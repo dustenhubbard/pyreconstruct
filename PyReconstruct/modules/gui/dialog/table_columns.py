@@ -47,7 +47,7 @@ class TableColumnsDialog(QDialog):
         bttns.setSpacing(0)
         bsize = (20, 20)
         style_sheet = """
-        QPushButton {background-color: transparent;}
+        QPushButton {background-color: transparent; padding: 0px;}
         QPushButton:hover {border: 1px solid yellow;}
         """
         # create up button

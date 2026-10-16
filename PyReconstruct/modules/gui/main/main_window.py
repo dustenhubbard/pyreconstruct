@@ -1299,16 +1299,16 @@ class MainWindow(QMainWindow):
         this changelog window after each update?" checkbox, and a checkable that
         contradicts the stored state would invert itself on the next click.
 
-        Checked means the popup is OFF, matching the row's wording: the tick
-        and the stored suppression flag are the same thing now, so the dialog's
-        checkbox and this row always agree.
+        Checked means the popup is ON, matching the row's wording and the
+        dialog's checkbox: the tick is the inverse of the stored suppression
+        flag, so this row and that box always show the same tick.
         """
         from PyReconstruct.modules.gui.main.first_launch import (
             WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT, whats_new_suppressed,
         )
         settings = QSettings(*domain_for(WHATSNEW_SUPPRESS_KEY))
         self.togglewhatsnew_act.setChecked(
-            whats_new_suppressed(
+            not whats_new_suppressed(
                 settings.value(WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT)
             )
         )
@@ -1352,11 +1352,12 @@ class MainWindow(QMainWindow):
         self.menusearchfield_act.focusField()
 
     def toggleWhatsNewPopup(self):
-        """Persist the Help-menu toggle: CHECKED means the popup is off.
+        """Persist the Help-menu toggle: CHECKED means the popup is on.
 
-        The row reads "Turn off What's new pop-up", so a tick is the disabled
-        state; the stored preference is the suppression flag itself, and the
-        two now match exactly.
+        The row reads "Show What's new after each update", the same sense as
+        the dialog's "Show this changelog window after each update?" box, so
+        a tick is the enabled state and the stored suppression flag is its
+        inverse.
 
         Writes only that preference. The once-per-version record is
         deliberately untouched, so switching the popup back on hands back the
@@ -1366,7 +1367,7 @@ class MainWindow(QMainWindow):
         from PyReconstruct.modules.gui.main.first_launch import WHATSNEW_SUPPRESS_KEY
         settings = QSettings(*domain_for(WHATSNEW_SUPPRESS_KEY))
         settings.setValue(
-            WHATSNEW_SUPPRESS_KEY, self.togglewhatsnew_act.isChecked()
+            WHATSNEW_SUPPRESS_KEY, not self.togglewhatsnew_act.isChecked()
         )
         from PyReconstruct.modules.gui.dialog.whats_new import sync_show_boxes
         sync_show_boxes(self)
@@ -5963,8 +5964,18 @@ class MainWindow(QMainWindow):
         event.accept()
 
 
+# qdarkstyle gives every push button 2 px of padding all round, so a text
+# button that sits at its own size drew as a tight box around its word
+# (Help > View log file's Close: 40 x 22 against the light theme's 64 x 20).
+# 12 px left and right brings it close to the native size (60 x 22). Dialogs
+# only: the palette and the main window's own buttons are icons or are sized
+# by hand. A button box (OK, Cancel, message boxes) already widens its
+# buttons to the style's minimum, so it keeps the 2 px; with the 12 a
+# message box's OK grew from 86 to 106 px.
 qdark_addon = """
 QPushButton {border: 1px solid transparent}
+QDialog QPushButton {padding: 2px 12px}
+QDialog QDialogButtonBox QPushButton {padding: 2px}
 QComboBox {padding-right: 40px}
 """
 
