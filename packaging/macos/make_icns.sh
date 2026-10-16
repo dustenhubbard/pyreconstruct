@@ -7,6 +7,10 @@
 # view and the Dock's smallest size, which scaling one 1024 px image down cannot
 # give. Their 1024 px slots match PyReconstruct/assets/img/PyReconstruct.png and
 # PyReconstructDev.png (tests/test_macos_icons.py checks).
+#
+# To change one, unpack it with `iconutil -c iconset`, edit the PNGs, and pack
+# it again with `iconutil -c icns`. macOS reads PNG data in the 16 and 32 px
+# slots as noise, so always let iconutil write the file.
 set -euo pipefail
 
 # The Dev flavor (packaging/FLAVOR says "dev") gets the icon with the DEV badge;
