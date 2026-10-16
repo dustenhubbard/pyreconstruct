@@ -82,6 +82,17 @@ def series(case):  # noqa: F811  (fixture)
         opened.close()
 
 
+@pytest.fixture(autouse=True)
+def no_stale_window(monkeypatch):
+    """getProgbar parents its dialog to the window setMainWindow last saw, and
+    falls back to the text-mode BasicProgbar when that window is gone (a
+    MainWindow an earlier test module built and tore down). The tests here
+    are about the Qt dialog, so they start with no window at all."""
+    from PyReconstruct.modules.gui.utils import utils as gui_utils
+
+    monkeypatch.setattr(gui_utils, "mainwindow", None)
+
+
 @pytest.fixture
 def notices(monkeypatch):
     """What the dialog would have said in a notice."""
@@ -332,6 +343,27 @@ def test_the_cancel_button_sets_the_stop_flag_and_relabels(qapp):
     assert progbar.labelText() == "Stopping after the section being written..."
     progress.close()
     assert not progbar.isVisible()
+
+
+def test_the_text_mode_bar_has_no_cancel_and_the_crop_still_runs(qapp, series, notices, monkeypatch):
+    """With no window to parent a dialog to, getProgbar hands back the
+    text-mode bar, which has no Cancel, no label and no signals."""
+    from PyReconstruct.modules.gui.utils.utils import BasicProgbar
+
+    monkeypatch.setattr(dialog_module, "getProgbar", lambda text, **kwargs: BasicProgbar(text))
+    opened, jser, src = series
+    stop = threading.Event()
+    progress = CropProgress("Cropping images around x...", stop)
+    assert isinstance(progress.dialog, BasicProgbar)
+    progress.report(50)
+    progress.close()
+    assert not stop.is_set()
+
+    summary = cropWithProgress(opened, _dialog(opened).values(), stop=stop)
+
+    assert summary[0] == f"Cropped around {OBJECT}: 3 of 5 sections."
+    assert os.path.isfile(os.path.join(src.parent, f"imgs_{OBJECT}_crop.zarr", LOG_NAME))
+    assert not stop.is_set()
 
 
 def test_closing_the_progress_dialog_is_not_a_cancel(qapp):

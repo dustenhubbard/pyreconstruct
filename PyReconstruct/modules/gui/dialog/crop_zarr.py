@@ -264,10 +264,13 @@ class CropProgress:
     as a busy bar saying the crop stops after the section being written, so
     the wait for that section is not a blank screen. Closing a
     QProgressDialog emits canceled as well, so close() unhooks the flag
-    first: a finished crop is not a stopped one.
+    first: a finished crop is not a stopped one. The text-mode bar getProgbar
+    falls back to (no window to parent a dialog to) has no Cancel and no
+    label: the crop then runs to the end, with its percent on the console.
 
         Attributes:
-            dialog (QProgressDialog): the dialog, application-modal
+            dialog: the QProgressDialog, application-modal, or the text-mode
+                BasicProgbar
             stop (threading.Event): set when Cancel is pressed
     """
 
@@ -276,7 +279,9 @@ class CropProgress:
         self.stop = stop
         self.started = time.monotonic()
         self.dialog = getProgbar(text, cancel=True, window_modality=Qt.ApplicationModal)
-        self.dialog.canceled.connect(self.onCancel)
+        self.canceled = getattr(self.dialog, "canceled", None)
+        if self.canceled is not None:
+            self.canceled.connect(self.onCancel)
 
     def onCancel(self):
         """Cancel was pressed: ask the crop to stop, and say so meanwhile."""
@@ -293,12 +298,13 @@ class CropProgress:
         # 100 would reset and hide the dialog before the log is written
         self.dialog.setValue(min(int(percent), 99))
         eta = estimate_remaining(time.monotonic() - self.started, percent)
-        if eta is not None:
+        if eta is not None and hasattr(self.dialog, "setLabelText"):
             self.dialog.setLabelText(f"{self.text}\n{format_remaining(eta)}")
 
     def close(self):
         """Take the dialog down once the crop has ended, however it ended."""
-        self.dialog.canceled.disconnect(self.onCancel)
+        if self.canceled is not None:
+            self.canceled.disconnect(self.onCancel)
         self.dialog.close()
 
 
