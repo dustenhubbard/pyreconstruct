@@ -336,6 +336,7 @@ def _run_view_recolor(series, monkeypatch, confirm=True):
     series_states = SeriesStates(series)
     field = types.SimpleNamespace(
         series_states=series_states,
+        refuseWhileRoiBox=lambda: False,
         table_manager=types.SimpleNamespace(
             updateObjects=lambda names: calls["updated"].append(sorted(names))
         ),

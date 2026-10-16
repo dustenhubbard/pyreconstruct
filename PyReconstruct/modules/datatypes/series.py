@@ -2608,8 +2608,11 @@ class Series():
                 section.save()
 
         ## Assign object attrs to copies
-        for obj_name, copy_name in zip(obj_names, copy_names):
-            self.objects.copyObjAttrs(obj_name, copy_name)
+        cleared = self.objects.copyObjAttrs(zip(obj_names, copy_names))
+
+        ## The sections were recorded before the copies had hosts
+        if series_states is not None:
+            series_states.recordLinksMade(cleared)
 
         self.modified = True
 
@@ -3087,6 +3090,14 @@ class Series():
         data is the same in every field. A record with no "lookalikes" keeps
         the index.
 
+        Before any of that, a record whose scan noted the trace's id
+        ("trace_id") is resolved by that id, when the section's ids are the
+        ones this session saved it with (Section.trace_ids_trusted), a trace
+        under its name still holds it, and it still has the content the scan
+        saw. This tells identical traces apart whatever was saved in between.
+        Otherwise, as when the trace was undone back or the file was changed
+        outside this session, the record falls through to the rules above.
+
         Records that name the same target resolve together, so one trace is
         deleted once however many rows name it: the same name, index and
         signature share a trace, and a record with no index shares the trace
@@ -3104,11 +3115,20 @@ class Series():
         unsure_targets = set()
         unresolved = []
         identities = {}  # name -> each trace's identity, read once
+        by_id : dict = {}  # name -> {trace id: trace}, read once
+        id_claimed = {}  # id(trace) -> the target that found it by id
         for record in records:
             contour = section.contours.get(record["name"])
             if not contour:
                 continue
             target = cls._recordTarget(record)
+            trace = cls._resolveByID(section, contour, record, by_id)
+            if trace is not None:
+                found[id(record)] = trace
+                claimed.add(id(trace))
+                id_claimed[id(trace)] = target
+                by_target.setdefault(target, trace)
+                continue
             if record.get("identity") is not None and \
                     record["name"] not in identities:
                 identities[record["name"]] = [
@@ -3120,6 +3140,10 @@ class Series():
             if counted is not None:
                 outcome, trace = counted
                 if outcome == "ambiguous":
+                    ambiguous.append(record)
+                    unsure_targets.add(target)
+                elif id_claimed.get(id(trace), target) != target:
+                    # another row found this trace by its id
                     ambiguous.append(record)
                     unsure_targets.add(target)
                 elif outcome == "found":
@@ -3165,6 +3189,35 @@ class Series():
                 ambiguous.append(record)
                 unsure_targets.add(target)
         return found, ambiguous
+
+    @classmethod
+    def _resolveByID(cls, section, contour, record, by_id):
+        """The trace holding the record's "trace_id", if its content is the same.
+
+        The content is the record's "identity" (every saved field) when the
+        scan placed it, else its "match" signature. ``by_id`` caches each
+        contour's {id: trace} by name.
+
+            Returns:
+                (Trace): the trace, or None to resolve the record without its id
+        """
+        trace_id = record.get("trace_id")
+        if not isinstance(trace_id, str) or \
+                not getattr(section, "trace_ids_trusted", False):
+            return None
+        name = record["name"]
+        if name not in by_id:
+            by_id[name] = {section.traceID(t): t for t in contour}
+        trace = by_id[name].get(trace_id)
+        if trace is None:
+            return None
+        identity = record.get("identity")
+        if identity is not None:
+            if cls._traceIdentity(trace) != cls._freeze(identity):
+                return None
+        elif not cls._traceMatchesSignature(trace, record["match"]):
+            return None
+        return trace
 
     @classmethod
     def _recordTarget(cls, record) -> tuple:
@@ -3228,8 +3281,9 @@ class Series():
         Sets "identity" (every saved field of the trace but its name, from
         Trace.getList: points, color, closed, negative, hidden, fill mode and
         tags), "lookalikes" (how many traces under that name on the section
-        have that identity, the record's own included) and "lookalike_ordinal"
-        (its place among them, from 0). Traces that differ in anything saved
+        have that identity, the record's own included), "lookalike_ordinal"
+        (its place among them, from 0) and "trace_id" (the trace's id this
+        session, which _resolveByID tries first). Traces that differ in anything saved
         are not lookalikes, so each is found as the only match wherever it
         moved; the place only chooses between traces whose data is the same.
         At delete time a changed count sets the record aside (see
@@ -3245,14 +3299,15 @@ class Series():
                 by_identity = {}
                 for i, identity in enumerate(identities):
                     by_identity.setdefault(identity, []).append(i)
-                entry = (identities, by_identity)
+                entry = (contour, identities, by_identity)
                 positions[name] = entry
-            identities, by_identity = entry
+            contour, identities, by_identity = entry
             if not isinstance(index, int) or not 0 <= index < len(identities):
                 return None
             identity = identities[index]
             indexes = by_identity[identity]
-            return identity, len(indexes), indexes.index(index)
+            return (identity, len(indexes), indexes.index(index),
+                    section.traceID(contour[index]))
 
         for record in records:
             placed = place(record["name"], record.get("index"))
@@ -3260,7 +3315,10 @@ class Series():
                 continue
             (record["identity"],
              record["lookalikes"],
-             record["lookalike_ordinal"]) = placed
+             record["lookalike_ordinal"],
+             trace_id) = placed
+            if trace_id is not None:
+                record["trace_id"] = trace_id
 
     @classmethod
     def _traceIdentity(cls, trace) -> tuple:
@@ -6138,8 +6196,13 @@ class Series():
                 section.save()
 
         ## Assign original attrs to new objects
-        for obj in new_names:
-            self.objects.assignCopyAttrs(obj, alignment, obj_groups, host)
+        cleared = self.objects.assignCopyAttrs({
+            obj: (alignment, obj_groups, host) for obj in new_names
+        })
+
+        ## The sections were recorded before the new objects had hosts
+        if series_states is not None:
+            series_states.recordLinksMade(cleared)
         
         if log_event:
             self.addLog(name, None, "Split into individual objects per trace")
@@ -6378,11 +6441,7 @@ class SeriesIterator():
         """Add the last section's change to the undo history, once."""
         section, self.section = self.section, None
         self.written = False
-        if self.series_states and section and (
-            section.getAllModifiedNames() or
-            section.tformsModified() or
-            section.flags_modified
-        ):
+        if self.series_states and section and section.isModified():
             self.series_states[section.n].addState(section, self.series)
             self.series_states.addSectionUndo(section.n)
 

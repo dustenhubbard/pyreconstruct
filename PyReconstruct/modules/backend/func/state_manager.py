@@ -3,6 +3,7 @@ import json
 import shutil
 import itertools
 from copy import deepcopy
+from dataclasses import dataclass, field
 
 from PyReconstruct.modules.datatypes import (
     Series,
@@ -80,6 +81,11 @@ class FieldState():
         # contour it changed here (a rename copies its links to the new
         # name): the redo of this section alone makes them again
         self.links_made = set()
+        # what a copy or a split did to the host links, shared with the
+        # other sections of the action (HostLinkRecord): a section undo or
+        # redo of this state changes the links as the record says. None for
+        # any other action.
+        self.host_links = None
         if updated_contours is None:
             if contours is None:
                 updated_contours = []
@@ -182,6 +188,8 @@ class FieldState():
         c.kept_after = self.kept_after
         c.keeps_emptied = self.keeps_emptied
         c.links_made = set(self.links_made)
+        # shared with the other sections of the action, not copied
+        c.host_links = self.host_links
         c.group_viz = dict(self.group_viz)
         c.undo_group_viz = dict(self.undo_group_viz)
         return c
@@ -379,6 +387,100 @@ def captureLinksMade(series : Series, names, before) -> set:
     return tree.linksMadeSince(before, names)
 
 
+def captureLinksTaken(series : Series, names, cleared) -> set:
+    """The links of cleared the series' host tree has not now, with an end
+    under one of the names (HostTree.linksTaken)."""
+    tree = getattr(series, "host_tree", None)
+    if not cleared or not hasattr(tree, "linksTaken"):
+        return set()
+    return tree.linksTaken(cleared, names)
+
+
+def captureLinksTrimmed(series : Series, before, cleared) -> set:
+    """The links the tree before has and the series' host tree has not,
+    other than those in cleared: the links the tree took off because their
+    host became a host of another host (HostTree.checkRedundantHosts)."""
+    tree = getattr(series, "host_tree", None)
+    if not hasattr(tree, "linksLostSince") or before is None:
+        return set()
+    return tree.linksLostSince(before) - set(cleared)
+
+
+class HostLinkRecord():
+
+    def __init__(self, made : dict, taken : dict, trimmed : set):
+        """What one copy or split did to the host links, shared by the
+        section states of the action (FieldState.host_links).
+
+        A copy or a split gives its new objects hosts after its sections
+        are recorded, and clears the hosts of a name that exists first.
+        A section undo or redo of the action changes only the links that
+        section owns: those with an end under a name the action changed
+        there. A link another section of the action needs stays while the
+        action stands on that section. A series undo or redo puts back the
+        whole tree, so it only marks where the action stands.
+
+            Params:
+                made (dict): section number -> the links the action made
+                    there (FieldState.links_made)
+                taken (dict): section number -> the links its clears took
+                    away there and did not make again
+                trimmed (set): the links the tree took off during the
+                    action because their host became a host of another host
+        """
+        self.made = made
+        self.taken = taken
+        self.trimmed = trimmed
+        # the section numbers where the action stands: not undone there
+        self.in_force = set(made)
+        # links a section undo or redo could not make or give back, as they
+        # would have made an object a host of itself then: each later
+        # section step of the action tries them again
+        self.refused = set()
+
+    def _needed(self, links : dict) -> set:
+        """The links of the sections where the action stands."""
+        return set().union(*(links.get(snum, ()) for snum in self.in_force))
+
+    def _replay(self, series : Series, remove, add, give_back=()):
+        """Take away the links in remove, make those in add, then give back
+        those in give_back, with the refused links the action still needs
+        made or given back tried again (HostTree.replayLinks)."""
+        needed = self._needed(self.made)
+        unowned = set().union(*self.taken.values()) - self._needed(self.taken)
+        retry = self.refused
+        self.refused = series.host_tree.replayLinks(
+            remove,
+            set(add) | (retry & needed),
+            set(give_back) | (retry & (unowned | self.trimmed)),
+        )
+
+    def redo(self, series : Series, snum : int):
+        """The action is redone on a section: take away the links its
+        clears took there and make its links there again."""
+        self.in_force.add(snum)
+        if series.seriesStepRunning():
+            return
+        self._replay(
+            series, self.taken.get(snum, ()), self.made.get(snum, ())
+        )
+
+    def undo(self, series : Series, snum : int):
+        """The action is undone on a section: take away the links it made
+        there, and give back the links its clears took there and the ones
+        the tree trimmed, unless a section where it stands needs them."""
+        self.in_force.discard(snum)
+        if series.seriesStepRunning():
+            return
+        self._replay(
+            series,
+            set(self.made.get(snum, ())) - self._needed(self.made),
+            (),
+            (set(self.taken.get(snum, ())) - self._needed(self.taken))
+            | self.trimmed,
+        )
+
+
 def restoreLinksMade(series : Series, links) -> None:
     """Make again the links a section redo's action made
     (FieldState.links_made)."""
@@ -508,8 +610,8 @@ def recreatedAlignments(snapshot : dict, recreated) -> dict:
 
     SeriesData sets a new object's alignment to the current one when it
     first sees it, so a section undo or redo that brings an object back loses
-    the pin it put back. The field puts it back again after that update
-    (FieldWidgetBase.undoState).
+    the pin it put back. SeriesStates.undoSection puts it back again after
+    that update.
     """
     out = {}
     for name in recreated:
@@ -609,11 +711,7 @@ class SectionStates():
         # file instead of re-serializing all contours. Fall back to serializing
         # the in-memory contours when the section is dirty (rare, e.g. a
         # b-section with unsaved edits re-initialized on save-as).
-        section_clean = not (
-            section.getAllModifiedNames()
-            or section.tformsModified()
-            or section.flags_modified
-        )
+        section_clean = not section.isModified()
         self.current_state = FieldState(
             section.contours,
             series.ztraces,
@@ -627,17 +725,21 @@ class SectionStates():
         )
         self.initialized = True
     
-    def addState(self, section : Section, series : Series):
+    def addState(self, section : Section, series : Series, merge=False):
         """Add a new undo state (called when an action is performed).
-        
+
             Params:
                 section (Section): the section object
+                merge (bool): True to fold the action into the last undo step
+                    (SeriesStates.commitSection)
         """
         # clear redo states
         self.redo_states = []
-        # push current state to undo states
-        self.current_state.updateTime()  # keep track of when added to undos
-        self.undo_states.append(self.current_state)
+        # push current state to undo states. A merged action leaves the stack
+        # as it is, so the next undo lands on the state before the first part
+        if not merge:
+            self.current_state.updateTime()  # keep track of when added to undos
+            self.undo_states.append(self.current_state)
         # get the names of the updated contours
         updated_contours = section.getAllModifiedNames()
         # get the updated ztraces
@@ -661,22 +763,6 @@ class SectionStates():
             series, section, updated_contours, assign=True
         )
         
-    def dropStatesAfter(self, count : int):
-        """Drop the undo states pushed after the first `count`.
-
-        Collapses a multi-part action into one undo step. The caller counts
-        the undo states before triggering the follow-up parts (autoMerge does
-        this around the merge that follows a draw, upstream issue #137) and
-        the intermediate snapshots those parts pushed are removed, so the next
-        undo lands on the state saved before the whole gesture rather than on
-        a composite the user never saw. The current state is untouched: it
-        already reflects the finished action, and redo replays it from there.
-
-            Params:
-                count (int): how many undo states to keep, from the oldest
-        """
-        del self.undo_states[count:]
-
     def undoState(self, section : Section, series : Series) -> set:
         """Restore an undo state on the section.
         
@@ -856,6 +942,9 @@ class SectionStates():
 
         restoreObjectIds(series, section, modified_contours, restored_oids)
         restoreKeptIds(series, getattr(self.current_state, "kept_before", {}))
+        record = getattr(self.current_state, "host_links", None)
+        if record is not None:
+            record.undo(series, section.n)
 
         recreated = [
             n for n in modified_contours
@@ -901,7 +990,11 @@ class SectionStates():
             for n in linkEndNames(series, links) - set(modified_contours)
             if n in kept_after
         })
-        restoreLinksMade(series, links)
+        record = getattr(redo_state, "host_links", None)
+        if record is None:
+            restoreLinksMade(series, links)
+        else:
+            record.redo(series, section.n)
         # objects this redo brings back from nothing get their attributes and
         # groups back too (see objectSnapshot)
         recreated = [
@@ -1271,6 +1364,30 @@ def alignmentPreferencesChanged(pre_series_attrs, post_series_attrs):
     return False
 
 
+@dataclass
+class SectionStep:
+    """What a section edit, undo or redo changed, for the lists and menus
+    to show (SeriesStates.commitSection and undoSection).
+
+        objects (set): the object names to refresh
+        ztraces (set): the z-trace names to refresh
+        groups_changed (bool): True if the set of groups changed
+        tform_moved (bool): True if the section's transform moved
+    """
+    objects : set = field(default_factory=set)
+    ztraces : set = field(default_factory=set)
+    groups_changed : bool = False
+    tform_moved : bool = False
+
+
+def _changedObjects(section : Section) -> set:
+    """The object names a section's tracking says changed: all of them when
+    the transform scaled, as SeriesData.updateSection reads it."""
+    if section.tformsModified(scaling_only=True):
+        return set(section.contours.keys())
+    return set(section.getAllModifiedNames())
+
+
 class SeriesStates():
 
     def __init__(self, series : Series):
@@ -1420,16 +1537,25 @@ class SeriesStates():
         data = getattr(self.series, "data", None)
         state.keeps_emptied = bool(getattr(data, "supress_logging", False))
 
-    def recordLinksMade(self):
+    def recordLinksMade(self, cleared=None):
         """Bring each section state of the newest series action up to date
         with the links the action made for the names it changed there
         (FieldState.links_made). An import merges the other series' host
-        tree after its sections are recorded (Series.importTraces), so
-        addSectionUndo saw none of those links."""
+        tree after its sections are recorded (Series.importTraces), and a
+        copy or a split gives the new objects hosts after (Series.copyObjects,
+        splitObject), so addSectionUndo saw none of those links.
+
+            Params:
+                cleared: for a copy or a split, (traveler id, host id) for
+                    each link it cleared to give the new objects their
+                    hosts (Objects.assignCopyAttrs). Its section states
+                    then share one record of the action (HostLinkRecord).
+        """
         if not self.undos:
             return
         series_state = self.undos[-1]
         before = series_state.series_attrs.get("host_tree")
+        made, taken = {}, {}
         for snum in series_state.undo_lens:
             state = self[snum].current_state
             names = state.getModifiedContours()
@@ -1437,6 +1563,15 @@ class SeriesStates():
             recordKeptLinkEnds(
                 self.series, series_state.kept_after, state.links_made, names
             )
+            made[snum] = state.links_made
+            taken[snum] = captureLinksTaken(self.series, names, cleared)
+        if cleared is None:
+            return
+        record = HostLinkRecord(
+            made, taken, captureLinksTrimmed(self.series, before, cleared)
+        )
+        for snum in series_state.undo_lens:
+            self[snum].current_state.host_links = record
 
     def clear(self):
         """Clear all state tracking."""
@@ -1589,18 +1724,140 @@ class SeriesStates():
         else:
             self.redos.append(self.undos.pop())
         
-    def undoSection(self, section : Section, redo=False):
-        """Undo/redo on a section
-        
+    def commitSection(self, section : Section, merge=False) -> SectionStep:
+        """Record an edit made on a section as an undo step, and bring the
+        series data up to date with it.
+
+        Does all the data work of an edit: the undo state, the series data,
+        the groups the edit emptied, the series steps it overwrote, and the
+        Section and Series tracking, which it clears. The lists and menus are
+        the caller's.
+
+            Params:
+                section (Section): the edited section
+                merge (bool): True to fold the edit into the last undo step,
+                    so one undo takes back both (a draw and the merge that
+                    follows it)
+            Returns:
+                (SectionStep): what the edit changed
+        """
+        series = self.series
+        section_states = self[section.n]
+        section_states.addState(section, series, merge=merge)
+
+        groups_before = set(series.object_groups.getGroupList())
+        step = SectionStep(
+            objects=_changedObjects(section),
+            ztraces=set(series.modified_ztraces),
+            tform_moved=section.tformsModified(),
+        )
+        series.data.updateSection(
+            section, update_traces=True, all_traces=False
+        )
+
+        # updateSection deletes an object whose last trace the edit took, and
+        # its groups with it; their visibility entries go too, so the Groups
+        # menu loses the row. The state keeps each value for its undo.
+        dropped = dropEmptiedGroups(series, groups_before)
+        section_states.current_state.undo_group_viz = dict(dropped)
+        step.groups_changed = bool(dropped)
+
+        self.checkOverwrite(section.n)
+
+        section.clearTracking()
+        series.clearTracking()
+        return step
+
+    def undoSection(self, section : Section, redo=False) -> SectionStep:
+        """Undo or redo the last step on a section, and bring the series
+        data up to date with it.
+
+        Does all the data work of the step: the section's traces, transforms
+        and flags, the series data, the host links, the groups it emptied or
+        brought back, the alignment pins of the objects it recreated, and
+        the Section and Series tracking, which it clears. The lists and menus
+        are the caller's. The data is brought up to date even when there is
+        no step to take, as an edit in progress may have changed the section.
+
+            Params:
+                section (Section): the section to undo/redo on
+                redo (bool): True if redo, False if undo
+            Returns:
+                (SectionStep): what the step changed
+        """
+        series = self.series
+        section_states = self[section.n]
+        groups_before = set(series.object_groups.getGroupList())
+        tform_before = section.tform.copy()
+        undos_before = len(section_states.undo_states)
+        redos_before = len(section_states.redo_states)
+        section_states.restored_alignments = {}
+
+        self._stepSection(section, redo)
+
+        # A redo of an action that kept the objects it emptied (an import)
+        # keeps them again, with their attributes, rather than deleting them
+        # as an erase would
+        redone = redo and len(section_states.undo_states) > undos_before
+        keeps_emptied = redone and getattr(
+            section_states.current_state, "keeps_emptied", False
+        )
+        step = SectionStep(
+            objects=_changedObjects(section),
+            ztraces=set(series.modified_ztraces),
+            tform_moved=not section.tform.equals(tform_before),
+        )
+        series.data.updateSection(
+            section,
+            update_traces=True,
+            all_traces=False,
+            log_events=not keeps_emptied,
+        )
+
+        # updateSection gave each object the step recreated the current
+        # alignment; put back the pin the object had
+        for name, alignment in section_states.restored_alignments.items():
+            if name in series.data["objects"]:
+                series.setAttr(name, "alignment", alignment)
+                step.objects.add(name)
+        section_states.restored_alignments = {}
+
+        # updateSection deletes an object whose last trace the step took, and
+        # its groups with it; their visibility entries go too. The dropped
+        # values also go to the state whose opposite step brings the groups
+        # back: an undo's to the state it put on the redo stack, a redo's to
+        # the state it redid. Replaced every time, even when the step empties
+        # nothing: a value left from an earlier step of the same state no
+        # longer describes it.
+        dropped = dropEmptiedGroups(series, groups_before)
+        if not redo and len(section_states.redo_states) > redos_before:
+            section_states.redo_states[-1].group_viz = dict(dropped)
+        elif redo and len(section_states.undo_states) > undos_before:
+            section_states.current_state.undo_group_viz = dict(dropped)
+
+        # A redo can bring back a group that no object held a moment ago
+        # (objectSnapshot)
+        step.groups_changed = (
+            set(series.object_groups.getGroupList()) != groups_before
+        )
+
+        section.clearTracking()
+        series.clearTracking()
+        return step
+
+    def _stepSection(self, section : Section, redo : bool):
+        """Move the section's own states one step, breaking the series step
+        it belongs to if that one allows it.
+
             Params:
                 section (Section): the section to undo/redo on
                 redo (bool): True if redo, False if undo
         """
         can_3D, can_2D, linked = self.canUndo(redo=redo)
-        
+
         if not can_2D:
             return
-        
+
         # check if series undo/redo should be broken
         snum = section.n
         if redo: states = self.redos
@@ -1615,7 +1872,7 @@ class SeriesStates():
                     states.remove(state)
                 else:
                     return # do not continue if state is unbreakable
-                
+
         if redo:
             self.section_states_dict[section.n].redoState(section, self.series)
         else:
