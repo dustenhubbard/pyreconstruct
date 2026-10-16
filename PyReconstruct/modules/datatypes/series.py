@@ -3111,7 +3111,7 @@ class Series():
         unsure_targets = set()
         unresolved = []
         identities = {}  # name -> each trace's identity, read once
-        by_id = {}  # name -> {trace id: trace}, read once
+        by_id : dict = {}  # name -> {trace id: trace}, read once
         id_claimed = {}  # id(trace) -> the target that found it by id
         for record in records:
             contour = section.contours.get(record["name"])

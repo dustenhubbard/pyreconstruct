@@ -700,6 +700,8 @@ class Section():
         ## The issuer is handed plain ids: the fill-mode spelling riding in the
         ## record is the unpack path's business (`reattachTraceIDs`) and means
         ## nothing to an id index.
+        adopted_ids : dict
+        derived_ids : Union[dict, None]
         if restored_ids is not None:
             adopted_ids, derived_ids = restored_ids, {}
         else:
