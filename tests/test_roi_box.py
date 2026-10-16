@@ -1,6 +1,7 @@
 """The ROI box: a view-only box in field coordinates.
 
-A click sets the box's center; its width and height are set in a dialog. Only
+A click sets the box's center; its width and height are set in a dialog, or a
+drag sets the center and the size together. Only
 the traces whose bounds in field coordinates touch the box are drawn and can be
 picked; turning the box off brings every trace back. Nothing is written to the
 traces, the sections or the series, and no undo state is made.
@@ -11,8 +12,9 @@ ones east of x = 14.15, d03p14 and d03sp14. Section 53, one PgUp away, has the
 same three a little shifted. The default box below covers part of d03 only.
 """
 import pytest
-from PySide6.QtCore import QPoint, QSettings, Qt
-from PySide6.QtWidgets import QWidget
+from PySide6.QtCore import QEvent, QPoint, QPointF, QSettings, Qt
+from PySide6.QtGui import QColor, QMouseEvent
+from PySide6.QtWidgets import QApplication, QWidget
 from PySide6.QtTest import QTest
 
 from PyReconstruct.modules.backend.view.trace_layer import (
@@ -404,12 +406,12 @@ def test_status_bar_says_the_box_is_on_and_its_size(mw, qapp):
     field = mw.field
     _turn_on(mw, qapp, size=(5, 5), center=None)
     field.updateStatusBar()
-    assert "ROI box 5 x 5 μm: click to place" in mw.status_readout.text()
+    assert "ROI box 5 x 5 μm: click or drag to place" in mw.status_readout.text()
 
     _click(field, qapp, *CENTER)
     field.updateStatusBar()
     text = mw.status_readout.text()
-    assert "ROI box 5 x 5 μm" in text and "click to place" not in text
+    assert "ROI box 5 x 5 μm" in text and "to place" not in text
 
     mw.roibox_act.trigger()
     field.updateStatusBar()
@@ -866,3 +868,332 @@ def test_trace_layer_keeps_both_initializations():
     layer = TraceLayer(None, None)
     assert layer.roi_box is None
     assert layer.selected_style_preview is None
+
+
+# --- drag to set the center and size -------------------------------------------
+
+def _move(field, qapp, p):
+    """Move the mouse to pixel point p with the left button held."""
+    QApplication.sendEvent(field, QMouseEvent(
+        QEvent.MouseMove, QPointF(p), QPointF(field.mapToGlobal(p)),
+        Qt.NoButton, Qt.LeftButton, Qt.NoModifier
+    ))
+    qapp.processEvents()
+
+
+def _press_and_drag(field, qapp, start, end, past_click=True):
+    """Press at pixel point start and move to end with the button held.
+
+    past_click puts the press outside the field's single-click window
+    (isSingleClicking), as a user's drag is."""
+    QTest.mousePress(field, Qt.LeftButton, Qt.NoModifier, start)
+    if past_click:
+        field.click_time -= field.max_click_time + 1
+    _move(field, qapp, end)
+
+
+def _release(field, qapp, p):
+    QTest.mouseRelease(field, Qt.LeftButton, Qt.NoModifier, p)
+    qapp.processEvents()
+
+
+def _drag(field, qapp, start, end):
+    _press_and_drag(field, qapp, start, end)
+    _release(field, qapp, end)
+
+
+def _one_pixel(field):
+    return field.series.window[2] / field.pixmap_dim[0]  # field units
+
+
+def _yellow_pixels(field):
+    image = field.grab().toImage()
+    yellow = QColor(255, 255, 0).rgb()
+    return sum(
+        image.pixel(x, y) == yellow
+        for x in range(0, image.width(), 2)
+        for y in range(0, image.height(), 2)
+    )
+
+
+def test_a_click_sets_the_center_and_keeps_the_size(mw, qapp):
+    field = mw.field
+    _turn_on(mw, qapp, center=None)
+
+    _click(field, qapp, *CENTER)
+
+    cx, cy = field.roi_box_center
+    assert abs(cx - CENTER[0]) <= _one_pixel(field)
+    assert abs(cy - CENTER[1]) <= _one_pixel(field)
+    assert field.roi_box_size == SIZE
+
+
+def test_movement_inside_the_click_window_is_a_click(mw, qapp):
+    """The field's own click-versus-drag rule (isSingleClicking): a press
+    released inside the single-click window is a click even if it moved. The
+    center is the press point and the size is unchanged."""
+    field = mw.field
+    _turn_on(mw, qapp, center=None)
+    start = _pix(field, *CENTER)
+    end = start + QPoint(25, 15)
+
+    _press_and_drag(field, qapp, start, end, past_click=False)
+    _release(field, qapp, end)
+
+    cx, cy = field.roi_box_center
+    assert abs(cx - CENTER[0]) <= _one_pixel(field)
+    assert abs(cy - CENTER[1]) <= _one_pixel(field)
+    assert field.roi_box_size == SIZE
+
+
+def test_drag_sets_center_and_size_in_field_units(mw, qapp):
+    """Under a window and a section mag that are not the defaults, the box is
+    the rectangle between the two field points, not pixels times a constant."""
+    field = mw.field
+    w = field.pixmap_dim[0]
+    h = field.pixmap_dim[1]
+    field.series.window = [12.9, 23.1, 2.0, 2.0 * h / w]
+    field.section.mag = 0.0123
+    field.generateView()
+    traces_before = [list(t.points) for t in field.section.tracesAsList()]
+    _turn_on(mw, qapp, center=None)
+
+    _drag(field, qapp, _pix(field, 13.2, 23.9), _pix(field, 13.8, 23.5))
+
+    one_pixel = _one_pixel(field)
+    cx, cy = field.roi_box_center
+    bw, bh = field.roi_box_size
+    assert abs(cx - 13.5) <= one_pixel and abs(cy - 23.7) <= one_pixel
+    assert abs(bw - 0.6) <= 2 * one_pixel and abs(bh - 0.4) <= 2 * one_pixel
+    assert field.roiBox() == (cx, cy, bw, bh)
+
+    # no other tool acted on the drag
+    assert field.current_trace == [] and not field.is_selecting_traces
+    assert [list(t.points) for t in field.section.tracesAsList()] == traces_before
+
+    # the dragged size is the size from here on: a click keeps it
+    _click(field, qapp, *CENTER)
+    assert field.roi_box_size == (bw, bh)
+
+
+@pytest.mark.parametrize("corners", [
+    ((13.2, 23.9), (13.8, 23.5)),  # down and right
+    ((13.8, 23.5), (13.2, 23.9)),  # up and left
+    ((13.2, 23.5), (13.8, 23.9)),  # up and right
+    ((13.8, 23.9), (13.2, 23.5)),  # down and left
+])
+def test_drag_works_in_any_direction(mw, qapp, corners):
+    field = mw.field
+    _turn_on(mw, qapp, center=None)
+
+    _drag(field, qapp, _pix(field, *corners[0]), _pix(field, *corners[1]))
+
+    one_pixel = _one_pixel(field)
+    cx, cy = field.roi_box_center
+    bw, bh = field.roi_box_size
+    assert abs(cx - 13.5) <= one_pixel and abs(cy - 23.7) <= one_pixel
+    assert abs(bw - 0.6) <= 2 * one_pixel and abs(bh - 0.4) <= 2 * one_pixel
+
+
+def test_drag_draws_a_preview_without_changing_the_box(mw, qapp):
+    field = mw.field
+    _turn_on(mw, qapp, center=None)
+    yellow_before = _yellow_pixels(field)
+
+    end = _pix(field, 13.8, 23.5)
+    _press_and_drag(field, qapp, _pix(field, 13.2, 23.9), end)
+
+    assert field.roiBox() is None and field.roi_box_size == SIZE
+    assert _yellow_pixels(field) > yellow_before
+
+    _release(field, qapp, end)
+    assert field.roiBox() is not None
+
+
+def test_escape_cancels_a_drag(mw, qapp):
+    field = mw.field
+    _turn_on(mw, qapp)
+    box_before = field.roiBox()
+
+    end = _pix(field, 14.3, 24.4)
+    _press_and_drag(field, qapp, _pix(field, 13.2, 23.9), end)
+    assert field.roi_box_drag_end is not None
+    QTest.keyClick(field, Qt.Key_Escape)
+    qapp.processEvents()
+    assert field.roi_box_drag_start is None and field.roi_box_drag_end is None
+
+    _release(field, qapp, end)
+    assert field.roiBox() == box_before
+
+
+def test_release_outside_the_field_ends_the_drag_at_the_edge(mw, qapp):
+    field = mw.field
+    _turn_on(mw, qapp, center=None)
+    start = _pix(field, *CENTER)
+
+    _drag(field, qapp, start, QPoint(field.pixmap_dim[0] + 200, start.y() - 30))
+
+    cx, _ = field.roi_box_center
+    bw, _ = field.roi_box_size
+    window = field.series.window
+    assert abs((cx + bw / 2) - (window[0] + window[2])) <= _one_pixel(field)
+
+
+def test_drag_writes_nothing_and_saves_no_undo_state(mw, qapp, monkeypatch):
+    field = mw.field
+    _turn_on(mw, qapp)
+    mw.series.modified = False
+    states = field.series_states[field.section.n]
+    undo_before = len(states.undo_states)
+    # every settings write during the drag, to QSettings (the suite's
+    # isolated class) or to the series' settings store
+    writes = []
+    monkeypatch.setattr(
+        QSettings, "setValue", lambda self, key, value: writes.append(key)
+    )
+    store = mw.series._settingsStore()
+    monkeypatch.setattr(
+        store, "set_value", lambda code, key, value: writes.append(key)
+    )
+
+    _drag(field, qapp, _pix(field, 13.2, 23.9), _pix(field, 13.8, 23.5))
+    assert field.roi_box_size != SIZE  # the drag was a drag
+
+    assert mw.series.modified is False
+    assert len(states.undo_states) == undo_before
+    assert not field.section.added_traces and not field.section.removed_traces
+    assert writes == []
+
+
+def test_section_change_mid_drag_clears_the_preview(mw, qapp):
+    field = mw.field
+    _turn_on(mw, qapp)
+    box_before = field.roiBox()
+
+    end = _pix(field, 14.3, 24.4)
+    _press_and_drag(field, qapp, _pix(field, 13.2, 23.9), end)
+    assert field.roi_box_drag_end is not None
+
+    mw.incrementSection()  # PgUp with the button held
+    qapp.processEvents()
+    assert field.section.n != 52
+    assert field.roi_box_drag_start is None and field.roi_box_drag_end is None
+
+    _move(field, qapp, end + QPoint(10, 10))
+    _release(field, qapp, end + QPoint(10, 10))
+    assert field.roiBox() == box_before
+
+
+class _Pinch:
+    """The accessors `gestureEvent` reads off a `QPinchGesture`."""
+
+    def __init__(self, state, x, y, scale):
+        self._state, self._center, self._scale = state, QPointF(x, y), scale
+
+    def state(self):
+        return self._state
+
+    def centerPoint(self):
+        return self._center
+
+    def totalScaleFactor(self):
+        return self._scale
+
+
+class _GestureEvent:
+    def __init__(self, pinch):
+        self._pinch = pinch
+
+    def gesture(self, kind):
+        return self._pinch
+
+
+def test_a_pinch_mid_drag_ends_it_with_the_box_as_it_was(mw, qapp):
+    field = mw.field
+    _turn_on(mw, qapp)
+    box_before = field.roiBox()
+
+    end = _pix(field, 14.3, 24.4)
+    _press_and_drag(field, qapp, _pix(field, 13.2, 23.9), end)
+    for state, scale in (
+        (Qt.GestureState.GestureStarted, 1.0),
+        (Qt.GestureState.GestureUpdated, 1.5),
+        (Qt.GestureState.GestureFinished, 1.5),
+    ):
+        field.gestureEvent(_GestureEvent(_Pinch(state, 200, 150, scale)))
+    assert field.roi_box_drag_start is None and field.roi_box_drag_end is None
+
+    _release(field, qapp, end)
+    assert field.roiBox() == box_before
+
+
+def test_the_context_menu_mid_drag_ends_it_with_the_box_as_it_was(mw, qapp, monkeypatch):
+    field = mw.field
+    _turn_on(mw, qapp)
+    box_before = field.roiBox()
+    previews = []
+    monkeypatch.setattr(
+        mw.field_menu, "exec",
+        lambda *a, **kw: previews.append(field.roi_box_drag_end)
+    )
+
+    end = _pix(field, 14.3, 24.4)
+    _press_and_drag(field, qapp, _pix(field, 13.2, 23.9), end)
+    QTest.mousePress(field, Qt.RightButton, Qt.NoModifier, end)
+    qapp.processEvents()
+    assert previews == [None]  # no preview under the open menu
+
+    QTest.mouseRelease(field, Qt.RightButton, Qt.NoModifier, end)
+    _release(field, qapp, end)
+    assert field.roiBox() == box_before
+
+
+def _undo_mid_drag(mw, qapp, redo):
+    """Start a drag, run Undo (or Redo), then move and release. The box must
+    keep its center and size and the preview must be gone."""
+    field = mw.field
+    box_before = field.roiBox()
+
+    end = _pix(field, 14.3, 24.4)
+    _press_and_drag(field, qapp, _pix(field, 13.2, 23.9), end)
+    assert field.roi_box_drag_end is not None
+
+    mw.undo(redo=redo)
+    qapp.processEvents()
+    assert field.roi_box_drag_start is None and field.roi_box_drag_end is None
+
+    _move(field, qapp, end + QPoint(10, 10))
+    _release(field, qapp, end + QPoint(10, 10))
+    assert field.roiBox() == box_before
+
+
+@pytest.mark.parametrize("redo", [False, True], ids=["undo", "redo"])
+def test_undo_with_the_trace_layer_hidden_mid_drag_ends_it(mw, qapp, redo):
+    """With H on, undoState returns before endPendingEvents, so Undo itself
+    has to end the drag."""
+    field = mw.field
+    field.deleteTraces([_trace(field.section, "d03p14")])
+    field.saveState()  # a section undo state
+    if redo:
+        mw.undo()
+    _turn_on(mw, qapp)
+    field.toggleHideAllTraces()
+    assert field.hide_trace_layer
+    assert field.series_states.canUndo(redo=redo)[1]
+
+    _undo_mid_drag(mw, qapp, redo)
+
+
+@pytest.mark.parametrize("redo", [False, True], ids=["undo", "redo"])
+def test_series_wide_undo_mid_drag_ends_it(mw, qapp, redo):
+    """A series-wide Undo goes through seriesUndo, which never reaches
+    endPendingEvents."""
+    field = mw.field
+    field.series_states.addState()
+    if redo:
+        mw.undo()
+    _turn_on(mw, qapp)
+    can_3D, can_2D, _ = field.series_states.canUndo(redo=redo)
+    assert can_3D and not can_2D
+
+    _undo_mid_drag(mw, qapp, redo)
