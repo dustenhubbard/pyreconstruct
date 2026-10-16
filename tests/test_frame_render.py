@@ -1,13 +1,10 @@
-"""The frame renderer draws a framed part of a section fresh at an output size.
+"""A frame renders a part of a section fresh at an output size.
 
-At 1x it must match the field's own pixmap pixel for pixel, so a figure at
-screen size is what the screen shows. At 3x every width the field draws in
-screen pixels is three times as wide: the trace outline, and the scale bar
-with its label. A render leaves the series window and the field as they were.
-
-The field tests open a real `MainWindow` on a copy of the shipped checker
-series ``shapes1.jser``, which carries images, through the suite's
-`main_window` fixture with `series_jser` pointed at that copy.
+At 1x a frame matches the field pixel for pixel. At 3x every width the field
+draws in screen pixels is three times as wide: the trace outline, and the
+scale bar with its label. Leaving the selection out drops its highlight and
+keeps each trace's fill as the field shows it. A render leaves the series
+window and the field as they were.
 """
 import numpy as np
 import pytest
@@ -21,22 +18,22 @@ from PyReconstruct.modules.backend.view.frame_render import (
     FrameLayers,
     renderFrame,
 )
-from PyReconstruct.modules.datatypes import Flag, Series
+from PyReconstruct.modules.datatypes import Flag, Series, Trace
 
-# the frame and window of the design mockup, on section 0 of shapes1
+# a frame around the star on section 0 of shapes1
 MOCK_FRAME = (480, 320)
 MOCK_WINDOW = [1.2241075625, 0.9433716583333334, 2.140304375, 1.4268695833333331]
 
 
 @pytest.fixture
 def series_jser(shapes1_jser):
-    """`main_window` opens this: the shapes1 copy, which has images."""
+    """A series with images."""
     return shapes1_jser
 
 
 @pytest.fixture
 def shapes1(qapp, shapes1_jser):
-    """shapes1 opened without a window, its options in memory."""
+    """The series with images, its options in memory."""
     series = Series.openJser(str(shapes1_jser))
     series.setSettingsStore(DictSettingsStore())
     series.src_dir = str(shapes1_jser.parent)
@@ -67,9 +64,8 @@ def unfilled(section):
 
 
 def decorate(field):
-    """Put something on screen for every layer the field draws: a selected
-    trace, a selected flag beside a plain one, and the series' z-traces with
-    one point selected, then redraw."""
+    """Show every layer the field draws: a selected trace, a selected flag
+    beside a plain one, and the z-traces with one point selected."""
     section = field.section
     x, y, w, h = field.series.window
     for i, dx in enumerate((0.4, 0.6)):
@@ -85,8 +81,10 @@ def decorate(field):
     field.generateView()
 
 
-def test_1x_render_matches_the_field_pixmap(main_window, local_series_settings):
-    local_series_settings(main_window)
+@pytest.mark.parametrize("style", ["standard", "outline", "glow"])
+def test_1x_render_matches_the_field_pixmap(main_window, local_series_settings, style):
+    series = local_series_settings(main_window)
+    series.setOption("selected_trace_style", style)
     field = main_window.field
     field.generateView()
     assert field.section_layer.image_found
@@ -175,7 +173,7 @@ def test_3x_scale_bar_and_label_are_three_times_as_large(shapes1):
         assert 2.8 < size_3 / size_1 < 3.2, (whole_1, whole_3)
 
 
-def test_mockup_frame_renders_at_1x_and_3x(shapes1):
+def test_star_frame_renders_at_1x_and_3x(shapes1):
     section = shapes1.loadSection(0)
     window = shapes1.window
     for k in (1, 3):
@@ -185,3 +183,48 @@ def test_mockup_frame_renders_at_1x_and_3x(shapes1):
         # the image fills the frame: the window lies inside it
         assert lit(frame).mean() > 0.9
     assert shapes1.window is window
+
+
+def square(section, fill_mode):
+    """Leave the section one red square, from (2, 2) to (8, 8)."""
+    for trace in list(section.tracesAsList()):
+        section.removeTrace(trace, log_event=False)
+    section.selected_traces = []
+    section.flags = []
+    section.selected_flags = []
+    trace = Trace("square", (255, 0, 0))
+    trace.points = [(2, 2), (8, 2), (8, 8), (2, 8)]
+    trace.fill_mode = fill_mode
+    section.addTrace(trace, log_event=False)
+    return trace
+
+
+@pytest.mark.parametrize("fill_when", ["selected", "unselected"])
+def test_selection_left_out_keeps_the_fill(shapes1, fill_when):
+    section = shapes1.loadSection(0)
+    trace = square(section, ("solid", fill_when))
+    section.selected_traces = [trace]
+    centers = []
+    for selection in (True, False):
+        frame = renderFrame(
+            shapes1, section, [0, 0, 10, 10], (100, 100), (100, 100),
+            FrameLayers(image=False, selection=selection, scale_bar=False),
+        )
+        centers.append(int(pixels(frame)[50, 50]))
+    filled = 0xFFFF0000 if fill_when == "selected" else 0xFF000000
+    assert centers == [filled, filled]
+
+
+def test_selection_left_out_drops_the_flag_box(shapes1):
+    section = shapes1.loadSection(0)
+    square(section, ("none", "none"))
+    flag = Flag("f", 5, 5, section.n, (255, 0, 0))
+    section.flags = [flag]
+    shapes1.setOption("show_flags", "all")
+    layers = FrameLayers(image=False, flags=True, scale_bar=False)
+    frames = []
+    for selected in ([flag], []):
+        section.selected_flags = selected
+        frames.append(pixels(renderFrame(
+            shapes1, section, [0, 0, 10, 10], (300, 300), (300, 300), layers)))
+    assert np.array_equal(*frames)

@@ -391,6 +391,6 @@ def test_every_options_slider_has_ticks_and_a_readout(qapp, tmp_path):
                 assert s.slider.tickPosition() == QSlider.TicksBelow, name
                 assert s.slider.tickInterval() > 0, name
                 assert s.text(), name
-        assert found == 4, found     # 3D detail, scale bar size and thickness, CPU usage
+        assert found == 5, found     # 3D detail, scale bar size and thickness, glow, CPU usage
     finally:
         dlg.deleteLater()

@@ -30,7 +30,37 @@ from PyReconstruct.modules.calc import (
     getExterior
 )
 from PyReconstruct.modules.calc.nesting import islandCuts
+from PyReconstruct.modules.datatypes.default_settings import MAX_SELECTION_GLOW_OPACITY
 from PyReconstruct.modules.gui.utils import drawOutlinedText
+
+# The looks a selected trace can have, set by the selected_trace_style option.
+# "standard" is drawn inline in _drawTrace: the trace's 1 px line, then the same
+# path again, 8 px wide at 40% opacity, under any fill. The others replace the
+# line with pens drawn after the fill, widest first, so a fill never covers them.
+# Each pen is (color, width in pixels, opacity): color None is the trace's own
+# color, and opacity None is the selection_glow_opacity option.
+SELECTED_TRACE_PENS = {
+    "outline": (
+        ((0, 0, 0), 6, 1),
+        ((255, 255, 255), 4, 1),
+        (None, 2, 1),
+    ),
+    "glow": (
+        (None, 5, None),
+        (None, 2, 1),
+    ),
+}
+SELECTED_TRACE_STYLES = ("standard", *SELECTED_TRACE_PENS)
+
+
+def selectionGlowOpacity(percent) -> float:
+    """Return the painter opacity for a selection_glow_opacity value.
+
+    The value is a percent; above MAX_SELECTION_GLOW_OPACITY it draws as that
+    maximum.
+    """
+    return min(max(percent, 0), MAX_SELECTION_GLOW_OPACITY) / 100
+
 
 class TraceLayer():
 
@@ -51,6 +81,10 @@ class TraceLayer():
         self._temp_hide_set = set()
         self._group_hide_set = set()
         self._group_hidden_names = set()
+        # the (style, glow percent) the options dialog shows while it is open;
+        # None draws from the stored options
+        self.selected_style_preview = None
+        self._selected_pens = None
         # an offscreen render at k times the screen size sets these: every
         # width drawn in screen pixels is multiplied by pen_scale, and the
         # selection, z-traces and flags can each be left out
@@ -295,20 +329,24 @@ class TraceLayer():
         draw_color = color if color else trace.color
 
         selected = trace in self._selected_set
+        # the fill follows the selection whether or not it is highlighted
+        highlighted = selected and self.draw_selection
 
         ## Set up painter (shared: reset state left over from the previous trace)
         painter.setOpacity(1)
         painter.setBrush(Qt.NoBrush)
         painter.setPen(QPen(QColor(*draw_color), self.penWidth(1)))
 
-        ## Draw trace
-        if trace.closed:
-            painter.drawPolygon(qpoints)
-        else:
-            painter.drawPolyline(qpoints)
+        ## Draw trace (another selected style draws its own line after the fill)
+        pens = self._selected_pens if highlighted else None
+        if not pens:
+            if trace.closed:
+                painter.drawPolygon(qpoints)
+            else:
+                painter.drawPolyline(qpoints)
 
         ## Draw highlight
-        if selected:
+        if highlighted and not pens:
 
             painter.setPen(QPen(QColor(*draw_color), self.penWidth(8)))
             painter.setOpacity(0.4)
@@ -355,7 +393,55 @@ class TraceLayer():
 
             painter.drawPolygon(qpoints)
 
+        ## Draw the selected style's pens last, so a fill never covers them
+        if pens:
+            self._drawSelectedPens(painter, qpoints, trace.closed, draw_color, pens)
+
         return True
+
+    def _drawSelectedPens(self, painter : QPainter, qpoints, closed : bool, draw_color, pens):
+        """Draw a selected trace with the pens of its selected_trace_style.
+
+            Params:
+                painter (QPainter): the painter
+                qpoints: the trace in pixmap coordinates
+                closed (bool): True to draw a polygon, False for a polyline
+                draw_color: the color the trace line is drawn in
+                pens: (color, width, opacity) tuples, widest first
+        """
+        painter.setBrush(Qt.NoBrush)
+        draw = painter.drawPolygon if closed else painter.drawPolyline
+        for color, width, opacity in pens:
+            if not opacity:
+                continue
+            pen = QPen(QColor(*(color or draw_color)), self.penWidth(width))
+            # round joins cost about twice the stroke time on long traces, so
+            # corners keep the default bevel; round caps only on open ends
+            if not closed:
+                pen.setCapStyle(Qt.RoundCap)
+            painter.setOpacity(opacity)
+            painter.setPen(pen)
+            draw(qpoints)
+
+    def _selectedPens(self):
+        """Return the pens for a selected trace, or None for the standard look.
+
+        Reads the dialog's preview when there is one, else the stored options.
+        An unknown style draws as standard.
+        """
+        if self.selected_style_preview is not None:
+            style, percent = self.selected_style_preview
+        else:
+            style = self.series.getOption("selected_trace_style")
+            percent = self.series.getOption("selection_glow_opacity")
+        pens = SELECTED_TRACE_PENS.get(style)
+        if pens is None:
+            return None
+        glow = selectionGlowOpacity(percent)
+        return tuple(
+            (color, width, glow if opacity is None else opacity)
+            for color, width, opacity in pens
+        )
     
     def _drawZtrace(self, trace_layer : QPixmap, ztrace : Ztrace):
         """Draw points on the current trace layer.
@@ -479,7 +565,7 @@ class TraceLayer():
             flag_size
         )
         # draw highlight if necessary
-        if flag in self.section.selected_flags:
+        if self.draw_selection and flag in self.section.selected_flags:
             painter.setPen(QPen(QColor(*flag.color), 2))
             painter.setOpacity(1)
             painter.setBrush(Qt.transparent)
@@ -551,9 +637,7 @@ class TraceLayer():
         # precompute membership sets for the per-trace loop below; testing
         # against these is O(1) instead of an O(n) scan of the backing lists
         # (which is O(n^2) overall when many traces are selected or hidden)
-        self._selected_set = (
-            set(self.section.selected_traces) if self.draw_selection else set()
-        )
+        self._selected_set = set(self.section.selected_traces)
         self._temp_hide_set = set(self.section.temp_hide)
         self._group_hide_set = set(self.section.traces_group_hide)
         # by name too, for traces drawn or restored since the section loaded
@@ -566,6 +650,7 @@ class TraceLayer():
         show_ztraces = self.series.getOption("show_ztraces")
         show_flags = self.series.getOption("show_flags")
         flag_size = self.series.getOption("flag_size")
+        self._selected_pens = self._selectedPens()
 
         if window_moved:
             trace_list = self.section.tracesAsList()

@@ -99,6 +99,8 @@
     "searchmenus_act": "str",
     "sectionlist_act": "str",
     "selectall_act": "str",
+    "selected_trace_style": "str",
+    "selection_glow_opacity": "int",
     "series_code_pattern": "str",
     "sethosts_act": "str",
     "show_flags": "str",
