@@ -87,7 +87,9 @@ def _field(series, viewer=None):
             updateObjects=lambda names: None,
             refresh=lambda: None,
         ),
-        section=types.SimpleNamespace(selected_traces=[]),
+        section=types.SimpleNamespace(
+            selected_traces=[], clearTracking=lambda: None
+        ),
         mainwindow=types.SimpleNamespace(
             saveAllData=lambda: None,
             seriesModified=lambda b: None,
