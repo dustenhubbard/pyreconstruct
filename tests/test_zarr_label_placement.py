@@ -1,8 +1,13 @@
-"""One placement calculation for Zarr labels, shared by the overlay and import.
+"""One placement for Zarr labels, shared by the label overlay and label import.
 
-Both read the same magnification, crop origin and label offsets from it. They
-anchor rows and pick a section's slice each their own way, and the fixtures
-below pin each to the placement it had before the calculation was shared.
+The overlay and the import each worked out where labels sit in the field. They
+agreed in x, but in y the overlay hung the labels from raw's bottom edge and
+moved them up by their offset, while import (rightly) hangs them from raw's top
+edge and moves them down. Labels shorter than raw, or offset in y, were drawn
+away from where they imported. The overlay also picked a section's slice by
+section number, so a gap in raw's sections showed the wrong slice. Both use
+``label_placement`` now, and these fixtures check the drawn label against the
+imported trace.
 """
 import types
 
@@ -21,11 +26,10 @@ from PyReconstruct.modules.datatypes import Transform
 def test_magnification_is_raw_true_mag_at_the_label_size():
     p = label_placement([50, 8, 8], [50, 4, 4], [0, 0, 0], [0, 0], [0], 0.004, 10)
     assert p.mag == pytest.approx(0.008)
-    assert p.overlay_mag == pytest.approx(0.008)
     assert p.raw_rows == 5
 
 
-def test_import_rows_count_down_from_the_top_of_raw():
+def test_rows_count_down_from_the_top_of_raw():
     """Label row 0 is raw's top edge; field y counts up from raw's bottom."""
     p = label_placement([50, 4, 4], [50, 4, 4], [0, 0, 0], [1, 2], [0], 0.004, 10)
     assert p.to_field([[0, 0], [3, 10]]).ravel() == pytest.approx(
@@ -33,16 +37,10 @@ def test_import_rows_count_down_from_the_top_of_raw():
     )
 
 
-def test_import_offsets_move_labels_right_and_down_in_label_pixels():
+def test_offsets_move_labels_right_and_down_in_label_pixels():
     """An offset of 16 nm across and 8 nm down is 2 and 1 pixels at 8 nm."""
     p = label_placement([50, 8, 8], [50, 4, 4], [0, 8, 16], [1, 2], [0], 0.004, 10)
     assert p.to_field([[0, 0]]).ravel() == pytest.approx([1.016, 2.032])
-
-
-def test_overlay_origin_moves_by_the_offsets_in_label_pixels():
-    """2 pixels right, 1 up and 1 section in, from the crop origin (1, 2)."""
-    p = label_placement([50, 8, 8], [50, 4, 4], [50, 8, 16], [1, 2], [3, 4], 0.004, 10)
-    assert p.overlay_origin() == pytest.approx((1.016, 2.008, 4))
 
 
 def test_unit_conversion_happens_before_the_calculation():
@@ -64,6 +62,12 @@ def test_unit_conversion_happens_before_the_calculation():
     assert placed(um) == placed(nm)
 
 
+def test_to_label_undoes_to_field():
+    p = label_placement([50, 8, 8], [50, 4, 4], [0, 8, 16], [1, 2], [0], 0.004, 10)
+    (x, y), = p.to_field([[3.25, 1.5]])
+    assert p.to_label(x, y) == pytest.approx((3.25, 1.5))
+
+
 @pytest.mark.parametrize(
     "z_offset_nm, snum, expected",
     [
@@ -71,22 +75,22 @@ def test_unit_conversion_happens_before_the_calculation():
         (50, 3, None), (50, 5, 0), (50, 7, 1),
     ],
 )
-def test_import_slices_follow_raw_sections(z_offset_nm, snum, expected):
-    """Raw's slices are sections 3, 5 and 7."""
+def test_slices_follow_raw_sections_and_skip_a_gap(z_offset_nm, snum, expected):
+    """Raw's slices are sections 3, 5 and 7; section 4 was deleted."""
     p = label_placement(
         [50, 4, 4], [50, 4, 4], [z_offset_nm, 0, 0], [0, 0], [3, 5, 7], 0.004, 10
     )
     assert p.slice_index(snum) == expected
 
 
-## each caller keeps its own placement
+## the overlay and the import agree
 
 
 def _ids(depth, rows, cols):
     """Label 7 in a small block near the top left, and 0 around it.
 
-    The block is a column further right on each slice, so the slice each
-    section shows is visible.
+    The block is a column further right on each slice, so a section shown
+    with another section's slice shows.
     """
     labels = np.zeros((depth, rows, cols), dtype=np.uint32)
     for z in range(depth):
@@ -140,50 +144,9 @@ def _overlay(fp):
     return ZarrLayer(series)
 
 
-def _metadata(zg, series):
-    labels, raw = zg["labels_x"], zg["raw"]
-    res, raw_res = conversions.get_label_resolutions(labels, raw, series)
-    offset = conversions.get_label_offset(labels, raw)
-    return res, raw_res, offset, raw.attrs
-
-
-def _base_overlay(zg, series):
-    """The overlay's mag, x, y and first section, worked out as it always was."""
-    res, raw_res, offset, attrs = _metadata(zg, series)
-    x, y = tuple(attrs["window"][:2])
-    s = attrs["sections"][0]
-    mag = conversions.get_true_mag(zg["raw"]) * (res[-1] / raw_res[-1])
-    pixel_offset = [o / r for o, r in zip(offset, res)]
-    field_offset = [p * mag for p in pixel_offset]
-    return mag, x + field_offset[2], y + field_offset[1], s + pixel_offset[0]
-
-
-def _base_import_points(zg, series, ext):
-    """Label import's trace points for ext, worked out as they always were."""
-    res, raw_res, offset, attrs = _metadata(zg, series)
-    mag = attrs["true_mag"] / raw_res[-1] * res[-1]
-    ext = ext.astype(np.float64)
-    ext[:, 0] += offset[2] / res[2]
-    ext[:, 1] += offset[1] / res[1]
-    ext[:, 1] *= -1
-    ext[:, 1] += zg["raw"].shape[-2] * (raw_res[1] / res[1])
-    ext *= mag
-    ext[:, 0] += attrs["window"][0]
-    ext[:, 1] += attrs["window"][1]
-    return Transform.identity().map(ext.tolist(), inverted=True)
-
-
-def _base_import_slice(zg, series, snum):
-    res, raw_res, offset, attrs = _metadata(zg, series)
-    if snum not in attrs["sections"]:
-        return None
-    zi = attrs["sections"].index(snum) - round(offset[0] / res[0])
-    return zi if 0 <= zi < conversions.label_volume(zg["labels_x"]).shape[0] else None
-
-
 def _drawn_id(layer, snum, x, y):
     """The label the overlay draws at field point (x, y) on section snum."""
-    size = layer.zarr_mag / 8
+    size = layer.placement.mag / 8
     window = [x - size / 2, y - size / 2, size, size]
     if layer.generateZarrLayer(types.SimpleNamespace(n=snum), (1, 1), window) is None:
         return None
@@ -192,46 +155,34 @@ def _drawn_id(layer, snum, x, y):
 
 
 @pytest.mark.parametrize("case", list(CASES))
-def test_overlay_places_labels_as_before(qapp, tmp_path, real_series, case):
+def test_overlay_draws_labels_where_they_import(qapp, tmp_path, real_series, case):
     fp, zg, sections = _zarr(tmp_path, real_series, case)
     layer = _overlay(fp)
-    mag, x0, y0, s0 = _base_overlay(zg, real_series)
-    assert (layer.zarr_mag, layer.zarr_x, layer.zarr_y, layer.zarr_s) == (mag, x0, y0, s0)
-
-    ## label pixel (c, r) on slice z is drawn from (x0, y0), rows hanging
-    ## down from the labels' height, on section s0 + z
-    ids = conversions.label_volume(zg["labels_x"])
-    depth, rows, cols = ids.shape
-    for snum in sections:
-        z = round(snum - s0)
-        for c, r in [(0, 0), (2, 1), (3, 2), (cols - 1, 1), (cols - 1, rows - 1)]:
-            x = x0 + (c + 0.5) * mag
-            y = y0 + (rows - r - 0.5) * mag
-            want = int(ids[z, r, c]) if 0 <= z < depth else None
-            assert _drawn_id(layer, snum, x, y) == want
-
-
-@pytest.mark.parametrize("case", list(CASES))
-def test_import_places_labels_as_before(qapp, tmp_path, real_series, case):
-    fp, zg, sections = _zarr(tmp_path, real_series, case)
-    ids = conversions.label_volume(zg["labels_x"])
+    mag = layer.placement.mag
     conversions.setDT()
 
     imported = 0
-    for snum in sorted(real_series.sections):
-        zi = _base_import_slice(zg, real_series, snum)
+    for snum in sections:
         conversions.importSection(zg, "labels_x", snum, real_series)
-        traces = real_series.loadSection(snum).contours.get("autoseg_7", [])
-        got = [[tuple(p) for p in t.points] for t in traces]
-        if zi is None:
-            assert got == []
+        contours = real_series.loadSection(snum).contours
+        if "autoseg_7" not in contours:
+            assert _drawn_id(layer, snum, 1.001, 2.001) is None
             continue
-        want = [
-            [tuple(p) for p in _base_import_points(zg, real_series, ext)]
-            for ext in conversions.getExteriors(ids[zi] == 7)
-        ]
-        assert got == want
         imported += 1
+        pts = np.array([p for t in contours["autoseg_7"] for p in t.points])
+        x0, x1 = pts[:, 0].min(), pts[:, 0].max()
+        y0, y1 = pts[:, 1].min(), pts[:, 1].max()
+        ## trace points are the top left corners of the block's edge pixels,
+        ## so the block's corner pixels are centered half a pixel right and
+        ## down from them, and their neighbors outside are a pixel further
+        half = mag / 2
+        inside = [(x0 + half, y1 - half), (x1 + half, y0 - half)]
+        outside = [
+            (x0 - half, y1 - half), (x0 + half, y1 + half),
+            (x1 + 3 * half, y0 - half), (x1 + half, y0 - 3 * half),
+        ]
+        assert [_drawn_id(layer, snum, x, y) for x, y in inside] == [7, 7]
+        assert 7 not in [_drawn_id(layer, snum, x, y) for x, y in outside]
     assert imported >= 1
 
 
