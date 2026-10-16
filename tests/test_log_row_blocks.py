@@ -183,6 +183,18 @@ def test_a_set_aside_block_records_each_of_its_lines():
     assert len(log_set.all_logs) == 2
 
 
+def test_failed_block_with_blank_tail():
+    # blank lines at the end of a set-aside block are lines of that block,
+    # so each is reported with it, one entry per physical line
+    lines = [STAMP + "alice, x", "y, z, w, v, x, event", "", "   ", NEXT]
+
+    log_set = LogSet.fromList(lines, skip_corrupt=True)
+
+    assert [log.user for log in log_set.all_logs] == ["carol"]
+    assert log_set.skipped_rows == lines[:-1]
+    assert log_set.skipped_indexes == [0, 1, 2, 3]
+
+
 def test_a_fragment_of_a_failed_block_is_never_read_alone():
     # read alone, the second line is a whole six-field row naming "w"
     lines = [STAMP + "alice, x", "y, z, w, v, 1, event", NEXT]
@@ -200,8 +212,17 @@ def test_lines_before_the_first_stamp_are_set_aside():
     with pytest.raises(ValueError):
         LogSet.fromList(lines)
     log_set = LogSet.fromList(lines, skip_corrupt=True)
-    assert log_set.skipped_rows == ["orphan, text"]
-    assert log_set.skipped_indexes == [1]
+    # the blank line is part of the block, so it is reported with it
+    assert log_set.skipped_rows == ["", "orphan, text"]
+    assert log_set.skipped_indexes == [0, 1]
+    assert [log.user for log in log_set.all_logs] == ["carol"]
+
+
+def test_blank_lines_alone_are_not_a_block():
+    log_set = LogSet.fromList(["", "  ", NEXT], skip_corrupt=True)
+
+    assert log_set.skipped_rows == []
+    assert [log.user for log in log_set.all_logs] == ["carol"]
 
 
 def test_blank_lines_between_rows_are_not_part_of_either():

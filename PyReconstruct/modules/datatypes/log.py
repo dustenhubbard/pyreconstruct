@@ -37,13 +37,13 @@ def logBlocks(log_list : list):
 
     The block rule: a row starts at a line that opens with the date stamp
     (ROW_START) and runs to the next such line. Every line between is part of
-    it, blank lines included, since a name can hold an empty line. Blank lines
-    at the end of a block are dropped: they add no field, only an event's
-    trailing space. Lines before the first stamp form a block of their own,
-    which can never parse.
+    it, blank lines included, since a name can hold an empty line. Lines
+    before the first stamp form a block of their own, which can never parse.
+    A block of blank lines only is not yielded.
 
     Yields (indexes, lines): the index in log_list of each line in the block,
-    and the line itself with its ending removed.
+    and the line itself with its ending removed. Every line is kept, so a
+    block that is set aside can report each of its lines.
     """
     indexes : list[int] = []
     lines : list[str] = []
@@ -58,17 +58,9 @@ def logBlocks(log_list : list):
 
 
 def _closeBlock(indexes : list, lines : list):
-    """Yield a block without blank lines at either end, if anything is left.
-
-    Only the block before the first stamp can open with a blank line.
-    """
-    a, n = 0, len(lines)
-    while n and not lines[n - 1].strip():
-        n -= 1
-    while a < n and not lines[a].strip():
-        a += 1
-    if a < n:
-        yield indexes[a:n], lines[a:n]
+    """Yield a block unless it holds nothing but blank lines."""
+    if any(line.strip() for line in lines):
+        yield indexes, lines
 
 
 ## The CSV header line, byte for byte as every writer in the tree emits it:
@@ -542,7 +534,8 @@ class LogSet():
         older row the bytes can mean more than one thing (a break in the name
         and a break in the event can give the same lines), so a caller can say
         how many rows were read that way. A set-aside block records one
-        skipped_rows entry per line, so --check-history keeps naming each line.
+        skipped_rows entry per line, blank lines included, so --check-history
+        keeps naming each line.
 
         One case is irreducible: a pasted name whose own text holds a line
         that looks like a whole row is byte for byte two rows, and is read as
@@ -551,13 +544,19 @@ class LogSet():
         """
         log_set = LogSet()
         for indexes, lines in logBlocks(log_list):
+            # blank lines at the end add no field, only an event's trailing
+            # space, so the row is read without them
+            n = len(lines)
+            while not lines[n - 1].strip():
+                n -= 1
+            row_lines = lines[:n]
             try:
-                if not ROW_START.match(lines[0].lstrip()):
+                if not ROW_START.match(row_lines[0].lstrip()):
                     raise ValueError(
                         "log row does not begin with a date and time: "
-                        f"{lines[0].strip()[:60]!r}"
+                        f"{row_lines[0].strip()[:60]!r}"
                     )
-                log = Log.fromStr("\n".join(lines))
+                log = Log.fromStr("\n".join(row_lines))
             except ValueError:
                 # the row does not have six fields, or the section range does
                 # not read as one. Anything else is not a parse failure and
@@ -569,7 +568,7 @@ class LogSet():
                     log_set.skipped_indexes.append(i)
                 continue
             log_set.addExistingLog(log)
-            if len(lines) > 1:
+            if len(row_lines) > 1:
                 log_set.rebuilt_logs.append(log)
 
         return log_set
