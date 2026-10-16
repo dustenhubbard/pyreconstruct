@@ -1,0 +1,196 @@
+name: promote-stable
+
+# Cuts a Stable release by promoting a nightly. Stable is a nightly that
+# someone installed, used and liked; this workflow proves the Stable commit is
+# that nightly's commit plus the release notes, and nothing else.
+#
+# Why the tag does not sit on the nightly commit itself: build-installers.yml
+# reads the release body from a [X.Y.Z] section in WHATS_NEW.md, and
+# CHANGELOG.md carries the same section, so both must be in the tagged tree.
+# The notes go in through one PR after the nightly, and the Stable tag goes on
+# main's HEAD once that PR is merged. The drift check below fails the run if
+# anything other than the notes landed on main since the nightly. There is no
+# override input. When main has moved on, wait for the next nightly (it holds
+# those commits) and promote that one, or cut the Stable by hand from a
+# release branch (docs/RELEASE_CHANNELS.md).
+#
+# Run it by hand from main only, after the notes PR is merged:
+#
+#   gh workflow run promote-stable.yml --ref main -f nightly=v1.25.0.dev202610151111
+#
+# A blank `nightly` means the newest nightly by date. A blank `version` means
+# the nightly's base version: v1.25.0.dev202610151111 ships as 1.25.0.
+#
+# Like nightly.yml, this pushes the tag AND dispatches build-installers.yml on
+# it, because a tag pushed with GITHUB_TOKEN never fires the `push: tags:`
+# trigger (see nightly.yml's header). build-installers.yml then treats the
+# clean vX.Y.Z tag as Stable: it drops packaging/FLAVOR, builds every platform
+# and stages the release as a hidden draft to check and publish.
+#
+# Every input reaches the shell through env, never pasted into a script.
+# Actions are pinned to full commit SHAs; the version rides in the trailing
+# comment.
+
+on:
+  workflow_dispatch:
+    inputs:
+      nightly:
+        description: "Nightly tag to promote, vX.Y.Z.devYYYYMMDDHHMM. Blank means the newest nightly."
+        required: false
+        default: ""
+      version:
+        description: "Stable version X.Y.Z. Blank means the nightly's base version."
+        required: false
+        default: ""
+
+permissions:
+  contents: write   # push the stable tag
+  actions: write    # dispatch build-installers.yml on that tag
+
+concurrency:
+  group: stable
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse any ref but main
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::run promote-stable from main, not $GITHUB_REF"
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0     # every tag and the full history behind them
+          fetch-tags: true
+
+      - name: Resolve the nightly
+        id: nightly
+        shell: bash
+        env:
+          NIGHTLY_INPUT: ${{ inputs.nightly }}
+        run: |
+          set -euo pipefail
+          NIGHTLY_RE='^v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]{8}([0-9]{4})?$'
+
+          if [ -n "$NIGHTLY_INPUT" ]; then
+            tag="$NIGHTLY_INPUT"
+          else
+            # Newest nightly by its date (or date and time) field, the same
+            # ordering nightly.yml uses.
+            tag="$(git tag --list 'v*' | grep -E "$NIGHTLY_RE" \
+              | awk -F'[.]dev' '{ print $2, $0 }' | sort -k1,1n -k2,2V | tail -n 1 | cut -d' ' -f2 || true)"
+            if [ -z "$tag" ]; then
+              echo "::error::no nightly tag found to promote"
+              exit 1
+            fi
+          fi
+
+          if ! [[ "$tag" =~ $NIGHTLY_RE ]]; then
+            echo "::error::'$tag' is not a nightly tag (vX.Y.Z.devYYYYMMDDHHMM)"
+            exit 1
+          fi
+          if ! nightly_commit="$(git rev-parse -q --verify "refs/tags/$tag^{commit}")"; then
+            echo "::error::no tag $tag"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$nightly_commit" HEAD; then
+            echo "::error::$tag ($nightly_commit) is not on main"
+            exit 1
+          fi
+
+          echo "nightly: $tag at $nightly_commit"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "commit=$nightly_commit" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve the version
+        id: version
+        shell: bash
+        env:
+          NIGHTLY: ${{ steps.nightly.outputs.tag }}
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          STABLE_RE='^v[0-9]+\.[0-9]+\.[0-9]+$'
+
+          if [ -n "$VERSION_INPUT" ]; then
+            stable="v${VERSION_INPUT#v}"
+          else
+            stable="${NIGHTLY%%.dev*}"
+          fi
+          if ! [[ "$stable" =~ $STABLE_RE ]]; then
+            echo "::error::version must be X.Y.Z, got '${VERSION_INPUT:-$stable}'"
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/$stable" >/dev/null; then
+            echo "::error::$stable already exists"
+            exit 1
+          fi
+
+          newest_stable="$(git tag --list 'v*' | grep -E "$STABLE_RE" | sort -V | tail -n 1 || true)"
+          if [ -n "$newest_stable" ] \
+            && [ "$(printf '%s\n' "$newest_stable" "$stable" | sort -V | tail -n 1)" != "$stable" ]; then
+            echo "::error::$stable is not above the newest stable, $newest_stable"
+            exit 1
+          fi
+
+          echo "stable: $stable (newest so far: ${newest_stable:-none})"
+          echo "tag=$stable" >> "$GITHUB_OUTPUT"
+          echo "version=${stable#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Notes gate
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for notes in CHANGELOG.md WHATS_NEW.md; do
+            if ! awk -v heading="## [$VERSION]" 'index($0, heading) == 1 { found = 1 } END { exit !found }' "$notes"; then
+              echo "::error file=$notes::$notes has no ## [$VERSION] section; merge the notes PR first"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Drift check
+        shell: bash
+        env:
+          NIGHTLY: ${{ steps.nightly.outputs.tag }}
+          NIGHTLY_COMMIT: ${{ steps.nightly.outputs.commit }}
+        run: |
+          set -euo pipefail
+          drift="$(git diff --name-only "$NIGHTLY_COMMIT..HEAD" -- . ':!CHANGELOG.md' ':!WHATS_NEW.md' ':!changelog.d')"
+          if [ -n "$drift" ]; then
+            echo "::error::main changed more than the release notes since $NIGHTLY:"
+            printf '%s\n' "$drift"
+            echo "Promote the next nightly, which will hold these commits, or cut this Stable"
+            echo "by hand from a release branch (docs/RELEASE_CHANNELS.md)."
+            exit 1
+          fi
+          echo "only the release notes changed since $NIGHTLY"
+
+      - name: Tag and build
+        shell: bash
+        env:
+          NIGHTLY: ${{ steps.nightly.outputs.tag }}
+          NIGHTLY_COMMIT: ${{ steps.nightly.outputs.commit }}
+          STABLE: ${{ steps.version.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          head="$(git rev-parse HEAD)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$STABLE" -m "Stable $STABLE: nightly $NIGHTLY ($NIGHTLY_COMMIT) plus notes $head"
+          git push origin "refs/tags/$STABLE"
+          # The push above never fires build-installers.yml's tag trigger (see
+          # the header), so run it by name on the new tag.
+          gh workflow run build-installers.yml --repo "$GITHUB_REPOSITORY" --ref "$STABLE"
+          echo "::notice::$STABLE promotes nightly $NIGHTLY ($NIGHTLY_COMMIT) plus notes $head; dispatched build-installers.yml"

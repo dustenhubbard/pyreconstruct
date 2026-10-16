@@ -23,8 +23,8 @@ from test_pruning_preserves_release_tags import workflow_script
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
-RELEASE_WORKFLOWS = ("build-installers.yml", "nightly.yml", "prune-nightlies.yml",
-                     "publish-pypi.yml")
+RELEASE_WORKFLOWS = ("build-installers.yml", "nightly.yml", "promote-stable.yml",
+                     "prune-nightlies.yml", "publish-pypi.yml")
 LINUX_INSTALLER = "Package the Linux .sh installer"
 
 linux_only = pytest.mark.skipif(os.name == "nt", reason="Linux workflow shell")

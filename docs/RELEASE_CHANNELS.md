@@ -86,16 +86,33 @@ gh workflow run build-installers.yml --repo dustenhubbard/pyreconstruct \
 
 ## Stable releases
 
-A clean `vX.Y.Z` tag on `main` builds the stable app. Prepare and approve the
-matching `WHATS_NEW.md` section before tagging. For example, for the next
-stable release:
+A clean `vX.Y.Z` tag builds the stable app. A stable release promotes a
+nightly that has been installed and used. Merge one pull request that adds the
+approved `## [X.Y.Z]` section to both `CHANGELOG.md` and `WHATS_NEW.md`, merge
+nothing else, then run `promote-stable.yml` from `main`:
 
 ```bash
-git checkout main
-git pull --ff-only
-# Confirm WHATS_NEW.md has the approved ## [1.25.0] section.
-git tag -a v1.25.0 -m "Stable v1.25.0"
-git push origin v1.25.0
+gh workflow run promote-stable.yml --ref main -f nightly=v1.25.0.dev202610151111
+```
+
+A blank `nightly` promotes the newest nightly, and a blank `version` uses the
+nightly's base version. The workflow fails unless both notes files have the
+section and nothing but the notes changed on `main` since the nightly. Then it
+puts an annotated `vX.Y.Z` tag on `main` and dispatches `build-installers.yml`
+on it.
+
+If `main` has moved past the nightly, promote the next nightly instead. To
+ship a fix without the other work, land the fix on `main`, cut a release
+branch from the nightly tag or the stable tag being fixed, cherry-pick the fix,
+add the notes sections, and push the tag by hand. A tag pushed with your own
+token starts the build by itself:
+
+```bash
+git switch -c release/1.25.1 v1.25.0
+# Cherry-pick the fix and add the ## [1.25.1] notes sections.
+git push origin release/1.25.1
+git tag -a v1.25.1 -m "Stable v1.25.1"
+git push origin v1.25.1
 ```
 
 The stable tag must be annotated. Nightly tags are annotated, and
