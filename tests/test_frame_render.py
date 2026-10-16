@@ -18,7 +18,7 @@ from PyReconstruct.modules.backend.view.frame_render import (
     FrameLayers,
     renderFrame,
 )
-from PyReconstruct.modules.datatypes import Flag, Series, Trace
+from PyReconstruct.modules.datatypes import Flag, Series, Trace, Ztrace
 
 # a frame around the star on section 0 of shapes1
 MOCK_FRAME = (480, 320)
@@ -227,4 +227,29 @@ def test_selection_left_out_drops_the_flag_box(shapes1):
         section.selected_flags = selected
         frames.append(pixels(renderFrame(
             shapes1, section, [0, 0, 10, 10], (300, 300), (300, 300), layers)))
+    assert np.array_equal(*frames)
+
+
+@pytest.mark.parametrize("overlay", ["flags", "ztraces"])
+def test_overlay_draws_without_the_traces(shapes1, overlay):
+    section = shapes1.loadSection(0)
+    for trace in list(section.tracesAsList()):
+        section.removeTrace(trace, log_event=False)
+    section.selected_traces = []
+    section.selected_flags = []
+    section.selected_ztraces = []
+    section.flags = [Flag("f", 5, 5, section.n, (255, 0, 0))]
+    shapes1.ztraces = {"z": Ztrace("z", (255, 0, 0), [(3, 5, section.n), (7, 5, section.n)])}
+    shapes1.setOption("show_flags", "all")
+    shapes1.setOption("show_ztraces", True)
+    frames = []
+    for traces in (True, False):
+        layers = FrameLayers(
+            image=False, traces=traces, scale_bar=False,
+            flags=overlay == "flags", ztraces=overlay == "ztraces",
+        )
+        frames.append(pixels(renderFrame(
+            shapes1, section, [0, 0, 10, 10], (100, 100), (100, 100), layers)))
+    # with no traces on the section, the overlay alone is drawn either way
+    assert (frames[0] != 0xFF000000).any()
     assert np.array_equal(*frames)

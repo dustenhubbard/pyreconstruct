@@ -87,8 +87,9 @@ class TraceLayer():
         self._selected_pens = None
         # an offscreen render at k times the screen size sets these: every
         # width drawn in screen pixels is multiplied by pen_scale, and the
-        # selection, z-traces and flags can each be left out
+        # traces, selection, z-traces and flags can each be left out
         self.pen_scale = 1
+        self.draw_traces = True
         self.draw_selection = True
         self.draw_ztraces = True
         self.draw_flags = True
@@ -701,7 +702,7 @@ class TraceLayer():
         tform = self.section.tform
         painter = QPainter(trace_layer)
 
-        for trace in trace_list:
+        for trace in trace_list if self.draw_traces else ():
 
             if self.trace_visibile_p(trace):
 

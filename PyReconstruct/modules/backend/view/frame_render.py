@@ -75,13 +75,15 @@ def renderFrame(
     try:
         layer = SectionLayer(section, series, load_image_layer=layers.image)
         layer.pen_scale = factor
+        # flags and z-traces are drawn with the traces, so leaving the
+        # traces out skips only their own loop
+        layer.draw_traces = layers.traces
         layer.draw_selection = layers.selection
         layer.draw_ztraces = layers.ztraces
         layer.draw_flags = layers.flags
         view = layer.generateView(
             out_dim,
             list(window),
-            hide_traces=not layers.traces,
             hide_image=not layers.image,
         )
     finally:
