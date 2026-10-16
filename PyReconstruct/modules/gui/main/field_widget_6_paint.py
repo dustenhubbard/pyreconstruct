@@ -2,6 +2,7 @@ from PySide6.QtWidgets import (
     QTextEdit,
 )
 from PySide6.QtCore import (
+    Qt,
     QPoint, 
     QLine,
     QRect,
@@ -19,6 +20,7 @@ from PyReconstruct.modules.backend.autoseg.palette import palette_color
 from PyReconstruct.modules.backend.view import drawArrow
 from PyReconstruct.modules.gui.utils import drawOutlinedText
 from PyReconstruct.modules.datatypes import Flag, Trace
+from PyReconstruct.modules.calc import fieldPointToPixmap
 
 from .field_widget_5_mouse import (
     FieldWidgetMouse,
@@ -172,6 +174,27 @@ class FieldWidgetPaint(FieldWidgetMouse):
         if self.blend_sections:
             self.drawBorder(field_painter, (0, 255, 255))
     
+    def paintRoiBox(self, field_painter : QPainter):
+        """Paint the ROI box outline, while the box is placed."""
+        box = self.roiBox()
+        if box is None:
+            return
+        cx, cy, w, h = box
+        x1, y1 = fieldPointToPixmap(
+            cx - w / 2, cy + h / 2,
+            self.series.window, self.pixmap_dim, self.section.mag
+        )
+        x2, y2 = fieldPointToPixmap(
+            cx + w / 2, cy - h / 2,
+            self.series.window, self.pixmap_dim, self.section.mag
+        )
+        pen = QPen(QColor(255, 255, 0), 2)
+        pen.setStyle(Qt.DashLine)
+        field_painter.setPen(pen)
+        field_painter.setBrush(Qt.NoBrush)
+        field_painter.setOpacity(1)
+        field_painter.drawRect(QRect(x1, y1, x2 - x1, y2 - y1))
+
     def paintWorkingTrace(self, field_painter : QPainter):
         """Paint the work trace on the field."""
         # draw the working trace on the screen

@@ -19,6 +19,7 @@ from PySide6.QtCore import (
 
 from PyReconstruct.modules.datatypes import Series, Section, Trace, Transform
 from PyReconstruct.modules.backend.view import SectionLayer, ZarrLayer
+from PyReconstruct.modules.backend.view.trace_layer import traceInRoiBox
 from PyReconstruct.modules.backend.func import SeriesStates
 from PyReconstruct.modules.backend.table import TableManager
 
@@ -64,6 +65,16 @@ class FieldWidgetBase:
         self.focus_hint : QLabel            = None
         self.hide_trace_layer : bool        = False
         self.show_all_traces : bool         = False
+
+        # The ROI box: only traces whose field bounds touch it are drawn and
+        # can be picked. View-only, like hide_trace_layer: nothing is written
+        # to the traces, the sections or the series. The center is in field
+        # coordinates, so the box keeps its place across section changes; it
+        # is None until the first click after the box is turned on. The size
+        # (width, height in field units) lasts for the session, never saved.
+        self.roi_box_on : bool              = False
+        self.roi_box_center : tuple         = None
+        self.roi_box_size : tuple           = (5.0, 5.0)
         self.hide_image : bool              = False
         self.blend_sections : bool          = False
 
@@ -171,6 +182,8 @@ class FieldWidgetBase:
         self.hide_trace_layer = False
         self.show_all_traces = False
         self.hide_image = False
+        self.roi_box_on = False
+        self.roi_box_center = None
 
         ## Propagate tform defaults
         self.propagate_tform = False
@@ -299,6 +312,10 @@ class FieldWidgetBase:
         ## Resize series window to match view proportions
         self.resizeWindow(self.pixmap_dim)
 
+        ## A redraw follows every selection change, so the ROI box's one
+        ## selection rule is kept here
+        self.dropSelectedOutsideRoiBox()
+
         ## Calculate scaling
         _, _, window_w, window_h = tuple(self.series.window)
         pixmap_w, pixmap_h = tuple(self.pixmap_dim)
@@ -320,7 +337,8 @@ class FieldWidgetBase:
             hide_traces=self.hide_trace_layer,
             show_all_traces=self.show_all_traces,
             hide_image=self.hide_image,
-            focus_on=self.focus_mode
+            focus_on=self.focus_mode,
+            roi_box=self.roiBox()
         )
 
         # blend b section if requested
@@ -334,7 +352,8 @@ class FieldWidgetBase:
                 hide_traces=self.hide_trace_layer,
                 show_all_traces=self.show_all_traces,
                 hide_image=self.hide_image,
-                focus_on=self.focus_mode
+                focus_on=self.focus_mode,
+                roi_box=self.roiBox()
             )
             # overlay a and b sections
             painter = QPainter(view)
@@ -373,6 +392,39 @@ class FieldWidgetBase:
 
         if update:
             self.update()
+
+    def roiBox(self) -> tuple:
+        """The ROI box as (center x, center y, width, height) in field units,
+        or None while it is off or not yet placed."""
+        if not self.roi_box_on or self.roi_box_center is None:
+            return None
+        return (*self.roi_box_center, *self.roi_box_size)
+
+    def inRoiBox(self, trace : Trace) -> bool:
+        """Whether a trace on the current section is inside the ROI box
+        (always True while the box is off)."""
+        return traceInRoiBox(trace, self.section.tform, self.roiBox())
+
+    def dropSelectedOutsideRoiBox(self) -> list:
+        """Deselect the traces outside the ROI box, which are not drawn.
+
+        The box's one selection rule: while it is on, the section's selected
+        traces are all inside it. Every way of building the selection (click,
+        lasso, Select all, Invert, focus mode, Find, a new trace) ends in a
+        redraw, and generateView calls this first.
+
+            Returns:
+                (list): the traces that were deselected
+        """
+        if self.roiBox() is None:
+            return []
+        selected = self.section.selected_traces
+        inside = [t for t in selected if self.inRoiBox(t)]
+        if len(inside) == len(selected):
+            return []
+        dropped = [t for t in selected if t not in inside]
+        self.section.selected_traces = inside
+        return dropped
 
     def focusHintText(self) -> str:
         """The focus mode label's text, naming the live `focus_act` shortcut."""

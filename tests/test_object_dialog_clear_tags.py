@@ -248,6 +248,7 @@ class _FieldStub:
         self.section = _FakeSection(obj_names)
         self.table_manager = _FakeTable()
         self.mainwindow = _FakeMainWindow()
+        self.refuseWhileRoiBox = lambda: False  # the ROI box is off
 
         # `editAttributes` refuses a rename onto a locked object. The real
         # check, not a stub: nothing here is locked, so it passes through.

@@ -132,6 +132,7 @@ def _field_stub(series, section, obj_names):
     stub.section.selected_traces = [Trace(n, (0, 0, 0)) for n in obj_names]
     stub.table_manager = _FakeTableManager()
     stub.mainwindow = _FakeMainWindow(stub)
+    stub.refuseWhileRoiBox = lambda: False  # the ROI box is off
     return stub
 
 

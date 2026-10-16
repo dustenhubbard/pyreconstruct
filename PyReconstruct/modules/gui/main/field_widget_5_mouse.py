@@ -21,7 +21,7 @@ from .field_widget_4_data import FieldWidgetData
 
 from .focus_mode import focus_edit_p, focus_comparison
 
-POINTER, PANZOOM, KNIFE, SCISSORS, CLOSEDTRACE, OPENTRACE, STAMP, GRID, FLAG, HOST, ZTOOL = range(11)
+POINTER, PANZOOM, KNIFE, SCISSORS, CLOSEDTRACE, OPENTRACE, STAMP, GRID, FLAG, HOST, ZTOOL, ROI_BOX = range(12)
 
 class FieldWidgetMouse(FieldWidgetData):
     """
@@ -63,7 +63,7 @@ class FieldWidgetMouse(FieldWidgetData):
         elif mode in (OPENTRACE, CLOSEDTRACE):
             cursor = self.pencil_l if self.series.getOption("left_handed") else self.pencil_r
             
-        elif mode in (STAMP, GRID, ZTOOL):
+        elif mode in (STAMP, GRID, ZTOOL, ROI_BOX):
             cursor = QCursor(Qt.CrossCursor)
             
         elif mode == SCISSORS:
@@ -158,7 +158,11 @@ class FieldWidgetMouse(FieldWidgetData):
         if not new_trace.closed or new_trace not in self.section.selected_traces:
             return
 
-        selected_only = self.series.getOption("auto_merge_selected_only")
+        # with the ROI box on, only the selected traces, which are inside it:
+        # a trace the box hides is never merged away
+        selected_only = (
+            self.series.getOption("auto_merge_selected_only") or self.roi_box_on
+        )
         traces_to_merge = []
         for t in contour:
             if t is new_trace or not t.closed:
@@ -1179,6 +1183,19 @@ class FieldWidgetMouse(FieldWidgetData):
         
         self.update()
     
+    def roiBoxPress(self, event):
+        """Called when mouse is pressed in ROI box mode: the click is the
+        box's new center. View-only, so no undo state is saved."""
+        if not self.lclick or not self.roi_box_on:
+            return
+        self.roi_box_center = pixmapPointToField(
+            event.x(), event.y(),
+            self.pixmap_dim,
+            self.series.window,
+            self.section.mag
+        )
+        self.generateView()
+
     def flagRelease(self, event):
         """Called when mouse is released in flag mode."""
         if self.lclick and self.series.getOption("show_flags") != "none":
@@ -1224,6 +1241,13 @@ class FieldWidgetMouse(FieldWidgetData):
         """Called when mouse is released in host mode."""
         # cancel operation if user right-clicked
         if self.rclick and self.hosted_trace:
+            self.hosted_trace = None
+            self.current_trace = []
+            self.update()
+            return
+
+        # a host is series-wide, so it waits for the ROI box to be off
+        if self.refuseWhileRoiBox():
             self.hosted_trace = None
             self.current_trace = []
             self.update()

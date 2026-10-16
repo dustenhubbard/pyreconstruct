@@ -84,6 +84,7 @@
     "recently_opened_series": "list",
     "redo_act": "str",
     "restart_act": "str",
+    "roibox_act": "str",
     "roll_average": "bool",
     "roll_knife_average": "bool",
     "roll_knife_window": "int",

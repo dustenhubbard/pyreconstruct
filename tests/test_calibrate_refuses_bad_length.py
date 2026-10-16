@@ -30,6 +30,9 @@ def _stub_window(monkeypatch, text):
             selected_traces=[types.SimpleNamespace(name="a")]
         )
 
+        def refuseWhileRoiBox(self):
+            return False
+
         def calibrateMag(self, trace_lengths):
             field_calls.append(trace_lengths)
 
