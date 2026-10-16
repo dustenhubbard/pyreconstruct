@@ -327,15 +327,52 @@ class ScaleBar(MoveableButton):
         # rebuild on the same series)
         self.override_length = None
         self.override_room = 0
+        # "show numbers" and "show ticks" as a settings dialog previews
+        # them; empty means the stored options (see displayOption)
+        self.display_preview = {}
         self.thickness = clampScaleBarThickness(thickness)
         self.resize(length, self._layout()[2])
         self._fitPinned()
 
+    def displayOption(self, name):
+        """`show_scale_bar_text` or `show_scale_bar_ticks`: the value being
+        previewed, else the stored one."""
+        if name in self.display_preview:
+            return self.display_preview[name]
+        return self.manager.series.getOption(name)
+
+    def previewDisplay(self, text=None, ticks=None):
+        """Show or hide the numbers and ticks without storing anything.
+
+        None for both goes back to the stored options. The widget's height
+        and a pinned bar's width follow, as they do for a stored change.
+        """
+        self.display_preview = {}
+        if text is not None:
+            self.display_preview["show_scale_bar_text"] = bool(text)
+        if ticks is not None:
+            self.display_preview["show_scale_bar_ticks"] = bool(ticks)
+        height = self._layout()[2]
+        if height != self.height():
+            self.resize(self.width(), height)
+        self._fitPinned()
+        self.update()
+
+    def setPinnedLength(self, micron_length):
+        """Pin the bar to `micron_length` µm, or None for the screen-fraction
+        bar; the sizing mode and length the stored options would give."""
+        if micron_length == self.micron_length:
+            return
+        self.micron_length = micron_length
+        if not self._pinned():
+            self.resize(self.max_pixel_length, self.height())
+        self._fitPinned()
+        self.update()
+
     def _layout(self):
         """The vertical positions, as (bar top, tick label top, height)."""
-        series = self.manager.series
-        draw_text = series.getOption("show_scale_bar_text")
-        draw_ticks = series.getOption("show_scale_bar_ticks")
+        draw_text = self.displayOption("show_scale_bar_text")
+        draw_ticks = self.displayOption("show_scale_bar_ticks")
         bar_top = LABEL_ROOM if draw_text else 1
         tick_label_top = bar_top + self.thickness + TICK_LENGTH
         height = tick_label_top + 1
@@ -432,7 +469,7 @@ class ScaleBar(MoveableButton):
 
     def labelWidth(self, real_len):
         """How wide the label over a bar of `real_len` µm is drawn, or 0."""
-        if not self.manager.series.getOption("show_scale_bar_text"):
+        if not self.displayOption("show_scale_bar_text"):
             return 0
         metrics = QFontMetrics(outlinedFont(LABEL_SIZE))
         return metrics.horizontalAdvance(formatLength(real_len) + " µm")
@@ -444,8 +481,8 @@ class ScaleBar(MoveableButton):
         pix_len = int(real_len / self.scale)
 
         # check text and tick preferences
-        draw_text = self.manager.series.getOption("show_scale_bar_text")
-        draw_ticks = self.manager.series.getOption("show_scale_bar_ticks")
+        draw_text = self.displayOption("show_scale_bar_text")
+        draw_ticks = self.displayOption("show_scale_bar_ticks")
         bar_top, tick_label_top, _height = self._layout()
 
         white, black = QColor(255, 255, 255), QColor(0, 0, 0)

@@ -104,11 +104,12 @@ from .help import palette_help
 
 from PyReconstruct.modules.datatypes import Series, Trace
 from PyReconstruct.modules.datatypes.trace import copyObjDefaults
-from PyReconstruct.modules.datatypes.default_settings import validPinnedLength
+from PyReconstruct.modules.datatypes.default_settings import pinnedLengthFor
 from PyReconstruct.modules.constants import (
     locations as loc
 )
 from PyReconstruct.modules.gui.dialog import TracePaletteDialog, QuickDialog
+from PyReconstruct.modules.gui.dialog.scale_bar_settings import ScaleBarSettingsDialog
 from PyReconstruct.modules.gui.popup import TextWidget
 from PyReconstruct.modules.gui.utils import notify
 
@@ -1100,12 +1101,8 @@ class MousePalette():
         """
         if self.series.getOption("scale_bar_mode") != "micron_pinned":
             return None
-        length = self.series.getOption("scale_bar_length_um")
-        # validPinnedLength, not `length > 0`: a stored inf passes the latter and
-        # then raises out of ScaleBar.__init__, i.e. out of this constructor, on
-        # every launch.  Falling back to the screen-fraction bar leaves the user
-        # a running application and a control they can fix the value in.
-        return length if validPinnedLength(length) else None
+        return pinnedLengthFor(
+            "micron_pinned", self.series.getOption("scale_bar_length_um"))
 
     def sbWidth(self, percent=None):
         """The widest the scale bar may be drawn, in pixels.
@@ -1147,11 +1144,24 @@ class MousePalette():
             self.placeSB()
 
     def sbMenuActions(self):
-        """The scale bar's own right-click items, above "Hide the scale bar"."""
-        actions = [("Set the scale bar length...", self.setSBLength)]
+        """The scale bar's own right-click items, above "Hide the scale bar".
+
+        Settings first: it is the one place every scale bar option can be
+        changed from the bar itself. The length items are for a figure and
+        are not stored.
+        """
+        actions = [
+            ("Scale bar settings...", self.openSBSettings),
+            ("Set the scale bar length...", self.setSBLength),
+        ]
         if self.sb.override_length:
             actions.append(("Size the scale bar automatically", self.clearSBLength))
         return actions
+
+    def openSBSettings(self):
+        """Every scale bar option in one dialog, previewed on the bar as it
+        changes; OK stores them, Cancel puts the bar back."""
+        ScaleBarSettingsDialog(self.mainwindow, self.series, self).exec()
 
     def sbLengthRange(self):
         """The shortest and longest lengths, in µm, you can type for a bar
@@ -1212,10 +1222,58 @@ class MousePalette():
         self.sb.setThickness(thickness)
         self.placeSB()
 
+    def previewScaleBar(self, settings):
+        """Show the bar as `settings` would draw it, without storing anything.
+
+        `settings` maps option names to values, as the scale bar settings
+        page reads them (see scale_bar_settings.readScaleBarSettings); a key
+        left out keeps what the bar shows now. The bar is changed in place, so
+        its position, visibility, hide menu and any length set for a figure
+        are kept. Cancel calls restoreScaleBar.
+        """
+        sb = self.sb
+        if "show_scale_bar_text" in settings or "show_scale_bar_ticks" in settings:
+            sb.previewDisplay(
+                settings.get("show_scale_bar_text",
+                             sb.displayOption("show_scale_bar_text")),
+                settings.get("show_scale_bar_ticks",
+                             sb.displayOption("show_scale_bar_ticks")),
+            )
+        if "scale_bar_thickness" in settings:
+            sb.setThickness(settings["scale_bar_thickness"])
+        if "scale_bar_width" in settings:
+            sb_w = self.sbWidth(settings["scale_bar_width"])
+            if sb_w > 0:
+                sb.setMaxPixelLength(sb_w)
+        if "scale_bar_mode" in settings:
+            sb.setPinnedLength(pinnedLengthFor(
+                settings["scale_bar_mode"],
+                settings.get("scale_bar_length_um", sb.micron_length),
+            ))
+        self.placeSB()
+
     def restoreScaleBar(self):
-        """Restore stored width in place, preserving visibility and hide controls."""
+        """Show the stored options again, in place, preserving visibility and
+        hide controls. After a preview's Cancel, or after its OK stored them."""
+        self.sb.previewDisplay(None, None)
+        self.sb.setThickness(self.series.getOption("scale_bar_thickness"))
         self.previewScaleBarWidth(self.series.getOption("scale_bar_width"))
-        self.previewScaleBarThickness(self.series.getOption("scale_bar_thickness"))
+        self.sb.setPinnedLength(self.getPinnedLength())
+        self.placeSB()
+
+    def hoverObstacles(self):
+        """What the field's hover box should not cover, in main window
+        coordinates: the scale bar's rect (None while hidden), then the rects
+        of the other palette widgets on show."""
+        def shown(widget):
+            return widget is not None and not widget.isHidden()
+
+        sb = self.sb.geometry() if shown(self.sb) else None
+        others = [button for button, _mode, _ in self.mode_buttons.values()]
+        others += list(self.palette_buttons) + list(self.palette_side_buttons)
+        others += [self.label] + list(self.inc_buttons)
+        others += [w for pair in self.bc_widgets for w in pair]
+        return sb, [w.geometry() for w in others if shown(w)]
 
     def placeSB(self):
         """Place the scale bar.
