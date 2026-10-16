@@ -39,6 +39,11 @@ from PyReconstruct.modules.constants import (
     SERIES_KEYS,
     default_traces,
 )
+from PyReconstruct.modules.constants.jser_scan import (
+    NotStreamable,
+    read_range,
+    scan_jser,
+)
 
 
 class SeriesOpenError(Exception):
@@ -343,6 +348,104 @@ def applyContourRenames(series_data : dict, renames : dict, collisions : dict):
 #: which is the one process-wide cache. Setting it can only make isolation
 #: tighter, never looser, so it cannot reopen the seam closed below.
 _SETTINGS_STORE = None
+
+
+_EMPTY_LOG = "Date, Time, User, Obj, Sections, Event"
+
+
+class _WholeJser:
+    """A .jser parsed whole, as openJser unpacks it (see _StreamedJser).
+
+    Hands each section over once and forgets it, so the document is not kept
+    alive through the series build that follows the unpack.
+    """
+
+    def __init__(self, jser_data : dict):
+        self._jser_data = jser_data
+        self._sections = jser_data["sections"]
+        self.series = jser_data["series"]
+        self.log = jser_data["log"]
+
+    def collisionInput(self) -> dict:
+        return self._jser_data
+
+    def sectionCount(self) -> int:
+        return sum(1 for sdata in self._sections if sdata)
+
+    def sections(self):
+        """Yield (section number, section data) for every slot that is not null."""
+        self._jser_data = None
+        for snum in range(len(self._sections)):
+            section_data = self._sections[snum]
+            if section_data is None:
+                continue
+            self._sections[snum] = None
+            yield snum, section_data
+
+    def close(self):
+        pass
+
+
+class _StreamedJser:
+    """A .jser read one section at a time, through the index `scan_jser` builds.
+
+    Parsing a whole .jser holds every section's decoded data at once: 10.3 GB
+    for a 1.4 GB series. This decodes one section's byte range when openJser
+    asks for it, so the open holds one section, the series and the log. Each
+    section decodes through `fast_loads` exactly as the whole file would, so
+    the hidden copy it writes is byte for byte the one a whole-file read writes.
+
+    One difference, on a file no build writes: `fast_loads` retries with the
+    stdlib parser when orjson refuses a value, and a whole-file read retries
+    the whole file. Here only the refused section is retried. The two parsers
+    agree on every value but an integer past 64 bits, which orjson reads as a
+    float (see fast_json), so a file holding both such an integer and a value
+    orjson refuses, in different sections, can unpack that integer differently.
+    """
+
+    def __init__(self, f, index):
+        self._f = f
+        self._index = index
+        self.series = index.series
+        self.log = index.log if index.has_log else _EMPTY_LOG
+
+    @classmethod
+    def open(cls, fp : str):
+        """Index the file at `fp`; raises NotStreamable if scan_jser cannot."""
+        f = open(fp, "rb")
+        try:
+            return cls(f, scan_jser(f))
+        except BaseException:
+            f.close()
+            raise
+
+    def collisionInput(self) -> dict:
+        """The contour names as contourNameCollisions reads them, no traces."""
+        names, self._index.names = self._index.names, None
+        return {"sections": [
+            None if n is None else {"contours": n} for n in names
+        ]}
+
+    def sectionCount(self) -> int:
+        return sum(1 for r in self._index.sections if r is not None)
+
+    def sections(self):
+        """Yield (section number, section data) for every slot that is not null."""
+        for snum, byte_range in enumerate(self._index.sections):
+            if byte_range is None:
+                continue
+            try:
+                section_data = fast_loads(read_range(self._f, byte_range))
+            except ValueError as e:
+                raise SeriesOpenError(
+                    f"{os.path.basename(self._f.name)} is not a valid series "
+                    f"file (the file is corrupt or is not JSON)."
+                ) from e
+            yield snum, section_data
+            section_data = None
+
+    def close(self):
+        self._f.close()
 
 
 def _default_settings_store():
@@ -679,12 +782,42 @@ class Series():
     ## OPENING, LOADING, AND MOVING THE JSER FILE
     @staticmethod
     def _readJserForOpen(fp : str, notifier):
-        """Read, parse, migrate and validate a .jser for openJser.
+        """Read, migrate and validate a .jser for openJser.
 
         Everything openJser does before the hidden directory exists, so the
-        caller can hold one progress dialog over it. Returns (jser data,
+        caller can hold one progress dialog over it. Returns (source,
         contour-name collisions), or (None, None) when the user declined the
-        contour-name merge.
+        contour-name merge. The source hands openJser the series, the log and
+        the sections one at a time (see `_StreamedJser`); the caller closes it.
+        """
+        try:
+            source = _StreamedJser.open(fp)
+        except NotStreamable:
+            # Not the shape the scan reads: a legacy layout, an unknown key, or
+            # a file that is not JSON. Read it whole, as every open used to.
+            source = _WholeJser(Series._readWholeJser(fp))
+
+        # Distinct objects about to become one object. Asked BEFORE the hidden
+        # directory exists, so declining leaves the file exactly as it was.
+        try:
+            collisions = contourNameCollisions(source.collisionInput())
+            if collisions:
+                asker = notifier if notifier is not None else _default_notifier()
+                if asker.confirm(contourMergeWarning(collisions)) is False:
+                    source.close()
+                    return None, None
+        except BaseException:
+            source.close()
+            raise
+
+        return source, collisions
+
+    @staticmethod
+    def _readWholeJser(fp : str) -> dict:
+        """Parse a whole .jser into one document, updating old layouts.
+
+        The open's fallback for any file `scan_jser` does not read; every shape
+        the reader has ever accepted opens through here.
         """
         # load json
         try:
@@ -745,17 +878,9 @@ class Series():
 
         # UPDATE TO INCLUDE A LOG
         if "log" not in jser_data:
-            jser_data["log"] = "Date, Time, User, Obj, Sections, Event"
+            jser_data["log"] = _EMPTY_LOG
 
-        # Distinct objects about to become one object. Asked BEFORE the hidden
-        # directory exists, so declining leaves the file exactly as it was.
-        collisions = contourNameCollisions(jser_data)
-        if collisions:
-            asker = notifier if notifier is not None else _default_notifier()
-            if asker.confirm(contourMergeWarning(collisions)) is False:
-                return None, None
-
-        return jser_data, collisions
+        return jser_data
 
     @staticmethod
     def openJser(fp : str, progress=None, notifier=None):
@@ -804,18 +929,16 @@ class Series():
         factory = progress if progress is not None else _default_progress_reporter_factory()
         reporter = factory(text=_openingText(sname))
         try:
-            jser_data, collisions = Series._readJserForOpen(fp, notifier)
+            source, collisions = Series._readJserForOpen(fp, notifier)
         except BaseException:
             reporter.finish()
             raise
-        if jser_data is None:
+        if source is None:
             reporter.finish()
             return None
 
         progress = 0
-        final_value = 0
-        for sdata in jser_data["sections"]:
-            if sdata: final_value += 1
+        final_value = source.sectionCount()
         final_value *= 2  # for loading section data
         final_value += 2  # unpacking series and log
 
@@ -823,12 +946,16 @@ class Series():
         # (the fast path above takes this file's) means the folder is the
         # working folder of a different series, so it is left alone and the
         # file is unpacked into a folder of its own.
-        if os.path.isdir(hidden_dir) and any(
-            f.endswith(".ser") for f in os.listdir(hidden_dir)
-        ):
-            hidden_dir = createNewSeriesDir(sdir, sname)
-        else:
-            hidden_dir = createHiddenDir(sdir, sname)
+        try:
+            if os.path.isdir(hidden_dir) and any(
+                f.endswith(".ser") for f in os.listdir(hidden_dir)
+            ):
+                hidden_dir = createNewSeriesDir(sdir, sname)
+            else:
+                hidden_dir = createHiddenDir(sdir, sname)
+        except BaseException:
+            source.close()
+            raise
 
         # The .ser file is written LAST as the completion sentinel: both
         # recovery scans (the fast path above and the GUI's unsaved-work
@@ -836,14 +963,11 @@ class Series():
         # a partial hidden dir that is later mistaken for unsaved work.
         # On any cancel or exception, remove the partial hidden dir entirely.
         try:
-            # extract JSON section data
+            # extract JSON section data, one section at a time: the source
+            # never holds more than the section in hand (see _StreamedJser)
             sections = {}
             renames = {}
-            for snum, section_data in enumerate(jser_data["sections"]):
-                # check for empty section, skip if so
-                if section_data is None:
-                    continue
-
+            for snum, section_data in source.sections():
                 filename = sname + "." + str(snum)
                 section_fp = os.path.join(hidden_dir, filename)
 
@@ -889,17 +1013,22 @@ class Series():
 
                 with open(section_fp, "wb") as f:
                     f.write(fast_dumps(section_data))
+                # drop it now, not when the loop rebinds the name: that is
+                # after the next section is decoded, so two would be alive
+                section_data = None
 
                 if reporter.was_canceled():
                     shutil.rmtree(hidden_dir, ignore_errors=True)
                     return None
                 progress += 1
                 reporter.set_progress(progress/final_value * 100)
+            # every section is out: let go of the file before the long build
+            source.close()
 
             # Extract the existing log. Copied through byte for byte: the
             # contour renames collected above are NOT applied to its object-name
             # field, deliberately -- see `applyContourRenames` for why.
-            log_str = jser_data["log"]
+            log_str = source.log
             existing_log_fp = os.path.join(hidden_dir, "existing_log.csv")
             with open(existing_log_fp, "w", encoding="utf-8") as f:
                 f.write(log_str)
@@ -910,7 +1039,7 @@ class Series():
             reporter.set_progress(progress/final_value * 100)
 
             # extract JSON series data (LAST: the .ser is the completion sentinel)
-            series_data = jser_data["series"]
+            series_data = source.series
             # add empty log_set for opening/saving purposes
             series_data["log_set"] = []
             Series.updateJSON(series_data)
@@ -948,6 +1077,7 @@ class Series():
             shutil.rmtree(hidden_dir, ignore_errors=True)
             raise
         finally:
+            source.close()
             # The dialog closes only at 100%, which a failure never reaches:
             # the raise above used to leave the window-modal "Opening
             # <name>..." dialog standing behind the error that follows it
