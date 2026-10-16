@@ -1,8 +1,8 @@
 """Which holiday, if any, the app icon dresses up for on a given day.
 
-Each holiday gets the week before it, the day itself and the week after. Where
-two windows overlap (Christmas and New Year's, or St. Patrick's Day and an
-early Easter), the nearer holiday wins, and on an exact tie the earlier one
+Each holiday gets the two weeks before it, the day itself and the week after.
+Where two windows overlap (Christmas and New Year's, or St. Patrick's Day and
+an early Easter), the nearer holiday wins, and on an exact tie the earlier one
 keeps its last day.
 
 Pure date arithmetic so it imports and tests without Qt; the icon files and
@@ -10,8 +10,10 @@ the window wiring live in ``gui/utils/app_icon.py``.
 """
 from datetime import date
 
-#: Days on each side of a holiday that still show its icon.
-WINDOW_DAYS = 7
+#: Days before a holiday that already show its icon.
+DAYS_BEFORE = 14
+#: Days after a holiday that still show its icon.
+DAYS_AFTER = 7
 
 
 def easter(year):
@@ -42,18 +44,18 @@ def holiday_dates(year):
     }
 
 
-def holiday_for(day, window=WINDOW_DAYS):
+def holiday_for(day, before=DAYS_BEFORE, after=DAYS_AFTER):
     """The holiday whose window contains ``day``, or None.
 
-    Neighbouring years are checked too, so the last days of December can
-    reach New Year's Day and the first days of January can look back.
+    Neighbouring years are checked too, so December can already reach New
+    Year's Day and the first days of January can look back.
     """
     candidates = []
     for year in (day.year - 1, day.year, day.year + 1):
         for name, when in holiday_dates(year).items():
-            distance = abs((when - day).days)
-            if distance <= window:
-                candidates.append((distance, when, name))
+            ahead = (when - day).days  # positive: the holiday is still coming
+            if -after <= ahead <= before:
+                candidates.append((abs(ahead), when, name))
     if not candidates:
         return None
     return min(candidates)[2]

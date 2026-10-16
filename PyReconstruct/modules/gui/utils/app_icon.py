@@ -1,8 +1,9 @@
 """The app's window and dock icon, dressed up around holidays.
 
-For the week before and after each holiday in ``backend/holidays.py`` the
-window takes that holiday's icon from ``assets/img/holidays/<holiday>/<flavor>``
-(``stable``, or ``dev`` for PyReconstruct Dev, which keeps its DEV badge).
+For the two weeks before each holiday in ``backend/holidays.py``, the day
+itself and the week after, the window takes that holiday's icon from
+``assets/img/holidays/<holiday>/<flavor>`` (``stable``, or ``dev`` for
+PyReconstruct Dev, which keeps its DEV badge).
 Every other day it is the regular icon, exactly as before.
 
 Each folder holds the window icon at several sizes. ``icon-16.png`` to

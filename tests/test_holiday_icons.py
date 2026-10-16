@@ -1,7 +1,7 @@
 """Holiday app icons: which days get one, and that every holiday ships one.
 
-The window shows a holiday's icon for the week before it, the day itself and
-the week after. Overlapping windows (Christmas and New Year's) go to the
+The window shows a holiday's icon for the two weeks before it, the day itself
+and the week after. Overlapping windows (Christmas and New Year's) go to the
 nearer holiday, and on a tie the earlier holiday keeps its last day.
 """
 from datetime import date
@@ -9,7 +9,8 @@ from datetime import date
 import pytest
 
 from PyReconstruct.modules.backend.holidays import (
-    WINDOW_DAYS,
+    DAYS_AFTER,
+    DAYS_BEFORE,
     easter,
     holiday_dates,
     holiday_for,
@@ -28,13 +29,18 @@ def test_easter_matches_the_published_dates(year, expected):
     assert easter(year) == expected
 
 
-def test_the_window_is_a_week_on_each_side():
-    assert WINDOW_DAYS == 7
-    assert holiday_for(date(2026, 10, 24)) == "halloween"
+def test_the_window_is_two_weeks_before_and_one_week_after():
+    assert (DAYS_BEFORE, DAYS_AFTER) == (14, 7)
+    assert holiday_for(date(2026, 10, 16)) is None
+    assert holiday_for(date(2026, 10, 17)) == "halloween"
     assert holiday_for(date(2026, 10, 31)) == "halloween"
     assert holiday_for(date(2026, 11, 7)) == "halloween"
-    assert holiday_for(date(2026, 10, 23)) is None
     assert holiday_for(date(2026, 11, 8)) is None
+
+
+def test_valentines_starts_two_weeks_early():
+    assert holiday_for(date(2027, 1, 30)) is None
+    assert holiday_for(date(2027, 1, 31)) == "valentines"
 
 
 def test_an_ordinary_day_has_no_holiday():
@@ -43,6 +49,8 @@ def test_an_ordinary_day_has_no_holiday():
 
 
 def test_christmas_hands_over_to_new_years_at_the_midpoint():
+    assert holiday_for(date(2026, 12, 10)) is None
+    assert holiday_for(date(2026, 12, 11)) == "christmas"
     assert holiday_for(date(2026, 12, 18)) == "christmas"
     assert holiday_for(date(2026, 12, 28)) == "christmas"
     assert holiday_for(date(2026, 12, 29)) == "new_year"
