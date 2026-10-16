@@ -859,6 +859,61 @@ def test_a_combo_never_splits_and_a_path_wraps_only_after_an_arrow(qapp):
         dlg.deleteLater()
 
 
+MENU_ITEM_NOTES = """## [1.21.0] — 2026-07-20
+
+- **Delete a trace from some sections** with Delete from sections..., under
+  Copy to sections.... It works from Lists ▸ Object list of selected traces.
+- Set it once in File ▸ Backup ▸ Settings....
+- Install with `curl -fsSL https://pyreconstruct.org/install.sh | bash`.
+"""
+
+
+def _menu_item_dialog():
+    from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
+    content = F.whats_new_content("1.21.0", last_seen="1.20.1", text=MENU_ITEM_NOTES)
+    return WhatsNewDialog(None, "1.21.0", content=content,
+                          settings=FakeSettings(), url="https://example.test")
+
+
+def test_menu_items_and_paths_ending_in_dots_take_the_code_style(qapp):
+    """A known label ending in "..." is styled on its own, a path's last label
+    keeps its "...", a lowercase label in a path is styled whole, and a
+    sentence's own period stays out of the run."""
+    dlg = _menu_item_dialog()
+    try:
+        assert [_shown(t) for t, _ in _code_runs(dlg)] == [
+            "Delete from sections...", "Copy to sections...",
+            "Lists ▸ Object list of selected traces", "File ▸ Backup ▸ Settings...",
+            "curl -fsSL https://pyreconstruct.org/install.sh | bash",
+        ]
+    finally:
+        dlg.deleteLater()
+
+
+def test_a_pipeline_breaks_after_the_pipe_without_a_leading_blank(qapp):
+    """The space after "|" in inline code is the run's one break: at the
+    widths the notes take (the dialog is at least 700 px wide), the second
+    line starts at "bash", never at a no-break space. Narrower than the
+    command up to the pipe, Qt has to break inside the run anyway."""
+    dlg = _menu_item_dialog()
+    try:
+        doc = dlg._notes.document()
+        block = next(b for b in _blocks(dlg) if "curl" in b.text())
+        text = block.text()
+        assert "| bash" in text
+        broke = False
+        for width in range(420, 700, 7):
+            doc.setTextWidth(width)
+            layout = block.layout()
+            for i in range(1, layout.lineCount()):
+                start = layout.lineAt(i).textStart()
+                assert text[start] != "\u00a0", (width, text[start:start + 8])
+                broke |= text[start:start + 4] == "bash"
+        assert broke
+    finally:
+        dlg.deleteLater()
+
+
 def _menu_labels():
     """Every label the app's menu definitions give a row or a submenu.
 
@@ -905,7 +960,8 @@ def test_every_multi_word_menu_label_is_a_real_label():
     menus = _menu_labels()
     assert {"Show/Hide lists", "Shortcuts list", "Online resources"} <= menus
     for label in MENU_LABELS:
-        assert label in menus or any(
+        # the menus are read without their "...", as _menu_labels gives them
+        assert label.removesuffix("...") in menus or any(
             f"{lead}{label}" in notes for lead in ("▸ ", "> ", '"')
         ), label
 
