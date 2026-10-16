@@ -63,13 +63,15 @@ is worse; content is the better of the two available keys.
 Until then: an id survives a reload, a scroll and a save of unchanged content,
 and does not survive an edit of the row it names.
 
-~~Re-derivation is all a load has.~~ Within one session it is not (hub #52):
+Within one session a load has more than re-derivation:
 `TraceIDIssuer.recordSaved` keeps the ids each section file was last saved
 with, and a load of those same bytes gets them back before anything is
 derived. So in a session an id survives a save and a load whatever the row's
 content, as long as the trace held it when the section was saved (an edit
-that replaces the trace, as `editTraceAttributes` does, already gave it a new
-one). The measurement above is what a new session sees.
+that replaces the trace, as `editTraceAttributes` does, gives it a new one).
+A section file changed by anything else gets no ids back for the rest of the
+session (`TraceIDIssuer.restoreForSection`). The measurement above is what a
+new session sees.
 
 THE FROZEN DERIVATION -- `tid-v1`
 ---------------------------------
@@ -415,6 +417,11 @@ class TraceIDIssuer():
         ## {section number: (digest of the bytes written, {contour name:
         ## [id per row, in row order]})}. See `recordSaved`.
         self._saved = {}
+        ## The digest of each section file as this session last read or
+        ## wrote it, and the sections whose file has since been changed by
+        ## something else. See `restoreForSection`.
+        self._known = {}
+        self._changed_outside = set()
 
     @property
     def taken(self) -> frozenset:
@@ -668,24 +675,24 @@ class TraceIDIssuer():
         The working copy stores positional rows with no ids, so a section
         loaded again would otherwise get its ids by derivation, which hands
         identical rows their ids in row order and gives an edited row a new
-        one. A clean-up list that recorded a trace's id at its scan then
-        cannot find that trace after any save in between (hub #52). This
-        record lets `restoreForSection` give the same rows their same ids
-        back, for as long as this issuer lives: one session.
+        one. A clean-up row that noted a trace's id at its scan could then not
+        find that trace after a save in between. This record lets
+        `restoreForSection` give the same rows their same ids back, for as
+        long as this issuer lives: one session.
 
-        Keyed on the digest of the exact bytes written, so a file anything
-        else wrote misses it and loads as before. A later save of the section
-        replaces the record, so it holds one entry per section and one id per
-        saved row, each id a reference to a string the store already holds.
+        A later save of the section replaces the record, so it holds one entry
+        per section and one id per saved row, each id a reference to a string
+        the store already holds.
 
             Params:
                 section_number (int): the section written
                 digest (bytes): `sectionFileDigest` of the bytes written
                 ids_by_contour (dict): {contour name: [id, ...]} in the row
-                    order written, or None to forget the section (a save that
-                    could not name every row's id)
+                    order written, or None when the save could not name every
+                    row's id
         """
-        if ids_by_contour is None:
+        self._known[section_number] = digest
+        if ids_by_contour is None or section_number in self._changed_outside:
             self._saved.pop(section_number, None)
         else:
             self._saved[section_number] = (digest, ids_by_contour)
@@ -695,6 +702,14 @@ class TraceIDIssuer():
         ):
         """The ids a section file was last saved with, if it is that file.
 
+        Called on every load. A file whose bytes are not the ones this
+        session last read or wrote was changed by something else, and from
+        then on, for the rest of the session, the section gets no ids back:
+        ids derived after an outside change are handed out by row order, so
+        an identical survivor of a deleted trace can wear the deleted trace's
+        id, and a saved record built from such ids would carry the mistake
+        on. Only ids given back here are proof of which trace is which.
+
             Params:
                 section_number (int): the section loaded
                 digest (bytes): `sectionFileDigest` of the bytes read
@@ -702,9 +717,15 @@ class TraceIDIssuer():
                     `Section.updateJSON` left them
             Returns:
                 (dict): {(contour name, index): id} for every row, or None
-                    when this session did not write these exact bytes or the
-                    rows no longer line up with the ones written
+                    when this session did not write these exact bytes, the
+                    file was changed outside it, or the rows no longer line
+                    up with the ones written
         """
+        known = self._known.get(section_number)
+        if known is not None and known != digest:
+            self._changed_outside.add(section_number)
+            self._saved.pop(section_number, None)
+        self._known[section_number] = digest
         saved = self._saved.get(section_number)
         if saved is None or saved[0] != digest:
             return None

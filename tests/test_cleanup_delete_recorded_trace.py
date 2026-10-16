@@ -82,7 +82,7 @@ def _states(series):
 
 def _without_id(record):
     """A row from a scan that did not note the trace's id: the rules below
-    are the ones it falls back to when the id is gone (hub #52)."""
+    are the ones a row falls back to when its id is gone or not proof."""
     record.pop("trace_id", None)
     return record
 

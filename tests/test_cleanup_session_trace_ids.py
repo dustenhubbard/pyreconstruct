@@ -1,12 +1,11 @@
 """A clean-up row finds its trace by the trace's id, saves in between or not.
 
-Each trace has an id in memory. The working copy stores no ids, so a section
-loaded again used to get its ids by row order, and a row could only tell
-identical traces apart by their place among the lookalikes (#660): an edit
-that changed how many there were left the row skipped. The issuer now gives a
-file this session wrote the ids it was written with (hub #52), so the row's id
-still names its trace after the edit. Identical traces are told apart here by
-those ids.
+Each trace has an id in memory. The working copy stores no ids, but the issuer
+gives a file this session wrote the ids it was written with, so a row's id
+still names its trace after an edit that changed how many identical traces
+there are. When the ids are not the saved ones (an undo, a file changed
+outside the session), the row falls back to its place among the lookalikes.
+Identical traces are told apart here by their ids.
 """
 from test_cleanup_delete_recorded_trace import (
     DUST, SQUARE, _dust_records, _load_series, _remove_first, _seed, _states,
@@ -20,7 +19,7 @@ def _ids(series, snum, name):
 
 
 # ---------------------------------------------------------------------------
-# the #660 skip: an edit outside the list changes the count of lookalikes
+# an edit outside the list changes the count of lookalikes
 # ---------------------------------------------------------------------------
 
 def test_deleting_one_twin_by_hand_leaves_the_row_for_the_other(tmp_path):
@@ -142,7 +141,7 @@ def test_a_trace_undone_back_has_a_new_id_and_the_count_rule_applies(
         tmp_path):
     """I delete the second twin from one list and undo it. Its row from
     another list no longer finds it by id, so when the first twin is then
-    deleted by hand, the row is left as #660 leaves it."""
+    deleted by hand, the lookalike count leaves the row."""
     series = _load_series(tmp_path)
     snum = _seed(series, [("DUST", DUST, "same"), ("DUST", DUST, "same")])
     record = _dust_records(series, snum)[1]
@@ -158,4 +157,75 @@ def test_a_trace_undone_back_has_a_new_id_and_the_count_rule_applies(
     ambiguous = []
     assert series.deleteMalformedTraces([record], ambiguous=ambiguous) == []
     assert ambiguous == [record]
+    assert _tags(series, snum, "DUST") == [["same"]]
+
+
+
+def test_a_lone_trace_undone_back_is_still_found_by_the_count(tmp_path):
+    """Its id is gone after the undo, but no identical copy could be it, so
+    the row still deletes it."""
+    series = _load_series(tmp_path)
+    snum = _seed(series, [("DUST", DUST, "only")])
+    record = _dust_records(series, snum)[0]
+    states = _states(series)
+    assert series.deleteMalformedTraces([dict(record)], series_states=states)
+    states.undoState()
+    assert record["trace_id"] not in _ids(series, snum, "DUST")
+
+    ambiguous = []
+    assert series.deleteMalformedTraces(
+        [record], ambiguous=ambiguous
+    ) == [record]
+    assert ambiguous == []
+    assert _tags(series, snum, "DUST") == []
+
+# ---------------------------------------------------------------------------
+# a section file changed by anything but this session's save
+# ---------------------------------------------------------------------------
+
+def test_digest_miss_cannot_revive_deleted_identity(tmp_path):
+    """Twins in a fresh session; I pick the first, then delete it by hand.
+    Something else then rewrites the section file without changing a trace.
+    The survivor's id from that load is not proof, so the row is left."""
+    from pathlib import Path
+    from PyReconstruct.modules.datatypes.series import Series
+    series = _load_series(tmp_path)
+    snum = _seed(series, [("DUST", DUST, "same"), ("DUST", DUST, "same")])
+    series = Series.openJser(series.jser_fp)
+    records = _dust_records(series, snum)
+    _remove_first(series, snum, "DUST")
+    path = Path(series.loadSection(snum).filepath)
+    path.write_bytes(path.read_bytes() + b"\n")
+    series.loadSection(snum)
+
+    ambiguous = []
+    deleted = series.deleteMalformedTraces([records[0]], ambiguous=ambiguous)
+
+    assert deleted == []
+    assert ambiguous == [records[0]]
+    assert _tags(series, snum, "DUST") == [["same"]]
+
+
+def test_an_outside_delete_then_a_save_cannot_pass_on_a_wrong_id(tmp_path):
+    """Twins in a fresh session; I pick the first. Something else deletes it
+    from the section file, then the section is loaded and saved here. The
+    survivor's id from that load is not proof, so the row is left."""
+    import json
+    from pathlib import Path
+    from PyReconstruct.modules.datatypes.series import Series
+    series = _load_series(tmp_path)
+    snum = _seed(series, [("DUST", DUST, "same"), ("DUST", DUST, "same")])
+    series = Series.openJser(series.jser_fp)
+    records = _dust_records(series, snum)
+    path = Path(series.loadSection(snum).filepath)
+    data = json.loads(path.read_bytes())
+    data["contours"]["DUST"].pop(0)
+    path.write_text(json.dumps(data))
+    series.loadSection(snum).save()
+
+    ambiguous = []
+    deleted = series.deleteMalformedTraces([records[0]], ambiguous=ambiguous)
+
+    assert deleted == []
+    assert ambiguous == [records[0]]
     assert _tags(series, snum, "DUST") == [["same"]]

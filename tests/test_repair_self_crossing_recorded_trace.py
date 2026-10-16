@@ -210,7 +210,7 @@ def test_a_changed_lookalike_count_skips_and_reports(tmp_path):
 
 def test_a_changed_lookalike_count_repairs_the_trace_by_its_id(tmp_path):
     """A lookalike added after the scan: the record still names its trace by
-    id (hub #52), so that trace is repaired and the other two are not."""
+    id from a section this session saved, so that trace is repaired and the other two are not."""
     series = _load_series(tmp_path)
     snum = _seed(series, [
         (SPIKED_SQUARE, "first", True),

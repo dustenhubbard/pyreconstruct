@@ -608,6 +608,11 @@ class Section():
     ## on a bare `__new__` instance for the same reason the two defaults above
     ## exist.
     _loaded_trace_ids = None
+    ## True only when every trace's id was given back from the ids this
+    ## session saved the file with (`TraceIDIssuer.restoreForSection`). A
+    ## derived id tells identical traces apart only by row order, so it is
+    ## not proof of which trace a clean-up row named.
+    trace_ids_trusted = False
 
     def __init__(self, n : int, series):
         """Load the section file.
@@ -697,6 +702,7 @@ class Section():
             if issuer is not None else None
         )
         del raw
+        self.trace_ids_trusted = restored_ids is not None
         ## The issuer is handed plain ids: the fill-mode spelling riding in the
         ## record is the unpack path's business (`reattachTraceIDs`) and means
         ## nothing to an id index.
@@ -1314,7 +1320,7 @@ class Section():
                 continue
             row_ids = [ids.get(trace) for trace in contour]
             if None in row_ids:
-                issuer.recordSaved(self.n, None, None)
+                issuer.recordSaved(self.n, sectionFileDigest(data), None)
                 return
             by_contour[name] = row_ids
         issuer.recordSaved(self.n, sectionFileDigest(data), by_contour)

@@ -48,11 +48,11 @@ flip is a harness that will not notice.
   `trace_id.py`'s module docstring records why the alternative is worse. The
   neighbours keep their ids and the superseded id stays spoken for in `taken`;
   all three halves are asserted.
-* ~~**An id issued during a session does not survive a save and a reload.**~~
-  It does now, within the session: the issuer records the ids each section
-  file was saved with and gives them back when this session loads those same
-  bytes (`TraceIDIssuer.recordSaved`, hub #52). Across sessions it still does
-  not, because nothing writes the id to the file.
+* **An id issued during a session survives a save and a reload only within
+  that session.** The issuer records the ids each section file was saved with
+  and gives them back when the session loads those same bytes
+  (`TraceIDIssuer.recordSaved`). Across sessions it does not, because nothing
+  writes the id to the file.
 
 TWO ROWS ARE RESERVED BY DESIGN AND ARE NOT GUESSED AT
 ---------------------------------------------------------------
@@ -188,7 +188,7 @@ CARRY_TABLE = (
     ),
     dict(
         row="an id issued in-session survives a save and a reload in the "
-            "same session (hub #52)",
+            "same session",
         entry_point="Section.addTrace + Section.save + Series.loadSection",
         verdict="holds within the session; across sessions only saving ids "
                 "would keep it",
@@ -197,7 +197,7 @@ CARRY_TABLE = (
     ),
     dict(
         row="two byte-identical rows in one contour: deleting the first keeps "
-            "the survivor's own id (hub #52)",
+            "the survivor's own id",
         entry_point="Section.addTrace + Section.removeTrace + save + reload",
         verdict="holds within the session",
         tests=("test_deleting_one_of_two_identical_rows_keeps_the_survivors_id",),
@@ -1081,7 +1081,7 @@ def test_an_edit_then_save_then_reload_moves_only_the_edited_traces_id(
 
 
 def test_an_id_issued_in_session_survives_a_save_and_reload(real_series):
-    """Turned over by hub #52: the id survives within the session.
+    """An id issued in a session survives a save and a reload in it.
 
     A trace created during a session is handed an opaque RANDOM id, because
     identity has to survive an edit and a content hash does not
@@ -1111,12 +1111,12 @@ def test_deleting_one_of_two_identical_rows_keeps_the_survivors_id(
 ):
     """Deleting one of two identical rows leaves the survivor its own id.
 
-    Turned over by hub #52. Derivation alone tells two byte-identical rows
-    apart only by the order they appear in, so deleting the first of a pair,
-    saving and reloading used to hand the survivor the FIRST id. The issuer
-    now gives a file this session saved the ids it was saved with, so the
-    survivor keeps its own id within the session, and the deleted trace's id
-    is orphaned. No two live rows ever share an id; asserted below.
+    Derivation alone tells two byte-identical rows apart only by the order
+    they appear in, so after deleting the first of a pair, saving and
+    reloading, it would hand the survivor the FIRST id. The issuer gives a
+    file this session saved the ids it was saved with, so the survivor keeps
+    its own id within the session, and the deleted trace's id is orphaned.
+    No two live rows ever share an id; asserted below.
     """
     snum, section = _aWorkingSection(real_series)
     cname = sorted(section.contours, key=str)[0]

@@ -3088,11 +3088,12 @@ class Series():
         the index.
 
         Before any of that, a record whose scan noted the trace's id
-        ("trace_id") is resolved by that id, when a trace under its name still
-        holds it and still has the content the scan saw. Ids last one session
-        and outlive saves (TraceIDIssuer.recordSaved), so this tells identical
-        traces apart whatever was edited in between. A trace brought back by
-        undo has a new id, so its record falls through to the rules above.
+        ("trace_id") is resolved by that id, when the section's ids are the
+        ones this session saved it with (Section.trace_ids_trusted), a trace
+        under its name still holds it, and it still has the content the scan
+        saw. This tells identical traces apart whatever was saved in between.
+        Otherwise, as when the trace was undone back or the file was changed
+        outside this session, the record falls through to the rules above.
 
         Records that name the same target resolve together, so one trace is
         deleted once however many rows name it: the same name, index and
@@ -3198,7 +3199,8 @@ class Series():
                 (Trace): the trace, or None to resolve the record without its id
         """
         trace_id = record.get("trace_id")
-        if not isinstance(trace_id, str):
+        if not isinstance(trace_id, str) or \
+                not getattr(section, "trace_ids_trusted", False):
             return None
         name = record["name"]
         if name not in by_id:
