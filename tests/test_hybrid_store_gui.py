@@ -89,3 +89,71 @@ def test_switch_off_save_still_writes_the_jser(
     finally:
         window.close()
     assert not (tmp_path / "stores").exists()
+
+
+# ---------------------------------------------------------------------------
+# round 2: when backups run, and close after an export
+# ---------------------------------------------------------------------------
+
+def _count_backups(window):
+    calls = []
+    window.backup = lambda *a, **k: calls.append(k)
+    return calls
+
+
+def test_store_only_save_makes_no_backup_and_close_makes_one(
+    qapp, store_on, series_jser, qsettings_snapshot, main_window_dialogs, monkeypatch,  # noqa: F811
+):
+    monkeypatch.setenv(hybrid_store.ENV_SAVE, "store")
+    window = _window(series_jser)
+    backups = _count_backups(window)
+    try:
+        _move_a_trace(window)
+        window.saveToJser()
+        assert backups == []
+    finally:
+        window.close()
+    assert backups == [{"check_auto": True, "from_saved": True}]
+
+
+def test_an_explicit_export_makes_a_backup_and_close_then_writes_nothing(
+    qapp, store_on, series_jser, qsettings_snapshot, main_window_dialogs, monkeypatch,  # noqa: F811
+):
+    monkeypatch.setenv(hybrid_store.ENV_SAVE, "store")
+    window = _window(series_jser)
+    backups = _count_backups(window)
+    try:
+        snum, edited = _move_a_trace(window)
+        window.saveToJser()
+        window.exportStoreToJser()
+        assert len(backups) == 1
+        exported = series_jser.stat().st_mtime_ns
+    finally:
+        window.close()
+    assert len(backups) == 1
+    assert series_jser.stat().st_mtime_ns == exported
+
+
+def test_close_with_nothing_changed_writes_no_jser_and_no_backup(
+    qapp, store_on, series_jser, qsettings_snapshot, main_window_dialogs, monkeypatch,  # noqa: F811
+):
+    _window(series_jser).close()  # the import
+    first = series_jser.stat().st_mtime_ns
+    window = _window(series_jser)
+    backups = _count_backups(window)
+    window.changeSection(sorted(window.series.sections)[1])
+    window.close()
+    assert backups == []
+    assert series_jser.stat().st_mtime_ns == first
+
+
+def test_the_store_menu_rows_exist_only_with_the_store():
+    from types import SimpleNamespace
+    from PyReconstruct.modules.gui.main.menubar import _storeExportOpts
+
+    assert _storeExportOpts(SimpleNamespace(series=SimpleNamespace(store=None))) == []
+    rows = _storeExportOpts(SimpleNamespace(
+        series=SimpleNamespace(store=object()),
+        exportStoreToJser=None, exportSetAsideStore=None,
+    ))
+    assert [r[0] for r in rows if r] == ["exportstorejser_act", "exportsetaside_act"]
