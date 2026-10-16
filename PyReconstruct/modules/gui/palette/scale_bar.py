@@ -239,7 +239,7 @@ def pinnedSubdivisions(real_len, rungs=None):
     table, and it may not be there. 3.7 µm has no division into two to seven
     parts that prints roundly.  Rather than print ticks labeled 0.74 and 1.48,
     a length that is not in the table gets no interior ticks. Its count is 1, which
-    `paintEvent`'s `range(1, subdivs)` draws as none.
+    `paintScaleBar`'s `range(1, subdivs)` draws as none.
 
         Params:
             real_len (float): the bar's length in real-world units
@@ -294,6 +294,149 @@ def outlinedFont(size):
     `size`. It reads the pixel size back as a point size.  Text is measured in
     this, so a width worked out here is the width that is drawn."""
     return QFont("Courier New", size, QFont.Bold)
+
+
+def barLayout(thickness, draw_text, draw_ticks, label_size=LABEL_SIZE,
+              tick_label_size=TICK_LABEL_SIZE):
+    """The vertical positions of a bar, as (bar top, tick label top, height).
+
+    The text bands grow in step with their font sizes, so a larger label
+    still fits above the bar.  At the default sizes they are `LABEL_ROOM` and
+    `TICK_LABEL_ROOM`.  All values are before any scale factor.
+    """
+    label_room = round(LABEL_ROOM * label_size / LABEL_SIZE)
+    tick_label_room = round(TICK_LABEL_ROOM * tick_label_size / TICK_LABEL_SIZE)
+    bar_top = label_room if draw_text else 1
+    tick_label_top = bar_top + thickness + TICK_LENGTH
+    height = tick_label_top + 1
+    if draw_ticks and draw_text:
+        height = tick_label_top + tick_label_room
+    elif not draw_ticks:
+        height = bar_top + thickness + 1
+    return bar_top, tick_label_top, height
+
+
+def labelText(real_len):
+    """The label printed over a bar of `real_len` µm."""
+    return formatLength(real_len) + " µm"
+
+
+def paintScaleBar(painter, real_len, subdivs, units_per_pixel, thickness,
+                  draw_text, draw_ticks, scale=1, label_size=LABEL_SIZE,
+                  tick_label_size=TICK_LABEL_SIZE):
+    """Draw a scale bar with its top left corner at the painter's origin.
+
+    The on-screen widget draws through this at scale 1 with the default
+    sizes.  A figure renders through it at a larger scale.  Everything is
+    laid out in screen pixels and then multiplied by `scale`: the bar, its
+    white edge, the ticks, the text and the text's outline.  So a bar drawn
+    at scale 3 is three times as wide, and as sharp as at scale 1.
+
+    The two text sizes are point sizes, the unit `LABEL_SIZE` has always
+    been in: `drawOutlinedText` builds its font from them as points.  Qt
+    turns points into pixels at the screen's DPI, not the target's, so a
+    label is about as many pixels as on screen (12 at 72 DPI, 16 at 96 DPI)
+    whatever DPI a target image carries.  The painter's scale then multiplies
+    that, so a label size of 16 at scale 3 is three times as tall as a label
+    size of 16 at scale 1.  No size here is a promise in pixels.
+
+        Params:
+            painter (QPainter): an active painter, origin at the bar's corner
+            real_len (float): the bar's length in real-world units
+            subdivs (int): how many segments the ticks cut the bar into
+            units_per_pixel (float): real-world units per screen pixel
+            thickness (int): the bar's own thickness in screen pixels
+            draw_text (bool): whether to draw the label and tick labels
+            draw_ticks (bool): whether to draw the tick marks
+            scale (float): output pixels per screen pixel
+            label_size (int): the label's point size, before the scale
+            tick_label_size (int): the tick labels' point size, before the scale
+        Returns:
+            (int, int): the width and height drawn in, in screen pixels
+                        (multiply by `scale` for output pixels); (0, 0) when
+                        there is no bar to draw
+    """
+    if real_len <= 0:
+        return 0, 0
+    pix_len = int(real_len / units_per_pixel)
+    bar_top, tick_label_top, height = barLayout(
+        thickness, draw_text, draw_ticks, label_size, tick_label_size
+    )
+    tick_label_room = height - tick_label_top
+    l_text = labelText(real_len)
+    label_w = (QFontMetrics(outlinedFont(label_size)).horizontalAdvance(l_text)
+               if draw_text else 0)
+
+    painter.save()
+    painter.scale(scale, scale)
+
+    white, black = QColor(255, 255, 255), QColor(0, 0, 0)
+    # no pen.  The outline is the white rectangle's own edge, so the bar
+    # looks the same whatever the theme's text color is
+    painter.setPen(Qt.NoPen)
+
+    # draw the scale bar as a black fill inside a 1 px white edge, which
+    # can be seen on a light image and on a dark one
+    r_x = 0
+    r_y = bar_top
+    r_w = pix_len
+    r_h = thickness
+    painter.setBrush(white)
+    painter.drawRect(r_x, r_y, r_w, r_h)
+    painter.setBrush(black)
+    painter.drawRect(r_x + 1, r_y + 1, r_w - 2, r_h - 2)
+
+    # draw text
+    if draw_text:
+        font = QFont("Courier New")
+        font.setPixelSize(label_size)
+        font.setBold(True)
+        painter.setFont(font)
+        # over the bar's middle, unless the bar is shorter than its label
+        drawCenteredText(
+            painter,
+            max(r_x + r_w/2, label_w / 2 + 1),
+            bar_top / 2,
+            l_text,
+            outlined=True
+        )
+
+    # draw ticks if requested.  Each one extends below the bar, black
+    # with a white edge like the bar, and its label is outlined like the
+    # main one
+    if draw_ticks:
+        small_font = QFont("Courier New")  # used for ticks
+        small_font.setPixelSize(tick_label_size)
+        small_font.setBold(True)
+        # on a short bar the tick labels would overlap, so only every
+        # `step`-th tick is labeled, as few as keep them apart
+        step = 1
+        if draw_text and subdivs > 1:
+            metrics = QFontMetrics(outlinedFont(tick_label_size))
+            widest = max(
+                metrics.horizontalAdvance(formatLength(real_len * i/subdivs))
+                for i in range(1, subdivs)
+            )
+            step = max(1, math.ceil((widest + 6) / (r_w / subdivs)))
+        for i in range(1, subdivs):
+            t_x = int(r_x + r_w/subdivs * i)
+            painter.setBrush(white)
+            painter.drawRect(t_x - 1, r_y + r_h - 1, 3, TICK_LENGTH + 1)
+            painter.setBrush(black)
+            painter.drawRect(t_x, r_y + r_h - 1, 1, TICK_LENGTH)
+            if draw_text and i % step == 0:
+                painter.setFont(small_font)
+                t_text = formatLength(real_len * i/subdivs)
+                drawCenteredText(
+                    painter,
+                    t_x,
+                    tick_label_top + tick_label_room / 2,
+                    t_text,
+                    outlined=True
+                )
+
+    painter.restore()
+    return max(pix_len, label_w + 2 if draw_text else 0), height
 
 
 class ScaleBar(MoveableButton):
@@ -371,16 +514,11 @@ class ScaleBar(MoveableButton):
 
     def _layout(self):
         """The vertical positions, as (bar top, tick label top, height)."""
-        draw_text = self.displayOption("show_scale_bar_text")
-        draw_ticks = self.displayOption("show_scale_bar_ticks")
-        bar_top = LABEL_ROOM if draw_text else 1
-        tick_label_top = bar_top + self.thickness + TICK_LENGTH
-        height = tick_label_top + 1
-        if draw_ticks and draw_text:
-            height = tick_label_top + TICK_LABEL_ROOM
-        elif not draw_ticks:
-            height = bar_top + self.thickness + 1
-        return bar_top, tick_label_top, height
+        return barLayout(
+            self.thickness,
+            self.displayOption("show_scale_bar_text"),
+            self.displayOption("show_scale_bar_ticks"),
+        )
 
     def setThickness(self, thickness):
         """Change the bar's thickness; the widget's height follows it."""
@@ -472,87 +610,31 @@ class ScaleBar(MoveableButton):
         if not self.displayOption("show_scale_bar_text"):
             return 0
         metrics = QFontMetrics(outlinedFont(LABEL_SIZE))
-        return metrics.horizontalAdvance(formatLength(real_len) + " µm")
+        return metrics.horizontalAdvance(labelText(real_len))
+
+    def paintTo(self, painter, scale=1, label_size=LABEL_SIZE,
+                tick_label_size=TICK_LABEL_SIZE):
+        """Draw this bar as it stands through `paintScaleBar`.
+
+        The length, ticks, thickness and display options are the widget's,
+        so a bar painted into a figure matches the one on the field.
+        Returns what `paintScaleBar` returns.
+        """
+        real_len, subdivs = self.currentLength()
+        return paintScaleBar(
+            painter, real_len, subdivs, self.scale, self.thickness,
+            self.displayOption("show_scale_bar_text"),
+            self.displayOption("show_scale_bar_ticks"),
+            scale, label_size, tick_label_size,
+        )
 
     def paintEvent(self, event):
-        real_len, subdivs = self.currentLength()
-        if real_len <= 0:
+        if self.currentLength()[0] <= 0:
             return
-        pix_len = int(real_len / self.scale)
-
-        # check text and tick preferences
-        draw_text = self.displayOption("show_scale_bar_text")
-        draw_ticks = self.displayOption("show_scale_bar_ticks")
-        bar_top, tick_label_top, _height = self._layout()
-
-        white, black = QColor(255, 255, 255), QColor(0, 0, 0)
         painter = QPainter(self)
-        # no pen.  The outline is the white rectangle's own edge, so the bar
-        # looks the same whatever the theme's text color is
-        painter.setPen(Qt.NoPen)
-
-        # draw the scale bar as a black fill inside a 1 px white edge, which
-        # can be seen on a light image and on a dark one
-        r_x = 0
-        r_y = bar_top
-        r_w = pix_len
-        r_h = self.thickness
-        painter.setBrush(white)
-        painter.drawRect(r_x, r_y, r_w, r_h)
-        painter.setBrush(black)
-        painter.drawRect(r_x + 1, r_y + 1, r_w - 2, r_h - 2)
-
-        # draw text
-        if draw_text:
-            font = QFont("Courier New")
-            font.setPixelSize(LABEL_SIZE)
-            font.setBold(True)
-            l_text = formatLength(real_len) + " µm"
-            painter.setFont(font)
-            # over the bar's middle, unless the bar is shorter than its label
-            drawCenteredText(
-                painter,
-                max(r_x + r_w/2, self.labelWidth(real_len) / 2 + 1),
-                bar_top / 2,
-                l_text,
-                outlined=True
-            )
-
-        # draw ticks if requested.  Each one extends below the bar, black
-        # with a white edge like the bar, and its label is outlined like the
-        # main one
-        if draw_ticks:
-            small_font = QFont("Courier New")  # used for ticks
-            small_font.setPixelSize(TICK_LABEL_SIZE)
-            small_font.setBold(True)
-            # on a short bar the tick labels would overlap, so only every
-            # `step`-th tick is labeled, as few as keep them apart
-            step = 1
-            if draw_text and subdivs > 1:
-                metrics = QFontMetrics(outlinedFont(TICK_LABEL_SIZE))
-                widest = max(
-                    metrics.horizontalAdvance(formatLength(real_len * i/subdivs))
-                    for i in range(1, subdivs)
-                )
-                step = max(1, math.ceil((widest + 6) / (r_w / subdivs)))
-            for i in range(1, subdivs):
-                t_x = int(r_x + r_w/subdivs * i)
-                painter.setBrush(white)
-                painter.drawRect(t_x - 1, r_y + r_h - 1, 3, TICK_LENGTH + 1)
-                painter.setBrush(black)
-                painter.drawRect(t_x, r_y + r_h - 1, 1, TICK_LENGTH)
-                if draw_text and i % step == 0:
-                    painter.setFont(small_font)
-                    t_text = formatLength(real_len * i/subdivs)
-                    drawCenteredText(
-                        painter,
-                        t_x,
-                        tick_label_top + TICK_LABEL_ROOM / 2,
-                        t_text,
-                        outlined=True
-                    )
-
+        self.paintTo(painter)
         painter.end()
+
 
 def drawCenteredText(painter, x, y, text, outlined=False):
     font = painter.font()
