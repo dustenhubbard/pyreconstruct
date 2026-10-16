@@ -1245,6 +1245,13 @@ class FieldWidgetMouse(FieldWidgetData):
             self.current_trace = []
             self.update()
             return
+
+        # a host is series-wide, so it waits for the ROI box to be off
+        if self.refuseWhileRoiBox():
+            self.hosted_trace = None
+            self.current_trace = []
+            self.update()
+            return
         
         closest, closest_type = self.section_layer.getTrace(self.mouse_x, self.mouse_y)
         if self.hosted_trace:

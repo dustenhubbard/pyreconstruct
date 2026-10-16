@@ -1439,6 +1439,10 @@ class MainWindow(QMainWindow):
         (this pass names its own objects) and the object list scroll-position
         restore (updateObjects edits rows in place here; nothing scrolls).
         """
+        # acts across the series, outside the ROI box too
+        if self.field.refuseWhileRoiBox():
+            return
+
         self.saveAllData()
 
         all_names = sorted(self.series.data["objects"].keys())
@@ -3702,6 +3706,10 @@ class MainWindow(QMainWindow):
             Params:
                 trace_lengths (dict): the lengths of traces to calibrate
         """
+        # reads every trace of the selected names, outside the ROI box too
+        if self.field.refuseWhileRoiBox():
+            return
+
         self.saveAllData()
         
         if trace_lengths is None:
@@ -3740,6 +3748,10 @@ class MainWindow(QMainWindow):
     
     def setSeriesMag(self):
         """Manually set (or view) the series magnification."""
+        # acts across the series, outside the ROI box too
+        if self.field.refuseWhileRoiBox():
+            return
+
         response, confirmed = QInputDialog.getDouble(
             self, 
             "Set Magnification", 
@@ -4304,6 +4316,10 @@ class MainWindow(QMainWindow):
             Params:
                 hidden (bool) True if traces will be hidden
         """
+        # acts across the series, outside the ROI box too
+        if self.field.refuseWhileRoiBox():
+            return
+
         self.saveAllData()
         self.series.hideAllTraces(hidden)
         self.field.reload()
@@ -4398,6 +4414,10 @@ class MainWindow(QMainWindow):
         asks which name to keep in each row and changes nothing until the
         user combines; combining is one undoable step per press.
         """
+        # acts across the series, outside the ROI box too
+        if self.field.refuseWhileRoiBox():
+            return
+
         self.saveAllData()
 
         structure = [
@@ -4444,6 +4464,10 @@ class MainWindow(QMainWindow):
         "smaller than N pixels on its own image" regardless of section scale.
         Deletion is a single undoable operation (see deleteMalformedContours).
         """
+        # acts across the series, outside the ROI box too
+        if self.field.refuseWhileRoiBox():
+            return
+
         self.saveAllData()
 
         # Default 10 px^2: a stray speck of a few pixels (up to roughly a 3x3
@@ -4497,6 +4521,10 @@ class MainWindow(QMainWindow):
         is skipped and named, because only the scissors should decide which
         loop lives. Locked objects are left alone, like the other clean-ups.
         """
+        # acts across the series, outside the ROI box too
+        if self.field.refuseWhileRoiBox():
+            return
+
         self.saveAllData()
 
 
@@ -4579,6 +4607,10 @@ class MainWindow(QMainWindow):
         confirmation rather than a review list. Locked objects are left alone.
         Removal is one undoable operation.
         """
+        # acts across the series, outside the ROI box too
+        if self.field.refuseWhileRoiBox():
+            return
+
         self.saveAllData()
 
         series = self.series
@@ -5218,6 +5250,10 @@ class MainWindow(QMainWindow):
 
     def updateCurationFromHistory(self):
         """Update the series curation from the history."""
+        # acts across the series, outside the ROI box too
+        if self.field.refuseWhileRoiBox():
+            return
+
         self.field.series_states.addState()
         self.series.updateCurationFromHistory()
         self.field.table_manager.recreateTables()
@@ -5544,6 +5580,10 @@ class MainWindow(QMainWindow):
 
     def importFromSeries(self):
         """Import from another series."""
+        # acts across the series, outside the ROI box too
+        if self.field.refuseWhileRoiBox():
+            return
+
         jser_fp = FileDialog.get(
             "file",
             self,
@@ -5705,6 +5745,10 @@ class MainWindow(QMainWindow):
 
     def importFromZarrLabels(self):
         """Import label data from a neuroglancer zarr."""
+        # acts across the series, outside the ROI box too
+        if self.field.refuseWhileRoiBox():
+            return
+
         zarr_fp = FileDialog.get(
             "dir",
             self,

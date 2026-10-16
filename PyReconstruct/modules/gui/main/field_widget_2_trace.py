@@ -457,8 +457,9 @@ class FieldWidgetTrace(FieldWidgetBase):
         self.generateView(generate_image=False)
 
     def refuseWhileRoiBox(self) -> bool:
-        """Refuse a command that acts on whole objects or the whole section
-        while the ROI box is on: it would reach traces the box hides.
+        """Refuse a command that acts on whole objects, the whole section or
+        the series while the ROI box is on: it would reach traces the box
+        hides.
 
             Returns:
                 (bool): True if the command was refused

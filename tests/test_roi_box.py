@@ -27,6 +27,7 @@ from PyReconstruct.modules.backend.view.trace_layer import TraceLayer
 from PyReconstruct.modules.gui.main import field_widget_2_trace as fwt
 from PyReconstruct.modules.gui.main import field_widget_3_object as fwo
 from PyReconstruct.modules.gui.main.field_widget_5_mouse import (
+    HOST,
     POINTER,
     ROI_BOX,
     SCISSORS,
@@ -290,6 +291,18 @@ def test_box_with_no_trace_inside_picks_nothing(mw, qapp):
     assert field.section.selected_traces == []
 
 
+def test_find_closest_with_an_empty_list_checks_no_trace(mw):
+    """findClosest itself: an empty list is no trace to check, and only None
+    searches the whole section."""
+    section = mw.field.section
+    sp = _trace(section, "d03sp14")
+    x, y = _on_trace(sp, section.tform)
+
+    assert section.findClosest(x, y, radius=0.5, traces_in_view=None) == (sp, "trace")
+    _, kind = section.findClosest(x, y, radius=0.5, traces_in_view=[])
+    assert kind != "trace"
+
+
 def test_without_the_box_an_empty_view_list_still_searches_the_section(mw):
     """The box-off pick is unchanged: findClosest was always handed None, not
     an empty list, when no trace had been drawn in view."""
@@ -546,6 +559,29 @@ def test_hidden_layer_leaves_no_stale_traces_in_view(mw, qapp):
     assert d03 in field.section.tracesAsList()
 
 
+def test_hide_all_with_the_box_off_picks_nothing(mw, qapp):
+    """With H on and the box off, a pick finds nothing, as on main: a trace
+    of a hidden group is not picked by a search of the whole section."""
+    field = mw.field
+    tform = field.section.tform
+    sp = _trace(field.section, "d03sp14")
+    mw.series.object_groups.add("roi_hidden", "d03sp14")
+    mw.series.groups_visibility["roi_hidden"] = False
+    field.generateView()
+    assert sp not in field.section_layer.traces_in_view
+
+    field.toggleHideAllTraces()
+    assert not field.roi_box_on
+    p = _pix(field, *_on_trace(sp, tform))
+    assert field.section_layer.getTrace(p.x(), p.y()) == (None, None)
+
+    # scissors on the hidden trace starts no cut
+    field.setMouseMode(SCISSORS)
+    _click(field, qapp, *_on_trace(sp, tform))
+    assert not field.is_scissoring
+    assert sp in field.section.tracesAsList()
+
+
 def test_a_cached_candidate_is_checked_against_the_current_box(mw, qapp):
     """A trace in the last draw's list is not picked once the box has moved
     off it, even before the next draw."""
@@ -635,6 +671,97 @@ def test_every_field_object_command_refuses_but_3d(mw, qapp, notices, monkeypatc
     notices.clear()
     field.addTo3D()
     assert notices == [] and added == [["d03"]]
+
+
+def test_calibrate_pixel_size_refuses_while_the_box_is_on(mw, qapp, notices, monkeypatch):
+    """Calibration reads every trace of the selected names and rewrites the
+    series pixel size, so it waits for the box to be off."""
+    from PySide6.QtWidgets import QInputDialog
+
+    field = mw.field
+    _outside_copy(field.section)
+    _turn_on(mw, qapp)
+    field.section.selected_traces = [_trace_inside(field, "d03")]
+    asked = []
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(
+        lambda *a, **k: asked.append(1) or ("2.0", True)
+    ))
+    mag = field.section.mag
+    mw.checkActions()
+    assert mw.calibrate_act.isEnabled()
+
+    mw.calibrate_act.trigger()
+
+    assert notices == ["Turn off the ROI box first."]
+    assert asked == []
+    assert field.section.mag == mag
+
+
+def test_host_gesture_refuses_and_drops_its_pending_trace(mw, qapp, notices):
+    """The Host tool sets a series-wide host, so each click refuses while the
+    box is on, and a trace picked before the box came on is let go."""
+    field = mw.field
+    tform = field.section.tform
+    _turn_on(mw, qapp)
+    field.setMouseMode(HOST)
+    d03 = _trace(field.section, "d03")
+
+    _click(field, qapp, *_on_trace(d03, tform))
+    assert notices == ["Turn off the ROI box first."]
+    assert field.hosted_trace is None
+
+    # a gesture begun before the box came on
+    notices.clear()
+    field.hosted_trace = _trace(field.section, "d03sp14")
+    field.current_trace = [(0, 0)]
+    _click(field, qapp, *_on_trace(d03, tform))
+    assert notices == ["Turn off the ROI box first."]
+    assert field.hosted_trace is None and field.current_trace == []
+    assert mw.series.getObjHosts("d03sp14") == []
+
+
+SERIES_WIDE_ACTIONS = [
+    "hidealltraces_act",
+    "unhidealltraces_act",
+    "duplicates_act",
+    "removepixeldust_act",
+    "removeempty_act",
+    "repairselfcrossings_act",
+    "recolorallfrompalette_act",
+    "setmag_act",
+    "importfromseries_act",
+    "importfromzarrlabels_act",
+    "updatecuration_act",
+]
+
+
+@pytest.mark.parametrize("act", SERIES_WIDE_ACTIONS)
+def test_series_wide_menu_commands_refuse_while_the_box_is_on(mw, qapp, notices, act):
+    """Each menu command that reads or writes traces across the series
+    refuses before it asks anything or changes a trace."""
+    field = mw.field
+    _turn_on(mw, qapp)
+    recorder = mw.main_window_dialogs
+    dialogs_before = list(recorder.dialogs)
+    traces_before = [
+        (t.name, t.hidden, t.color, list(t.points))
+        for t in field.section.tracesAsList()
+    ]
+    mag = field.section.mag
+    mw.checkActions()
+    action = getattr(mw, act)
+    assert action.isEnabled()
+
+    action.trigger()
+    qapp.processEvents()
+
+    assert notices == ["Turn off the ROI box first."]
+    assert recorder.dialogs == dialogs_before and recorder.notices == []
+    assert field.section.mag == mag
+    assert [
+        (t.name, t.hidden, t.color, list(t.points))
+        for t in field.section.tracesAsList()
+    ] == traces_before
 
 
 def test_object_list_commands_are_not_limited_by_the_box(mw, qapp, notices, monkeypatch):

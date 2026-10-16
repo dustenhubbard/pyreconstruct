@@ -84,6 +84,9 @@ class TraceLayer():
         # the field's ROI box (center x, center y, width, height in field
         # units), or None. View-only: set by every draw, never saved
         self.roi_box = None
+        # True while every trace is hidden (H): nothing is drawn, so
+        # nothing can be picked
+        self.traces_hidden = False
         # the (style, glow percent) the options dialog shows while it is open;
         # None draws from the stored options
         self.selected_style_preview = None
@@ -185,8 +188,9 @@ class TraceLayer():
 
         # findClosest searches the whole section when it gets no traces. With
         # the ROI box on, no traces in view means none inside the box, and
-        # the traces outside it must not be picked.
-        if self.traces_in_view or self.roi_box is not None:
+        # the traces outside it must not be picked. With every trace hidden,
+        # none is on the screen to pick.
+        if self.traces_in_view or self.roi_box is not None or self.traces_hidden:
             traces_in_view = self.traces_in_view
         else:
             traces_in_view = None

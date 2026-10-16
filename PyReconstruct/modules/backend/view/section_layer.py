@@ -64,6 +64,7 @@ class SectionLayer(ImageLayer, TraceLayer):
         
         ## Kept even when the traces are hidden, so picking never sees a stale box
         self.roi_box = roi_box
+        self.traces_hidden = hide_traces
 
         ## Hide all traces if requested. Nothing is drawn, so nothing is in
         ## view: a list left from an earlier draw would let a click pick a
