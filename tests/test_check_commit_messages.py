@@ -8,13 +8,12 @@ on the message it is for, and an ordinary squash message passes.
 
 The rules are a copy of the pre-commit check's. Set MESSAGE_RULES_SOURCE to the
 path of that check's script to compare the two; without it, that test skips.
-The names the rules look for are decoded here, so this file does not carry
+The names the rules look for come from the script, so this file does not carry
 them either.
 
 Loaded by file path, like the other CI scripts in ``scripts/``.
 """
 
-import base64
 import importlib.util
 import json
 import os
@@ -33,13 +32,9 @@ check = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(check)
 
 
-def _word(encoded):
-    return base64.b64decode(encoded).decode("ascii")
-
-
-TOOL = _word("Q2xhdWRl")
-MODEL = _word("b3B1cw==")
-VENDOR = _word("YW50aHJvcGlj")
+TOOL = check.TOOL.capitalize()
+MODEL = check.NAME_WORDS[2]
+VENDOR = check.VENDOR
 
 ATTRIBUTION = "has an attribution trailer, a session line or a generated-with line"
 NAME = "names a tool or process"
@@ -77,7 +72,7 @@ def test_the_pr_number_github_adds_is_not_counted_in_the_subject():
         (f"fix: {MODEL} integration", NAME),
         ("fix: a thing \u2014 and more", "has an em dash or a spaced double hyphen"),
         ("fix: a thing -- and more", "has an em dash or a spaced double hyphen"),
-        ("fix: a thing\n\n" + "a" * 701, "body is 701 characters; the cap is 700"),
+        ("fix: a thing\n\n" + "a" * 701, "message is 715 characters; the cap is 700"),
         ("fix: a thing\n\nThis was his call.",
          "names the owner in the third person ('his call')"),
         ("fix: a thing\n\nLet us delve into it.", "has a stock phrase ('delve')"),
@@ -85,6 +80,30 @@ def test_the_pr_number_github_adds_is_not_counted_in_the_subject():
 )
 def test_each_rule_fires_on_its_message(message, expected):
     assert expected in check.problems_in(message)
+
+
+# The 700 cap counts the whole message, subject and body, as the pre-commit
+# check does.
+CAP_CASES = [
+    ("fix: short\n\n" + "a" * 688, None),
+    ("fix: short\n\n" + "a" * 689, "message is 701 characters; the cap is 700"),
+    ("fix: short\n\n" + "a" * 690, "message is 702 characters; the cap is 700"),
+    ("fix: " + "s" * 65 + "\n\n" + "a" * 628, None),
+    ("fix: " + "s" * 65 + "\n\n" + "a" * 630, "message is 702 characters; the cap is 700"),
+]
+
+
+@pytest.mark.parametrize("message, expected", CAP_CASES)
+def test_the_cap_counts_the_subject_and_the_body(message, expected):
+    assert check.problems_in(message) == ([expected] if expected else [])
+
+
+def test_the_pr_number_github_adds_is_not_counted_in_the_whole_message():
+    message = "fix: short (#914)\n\n" + "a" * 688
+    assert check.problems_in(message) == []
+    assert check.problems_in(message + "a") == [
+        "message is 701 characters; the cap is 700"
+    ]
 
 
 def test_a_name_inside_a_longer_word_passes():
@@ -126,6 +145,7 @@ PROBES = [
     "fix: a thing\n\nThis was his call.",
     "fix: a thing\n\nLet us delve into it.",
     "fix: plain wording\n\nNothing to see here.",
+    *(message for message, _ in CAP_CASES),
 ]
 
 
@@ -147,7 +167,7 @@ def test_the_copy_has_the_same_patterns_and_caps(source_check):
                  check.THIRD_PERSON, check.STOCK_PHRASES):
         assert (mine.pattern, mine.flags) in theirs, mine.pattern
     assert check.SUBJECT_MAX == source_check.SUBJECT_MAX
-    assert check.BODY_MAX == source_check.PUBLIC_TEXT_MAX
+    assert check.TEXT_MAX == source_check.PUBLIC_TEXT_MAX
 
 
 @pytest.mark.parametrize("message", PROBES)
@@ -189,11 +209,35 @@ def test_a_push_of_more_than_250_commits_is_checked_in_full(tmp_path, monkeypatc
     assert hits[0]["subject"] == messages[3]
 
 
-def test_with_no_usable_base_only_the_pushed_commit_is_checked(tmp_path, monkeypatch):
-    shas = make_history(tmp_path, ["fix: one", "fix: two", "fix: three"])
+def git(repo, *args):
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+
+
+def test_a_first_push_checks_every_commit_on_the_branch(tmp_path, monkeypatch):
+    messages = ["fix: first \u2014 with a dash", "fix: clean middle", "fix: clean tip"]
+    shas = make_history(tmp_path, messages)
     monkeypatch.chdir(tmp_path)
-    for before in ("0" * 40, "1" * 40):
-        assert [c["sha"] for c in check.commits_between(before, shas[-1])] == [shas[-1]]
+    commits = check.commits_between("0" * 40, shas[-1])
+    assert [c["sha"] for c in commits] == shas[::-1]
+    assert [h["sha"] for h in check.scan(commits)] == [shas[0]]
+
+
+def test_a_first_push_skips_commits_another_branch_or_tag_has(tmp_path, monkeypatch):
+    shas = make_history(tmp_path, [f"fix: change {i}" for i in range(5)])
+    git(tmp_path, "branch", "other", shas[1])
+    git(tmp_path, "tag", "v1", shas[2])
+    git(tmp_path, "update-ref", "refs/remotes/origin/main", shas[-1])
+    git(tmp_path, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+    monkeypatch.chdir(tmp_path)
+    commits = check.commits_between("0" * 40, shas[-1])
+    assert [c["sha"] for c in commits] == [shas[4], shas[3]]
+
+
+def test_a_base_the_clone_does_not_have_is_an_error(tmp_path, monkeypatch):
+    shas = make_history(tmp_path, ["fix: one", "fix: two"])
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(RuntimeError, match="not in this clone"):
+        check.commits_between("1" * 40, shas[-1])
 
 
 def test_main_prints_only_the_commits_with_problems(tmp_path, monkeypatch, capsys):
