@@ -110,6 +110,7 @@ PyReconstruct = "PyReconstruct.cli:main"
 test = [
     "pytest>=9,<10",
     "pytest-qt>=4",
+    "pyyaml>=6",
     "setuptools-scm>=8",
 ]
 
