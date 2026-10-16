@@ -475,3 +475,146 @@ def test_a_busy_store_is_reported_as_busy_never_as_damage(tmp_path, store_on):
             other.close()
     finally:
         series.close()
+
+
+# ---------------------------------------------------------------------------
+# round 2: same-content rewrites, inserted sections, stranded stores
+# ---------------------------------------------------------------------------
+
+def test_a_rewrite_of_the_same_content_does_not_mark_the_store_ahead(tmp_path, store_on):
+    fp = _copy(SERIES_FILES[1], tmp_path)
+    series = _open(fp)
+    try:
+        snum, name, edited = _edit_one_trace(series)
+        assert series.store.commit(series) is True
+        series.saveJser()
+        assert not series.store.hasUnexportedWork()
+        # what MainWindow.saveAllData does at close, "when in doubt"
+        series.loadSection(snum).save(update_series_data=False)
+        series.save()
+        assert series.store.hasPending()
+        assert series.store.commit(series) is False
+        assert not series.store.hasUnexportedWork()
+    finally:
+        series.close()
+
+
+@pytest.mark.parametrize("where", ["end", "middle"])
+@pytest.mark.parametrize("answer", [True, False])
+def test_an_inserted_section_survives_a_crash(where, answer, tmp_path, store_on):
+    fp = _copy(SERIES_FILES[1], tmp_path)
+    series = _open(fp)
+    before = sorted(series.sections)
+    index = max(before) + 1 if where == "end" else before[len(before) // 2]
+    moved = series.loadSection(index).getDict() if where == "middle" else None
+    series.insertSection(index, "inserted.tif", 0.00254, 0.05, log_event=False)
+    series.save()
+    _die(series)
+
+    asked = Answer(answer)
+    series = _open(fp, notifier=asked)
+    try:
+        assert len(asked.asked) == 1
+        if answer:
+            assert len(series.sections) == len(before) + 1
+            assert series.loadSection(index).src == "inserted.tif"
+            if moved is not None:
+                assert series.loadSection(index + 1).getDict() == moved
+        else:
+            assert sorted(series.sections) == before
+    finally:
+        series.close()
+
+
+def test_a_section_file_left_in_the_working_folder_is_offered_back(tmp_path, store_on):
+    fp = _copy(SERIES_FILES[0], tmp_path)
+    series = _open(fp)
+    new = max(series.sections) + 1
+    Section.new(series.name, new, "stray.tif", 0.00254, 0.05, series.hidden_dir)
+    _die(series)
+
+    asked = Answer(True)
+    series = _open(fp, notifier=asked)
+    try:
+        assert len(asked.asked) == 1
+        assert new in series.sections
+    finally:
+        series.close()
+
+
+def test_an_insert_exports_what_the_app_writes_today(tmp_path, monkeypatch, store_on):
+    src = SERIES_FILES[1]
+    out = {}
+    for mode in ("today", "store"):
+        if mode == "today":
+            monkeypatch.delenv(hybrid_store.ENV_SWITCH)
+        else:
+            monkeypatch.setenv(hybrid_store.ENV_SWITCH, "1")
+        fp = _copy(src, tmp_path, mode)
+        series = _open(fp)
+        try:
+            middle = sorted(series.sections)[len(series.sections) // 2]
+            series.insertSection(middle, "inserted.tif", 0.00254, 0.05, log_event=False)
+            series.saveJser()
+        finally:
+            series.close()
+        out[mode] = fp.read_bytes()
+    assert out["store"] == out["today"]
+
+
+def _store_only_save(fp):
+    series = _open(fp)
+    snum, name, edited = _edit_one_trace(series)
+    series.store.commit(series)
+    series.close()
+    return snum, edited
+
+
+def test_a_store_whose_jser_moved_is_named_at_the_next_open(tmp_path, store_on):
+    fp = _copy(SERIES_FILES[1], tmp_path)
+    _store_only_save(fp)
+    db_fp, _ = hybrid_store.storePaths(str(fp))
+    fp.rename(tmp_path / "data" / "renamed.jser")
+
+    other = _copy(SERIES_FILES[0], tmp_path, "other")
+    told = Answer(True)
+    _open(other, notifier=told).close()
+    assert len(told.told) == 1
+    assert db_fp in told.told[0] and "gone" in told.told[0]
+
+
+def test_a_set_aside_store_is_named_and_exports_its_work(tmp_path, monkeypatch, store_on):
+    fp = _copy(SERIES_FILES[1], tmp_path)
+    snum, edited = _store_only_save(fp)
+    os.utime(fp, ns=(1, 1))  # another opener saves the stale .jser
+    told = Answer(True)
+    _open(fp, notifier=told).close()  # sets the store aside
+    kept = [p for p in store_on.iterdir() if ".conflict-" in p.name and p.suffix == ".pyrstore"]
+    assert len(kept) == 1
+    assert len(told.told) == 1  # the set-aside notice, not twice
+
+    told = Answer(True)
+    _open(fp, notifier=told).close()  # every later open names it
+    assert len(told.told) == 1 and str(kept[0]) in told.told[0]
+
+    out = Path(hybrid_store.exportStoreFile(str(kept[0])))
+    assert out.parent == store_on and out.suffix == ".jser"
+    monkeypatch.delenv(hybrid_store.ENV_SWITCH)
+    plain = _open(out)
+    try:
+        assert plain.store is None
+        assert plain.loadSection(snum).getDict() == edited
+    finally:
+        plain.close()
+    with pytest.raises(FileExistsError):
+        hybrid_store.exportStoreFile(str(kept[0]), str(out))
+    assert hybrid_store.strandedStores() == []  # exported: no longer stranded
+
+
+def test_export_of_a_store_from_the_command_line(tmp_path, store_on, capsys):
+    fp = _copy(SERIES_FILES[0], tmp_path)
+    _open(fp).close()
+    db_fp, _ = hybrid_store.storePaths(str(fp))
+    out = tmp_path / "cli.jser"
+    assert hybrid_store._main(["export", db_fp, str(out)]) == 0
+    assert out.is_file() and str(out) in capsys.readouterr().out

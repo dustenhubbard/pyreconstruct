@@ -87,7 +87,7 @@ def return_file_menu(self):
                 [
                     ("exportxml_act", "To legacy Reconstruct (XML)...", "", self.exportToXML),
                     ("exportngzarr_act", "To Neuroglancer (Zarr)...", "", self.exportToZarr)
-                ]
+                ] + _storeExportOpts(self)
             },
             None,
             ("username_act", "Change username...", "", self.changeUsername),
@@ -563,6 +563,17 @@ def return_help_menu(self):
             },
         ]
     }
+
+
+def _storeExportOpts(self) -> list:
+    """PROTOTYPE: the hybrid store's export rows, only when the series uses it."""
+    if getattr(self.series, "store", None) is None:
+        return []
+    return [
+        None,
+        ("exportstorejser_act", "To .jser now (from the local store)", "", self.exportStoreToJser),
+        ("exportsetaside_act", "Set-aside store to .jser...", "", self.exportSetAsideStore),
+    ]
 
 
 def return_menubar(self):

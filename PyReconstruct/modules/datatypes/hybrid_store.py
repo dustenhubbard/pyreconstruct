@@ -345,6 +345,45 @@ class HybridStore():
                 (snum,),
             )
 
+    def foldStraySections(self):
+        """Keep section files the last session left only in the working folder.
+
+        A section inserted by Section.new exists as a file in the working folder
+        until it is in the store. After a crash the next open would clear the
+        folder; its sections go into the working rows first, so the recovery
+        offer includes them, as the hidden folder's files are offered today.
+        """
+        if not os.path.isdir(self.work_dir):
+            return []
+        known = set(self.sectionNumbers())
+        found = {}
+        for name in os.listdir(self.work_dir):
+            stem, dot, ext = name.rpartition(".")
+            if dot and ext.isdigit() and int(ext) not in known:
+                with open(os.path.join(self.work_dir, name), "rb") as f:
+                    found[int(ext)] = fast_loads(f.read())
+        for snum, data in sorted(found.items()):
+            self.writePendingSection(snum, data)
+        return sorted(found)
+
+    def reorderSections(self, mapping : dict, work_files : dict):
+        """Renumber sections in the working layer (Series.reorderSections)."""
+        moved = {old: new for old, new in mapping.items() if old != new}
+        if not moved:
+            return
+        data = {old: self.readSection(old, work_files.get(old)) for old in moved}
+        with self._tx(sync="NORMAL"):
+            for old, new in moved.items():
+                self.con.execute(
+                    "INSERT OR REPLACE INTO pending_section(snum, data) VALUES (?, ?)",
+                    (new, fast_dumps(data[old])),
+                )
+            for old in set(moved) - set(mapping.values()):
+                self.con.execute(
+                    "INSERT OR REPLACE INTO pending_section(snum, data) VALUES (?, NULL)",
+                    (old,),
+                )
+
     def writePendingSeries(self, series_data : dict):
         with self._tx(sync="NORMAL"):
             self.con.execute(
@@ -434,6 +473,10 @@ class HybridStore():
             f"INSERT INTO trace({TRACE_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", rows
         )
 
+    def _savedSection(self, snum : int) -> dict:
+        row = self.con.execute("SELECT header FROM section WHERE snum=?", (snum,)).fetchone()
+        return self._assemble(snum, fast_loads(row[0]))
+
     def _dropSection(self, snum : int):
         for table in ("trace", "trace_stats", "section"):
             self.con.execute(f"DELETE FROM {table} WHERE snum=?", (snum,))
@@ -468,6 +511,11 @@ class HybridStore():
         its saved rows, exactly as a full open would measure them: the numbers
         the session holds come from unsaved points and can differ in the last
         bit from the saved ones.
+
+        A working row whose content equals the saved section is dropped, not
+        saved: the app writes a section "when in doubt" (MainWindow.saveAllData
+        on close, after a Save), and a rewrite of the same content must not
+        mark the store ahead of the .jser. So `dirty` means the content changed.
         """
         work_files = {
             snum: os.path.join(series.getwdir(), fname)
@@ -485,27 +533,39 @@ class HybridStore():
             for snum in saved - set(series.sections):
                 pending[snum] = None
             replaced = []
+            changed = False
             for snum, data in sorted(pending.items()):
                 if data is None or snum not in series.sections:
-                    self._dropSection(snum)
+                    if snum in saved:
+                        self._dropSection(snum)
+                        changed = True
                     continue
-                self._replaceSection(snum, fast_loads(data))
+                section_data = fast_loads(data)
+                if snum in saved and self._savedSection(snum) == section_data:
+                    continue  # the same content written again
+                self._replaceSection(snum, section_data)
                 replaced.append(snum)
+                changed = True
             self.con.execute("DELETE FROM pending_section")
             self._measure(series, replaced)
             row = self.con.execute("SELECT data FROM pending_series").fetchone()
             if row is not None:
-                self.con.execute("INSERT OR REPLACE INTO series(id, data) VALUES (1, ?)", row)
+                old = self.con.execute("SELECT data FROM series").fetchone()
+                if old is None or fast_loads(old[0]) != fast_loads(row[0]):
+                    self.con.execute("INSERT OR REPLACE INTO series(id, data) VALUES (1, ?)", row)
+                    changed = True
             log_fp = os.path.join(series.getwdir(), "existing_log.csv")
             if os.path.isfile(log_fp):
                 with open(log_fp, "r", encoding="utf-8", errors="replace") as f:
-                    self.con.execute(
-                        "INSERT OR REPLACE INTO log(id, text) VALUES (1, ?)", (f.read(),)
-                    )
+                    text = f.read()
+                if text != self.logText():
+                    self.con.execute("INSERT OR REPLACE INTO log(id, text) VALUES (1, ?)", (text,))
+                    changed = True
             self.con.execute("DELETE FROM pending_section")
             self.con.execute("DELETE FROM pending_series")
-            if pending or row is not None:
+            if changed:
                 self.setMeta("dirty", 1)
+        return changed
 
     def markExported(self, jser_fp : str):
         with self._tx():
@@ -762,8 +822,112 @@ class _Transaction():
         return False
 
 
+def _readMeta(db_fp : str):
+    """(meta dict, has working rows) of a store, read only; None if unreadable."""
+    try:
+        con = sqlite3.connect(f"file:{db_fp}?mode=ro", uri=True, timeout=1)
+        try:
+            meta = dict(con.execute("SELECT key, value FROM meta"))
+            pending = bool(
+                con.execute("SELECT 1 FROM pending_section LIMIT 1").fetchone()
+                or con.execute("SELECT 1 FROM pending_series LIMIT 1").fetchone()
+            )
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return None
+    return meta, pending
+
+
+def strandedStores(skip=()) -> list:
+    """Stores holding work no .jser has: (store file, recorded .jser, why).
+
+    Read at every open. A store is stranded when it has unexported work and its
+    .jser is gone (moved, renamed, deleted), changed on disk since the store
+    last matched it, or when the store was set aside after such a change.
+    Content-keyed identity, which would follow a moved file, is not built.
+    """
+    root = storeRoot()
+    if not root.is_dir():
+        return []
+    skip = {os.path.realpath(p) for p in skip}
+    out = []
+    for fp in sorted(root.glob("*.pyrstore")):
+        if os.path.realpath(fp) in skip:
+            continue
+        read = _readMeta(str(fp))
+        if read is None:
+            continue
+        meta, pending = read
+        if meta.get("dirty") != "1" and not pending:
+            continue
+        jser = meta.get("jser_path") or ""
+        if ".conflict-" in fp.name:
+            why = "set aside after its .jser changed on disk"
+        elif not os.path.isfile(jser):
+            why = "its .jser is gone (moved, renamed or deleted)"
+        else:
+            st = os.stat(jser)
+            if (str(st.st_size), str(st.st_mtime_ns)) == (meta.get("jser_size"), meta.get("jser_mtime_ns")):
+                continue  # the .jser is as the store left it; its own open says so
+            why = "its .jser changed on disk after the store's last export"
+        out.append((str(fp), jser, why))
+    return out
+
+
+def strandedText(stranded) -> str:
+    lines = [
+        "Changes saved on this computer were never written to a .jser:", "",
+    ]
+    for fp, jser, why in stranded:
+        lines.append(f"{os.path.basename(jser) or '(unknown series)'}: {why}.")
+        lines.append(f"    kept in {fp}")
+    lines += ["", "Nothing was deleted. To get a .jser back, use File > Export series > "
+              "Set-aside store to .jser..."]
+    return "\n".join(lines)
+
+
+def exportStoreFile(db_fp : str, out_fp : str = None, progress=None) -> str:
+    """Write a .jser from a store file (a set-aside one, say), next to it.
+
+    The series is built from the store as an open would build it and written
+    by Series.saveJser, so the bytes are what the app writes. An existing file
+    is never replaced.
+    """
+    from PyReconstruct.modules.backend.progress import NullProgressReporter
+
+    meta = (_readMeta(db_fp) or ({}, False))[0]
+    if out_fp is None:
+        stem = os.path.splitext(os.path.basename(meta.get("jser_path") or "series.jser"))[0]
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        out_fp = os.path.join(os.path.dirname(db_fp), f"{stem} recovered {stamp}.jser")
+    if os.path.exists(out_fp):
+        raise FileExistsError(out_fp)
+    store = HybridStore(db_fp, db_fp[:-len(".pyrstore")] + ".work")
+    series = None
+    try:
+        store.foldStraySections()
+        series = store.buildSeries(out_fp)
+        series.setProgressReporter(progress or NullProgressReporter)
+        series.saveJser()
+    finally:
+        if series is not None:
+            series.close()
+        store.close()
+    return out_fp
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _main(argv):
+    """python -m PyReconstruct.modules.datatypes.hybrid_store export <store> [out.jser]"""
+    if len(argv) < 2 or argv[0] != "export":
+        print(_main.__doc__)
+        return 2
+    print(exportStoreFile(argv[1], argv[2] if len(argv) > 2 else None))
+    return 0
 
 
 def openSeries(jser_fp : str, progress, notifier):
@@ -778,6 +942,7 @@ def openSeries(jser_fp : str, progress, notifier):
         store = HybridStore.forJser(jser_fp)
     except StoreBusyError as e:
         raise SeriesOpenError(str(e)) from e
+    kept = None
     if store.isImported() and not store.matchesJser(jser_fp):
         if store.hasUnexportedWork():
             # both the .jser and the store changed: keep the store, read the file
@@ -796,6 +961,8 @@ def openSeries(jser_fp : str, progress, notifier):
     sname = os.path.splitext(os.path.basename(jser_fp))[0]
     reporter = factory(text=_openingText(sname))
     try:
+        if store.isImported():
+            store.foldStraySections()
         if not store.isImported():
             jser_data, collisions = Series._readJserForOpen(jser_fp, notifier)
             if jser_data is None:
@@ -820,9 +987,16 @@ def openSeries(jser_fp : str, progress, notifier):
         store.writeStatsFor(series, store.recomputed)
         if store.hasPending():
             series.modified = True
+        stranded = strandedStores(skip=[store.db_fp] + ([kept] if kept else []))
+        if stranded:
+            asker.notify(strandedText(stranded))
     except BaseException:
         store.close()
         raise
     finally:
         reporter.finish()
     return series
+
+
+if __name__ == "__main__":
+    sys.exit(_main(sys.argv[1:]))

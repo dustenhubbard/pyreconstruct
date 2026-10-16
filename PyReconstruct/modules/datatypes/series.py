@@ -4943,13 +4943,23 @@ class Series():
             Returns:
                 (dict): the old_snum : new_snum map that was applied
         """
-        if self.store is not None:
-            raise SeriesSaveError("Reordering sections is not in the hybrid store prototype.")
         if not d:
             d = dict(tuple((snum, i) for i, snum in enumerate(sorted(self.sections))))
 
+        if self.store is not None:
+            # PROTOTYPE: the sections are renumbered in the store's working rows
+            self.store.reorderSections(d, {
+                n: os.path.join(self.hidden_dir, f) for n, f in self.sections.items()
+            })
+            for old_snum in d:
+                fp = os.path.join(self.hidden_dir, f"{self.name}.{old_snum}")
+                if os.path.isfile(fp):
+                    os.remove(fp)
+
         # rename the section files
         for old_snum, new_snum in d.items():
+            if self.store is not None:
+                break
             os.rename(
                 os.path.join(self.hidden_dir, f"{self.name}.{old_snum}"),
                 os.path.join(self.hidden_dir, f"{self.name}.{new_snum}.temp")
@@ -5012,6 +5022,12 @@ class Series():
             self.hidden_dir
         )
         self.sections[max_snum] = f"{self.name}.{max_snum}"
+        if self.store is not None:
+            # PROTOTYPE: the new section is unsaved work in the store, so a
+            # crash before the next Save offers it back like any other edit
+            new_fp = os.path.join(self.hidden_dir, self.sections[max_snum])
+            with open(new_fp, "rb") as f:
+                self.store.writePendingSection(max_snum, fast_loads(f.read()))
 
         # reorder the sections
         if index in self.sections:
