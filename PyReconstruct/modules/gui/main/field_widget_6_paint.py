@@ -4,12 +4,14 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import (
     QPoint, 
     QLine,
+    QRect,
 )
 from PySide6.QtGui import (
     QPen,
     QColor,
     QPainter, 
     QFont,
+    QFontMetrics,
 )
 
 from PyReconstruct.modules.backend.autoseg.palette import palette_color
@@ -26,6 +28,75 @@ from .field_widget_5_mouse import (
     STAMP, 
     HOST
 )
+
+def hoverDisplayPosition(field, size, prefer_right, scale_bar=None, others=(),
+                         text=None, margin=3):
+    """Where the hover box goes: its top-left point, in the field's parent's
+    coordinates.
+
+    The box goes in a bottom corner, the one opposite the tool palette first.
+    If something is in that corner (the scale bar, the section buttons), the
+    box is lifted until it sits just above it, so it stays near where it
+    always was without covering the bar. The corner text (the selected trace
+    and z-trace names) is on the same side at the top, and the box must not
+    cover it either. If that side has no room, the other bottom corner is
+    tried the same way, then the two top corners. If no candidate is clear
+    of everything, the one that covers the least wins: the bar and the corner
+    text count worst, then the number of palette widgets covered, and on a
+    tie the unlifted bottom corners come first, where the box always went.
+    The scale bar itself is never moved or hidden.
+
+    Run when the box is placed, not on every paint.
+
+        Params:
+            field (QRect): the field
+            size (QSize): the box's size
+            prefer_right (bool): True for the bottom-right corner first
+            scale_bar (QRect): the scale bar on show, or None
+            others (list[QRect]): the other palette widgets on show
+            text (QRect): the corner text, or None when there is none
+            margin (int): the gap kept from the field's edge and from obstacles
+        Returns:
+            (QPoint): where to move the box
+    """
+    left = field.x() + margin
+    right = field.x() + field.width() - size.width() - margin
+    top = field.y() + margin
+    bottom = field.y() + field.height() - size.height() - margin
+    near, far = (right, left) if prefer_right else (left, right)
+    worst = [r for r in (scale_bar, text) if r is not None]
+    solid = ([scale_bar] if scale_bar is not None else []) + list(others)
+
+    def lifted(x):
+        """The bottom-corner spot at `x`, lifted above anything in the way,
+        or None when it would leave the field."""
+        y = bottom
+        while True:
+            box = QRect(QPoint(x, y), size)
+            hits = [r for r in solid if box.intersects(r)]
+            if not hits:
+                return QPoint(x, y)
+            y = min(r.top() for r in hits) - margin - size.height()
+            if y < top:
+                return None
+
+    candidates = [lifted(near), lifted(far), QPoint(near, top), QPoint(far, top)]
+    candidates = [c for c in candidates if c is not None]
+    fallback = [QPoint(near, bottom), QPoint(far, bottom)]
+
+    def cost(point):
+        box = QRect(point, size)
+        return (sum(box.intersects(r) for r in worst),
+                sum(box.intersects(r) for r in others))
+
+    for point in candidates:
+        if cost(point) == (0, 0):
+            return point
+    # nothing is clear: the least covered, and on a tie the box's usual
+    # bottom corners before anything else, as it was placed before
+    pool = fallback + candidates
+    return min(pool, key=lambda p: (cost(p), pool.index(p)))
+
 
 class FieldWidgetPaint(FieldWidgetMouse):
     """
@@ -168,6 +239,18 @@ class FieldWidgetPaint(FieldWidgetMouse):
             x = self.width() - 10
             right_justified = True
         y = 0
+
+        # the text in the corner opposite the palette (blended sections,
+        # selected flags, traces and z-traces); its lines are kept so the
+        # hover box can be placed clear of them (see cornerTextRect)
+        corner_lines = []
+
+        def drawCorner(y, text):
+            corner_lines.append(text)
+            drawOutlinedText(
+                field_painter, x, y, text,
+                (255, 255, 255), (0, 0, 0), st_size, right_justified,
+            )
         
         # draw the name of the closest trace on the screen
         # draw the selected traces to the screen
@@ -326,90 +409,44 @@ class FieldWidgetPaint(FieldWidgetMouse):
         # draw the names of the blended sections
         if self.blend_sections and self.b_section:
             y += 20
-            drawOutlinedText(
-                field_painter,
-                x, y,
-                f"Blended sections: {self.b_section.n} and {self.section.n}",
-                (255, 255, 255),
-                (0, 0, 0),
-                st_size,
-                right_justified
-            )
+            drawCorner(y, f"Blended sections: {self.b_section.n} and {self.section.n}")
             y += st_size
         
         # draw the number of selected flags
         if self.section.selected_flags:
             y += 20
             l = len(self.section.selected_flags)
-            drawOutlinedText(
-                field_painter,
-                x, y,
-                f"{l} flag{'s' if l > 1 else ''} selected",
-                (255, 255, 255),
-                (0, 0, 0),
-                st_size,
-                right_justified
-            )
+            drawCorner(y, f"{l} flag{'s' if l > 1 else ''} selected")
             y += st_size
         
         # draw the names of the selected traces
         if self.selected_trace_names:
             y += 20
-            drawOutlinedText(
-                field_painter,
-                x, y,
-                "Selected Traces:",
-                (255, 255, 255),
-                (0, 0, 0),
-                st_size,
-                right_justified
-            )
+            drawCorner(y, "Selected Traces:")
             for name, n in self.selected_trace_names.items():
                 y += st_size + 10
                 if n == 1:
                     text = name
                 else:
                     text = f"{name} * {n}"
-                drawOutlinedText(
-                    field_painter,
-                    x, y,
-                    text,
-                    (255, 255, 255),
-                    (0, 0, 0),
-                    st_size,
-                    right_justified
-                )
+                drawCorner(y, text)
             y += st_size
         
         # draw the names of the selected ztraces
         if self.selected_ztrace_names:
             y += 20
-            drawOutlinedText(
-                field_painter,
-                x, y,
-                "Selected Ztraces:",
-                (255, 255, 255),
-                (0, 0, 0),
-                st_size,
-                right_justified
-            )
+            drawCorner(y, "Selected Ztraces:")
             for name, n in self.selected_ztrace_names.items():
                 y += st_size + 10
                 if n == 1:
                     text = name
                 else:
                     text = f"{name} * {n}"
-                drawOutlinedText(
-                    field_painter,
-                    x, y,
-                    text,
-                    (255, 255, 255),
-                    (0, 0, 0),
-                    st_size,
-                    right_justified
-                )
+                drawCorner(y, text)
             y += st_size
         
+        self.corner_text = (corner_lines, y, x, right_justified, st_size)
+
         # close the flag display if needed
         if close_hover_display:
             self.closeHoverDisplay()
@@ -421,6 +458,21 @@ class FieldWidgetPaint(FieldWidgetMouse):
             else:
                 self.updateStatusBar(closest)
     
+    def cornerTextRect(self):
+        """Where paintText last drew the corner text, in the field's
+        parent's coordinates, or None when it drew none. Measured only when
+        asked (the hover box asks when it is placed), not on every paint."""
+        lines, bottom, x, right_justified, size = getattr(
+            self, "corner_text", ([], 0, 0, False, 0))
+        if not lines:
+            return None
+        metrics = QFontMetrics(QFont("Courier New", size, QFont.Bold))
+        width = max(metrics.horizontalAdvance(line) for line in lines)
+        left = x - width if right_justified else x
+        pad = 2   # the text's outline
+        return QRect(self.x() + left - pad, self.y(),
+                     width + 2 * pad, bottom + pad)
+
     def closeHoverDisplay(self):
         """Close the hover information display."""
         # hide (do not close/discard) the widget: it is reused across hovers so
@@ -489,18 +541,18 @@ class FieldWidgetPaint(FieldWidgetMouse):
         elif h > self.height() - 6:
             h = self.height() - 6
         self.hover_display.resize(self.width() // 5, h)
-        # move to proper location
-        right_justified = self.mainwindow.mouse_palette.mode_x <= .5
-        if right_justified:
-            self.hover_display.move(
-                self.x() + self.width() - self.hover_display.width() - 3,
-                self.y() + self.height() - self.hover_display.height() - 3
-            )
-        else:
-            self.hover_display.move(
-                self.x() + 3,
-                self.y() + self.height() - self.hover_display.height() - 3
-            )
+        # a bottom corner, opposite the tool palette when there is room,
+        # clear of the scale bar, the palette and the corner text
+        palette = self.mainwindow.mouse_palette
+        scale_bar, others = palette.hoverObstacles()
+        self.hover_display.move(hoverDisplayPosition(
+            self.geometry(),
+            self.hover_display.size(),
+            prefer_right=palette.mode_x <= .5,
+            scale_bar=scale_bar,
+            others=others,
+            text=self.cornerTextRect(),
+        ))
         # scroll all the way down
         sb = self.hover_display.verticalScrollBar()
         sb.setValue(sb.maximum())
