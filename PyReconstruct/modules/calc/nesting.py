@@ -7,6 +7,12 @@ and then every negative would clear it with the hole. The 3D volume and the
 label export draw that way and then fill each island back in, less the voxels
 of every negative that cuts it, so a negative clears an island the same way
 whether or not the island sits in a hole.
+
+A hole may be drawn as several negatives that abut or overlap, none of which
+covers the island on its own. Together they are the hole around it, and the
+pieces the covering needs do not cut the island. A negative the covering does
+not need (one inside the hole, or across the island's edge) cuts it as it
+would with no hole around.
 """
 
 
@@ -39,11 +45,21 @@ def _covers(outer, inner) -> bool:
     """
     if outer is None or inner is None:
         return False
-    ob, ib = outer.bounds, inner.bounds
-    if ib[0] < ob[0] or ib[1] < ob[1] or ib[2] > ob[2] or ib[3] > ob[3]:
+    if not _boxAround(outer.bounds, inner.bounds):
         return False  # the box test is cheap and settles most pairs
+    return _around(outer, inner)
+
+
+def _boxAround(outer_bounds, inner_bounds) -> bool:
+    """Return whether one bounding box holds another."""
+    ob, ib = outer_bounds, inner_bounds
+    return not (ib[0] < ob[0] or ib[1] < ob[1] or ib[2] > ob[2] or ib[3] > ob[3])
+
+
+def _around(cover, inner) -> bool:
+    """Return whether a shape covers a polygon without being its outline."""
     try:
-        return outer.covers(inner) and not outer.equals(inner)
+        return cover.covers(inner) and not cover.equals(inner)
     except Exception:
         return False
 
@@ -57,14 +73,15 @@ def _boxesApart(a, b, reach=0.0) -> bool:
     )
 
 
-def _cutsIsland(island, negative, reach=0.0) -> bool:
-    """Return whether a negative clears part of an island.
+def _reaches(island, negative, reach=0.0) -> bool:
+    """Return whether a negative touches an island or comes within ``reach``
+    of it.
 
-    Every negative that touches the island or comes within ``reach`` of it
-    does, unless it is a hole around the island. That takes in one inside the
-    island, one with its outline (which cancels it), one that cuts across or
-    only touches its edge, one with no area that runs over it, and one close
-    enough that the two round onto the same voxel.
+    Such a negative clears part of the island unless it is a piece of the
+    hole around it: one inside the island, one with its outline (which
+    cancels it), one that cuts across or only touches its edge, one with no
+    area that runs over it, and one close enough that the two round onto the
+    same voxel.
 
         Params:
             island: the island's polygon
@@ -72,7 +89,7 @@ def _cutsIsland(island, negative, reach=0.0) -> bool:
                 no area
             reach (float): how far apart the two can be and still count
         Returns:
-            (bool): whether the negative clears part of the island
+            (bool): whether the negative reaches the island
     """
     if island is None or negative is None:
         return False
@@ -80,12 +97,109 @@ def _cutsIsland(island, negative, reach=0.0) -> bool:
         return False
     try:
         if reach > 0:
-            near = island.dwithin(negative, reach)
-        else:
-            near = island.intersects(negative)
+            return island.dwithin(negative, reach)
+        return island.intersects(negative)
     except Exception:
         return False
-    return near and not _covers(negative, island)
+
+
+def _aroundTogether(island, polys : list, reach=0.0) -> bool:
+    """Return whether several negatives together are a hole around an island:
+    their union, with any gap narrower than ``reach`` closed, covers it, and
+    the union is not the island's own outline.
+
+    Two pieces of a hole drawn a fraction of a voxel apart both reach into
+    the voxels between them, so the fill shows no wall there, and the same
+    holds for a slit that narrow through the pieces; closing the gaps (a
+    mitre buffer out and back in by half the reach) makes the union cover
+    what the pieces clear. The closing runs only when the plain union does
+    not already cover the island, and the outline test uses the plain union,
+    whose coordinates are exact. GEOS cannot join some self-crossing
+    outlines and raises; the caller decides what that means.
+    """
+    from shapely.ops import unary_union
+
+    # closing a gap adds nothing outside the pieces' boxes
+    bounds = [poly.bounds for poly in polys]
+    joint = (
+        min(b[0] for b in bounds), min(b[1] for b in bounds),
+        max(b[2] for b in bounds), max(b[3] for b in bounds),
+    )
+    if not _boxAround(joint, island.bounds):
+        return False
+    union = unary_union(polys)
+    if union.equals(island):
+        return False
+    if union.covers(island):
+        return True
+    if reach <= 0:
+        return False
+    closed = union.buffer(reach / 2, join_style="mitre")
+    closed = closed.buffer(-reach / 2, join_style="mitre")
+    return closed.covers(island)
+
+
+def _holeAround(island, negatives : list, reach=0.0) -> list:
+    """Return the indices of the negatives that are the hole around an island,
+    or an empty list when no hole is around it.
+
+    A negative that covers the island on its own is a hole around it, and
+    when any does, those are the hole: the other negatives are cuts, as they
+    were. Otherwise the negatives near the island are taken together; when
+    their union (gaps narrower than ``reach`` closed) covers the island
+    without being its outline, the hole is drawn as several traces, and its
+    pieces are the negatives the covering needs: those without which the rest
+    no longer covers the island. A negative drawn twice counts once for that,
+    so a duplicated piece is still a piece. When GEOS cannot join the
+    negatives (some self-crossing outlines), none of them is a piece of a
+    hole, as before.
+
+        Params:
+            island: the island's polygon
+            negatives (list): the negatives' polygons (None for one with no
+                area, which is never a piece of a hole)
+            reach (float): how far a piece can be from the island, or from
+                the next piece, and still count
+        Returns:
+            (list): ascending indices into negatives
+    """
+    if island is None:
+        return []
+    near = [
+        j for j, poly in enumerate(negatives)
+        if poly is not None and not _boxesApart(island, poly, reach)
+    ]
+    alone = [j for j in near if _covers(negatives[j], island)]
+    if alone or len(near) < 2:
+        return alone
+
+    try:
+        if not _aroundTogether(island, [negatives[j] for j in near], reach):
+            return []
+
+        # the same outline drawn twice is one piece
+        groups : list[list[int]] = []
+        for j in near:
+            for group in groups:
+                try:
+                    same = negatives[group[0]].equals(negatives[j])
+                except Exception:
+                    same = False
+                if same:
+                    group.append(j)
+                    break
+            else:
+                groups.append([j])
+        pieces = []
+        for group in groups:
+            rest = [negatives[j] for other in groups if other is not group for j in other]
+            if not rest or not _aroundTogether(island, rest, reach):
+                pieces.extend(group)
+    except Exception:
+        # GEOS cannot join some self-crossing outlines; then no hole is
+        # around the island, and it fills the way it did before
+        return []
+    return sorted(pieces)
 
 
 def _traceLine(points : list):
@@ -143,11 +257,13 @@ def _pairs(geoms : list, others : list, reach=0.0) -> dict:
 def islandCuts(pos : list, neg : list, reach : float = 0.0) -> list:
     """Return the islands of one section, each with the negatives that cut it.
 
-    An island is a positive trace inside a negative trace (a hole). Drawing
-    every positive and then every negative clears it with the hole, so the
-    caller fills each island back in afterward, less the voxels of the
-    negatives listed with it: every negative that touches it or comes within
-    ``reach`` of it, except the holes around it. Each island is filled back
+    An island is a positive trace inside a negative trace (a hole), or
+    inside several negatives that abut and together cover it (a hole drawn
+    as several traces). Drawing every positive and then every negative
+    clears it with the hole, so the caller fills each island back in
+    afterward, less the voxels of the negatives listed with it: every
+    negative that touches it or comes within ``reach`` of it, except the
+    pieces of the hole around it. Each island is filled back
     on its own, so one island's holes never clear another island, and the
     island loses the voxels it would lose with no hole around it. A section
     with no island comes back empty and draws exactly as before.
@@ -156,8 +272,9 @@ def islandCuts(pos : list, neg : list, reach : float = 0.0) -> list:
             pos (list): the point lists of the positive traces
             neg (list): the point lists of the negative traces
             reach (float): how far a negative can be from an island and still
-                round onto the island's voxels; the diagonal of one voxel
-                when the caller rounds the points to a grid
+                round onto the island's voxels, and how far apart two pieces
+                of one hole can be; the diagonal of one voxel when the
+                caller rounds the points to a grid
         Returns:
             (list): (island points, [negative points]) pairs, in the order
                 of pos
@@ -172,19 +289,17 @@ def islandCuts(pos : list, neg : list, reach : float = 0.0) -> list:
         for poly, pts in zip(neg_polys, neg)
     ]
 
-    holes = _pairs(pos_polys, neg_polys)
-    islands = [
-        i for i in sorted(holes)
-        if any(_covers(neg_polys[j], pos_polys[i]) for j in holes[i])
-    ]
-    if not islands:
-        return []
-
-    near = _pairs([pos_polys[i] for i in islands], neg_shapes, reach)
-    return [
-        (pos[i], [
-            neg[j] for j in near.get(k, ())
-            if _cutsIsland(pos_polys[i], neg_shapes[j], reach)
-        ])
-        for k, i in enumerate(islands)
-    ]
+    near = _pairs(pos_polys, neg_shapes, reach)
+    found = []
+    for i in sorted(near):
+        island = pos_polys[i]
+        candidates = near[i]
+        pieces = _holeAround(island, [neg_polys[j] for j in candidates], reach)
+        if not pieces:
+            continue
+        hole = {candidates[k] for k in pieces}
+        found.append((pos[i], [
+            neg[j] for j in candidates
+            if j not in hole and _reaches(island, neg_shapes[j], reach)
+        ]))
+    return found

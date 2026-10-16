@@ -333,3 +333,71 @@ def test_negative_near_the_island_clears_what_it_would_with_no_hole(
     pixels = _pixels(arr, 40, 40, 60, 60)
     assert int((pixels == ids["a"]).sum()) == island_px, name
     np.testing.assert_array_equal(pixels, _pixels(no_hole, 40, 40, 60, 60))
+
+
+def _twoTraceHole(right_from=50):
+    ## the hole is two negatives: one up to x = 50 and one from
+    ## ``right_from``, so neither covers the island on its own
+    return [
+        _square("a", 0, 100),
+        _rect("a", 10, 10, 50, 90, negative=True),
+        _rect("a", right_from, 10, 90, 90, negative=True),
+        _square("a", 20, 80),
+    ]
+
+
+def test_island_in_a_hole_drawn_as_two_traces_keeps_the_label():
+    arr, ids = _labels(_twoTraceHole())
+
+    assert (_pixels(arr, 20, 20, 80, 80) == ids["a"]).all()  # the island, seam included
+    assert _at(arr, 15, 15) == 0  # the hole, left piece
+    assert _at(arr, 85, 85) == 0  # the hole, right piece
+    assert _at(arr, 5, 5) == ids["a"]  # the ring
+
+
+def test_two_passes_lost_the_island_in_a_two_trace_hole():
+    arr, ids = _labels(_twoTraceHole(), draw=_twoPassDraw)
+
+    assert _at(arr, 50, 50) == 0
+
+
+def test_pieces_a_fraction_of_a_pixel_apart_are_one_hole():
+    ## both pieces round onto pixel column 50, so the drawing has no wall
+    ## between them and the island is in one hole
+    arr, ids = _labels(_twoTraceHole(right_from=50.4))
+
+    assert (_pixels(arr, 20, 20, 80, 80) == ids["a"]).all()
+    assert _at(arr, 15, 15) == 0
+
+
+def test_pieces_with_a_wall_between_them_are_two_holes():
+    ## a wall wider than a pixel's diagonal stays, and a positive across it
+    ## is no island: the drawing is the two passes
+    traces = _twoTraceHole(right_from=52)
+
+    arr, ids = _labels(traces)
+    old, _ = _labels(traces, draw=_twoPassDraw)
+
+    assert _at(arr, 51, 50) == ids["a"]  # the wall
+    assert _at(arr, 30, 50) == 0
+    np.testing.assert_array_equal(arr, old)
+
+
+def test_a_self_crossing_negative_beside_a_piece_draws_as_before():
+    ## the union of some self-crossing outlines fails in GEOS; such a
+    ## negative is no piece of a hole, and the drawing is the two passes
+    crossing = Trace("a", (255, 0, 0), closed=True)
+    crossing.points = [(10, 10), (60, 90), (10, 90), (40, 10)]
+    crossing.negative = True
+    traces = [
+        _square("a", 0, 100),
+        crossing,
+        _rect("a", 50, 10, 90, 90, negative=True),
+        _square("a", 20, 80),
+    ]
+
+    arr, ids = _labels(traces)
+    old, _ = _labels(traces, draw=_twoPassDraw)
+
+    assert arr.any()
+    np.testing.assert_array_equal(arr, old)
