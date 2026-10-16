@@ -3226,7 +3226,7 @@ class MainWindow(QMainWindow):
     
     def viewSeriesHistory(self):
         """View the history for the entire series."""
-        HistoryTableWidget(self.series.getFullHistory(), self)
+        HistoryTableWidget(self.series.getFullHistory(skip_corrupt=True), self)
     
     def toggleZtraces(self):
         """Toggle whether ztraces are shown."""

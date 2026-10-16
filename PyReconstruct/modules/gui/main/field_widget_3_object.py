@@ -1038,7 +1038,9 @@ class FieldWidgetObject(FieldWidgetTrace):
     @object_function(update_objects=False, reload_field=False)
     def viewHistory(self, obj_names : list):
         """View the history for a set of objects."""
-        HistoryTableWidget(self.series.getFullHistory(), self.mainwindow, obj_names)
+        HistoryTableWidget(
+            self.series.getFullHistory(skip_corrupt=True), self.mainwindow, obj_names
+        )
     
     @object_function(update_objects=False, reload_field=True)
     def createZtrace(self, obj_names : list, cross_sectioned=True):

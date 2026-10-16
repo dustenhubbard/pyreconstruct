@@ -17,11 +17,57 @@ from .filters import passesFilters
 ## structural fact about the writer, not a guess about the content.
 ##
 ## Deliberately laxer than the writer in one place: "%H" never emits a
-## single-digit hour, but \d?\d accepts one anyway. The looseness only ever
-## widens what is REFUSED as a row start (see fromList's join guard, which
-## fails safe), so it costs nothing on data this program wrote and covers a
-## hand-edited or foreign-tool row that a stricter pattern would silently join.
+## single-digit hour, but \d?\d accepts one anyway. It costs nothing on data
+## this program wrote and keeps a hand-edited or foreign-tool row with an
+## unpadded hour a row of its own, rather than part of the row above it.
 ROW_START = re.compile(r"\d\d-\d\d-\d\d, \d?\d:\d\d, ")
+
+
+def _dropLineEnding(line : str) -> str:
+    """Remove one line ending ("\\r\\n", "\\n" or "\\r") from a line."""
+    if line.endswith("\r\n"):
+        return line[:-2]
+    if line.endswith(("\n", "\r")):
+        return line[:-1]
+    return line
+
+
+def logBlocks(log_list : list):
+    """Group the physical lines of a log into the blocks that hold one row.
+
+    The block rule: a row starts at a line that opens with the date stamp
+    (ROW_START) and runs to the next such line. Every line between is part of
+    it, blank lines included, since a name can hold an empty line. Blank lines
+    at the end of a block are dropped: they add no field, only an event's
+    trailing space. Lines before the first stamp form a block of their own,
+    which can never parse.
+
+    Yields (indexes, lines): the index in log_list of each line in the block,
+    and the line itself with its ending removed.
+    """
+    indexes, lines = [], []
+    for i, raw in enumerate(log_list):
+        line = _dropLineEnding(raw)
+        if ROW_START.match(line.lstrip()) and lines:
+            yield from _closeBlock(indexes, lines)
+            indexes, lines = [], []
+        indexes.append(i)
+        lines.append(line)
+    yield from _closeBlock(indexes, lines)
+
+
+def _closeBlock(indexes : list, lines : list):
+    """Yield a block without blank lines at either end, if anything is left.
+
+    Only the block before the first stamp can open with a blank line.
+    """
+    a, n = 0, len(lines)
+    while n and not lines[n - 1].strip():
+        n -= 1
+    while a < n and not lines[a].strip():
+        a += 1
+    if a < n:
+        yield indexes[a:n], lines[a:n]
 
 
 ## The CSV header line, byte for byte as every writer in the tree emits it:
@@ -363,6 +409,10 @@ class LogSet():
         self.skipped_rows = []
         # the index in the fromList input of each entry in skipped_rows
         self.skipped_indexes = []
+        # the logs fromList() read from a row split across several lines.
+        # Most are exact, but some older rows are ambiguous byte for byte, so
+        # a caller that shows the history says how many there are.
+        self.rebuilt_logs = []
 
     def addLog(self, user : str, obj_name : str, snum : int, event : str):
         """Add a log to the set.
@@ -466,257 +516,60 @@ class LogSet():
         """Get a log set from a list.
 
             Params:
-                log_list (list): the list representation of the logs
+                log_list (list): the physical lines of the log, with or
+                    without their line endings
                 skip_corrupt (bool): False (the default) to raise on the first
-                    row that will not parse. True to drop just that row, record
-                    it in skipped_rows, and keep every other row.
+                    row that will not parse. True to set that row aside, record
+                    its lines in skipped_rows, and keep every other row.
             Returns:
                 (LogSet): the parsed log set
 
-        Which of the two behaviors is right is the caller's call, not this
-        function's: a reader that shows the history to a user would rather
-        raise than quietly present an incomplete one, while a reader that
-        folds the rows into a set (Series.getEditorsFromHistory) loses every
-        OTHER user's entry if one row costs the file. Hence the flag,
-        defaulting to the historical all-or-nothing so no existing caller
-        changes.
+        Rows are found by the block rule (see logBlocks): a row starts at a
+        line with the date stamp and runs to the next such line. The block is
+        joined with the line breaks put back and parsed once. A block that
+        does not parse is set aside whole; nothing in it is retried on its own,
+        guessed at or renamed.
 
-        "A bad row costs only itself" now holds for every shape, which took
-        two separate changes and is worth stating as one claim because earlier
-        versions of this docstring had to qualify it.
+        Older builds wrote a line break in a name or event as it was, so one
+        row reached this reader as several lines. Joining them with "\\n" gives
+        back the exact row that build wrote. The current writer replaces the
+        break (Log.__str__), but the stored history is copied byte for byte on
+        open and save, so those rows stay on disk, and upstream builds still
+        write them.
 
-        A row holding FEWER than six comma fields is first joined to the lines
-        after it by the continuation loop below, because a name or event
-        carrying a literal newline reaches us split across the physical lines
-        it was written to. That join used to be unguarded, so it took whatever
-        followed -- including a well-formed row belonging to somebody else --
-        and the two outcomes had to be described separately:
+        A block of several lines that parses is recorded in rebuilt_logs: on an
+        older row the bytes can mean more than one thing (a break in the name
+        and a break in the event can give the same lines), so a caller can say
+        how many rows were read that way. A set-aside block records one
+        skipped_rows entry per line, so --check-history keeps naming each line.
 
-        * the join does NOT parse -- recovered by the handler below. Only the
-          first physical line is recorded as skipped and the scan resumes at
-          the line after it, so every line the failed join swept up gets a
-          fresh attempt on its own, and skipped_rows holds one entry per lost
-          file line.
-        * the join DOES parse -- used to be lost silently. One fabricated Log
-          stood in for both rows, nothing reached skipped_rows, and it fired
-          on the default path too, where skip_corrupt never comes into it.
-
-        The second is now closed at the source: the join refuses any line that
-        opens with the "YY-MM-DD, HH:MM, " stamp Log.__str__ writes on every
-        row (see ROW_START and the guard below), so an unrelated row can no
-        longer be eaten as a continuation. What used to be a silent
-        fabrication is a plain parse failure, which means it goes through the
-        first bullet instead -- raising by default, recorded in skipped_rows
-        under skip_corrupt, and in both cases leaving the following row to be
-        read on its own.
-
-        The residue is one genuinely irreducible case, and the guard fails
-        safe on it: a pasted name whose own text contains a line that looks
-        like a whole row is indistinguishable, byte for byte, from two real
-        rows. There the guard reads both lines as rows, which truncates the
-        name, rather than inventing an editor from somebody else's timestamp.
-
-        Be exact about what "safe" does and does not cover, because it is the
-        word a future reader will remember. The embedded line is still read as
-        a row, so whatever it names in the user field -- text the paster
-        chose -- is admitted: getEditorsFromHistory unions every row's user,
-        so that name IS an editor of the series. What is prevented is the
-        other failure, reading a TIMESTAMP as if it were a person, not the
-        admission of a plausible name somebody typed into a dialog.
-
-        Log.__str__ no longer emits a multi-line row at all, so nothing
-        written from here on can reach any of this. The guard is for what is
-        already on disk, which is copied through byte for byte on every open
-        and save and is therefore permanent. All of these shapes are pinned in
+        One case is irreducible: a pasted name whose own text holds a line
+        that looks like a whole row is byte for byte two rows, and is read as
+        two. Every shape is pinned in tests/test_log_row_blocks.py and
         tests/test_editors_from_corrupt_history.py.
         """
         log_set = LogSet()
-        i = 0
-        while i < len(log_list):
-            # the physical line this attempt starts from. The continuation
-            # loop below advances i as it consumes lines, so this is the only
-            # record of where the attempt began once it has run.
-            start = i
-            log_str = log_list[i]
-            if log_str.strip():
-                try:
-                    # A row begins where a row's date stamp begins, and nowhere
-                    # else. This is the first of the two places the anchor is
-                    # applied, and it is not redundant with the second: it
-                    # catches the line that is reached as a START without being
-                    # a row, which no join guard can see because no join runs.
-                    #
-                    # How such a line is reached: a name holding SEVERAL
-                    # newlines splits its row into three or more physical
-                    # lines. The head fails, the handler below hands the
-                    # remaining fragments back one at a time, and a middle
-                    # fragment can hold six comma fields all by itself -- at
-                    # which point Log.fromStr reads it as a whole row and
-                    # takes its fields for a date, a time and a USER. A pasted
-                    # ztrace name of "x\\ny, z, w, v" is enough: the fragment
-                    # "y, z, w, v, -, Offloaded log to x" parses, and "w"
-                    # becomes an editor of the series. Measured on the writer's
-                    # own output, not constructed by hand.
-                    #
-                    # Requiring the stamp costs nothing legitimate, because a
-                    # genuine continuation is never reached here: it is
-                    # consumed by the join below, from its own anchored head,
-                    # before the loop can advance onto it. Only a fragment
-                    # whose head already failed arrives as a start, and that
-                    # fragment is exactly what must not be trusted.
-                    if not ROW_START.match(log_str.strip()):
-                        raise ValueError(
-                            "log row does not begin with a date and time: "
-                            f"{log_str.strip()[:60]!r}"
-                        )
-
-                    # Reassemble before parsing: a name holding a literal
-                    # newline -- the "return key in name" this loop was written
-                    # for -- reaches us split across the physical lines it was
-                    # written to, so a short row is joined to the line after it
-                    # until it has six comma fields.
-                    #
-                    # The join is anchored too, and this is the second place.
-                    # It refuses to absorb a line
-                    # that opens with the "YY-MM-DD, HH:MM, " stamp ROW_START
-                    # describes, because Log.__str__ writes that stamp on every
-                    # row unconditionally: a line carrying it is a row, not the
-                    # tail of one.
-                    #
-                    # That is a structural guarantee about this program's own
-                    # writer, not a heuristic about content, which is what
-                    # makes it worth the behavior change. The rule it replaces
-                    # was "keep going until six commas have accumulated", which
-                    # says nothing about where rows begin, so it consumed the
-                    # next row whenever that row's fields happened to line up.
-                    # What it took depended on k, the number of ", " fields on
-                    # the orphan: the concatenation puts the next row's field
-                    # k-1 into the section-range slot, the only slot that must
-                    # read as an integer, so k=1 always parsed (polluting the
-                    # next row's date), k=2 parsed whenever the follower's
-                    # obj_name was the "-" every series-level row writes or a
-                    # numeric object name, and k=3/4 parsed on a numeric
-                    # username or a colon-less time. k=2 was the live one:
-                    # after it, getEditorsFromHistory reported the next row's
-                    # TIME as an editor, with nothing in skipped_rows and no
-                    # warning printed. Anchoring removes the whole family at
-                    # once rather than excluding one k at a time, because it
-                    # stops the join before the alignment can happen.
-                    #
-                    # The cost, stated plainly because it is a change every
-                    # default caller sees, not just skip_corrupt ones: a short
-                    # head that can never be completed now RAISES where it used
-                    # to fabricate. That is the better failure -- a caller can
-                    # see a raise and cannot see a fabrication -- but it is not
-                    # a one-directional improvement, and the direction is worth
-                    # stating as it measured. Over generated hazard logs in the
-                    # shape an older writer already put on disk -- the
-                    # population this guard exists for -- the anchored reader
-                    # raises on MORE inputs than the unguarded join did, and no
-                    # input goes the other way, from raising to parsing. Most of
-                    # what newly raises is input the join used to fabricate an
-                    # editor from, which is the trade this is for and wins; a
-                    # minority used to parse with an entirely correct editor set
-                    # and is refused now as well. That minority is not an
-                    # editors loss -- under skip_corrupt it still yields the
-                    # same editor set, because the refused lines are handed back
-                    # individually and read on their own rather than dropped --
-                    # but it is a new raise on the default path, so it is a real
-                    # cost and not a saving. Over the real logs on hand the
-                    # difference is zero in both directions.
-                    #
-                    # One case is genuinely irreducible and the anchor does not
-                    # pretend otherwise: a pasted name whose own text contains
-                    # a line that looks like a whole row produces bytes
-                    # identical to two real rows, and nothing in the file can
-                    # tell them apart. The guard fails safe there -- it reads
-                    # both lines as rows, which truncates the name -- where the
-                    # unguarded join failed unsafe, inventing an editor nobody
-                    # was. Be exact about what "safe" does and does not cover:
-                    # the embedded line is still read as a row, so whatever it
-                    # names in the user field -- text the paster chose -- IS
-                    # admitted to Series.editors. What is prevented is the other
-                    # failure -- reading a TIMESTAMP as if it were a person --
-                    # not the admission of a plausible name somebody typed into
-                    # a dialog. Of the hazard shapes measured, this is the only
-                    # one with any residual admission at all, which is why it is
-                    # called irreducible rather than merely unfixed. It is
-                    # pinned in tests/test_editors_from_corrupt_history.py by
-                    # test_the_irreducible_case_fails_safe_rather_than_inventing_an_editor,
-                    # whose assertion records the pasted name as an editor on
-                    # purpose.
-                    #
-                    # Why this still matters now that Log.__str__ cannot emit a
-                    # multi-line row: the historical log is copied byte for
-                    # byte on open and save and is never re-emitted from parsed
-                    # objects, so a file corrupted by an older build stays
-                    # corrupted forever. The write-side fix protects new data;
-                    # this protects what is already on disk, plus hand-edited
-                    # files and any route a future writer opens by accident.
-                    #
-                    while len(log_str.split(",")) < 6:
-                        nxt = log_list[i+1]
-                        if ROW_START.match(nxt.strip()):
-                            # A row, not a continuation. Stop rather than eat
-                            # it: log_str is still short of six fields, so
-                            # Log.fromStr below raises ValueError, the handler
-                            # records this line alone, and the scan resumes at
-                            # nxt so it gets read as the row it is.
-                            break
-                        log_str += nxt.strip()
-                        i += 1
-                    log = Log.fromStr(log_str)
-                except (ValueError, IndexError):
-                    # ValueError: the row does not have six fields, or the
-                    # section range does not read as one -- what a legacy
-                    # object name holding the ", " fromStr splits on produces,
-                    # since it shifts every field after it. IndexError: a
-                    # continuation join that runs off the end of the list.
-                    # Those two are the parse failures; anything else is not,
-                    # and still propagates whatever skip_corrupt says.
-                    if not skip_corrupt:
-                        raise
-                    # Record the FIRST physical line of the failed attempt, not
-                    # the whole concatenation, and resume at the line after it
-                    # rather than after everything the join consumed. The join
-                    # is greedy, so those consumed lines may be perfectly
-                    # well-formed rows belonging to other users; discarding
-                    # them with the line that failed loses history nobody has
-                    # any reason to lose, and undercounts the loss besides,
-                    # since several file lines went into one entry.
-                    #
-                    # Safe by reachability rather than by judgement: this
-                    # handler is only ever entered on an attempt that ALREADY
-                    # raised, i.e. on input the previous code already gave up
-                    # on entirely. There is no way for it to make a join that
-                    # succeeds today succeed differently, so no caller whose
-                    # log parses sees any change at all. What it can change is
-                    # how much is salvaged from a log that does not -- which
-                    # is the whole point.
-                    #
-                    # The lines handed back go through the same join, and that
-                    # used to carry a caveat: on an ALREADY-failing log a
-                    # recovered orphan could join FORWARD and fabricate, so a
-                    # loud loss became a silent invented editor. The shape it
-                    # needed was one pasted name splitting its row across three
-                    # physical lines, leaving two orphan fragments of which the
-                    # second was k=2, followed by a row whose obj_name was "-"
-                    # or numeric -- an alignment named "\n, b\n, b" through
-                    # Series.modifyAlignments did it, measured end to end.
-                    #
-                    # The anchored join closes that too, and closes it here
-                    # rather than by a separate rule: the row such an orphan
-                    # would have joined forward to carries the date stamp, so
-                    # the join refuses it and the orphan fails alone. The
-                    # recovery is now what it always claimed to be -- one
-                    # skipped_rows entry per lost file line, no exceptions --
-                    # because the one exception was that fabrication.
-                    log_set.skipped_rows.append(log_list[start])
-                    log_set.skipped_indexes.append(start)
-                    i = start + 1
-                    continue
-                log_set.addExistingLog(log)
-            i += 1
+        for indexes, lines in logBlocks(log_list):
+            try:
+                if not ROW_START.match(lines[0].lstrip()):
+                    raise ValueError(
+                        "log row does not begin with a date and time: "
+                        f"{lines[0].strip()[:60]!r}"
+                    )
+                log = Log.fromStr("\n".join(lines))
+            except ValueError:
+                # the row does not have six fields, or the section range does
+                # not read as one. Anything else is not a parse failure and
+                # propagates whatever skip_corrupt says.
+                if not skip_corrupt:
+                    raise
+                for i in indexes:
+                    log_set.skipped_rows.append(log_list[i])
+                    log_set.skipped_indexes.append(i)
+                continue
+            log_set.addExistingLog(log)
+            if len(lines) > 1:
+                log_set.rebuilt_logs.append(log)
 
         return log_set
     

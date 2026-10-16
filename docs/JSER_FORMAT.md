@@ -416,14 +416,15 @@ Parsing rules that a generator must respect:
   have their commas replaced with underscores.
 - **One row is one line.** The writer replaces a CR, LF or CRLF inside any field with
   `_`. A reader of older files must still expect a row split across lines by a newline
-  pasted into a name. PyReconstruct starts a row only at a line that opens with the
-  `YY-MM-DD, HH:MM, ` stamp. While the row splits into fewer than six pieces on a bare
-  comma, it is joined to the next line, stripped and with nothing between them, but
-  never to a line that opens with that stamp. The join counts bare commas, while the
-  row is then parsed on `", "`, so the join can stop too early: a first line such as
-  `26-01-01, 10:00, alice, foo,bar,baz` already splits into six pieces, so its
-  continuation line is not joined and the row does not parse.
-- Blank lines are skipped.
+  pasted into a name or event. PyReconstruct reads rows by the block rule: a row starts
+  at a line that opens with the `YY-MM-DD, HH:MM, ` stamp and runs to the next line that
+  does. The lines of a block are joined with LF, which gives back the row the older build
+  wrote, and the block is parsed once. So `26-01-01, 10:00, alice, foo,bar,baz` followed by
+  `qux, 1, Modified trace(s)` loads as object `foo,bar,baz` LF `qux`, section `1`.
+- A block that does not parse is set aside whole. The history view says how many lines
+  it set aside, and how many rows it rebuilt from several lines, since some older split
+  rows can be read more than one way. The file keeps every line.
+- Blank lines between rows are skipped. A blank line inside a block is part of the row.
 - Leading and trailing whitespace in the Event column is stripped.
 - A negative number cannot appear in the Sections column, because `-` is both the null
   marker and the range separator.
@@ -1605,12 +1606,13 @@ re-checked.
 | Row format and `", "` delimiter | `PyReconstruct/modules/datatypes/log.py` (`Log.__str__`, `splitRow`) |
 | User and Obj quoted when needed, and read back | `PyReconstruct/modules/datatypes/log.py` (`quoteField`, `_readQuoted`, `_onlyQuotedShape`, `splitRow`, `Log.fromStr`) |
 | A newline inside a field is written as `_` | `PyReconstruct/modules/datatypes/log.py` (`Log.__str__`) |
-| A row starts only at the date and time stamp; the join guard and its bare-comma count | `PyReconstruct/modules/datatypes/log.py` (`ROW_START`, `LogSet.fromList`) |
+| A row starts only at the date and time stamp and runs to the next one (the block rule) | `PyReconstruct/modules/datatypes/log.py` (`ROW_START`, `logBlocks`, `LogSet.fromList`) |
+| The history view reports lines set aside and rows rebuilt | `PyReconstruct/modules/gui/table/history.py` (`historyNotice`) |
 | Section range encoding, inclusive, space separated | `PyReconstruct/modules/datatypes/log.py` (`Log.__str__`, `Log._fromStr`, `Log.containsSection`) |
 | `-` as the null marker for Obj and Sections | `PyReconstruct/modules/datatypes/log.py` (`Log.__str__`, `Log._fromStr`) |
 | Commas are safe in the Event column | `PyReconstruct/modules/datatypes/log.py` (`splitRow`) |
 | Event whitespace stripped on read | `PyReconstruct/modules/datatypes/log.py` (`Log._fromStr`) |
-| Blank lines skipped | `PyReconstruct/modules/datatypes/log.py` (`LogSet.fromList`) |
+| Blank lines skipped between rows | `PyReconstruct/modules/datatypes/log.py` (`logBlocks`) |
 | Date and time formats, timezone from a setting | `PyReconstruct/modules/constants/getdatetime.py` (`getDateTime`, `utc_p`) |
 | `log_set` is a flat array of row strings | `PyReconstruct/modules/datatypes/log.py` (`LogSet.getList`, `LogSet.fromList`) |
 | Session events appended only to `log_set` | `PyReconstruct/modules/datatypes/series.py` (`Series.addLog`), `PyReconstruct/modules/datatypes/log.py` (`LogSet.addLog`) |

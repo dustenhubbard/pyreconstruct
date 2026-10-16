@@ -1,10 +1,45 @@
-from PySide6.QtWidgets import QDockWidget, QWidget, QTableWidgetItem, QAbstractItemView
+from PySide6.QtWidgets import (
+    QDockWidget, QWidget, QTableWidgetItem, QAbstractItemView, QLabel, QVBoxLayout
+)
 from PySide6.QtCore import Qt
 
 from .copy_table_widget import CopyTableWidget
 
 from PyReconstruct.modules.datatypes import LogSet, Log
 from PyReconstruct.modules.datatypes.log import splitRow
+
+
+def _count(n, noun):
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
+def historyNotice(log_set : LogSet) -> str:
+    """Say what the reader did not show as written, or "" if nothing.
+
+    Lines set aside are counted for the whole series: a row that will not
+    parse names no object a view could filter it by. Rebuilt rows are counted
+    among the rows shown.
+    """
+    parts = []
+    skipped = len(log_set.skipped_rows)
+    if skipped:
+        parts.append(
+            f"{_count(skipped, 'line')} of this series' history could not be "
+            "read and {} not shown. The series file still holds {}.".format(
+                "is" if skipped == 1 else "are",
+                "it" if skipped == 1 else "them",
+            )
+        )
+    rebuilt_ids = {id(log) for log in log_set.rebuilt_logs}
+    rebuilt = sum(id(log) in rebuilt_ids for log in log_set.all_logs)
+    if rebuilt:
+        parts.append(
+            f"{_count(rebuilt, 'row')} {'was' if rebuilt == 1 else 'were'} "
+            "rebuilt from an entry an older version split across lines. "
+            "Line breaks show as _."
+        )
+    return " ".join(parts)
+
 
 class HistoryTableWidget(QDockWidget):
 
@@ -66,7 +101,18 @@ class HistoryTableWidget(QDockWidget):
         self.horizontal_headers = ["Date", "Time", "User", "Object", "Sections", "Event"]
 
         self.table = CopyTableWidget(self, len(log_set.all_logs), len(self.horizontal_headers))
-        self.setWidget(self.table)
+        notice = historyNotice(log_set)
+        if notice:
+            self.notice = QLabel(notice, self)
+            self.notice.setWordWrap(True)
+            container = QWidget(self)
+            layout = QVBoxLayout(container)
+            layout.addWidget(self.notice)
+            layout.addWidget(self.table)
+            self.setWidget(container)
+        else:
+            self.notice = None
+            self.setWidget(self.table)
 
         # format table
         self.table.setShowGrid(False)  # no grid
