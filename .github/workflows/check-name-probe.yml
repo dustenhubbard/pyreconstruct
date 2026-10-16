@@ -1,0 +1,13 @@
+# Temporary. Tests how a required check is read when two runs share a name.
+name: check-name-probe
+
+on:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  merge-evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "same-name probe job, always passes"
