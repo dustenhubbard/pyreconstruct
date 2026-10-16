@@ -1,4 +1,4 @@
-"""Run by ``test_settings_copy_review_r3.py`` in a pytest process of its own.
+"""Run by ``test_settings_copy_restart.py`` in a pytest process of its own.
 
 The in-app Restart (``run.runPyReconstruct``) reloads every
 ``PyReconstruct.modules`` module inside the same process, and Qt keeps its
@@ -20,7 +20,7 @@ from PySide6.QtCore import QSettings
 import qsettings_isolation
 from PyReconstruct.modules.constants import settings_domain as D
 
-from settings_copy_review import DAMAGED
+from settings_copy_helpers import DAMAGED
 
 pytestmark = pytest.mark.gui
 
@@ -43,7 +43,7 @@ def _window_store(main_window):
 
 
 def test_module_reload_keeps_corrupt_source_owed(qapp):
-    code = "RELOAD_CORRUPT_REVIEW"
+    code = "RELOAD_CORRUPT_COPYTEST"
     app = D.SHARED_APP + "-" + code
     path = _damage(app)
     assert D.copy_legacy_series_settings_once(code).complete is False
