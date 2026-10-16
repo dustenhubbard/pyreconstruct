@@ -22,6 +22,7 @@ The length field does nothing in share-of-field mode, so it is disabled there.
 from PySide6.QtWidgets import QDialog, QLabel
 
 from .quick_dialog import QuickDialog
+from PyReconstruct.modules.constants.settings_domain import user_action
 from PyReconstruct.modules.datatypes.default_settings import (
     MAX_SCALE_BAR_THICKNESS,
     MIN_SCALE_BAR_THICKNESS,
@@ -209,7 +210,10 @@ class ScaleBarSettingsDialog(QuickDialog):
     def accept(self, close=True):
         if not super().accept(close=False):
             return False
-        storeScaleBarResponse(self.series, self.responses)
+        # the choices the user accepted, saved even while the old KHLab
+        # settings are still being copied
+        with user_action():
+            storeScaleBarResponse(self.series, self.responses)
         if self.palette is not None:
             self.palette.restoreScaleBar()
         self.previewed = False

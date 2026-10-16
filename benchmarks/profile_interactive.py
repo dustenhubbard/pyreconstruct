@@ -43,8 +43,11 @@ Notes / hazards handled here (each was a real trap):
     to claim XDG_CONFIG_HOME did that. It does not. On macOS the two-argument
     QSettings(org, app) constructor is NativeFormat and goes through
     CFPreferences, which ignores XDG_CONFIG_HOME, HOME and QStandardPaths alike
-    and resolves ~/Library/Preferences/com.khlab.PyReconstruct.plist anyway
-    (measured: format() reports NativeFormat and fileName() is the real path).
+    and resolves ~/Library/Preferences/com.pyreconstruct.PyReconstruct.plist
+    anyway (measured: format() reports NativeFormat and fileName() is the real
+    path). The settings from before 2026-10-03 sit in com.khlab.PyReconstruct,
+    which the app still reads once to copy from, so that organization is
+    redirected too.
     Since Series.getOption writes the default back whenever a key is absent,
     every profiling run on macOS was reading and writing the developer's own
     preferences. The redirect is now by domain name instead, installed before
@@ -64,13 +67,16 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"          # must precede PySide6 impo
 #: to. The scratch name is fixed rather than per-process on purpose: the exit
 #: sweep below empties these domains but cannot reliably delete the files, so a
 #: per-run name would leave a new empty plist behind on every profile.
-REAL_ORG, REAL_APP = "KHLab", "PyReconstruct"
+REAL_ORG, REAL_APP = "PyReconstruct", "PyReconstruct"
+#: The organization the settings sat under before 2026-10-03. Its scratch
+#: stores stay empty, so the copy from it finds nothing owed.
+LEGACY_ORG = "KHLab"
 SCRATCH_ORG = "PyReconProfilingScratch"
 SCRATCH_APP = "profile"
 
 
 def _redirect_qsettings():
-    """Point every QSettings("KHLab", "PyReconstruct") at a throwaway domain.
+    """Point every QSettings("PyReconstruct" or "KHLab", ...) at a throwaway domain.
 
     Rebinding the name in PySide6.QtCore covers the deferred imports the product
     uses (QSettingsStore._settings imports QSettings inside the method) and every
@@ -87,21 +93,22 @@ def _redirect_qsettings():
 
     class ScratchQSettings(real):
         def __init__(self, *args, **kwargs):
-            if len(args) >= 2 and args[0] == REAL_ORG and args[1] == REAL_APP:
-                args = (SCRATCH_ORG, SCRATCH_APP) + tuple(args[2:])
-            elif len(args) >= 2 and args[0] == REAL_ORG:
-                # per-series scope: "PyReconstruct-{code}"
-                args = (SCRATCH_ORG, "%s-%s" % (SCRATCH_APP, args[1])) + tuple(args[2:])
+            if len(args) >= 2 and args[0] in (REAL_ORG, LEGACY_ORG):
+                app = SCRATCH_APP if args[0] == REAL_ORG else SCRATCH_APP + "-legacy"
+                if args[1] != REAL_APP:
+                    # per-series scope: "PyReconstruct-{code}"
+                    app = "%s-%s" % (app, args[1])
+                args = (SCRATCH_ORG, app) + tuple(args[2:])
             super().__init__(*args, **kwargs)
 
     QtCore.QSettings = ScratchQSettings
 
-    probe = QtCore.QSettings(REAL_ORG, REAL_APP)
-    resolved = probe.fileName()
-    assert REAL_APP.lower() not in os.path.basename(resolved).lower(), (
-        "refusing to profile: QSettings still resolves the real domain at %s"
-        % resolved
-    )
+    for org in (REAL_ORG, LEGACY_ORG):
+        resolved = QtCore.QSettings(org, REAL_APP).fileName()
+        assert REAL_APP.lower() not in os.path.basename(resolved).lower(), (
+            "refusing to profile: QSettings still resolves the real domain at %s"
+            % resolved
+        )
     return real
 
 

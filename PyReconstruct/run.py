@@ -90,21 +90,30 @@ def runPyReconstruct(filename=None):
         qt_plugins = ps6_dir / "Qt/plugins"
         os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = str(qt_plugins)
 
-    # a flavored build's first launch on the shared settings store folds its
-    # old private domain in (once; the stable app is a no-op)
+    # the first launch after settings moved from the KHLab organization to
+    # PyReconstruct copies the old stores across (once, leaving them in
+    # place); then a flavored build's first launch on the shared settings
+    # store folds its old private domain in (once; the stable app is a no-op).
+    # The fold waits while a copy still needs a retry: folding first could
+    # put a Dev value where the stable one belongs, or mark an empty Dev
+    # store as folded, and the retry could not undo either.
     from PyReconstruct.modules.constants.settings_domain import (
+        copy_legacy_settings_once,
         fold_flavor_settings_once,
     )
-    fold_flavor_settings_once()
-
-    # the What's new pop-up is back on by default from this version, once:
-    # a stored "off" from before it does not bind, and a fresh install records
-    # this version as seen so its first pop-up is the update after it. Before
-    # the window, which writes the keys the fresh-install test reads.
     from PyReconstruct.modules.gui.main.first_launch import (
         reset_whats_new_popup_startup,
     )
-    reset_whats_new_popup_startup()
+    settings_copied = copy_legacy_settings_once().complete
+    if settings_copied:
+        fold_flavor_settings_once()
+
+        # the What's new pop-up is back on by default from this version,
+        # once: a stored "off" from before it does not bind, and a fresh
+        # install records this version as seen so its first pop-up is the
+        # update after it. Before the window, which writes the keys the
+        # fresh-install test reads, and after the copy, which brings them.
+        reset_whats_new_popup_startup()
 
     # create the Qt Application
     app = QApplication(sys.argv)

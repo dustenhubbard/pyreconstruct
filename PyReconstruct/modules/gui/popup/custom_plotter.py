@@ -16,6 +16,7 @@ from PySide6.QtCore import Qt, QEvent
 from PyReconstruct.modules.gui.dialog import QuickDialog, FileDialog
 from PyReconstruct.modules.backend.threading import ThreadPoolProgBar
 from PyReconstruct.modules.datatypes import Series
+from PyReconstruct.modules.constants.settings_domain import user_action
 from PyReconstruct.modules.datatypes.host_tree import HostTree
 from PyReconstruct.modules.backend.volume import (
     generateVolumes,
@@ -1177,7 +1178,8 @@ class CustomPlotter(QVTKRenderWindowInteractor):
     def toggleAutoRefresh(self):
         """Toggle auto-refreshing of edited objects when the window is focused."""
         auto_refresh = self.autorefresh_act.isChecked()
-        self.series.setOption("3D_auto_refresh", auto_refresh)
+        with user_action():
+            self.series.setOption("3D_auto_refresh", auto_refresh)
         # turning it back on catches up any edits made while it was off
         # (no-op if nothing is stale)
         if auto_refresh:
@@ -1478,8 +1480,9 @@ class CustomPlotter(QVTKRenderWindowInteractor):
         if not confirmed:
             return
         
-        self.series.setOption("translate_step_3D", response[0])
-        self.series.setOption("rotate_step_3D", response[1])
+        with user_action():
+            self.series.setOption("translate_step_3D", response[0])
+            self.series.setOption("rotate_step_3D", response[1])
 
     def exportScene(self):
         """Export 3D scene as an obj file."""

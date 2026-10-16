@@ -5,22 +5,22 @@ Dev packaging stamps PYRECON_APP_NAME (packaging/rthook_flavor.py), and that
 variable still decides everything that has to differ between the two apps:
 the window title, the update channel, the series ownership marker. Stored
 settings are the exception. Since 2026-09-27 both apps read and write ONE
-shared domain, ``KHLab / PyReconstruct``, for global preferences and
-``KHLab / PyReconstruct-<code>`` for per-series ones, so a preference changed
+shared domain, ``PyReconstruct / PyReconstruct``, for global preferences and
+``PyReconstruct / PyReconstruct-<code>`` for per-series ones, so a preference changed
 in either app is what the other app sees at its next read. A user who runs
 both no longer sets everything twice.
 
 A short list of keys must stay per app (PER_APP_KEYS, PER_APP_PREFIXES):
 the What's new popup state, the update-check throttle, the window position,
 and the store's own bookkeeping under ``meta/``. Those route to the flavored
-domain ``KHLab / <settings_app()>``. For the stable app the two domains are
+domain ``PyReconstruct / <settings_app()>``. For the stable app the two domains are
 the same name, so its behavior is unchanged: same file, same keys, same
 values as before the Dev app started sharing.
 
-Every raw ``QSettings`` construction in the app goes through
-``domain_for(key)``; ``QSettingsStore`` (backend/settings_store.py), which
-carries ``Series.getOption``, addresses the shared domain directly. A test
-scans the sources for any construction that bypasses this module.
+Every settings object the app opens comes from ``settings_for(key)``, which
+routes by ``domain_for(key)``; ``QSettingsStore`` (backend/settings_store.py),
+which carries ``Series.getOption``, addresses the shared domain directly. A
+test scans the sources for any construction that bypasses this module.
 
 Forward compatibility is the one real hazard of sharing: a nightly runs
 against a store the stable build also reads, and stable coerces each value
@@ -29,14 +29,24 @@ a shape change is a new key name, the old key is left in place, and stable
 keeps reading it. tests/settings_manifest.json pins the type of every
 default and the test on it fails when one moves.
 
+Until 2026-10-03 every domain above sat under the organization ``KHLab``
+instead of ``PyReconstruct``. ``copy_legacy_settings_once`` and
+``copy_legacy_series_settings_once`` copy those stores across once and leave
+them in place, so an older build still finds its settings.
+
 Read at call time, not import time, so tests can flip the environment
 without reimporting, and so import order against the runtime hook cannot
 matter.
 """
 import json
 import os
+from contextlib import contextmanager
 
-SETTINGS_ORG = "KHLab"
+SETTINGS_ORG = "PyReconstruct"
+
+# The organization every store sat under before 2026-10-03. Read once per
+# store by the copy below and never written.
+LEGACY_SETTINGS_ORG = "KHLab"
 
 # The application name of the shared store. Also the stable app's own name,
 # which is what makes sharing free for the stable app: it reads and writes
@@ -109,9 +119,9 @@ def is_per_app_key(key):
 
 
 def domain_for(*keys):
-    """(org, app) for a raw ``QSettings`` that reads or writes ``keys``.
+    """(org, app) for a ``QSettings`` that reads or writes ``keys``.
 
-    Unpack into ``QSettings(*domain_for(key))``. Several keys can be named
+    ``settings_for(key)`` opens it. Several keys can be named
     when one settings object serves them all; they must all land in the same
     domain, and a mix raises rather than silently routing half of them to the
     wrong store.
@@ -220,7 +230,7 @@ def fold_series_settings_once(code, flavored=None, shared=None):
     """Fold one series' old Dev per-series domain into the shared one, once.
 
     Per-series settings (``autobackup``, ``backup_dir``, ``list_layout``)
-    live in ``KHLab / <app>-<code>``. The old split gave the Dev app its own
+    live in ``PyReconstruct / <app>-<code>``. The old split gave the Dev app its own
     ``PyReconstruct Dev-<code>`` domain, which the seed never touched, so it
     holds whatever the Dev app wrote there. Runs lazily when a series opens,
     because the per-series domains cannot be enumerated portably. Same rule
@@ -246,3 +256,423 @@ def fold_series_settings_once(code, flavored=None, shared=None):
     return bool(_fold(
         flavored, shared, mark_always=False, validate_list_layout=True
     ))
+
+
+# Marker the legacy copy writes into a store once that store has been filled
+# from its ``KHLab`` counterpart. Per-app by prefix, so the fold never carries
+# it into the shared store, and one app's copy never marks another app's.
+LEGACY_COPY_MARKER = "meta/copied_from_khlab"
+
+
+# Stores whose copy from ``KHLab`` is known, this session, to be unfinished
+# (True) or done (False), by application name. Filled by the copy and by
+# legacy_copy_pending; tests clear it between cases.
+_copy_pending: dict[str, bool] = {}
+
+# Old stores whose file failed to parse in this process, by application name.
+# The in-app Restart reloads every PyReconstruct.modules module in the same
+# process, and Qt's parse of the file outlives that reload, so this set must
+# too: a reload runs this line again with the module's old namespace, and
+# keeps the set it finds there.
+_unparsable_legacy: set[str] = globals().get("_unparsable_legacy", set())
+
+
+def _read_legacy_keys(app, old=None):
+    """The keys ``KHLab / <app>`` holds, or None when it cannot be read.
+
+    Qt parses a settings file once per process and keeps that parse until it
+    decides the file changed. A later ``QSettings`` on the same file is handed
+    the first parse and reports no error, even when the parse stopped partway
+    through a damaged file. Qt's test for a change is its own (size and a
+    millisecond time, among others), so a file that failed to parse counts as
+    unreadable for the rest of the session, changed or not; the next launch
+    reads it afresh. A file that could not be opened is not parsed, so it is
+    simply tried again.
+    """
+    from PySide6.QtCore import QSettings
+
+    if app in _unparsable_legacy:
+        return None
+    if old is None:
+        old = QSettings(LEGACY_SETTINGS_ORG, app)
+        old.setFallbacksEnabled(False)
+    keys = [key for key in old.allKeys() if key != LEGACY_COPY_MARKER]
+    status = old.status()
+    if status != QSettings.NoError:
+        if status == QSettings.FormatError:
+            _unparsable_legacy.add(app)
+        return None
+    return keys
+
+
+def legacy_copy_pending(app):
+    """True while ``PyReconstruct / <app>`` still owes a copy from ``KHLab``.
+
+    That is: the copy failed this session, or it has not run and the new
+    store carries no marker while the old one holds something or cannot be
+    read. An old store that cannot be read is a copy to retry, as it is in
+    the copy itself, not a store with nothing to give. While a store is
+    pending, it takes only the user's own writes (``GuardedSettings``),
+    because the retry never overwrites a key the new store already holds,
+    and a value written in the meantime would win over the one the retry was
+    meant to bring back. Never raises; when the stores cannot be read the
+    answer is True, which only means such a value is not saved yet.
+    """
+    if app in _copy_pending:
+        return _copy_pending[app]
+    try:
+        from PySide6.QtCore import QSettings
+
+        new = QSettings(SETTINGS_ORG, app)
+        new.setFallbacksEnabled(False)
+        if new.contains(LEGACY_COPY_MARKER):
+            pending = False
+        else:
+            keys = _read_legacy_keys(app)
+            pending = keys is None or bool(keys)
+    except Exception:
+        return True
+    _copy_pending[app] = pending
+    return pending
+
+
+def store_copy_pending(app):
+    """True while ``PyReconstruct / <app>`` is still owed values from ``KHLab``.
+
+    The shared stores (``PyReconstruct`` and ``PyReconstruct-<code>``) are
+    owed them by their own copy and by the Dev fold (``shared_copy_pending``);
+    any other store, such as the Dev app's own, only by its own copy.
+    """
+    if app == SHARED_APP or app.startswith(f"{SHARED_APP}-"):
+        return shared_copy_pending(app[len(SHARED_APP):])
+    return legacy_copy_pending(app)
+
+
+# How many ``user_action`` blocks are open. Settings are written on the GUI
+# thread only.
+_user_actions = 0
+
+
+@contextmanager
+def user_action():
+    """Mark the settings writes inside as the user's own choice.
+
+    While a store is owed its copy from ``KHLab``, it takes no other write
+    (``GuardedSettings``): the copy never replaces a key the store already
+    holds, so a value the program saved on its own would win over the one the
+    copy brings. A choice the user makes is newer than anything the copy can
+    bring, so it is saved as usual. Wrap only the writes of what the user
+    chose: a default read on a miss inside the block is still not saved
+    (``Series.getOption``).
+    """
+    global _user_actions
+    _user_actions += 1
+    try:
+        yield
+    finally:
+        _user_actions -= 1
+
+
+def may_write(settings):
+    """Whether a write to ``settings`` goes through now: always inside a
+    ``user_action``, otherwise only once its store owes no copy. Never
+    raises."""
+    if _user_actions:
+        return True
+    try:
+        if settings.organizationName() != SETTINGS_ORG:
+            return True
+        return not store_copy_pending(settings.applicationName())
+    except Exception:
+        return False
+
+
+class _WriteArray:
+    """An array ``GuardedSettings`` is writing, kept by the wrapper rather
+    than opened in Qt, so each call can be checked when it is made."""
+
+    def __init__(self, prefix, size):
+        self.prefix = prefix
+        self.size = size
+        self.index = None
+        # the size Qt would store at the end of an array begun without one:
+        # one past the highest index selected
+        self.guess = 0 if size < 0 else None
+
+    def key(self, key):
+        if self.index is None:
+            return f"{self.prefix}/{key}"
+        return f"{self.prefix}/{self.index + 1}/{key}"
+
+
+class GuardedSettings:
+    """A ``QSettings`` whose writes wait while its store is owed its copy.
+
+    Every settings object the app writes through is one of these
+    (``settings_for``, and ``QSettingsStore`` for ``Series.setOption``), so
+    one rule holds every write that is not the user's (``may_write``): a
+    writer nobody listed cannot fill a key the copy still has to bring.
+    The copy and the fold in this module write through plain ``QSettings``.
+
+    Only the reads in ``READS`` pass straight through. Every call that can
+    change the store is checked here, each when it is made: ``setValue``,
+    ``remove``, ``clear``, and the calls of an array write. An array write is
+    never opened in Qt: the wrapper keeps its prefix, index and size and
+    writes the same keys Qt would (``<prefix>/<index + 1>/<key>`` and
+    ``<prefix>/size``), so a ``beginWriteArray``, ``setArrayIndex`` or
+    ``endArray`` made outside a user action changes nothing, whatever the
+    calls before it were allowed, and Qt's own groups stay as they were.
+    Inside an array write only writes, ``endArray``, ``sync`` and ``status``
+    are offered; reading or grouping there would need the wrapper's prefix,
+    and raises instead. Anything else is not offered, so a mutator added to
+    Qt later fails loudly instead of writing past the check. Wraps rather
+    than subclasses, so the ``QSettings`` class is looked up when a store is
+    opened, not when this module is imported.
+    """
+
+    READS = frozenset({
+        "allKeys", "applicationName", "beginGroup", "childGroups",
+        "childKeys", "contains", "endGroup", "fallbacksEnabled", "fileName",
+        "format", "group", "isAtomicSyncRequired", "isWritable",
+        "organizationName", "scope", "status", "sync", "value",
+    })
+
+    # reads that do not depend on the current group, so still right inside
+    # an array write
+    _ANYWHERE = frozenset({
+        "applicationName", "fallbacksEnabled", "fileName", "format",
+        "isAtomicSyncRequired", "isWritable", "organizationName", "scope",
+        "status", "sync",
+    })
+
+    def __init__(self, settings):
+        self._settings = settings
+        # open arrays, innermost last: a _WriteArray, or None for a read
+        # array, which Qt keeps
+        self._arrays = []
+
+    def __getattr__(self, name):
+        if name not in GuardedSettings.READS:
+            raise AttributeError(
+                f"GuardedSettings does not offer {name!r}; a call that can "
+                "change the store needs its own check here"
+            )
+        if self._writing() is not None and name not in GuardedSettings._ANYWHERE:
+            raise RuntimeError(f"{name!r} inside an array write")
+        return getattr(self._settings, name)
+
+    def _writing(self):
+        """The innermost array, when it is an array write."""
+        return self._arrays[-1] if self._arrays else None
+
+    def _key(self, key):
+        array = self._writing()
+        return key if array is None else array.key(key)
+
+    def setValue(self, key, value):
+        if may_write(self._settings):
+            self._settings.setValue(self._key(key), value)
+
+    def remove(self, key):
+        if may_write(self._settings):
+            self._settings.remove(self._key(key))
+
+    def clear(self):
+        if self._writing() is not None:
+            raise RuntimeError("'clear' inside an array write")
+        if may_write(self._settings):
+            self._settings.clear()
+
+    def beginReadArray(self, prefix):
+        if self._writing() is not None:
+            raise RuntimeError("'beginReadArray' inside an array write")
+        self._arrays.append(None)
+        return self._settings.beginReadArray(prefix)
+
+    def beginWriteArray(self, prefix, size=-1):
+        if self._writing() is not None:
+            raise RuntimeError("'beginWriteArray' inside an array write")
+        array = _WriteArray(prefix, size)
+        self._arrays.append(array)
+        # what Qt does on beginning an array write
+        if may_write(self._settings):
+            if size < 0:
+                self._settings.remove(f"{prefix}/size")
+            else:
+                self._settings.setValue(f"{prefix}/size", size)
+
+    def setArrayIndex(self, i):
+        array = self._writing()
+        if array is None:
+            self._settings.setArrayIndex(i)
+        elif may_write(self._settings):
+            array.index = max(i, 0)
+            if array.guess is not None:
+                array.guess = max(array.guess, array.index + 1)
+
+    def endArray(self):
+        array = self._arrays.pop() if self._arrays else None
+        if array is None:
+            self._settings.endArray()
+        elif array.guess is not None and may_write(self._settings):
+            self._settings.setValue(f"{array.prefix}/size", array.guess)
+
+
+def settings_for(*keys):
+    """The store for ``keys`` (``domain_for``), with its writes guarded."""
+    from PySide6.QtCore import QSettings
+
+    return GuardedSettings(QSettings(*domain_for(*keys)))
+
+
+def per_app_copy_pending():
+    """True while this app's own store still owes its copy from ``KHLab``.
+
+    The per-app keys (window position, What's new state, update bookkeeping)
+    live there and never pass through the fold, so only that store's own copy
+    matters for them.
+    """
+    return legacy_copy_pending(settings_app())
+
+
+def shared_copy_pending(suffix=""):
+    """True while the shared store ``PyReconstruct / PyReconstruct<suffix>``
+    is still owed values from ``KHLab``.
+
+    It is owed them by its own copy and, in a flavored build, by the fold of
+    that flavor's store, which waits for the flavor's copy. Until both are
+    done, a value the program writes on its own (a default read on a miss,
+    the username it picks at launch, a list it rebuilds from what it read)
+    would block the stored one, so those wait (``user_action``). ``suffix``
+    is ``""`` for the global store and ``"-<code>"`` for a series' store.
+    """
+    return any(
+        legacy_copy_pending(app) for app in _this_app_and_shared(suffix)
+    )
+
+
+class LegacyCopyResult(dict):
+    """The keys a legacy copy wrote, by application name, plus whether it
+    finished.
+
+    ``complete`` is False while any store still needs a retry: its old store
+    could not be read, or its new store could not be written or marked. The
+    Dev fold waits for a complete copy. Folding first would let a Dev value
+    fill a shared key the stable value was still to fill, or mark an empty
+    Dev store as folded, and a later retry could undo neither.
+    """
+
+    complete = True
+
+
+def _copy_legacy_domain(app, mark_always):
+    """Copy ``KHLab / <app>`` into ``PyReconstruct / <app>``, once.
+
+    Every key the old store holds and the new one lacks is copied, ``meta/``
+    bookkeeping included, so a Dev store that was already folded stays marked
+    as folded. A key the new store already holds is left alone. The old store
+    is only read: an older build that still addresses it finds everything it
+    left there.
+
+    Once the copy has been written, LEGACY_COPY_MARKER goes into the new store
+    and later calls return at once. That is what makes it happen once: a value
+    changed or removed in the new store afterwards is never brought back from
+    the old one. When the old store cannot be read, or the new one cannot be
+    written or marked, the call reports failure and the next one tries again.
+    A marker already in the new store counts only once a sync confirms it is
+    on disk.
+
+    ``mark_always`` writes the marker even when the old store is empty. The
+    global stores want that; a per-series store does not, so opening a
+    series with no old settings never creates a store holding only a marker.
+    Returns the keys that were copied, or None when the copy did not finish.
+
+    Both stores are read with fallbacks off, so only what was stored for
+    this application counts. With fallbacks on, ``allKeys()`` on macOS also
+    lists the whole global NSUserDefaults domain, and on every platform it
+    would pull in organization-wide and system-wide files.
+    """
+    from PySide6.QtCore import QSettings
+
+    new = QSettings(SETTINGS_ORG, app)
+    new.setFallbacksEnabled(False)
+    if new.contains(LEGACY_COPY_MARKER):
+        # A marker whose write failed earlier this session is still visible
+        # in memory. Trust it only once a sync says it reached the disk.
+        new.sync()
+        if new.status() == QSettings.NoError:
+            return []
+    old = QSettings(LEGACY_SETTINGS_ORG, app)
+    old.setFallbacksEnabled(False)
+    keys = _read_legacy_keys(app, old)
+    if keys is None:
+        return None
+    if not keys and not mark_always:
+        return []
+    copied = []
+    for key in keys:
+        if new.contains(key):
+            continue
+        new.setValue(key, old.value(key))
+        copied.append(key)
+    if copied:
+        # the values are on disk before the marker that says they are
+        new.sync()
+        if new.status() != QSettings.NoError:
+            return None
+    new.setValue(LEGACY_COPY_MARKER, True)
+    new.sync()
+    if new.status() != QSettings.NoError:
+        # the marker may not have landed; say so, so the fold waits
+        return None
+    return copied
+
+
+def _this_app_and_shared(suffix=""):
+    """Application names of the stores this app reads, each once."""
+    names = [f"{SHARED_APP}{suffix}", f"{settings_app()}{suffix}"]
+    return list(dict.fromkeys(names))
+
+
+def _copy_legacy_domains(apps, mark_always):
+    """Run the copy for each of ``apps``; never raises."""
+    result = LegacyCopyResult()
+    for app in apps:
+        try:
+            keys = _copy_legacy_domain(app, mark_always=mark_always)
+        except Exception:
+            keys = None
+        _copy_pending[app] = keys is None
+        if keys is None:
+            result.complete = False
+        elif keys:
+            result[app] = keys
+    return result
+
+
+def copy_legacy_settings_once():
+    """First launch after the move from ``KHLab``: copy the global stores.
+
+    Covers the shared store and, in a flavored build, that flavor's own
+    store. Runs before the Dev fold, which then works on the copied stores,
+    and only when ``complete`` is True on the result. Never raises: a
+    settings carry-over must not stop the app from opening. Returns a
+    LegacyCopyResult: the keys copied, by application name.
+    """
+    return _copy_legacy_domains(_this_app_and_shared(), mark_always=True)
+
+
+def copy_legacy_series_settings_once(code):
+    """Copy one series' ``KHLab`` per-series stores the first time it opens.
+
+    Per-series stores cannot be listed portably, so this runs when a series
+    opens, before its first per-series read. Same rule as the global copy,
+    and the per-series fold waits for ``complete`` the same way. A series
+    without a code has no per-series store. Never raises. Returns a
+    LegacyCopyResult.
+    """
+    if not code:
+        return LegacyCopyResult()
+    return _copy_legacy_domains(
+        _this_app_and_shared(f"-{code}"), mark_always=False
+    )

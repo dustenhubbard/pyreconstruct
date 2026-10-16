@@ -90,7 +90,7 @@ registers the host as well as the traveler. So "no attrs entry" does not imply
 "no host entry", and the two cleanups are independent.
 
 No ``gui`` marker: these drive the datatype directly and build no widgets. No
-test here touches ``QSettings("KHLab", "PyReconstruct")``; the two that need a
+test here touches ``QSettings("PyReconstruct", "PyReconstruct")``; the two that need a
 username go through ``DictSettingsStore``, and none assigns ``series.user``.
 """
 
@@ -123,7 +123,7 @@ def open_fixture(tmp_path, name="s", username="tester"):
 
     The settings store is always injected. ``series.user`` is read on every
     ``addLog``, and the default store is backed by
-    ``QSettings("KHLab", "PyReconstruct")``, which is machine-wide and holds the
+    ``QSettings("PyReconstruct", "PyReconstruct")``, which is machine-wide and holds the
     real user's preferences. Reading it would make the tests depend on the
     developer's own username; writing it is out of the question.
     """

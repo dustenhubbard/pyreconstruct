@@ -362,8 +362,8 @@ def test_startup_under_the_dev_flavor_leaves_both_stores_alone(qapp, monkeypatch
     app's keys are exactly as they were."""
     from PySide6.QtCore import QSettings
 
-    DEV = ("KHLab", "PyReconstruct Dev")
-    STABLE = ("KHLab", "PyReconstruct")
+    DEV = (W.ORG, "PyReconstruct Dev")
+    STABLE = (W.ORG, W.APP)
     monkeypatch.setenv("PYRECON_APP_NAME", DEV[1])
     dev, stable = QSettings(*DEV), QSettings(*STABLE)
     _clear(dev)

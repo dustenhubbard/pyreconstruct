@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 from .helper import BrowseWidget, BorderedWidget
 
 from PyReconstruct.modules.datatypes import Series
+from PyReconstruct.modules.constants.settings_domain import user_action
 
 # room for the dialog's frame and the screen's edges
 SCREEN_SHARE = 0.85
@@ -311,26 +312,29 @@ class BackupDialog(QDialog):
     def set(self):
         """Set the series options with the requested backup data"""
         if self.accept():
-            # set the series options
-            self.series.setBackupUsesDefaults(self.use_defaults_cb.isChecked())
-            self.series.setOption("autobackup", self.auto_cb.isChecked())
-            self.series.setOption("backup_dir", self.dir_widget.text())
-            self.series.setOption("default_autobackup", self.default_auto_cb.isChecked())
-            self.series.setOption("default_backup_dir", self.defaultTemplate())
-            for name, (cb, w) in self.widgets.items():
-                self.series.setOption(
-                    f"backup_{name}",
-                    cb.isChecked()
-                )
-                if name in ("date", "time", "prefix", "suffix"):
+            # the user accepted the dialog: saved even while the old KHLab
+            # settings are still being copied
+            with user_action():
+                # set the series options
+                self.series.setBackupUsesDefaults(self.use_defaults_cb.isChecked())
+                self.series.setOption("autobackup", self.auto_cb.isChecked())
+                self.series.setOption("backup_dir", self.dir_widget.text())
+                self.series.setOption("default_autobackup", self.default_auto_cb.isChecked())
+                self.series.setOption("default_backup_dir", self.defaultTemplate())
+                for name, (cb, w) in self.widgets.items():
                     self.series.setOption(
-                        f"backup_{name}_str", 
-                        w.text()
+                        f"backup_{name}",
+                        cb.isChecked()
                     )
-            self.series.setOption(
-                "backup_delimiter",
-                self.delimiter_le.text()
-            )
+                    if name in ("date", "time", "prefix", "suffix"):
+                        self.series.setOption(
+                            f"backup_{name}_str", 
+                            w.text()
+                        )
+                self.series.setOption(
+                    "backup_delimiter",
+                    self.delimiter_le.text()
+                )
     
     def exec(self):
         "Run the dialog."

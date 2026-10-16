@@ -7,14 +7,17 @@ behavior is identical to the previous direct `QSettings` usage; headless
 callers and tests can inject `DictSettingsStore` (pure Python, no Qt).
 
 Two scopes are preserved exactly, matching the prior `QSettings` usage:
-  - per-series settings, keyed by the series ``code`` (org ``"KHLab"``, app
-    ``"PyReconstruct-{code}"``)
-  - global settings (org ``"KHLab"``, app ``"PyReconstruct"``)
+  - per-series settings, keyed by the series ``code`` (org ``"PyReconstruct"``,
+    app ``"PyReconstruct-{code}"``)
+  - global settings (org ``"PyReconstruct"``, app ``"PyReconstruct"``)
+
+The organization was ``"KHLab"`` until 2026-10-03; the startup copy in
+`constants/settings_domain.py` carries those stores across once.
 
 Both scopes are the SHARED domain (`constants/settings_domain.py`): the
 stable app and the Dev app read and write the same store, so a preference
 set in one is what the other sees. The few keys that stay per app never
-pass through here; they are raw `QSettings` sites routed by `domain_for`.
+pass through here; they are `settings_for` sites routed by `domain_for`.
 
 Pass ``code=None`` to address the global scope; pass a series ``code`` to
 address that series' per-series scope.
@@ -43,6 +46,16 @@ class SettingsStore(ABC):
     def set_value(self, code: Optional[str], key: str, value) -> None:
         """Store ``value`` under ``key`` in the given scope."""
 
+    def may_save_defaults(self, code: Optional[str]) -> bool:
+        """Whether the program may write a value of its own into the scope:
+        a default read on a miss, or state it saves without being asked.
+
+        True unless the scope is waiting on a settings copy that has not
+        finished (``QSettingsStore``); a value saved then would block the
+        one the copy is meant to bring.
+        """
+        return True
+
 
 class QSettingsStore(SettingsStore):
     """Default store backed by ``QSettings`` (identical to prior behavior).
@@ -67,8 +80,13 @@ class QSettingsStore(SettingsStore):
 
     def _settings(self, code: Optional[str]):
         from PySide6.QtCore import QSettings
+        from PyReconstruct.modules.constants.settings_domain import (
+            GuardedSettings,
+        )
         app = self.APP if code is None else f"{self.APP}-{code}"
-        return QSettings(self.ORG, app)
+        # guarded: while the store is owed its copy from the old KHLab
+        # settings, only a user action writes to it
+        return GuardedSettings(QSettings(self.ORG, app))
 
     def contains(self, code, key):
         return self._settings(code).contains(key)
@@ -78,6 +96,12 @@ class QSettingsStore(SettingsStore):
 
     def set_value(self, code, key, value):
         self._settings(code).setValue(key, value)
+
+    def may_save_defaults(self, code):
+        from PyReconstruct.modules.constants.settings_domain import (
+            store_copy_pending,
+        )
+        return not store_copy_pending(self.APP if code is None else f"{self.APP}-{code}")
 
 
 class DictSettingsStore(SettingsStore):
