@@ -512,6 +512,32 @@ MENUBAR_EXPECTED[_tail_at:_tail_at + len(_HELP_TAIL_OLD)] = _HELP_TAIL_NEW
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "act", "submitissue_act")) + 1, _REQUEST_FEATURE_ROW
 )
+# The Dev-build row (fork, 2026-10-16): Series > Images > Crop scaled images
+# around an object... is built only when constants.build_flavor.is_dev_build()
+# says so, which the autouse fixture below forces on for these rows. The stable
+# app's tree is the same list without it (test_the_stable_app_has_no_crop_row).
+_CROP_ZARR_ROW = (2, "act", "cropzarr_act")
+MENUBAR_EXPECTED.insert(
+    MENUBAR_EXPECTED.index((2, "act", "scalezarr_act")) + 1, _CROP_ZARR_ROW
+)
+
+
+@pytest.fixture(autouse=True)
+def dev_build(monkeypatch):
+    """Build the menus as the Dev build does, whatever this checkout's version."""
+    from PyReconstruct.modules.gui.main import menubar
+
+    monkeypatch.setattr(menubar, "is_dev_build", lambda: True)
+
+
+def test_the_stable_app_has_no_crop_row(monkeypatch):
+    """With the gate off, the tree is the Dev tree without the crop row: one
+    row, in one place, is the whole difference between the two apps."""
+    from PyReconstruct.modules.gui.main import menubar
+
+    monkeypatch.setattr(menubar, "is_dev_build", lambda: False)
+    built = [(d, kind, attr) for d, kind, attr, _text in _rows()]
+    assert built == [row for row in MENUBAR_EXPECTED if row != _CROP_ZARR_ROW]
 
 
 def test_menubar_structure_matches_the_baseline_plus_additions():
@@ -543,10 +569,12 @@ def test_menubar_action_and_submenu_counts():
     and the series-wide recolor, both 2026-08-12, built on separate branches)
     each took the count up one, 117 to 119 together. Lists > Object list of
     selected traces (fork #438) took it from 125 to 126. Clean up >
-    Duplicates... replaced its two duplicate finders, 126 to 125.
+    Duplicates... replaced its two duplicate finders, 126 to 125. The Dev
+    build's Series > Images > Crop scaled images around an object... took it
+    to 126 (counted with the gate on, see dev_build).
     """
     rows = _rows()
-    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 125
+    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 126
     assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 30
 
 
@@ -694,6 +722,7 @@ SERIES_MENU_LABELS = [
     "    Find/change image directory",
     "    Convert to scaled images",
     "    Update image scales",
+    "    Crop scaled images around an object...",   # Dev build (dev_build fixture)
     "Hide >",
     "    Hide all traces (entire series)",
     "    Unhide all traces (entire series)",
