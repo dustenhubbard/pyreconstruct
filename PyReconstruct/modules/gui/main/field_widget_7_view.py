@@ -315,6 +315,44 @@ class FieldWidgetView(FieldWidgetPaint):
             return False
         return viewMissesBounds(self.series.window, bounds)
 
+    def viewIsOffTraces(self) -> bool:
+        """Whether the view window misses every shown trace on the section.
+
+        A trace counts as in view when its bounding box, after the section
+        transform, shares any area with the window, which is the box the
+        field draws it in. Hidden traces and traces of a hidden group are
+        not drawn, so they do not count: a view over nothing but hidden
+        traces shows a black field. A section with no shown traces is off
+        traces.
+
+        One pass over the section's points, the same mapping the trace
+        layer uses, stopping at the first trace in view.
+        """
+        window = self.series.window
+        tform = self.section.tform
+        group_hidden = self.section.groupHiddenNames()
+        for trace in self.section.tracesAsList():
+            if trace.hidden or not trace.points or trace.name in group_hidden:
+                continue
+            points = tform.mapPointsArray(trace.points)
+            bounds = (
+                points[:, 0].min(), points[:, 1].min(),
+                points[:, 0].max(), points[:, 1].max(),
+            )
+            if not viewMissesBounds(window, bounds):
+                return False
+        return True
+
+    def viewShowsNothing(self) -> bool:
+        """Whether the view window misses both the section image and every
+        shown trace on the section, so the field is black.
+
+        A view that shows traces outside the image is one the user may have
+        chosen, since the 3D scene's double-click writes a one-micron view
+        at the point clicked, so it is not treated as lost.
+        """
+        return self.viewIsOffImage() and self.viewIsOffTraces()
+
     def moveTo(self, snum : int, x : float, y : float):
         """Move to a specified section number and coordinates (used from 3D scene).
         
