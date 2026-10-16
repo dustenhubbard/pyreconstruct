@@ -332,11 +332,13 @@ def paintScaleBar(painter, real_len, subdivs, units_per_pixel, thickness,
     white edge, the ticks, the text and the text's outline.  So a bar drawn
     at scale 3 is three times as wide, and as sharp as at scale 1.
 
-    The two text sizes are font sizes before the scale, the same unit as
-    `LABEL_SIZE`, so at scale 3 a label size of 16 draws a 48 px label.  They
-    reach the font as `drawOutlinedText` takes them, which is a point size.
-    A point is a pixel on a 72 dpi device, so keep a target image at its
-    default dots per meter while painting and set its DPI afterward.
+    The two text sizes are point sizes, the unit `LABEL_SIZE` has always
+    been in: `drawOutlinedText` builds its font from them as points.  Qt
+    turns points into pixels at the screen's DPI, not the target's, so a
+    label is about as many pixels as on screen (12 at 72 DPI, 16 at 96 DPI)
+    whatever DPI a target image carries.  The painter's scale then multiplies
+    that, so a label size of 16 at scale 3 is three times as tall as a label
+    size of 16 at scale 1.  No size here is a promise in pixels.
 
         Params:
             painter (QPainter): an active painter, origin at the bar's corner
@@ -347,8 +349,8 @@ def paintScaleBar(painter, real_len, subdivs, units_per_pixel, thickness,
             draw_text (bool): whether to draw the label and tick labels
             draw_ticks (bool): whether to draw the tick marks
             scale (float): output pixels per screen pixel
-            label_size (int): the label's font size, before the scale
-            tick_label_size (int): the tick labels' font size, before the scale
+            label_size (int): the label's point size, before the scale
+            tick_label_size (int): the tick labels' point size, before the scale
         Returns:
             (int, int): the width and height drawn in, in screen pixels
                         (multiply by `scale` for output pixels); (0, 0) when
