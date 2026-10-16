@@ -45,7 +45,8 @@ def logBlocks(log_list : list):
     Yields (indexes, lines): the index in log_list of each line in the block,
     and the line itself with its ending removed.
     """
-    indexes, lines = [], []
+    indexes : list[int] = []
+    lines : list[str] = []
     for i, raw in enumerate(log_list):
         line = _dropLineEnding(raw)
         if ROW_START.match(line.lstrip()) and lines:
