@@ -70,6 +70,8 @@ default_settings = {
     "screenshot_res": 300,
     "show_ztraces": True,  # MFO
     "fill_opacity": 0.2,  # MFO
+    "selected_trace_style": "standard",  # standard, outline or glow  # MFO
+    "selection_glow_opacity": 20,  # % opacity of the glow style's wide stroke  # MFO
     "find_zoom": 95.0,  # MFO
     "show_flags": "unresolved",  # MFO
     "display_closest": True,  # MFO
@@ -303,6 +305,10 @@ def clampScaleBarThickness(value) -> int:
         return DEFAULT_SCALE_BAR_THICKNESS
     return max(MIN_SCALE_BAR_THICKNESS, min(MAX_SCALE_BAR_THICKNESS, value))
 
+
+# The selection glow opacity slider runs from 0 to this percent. A stored value
+# above it, such as one set by hand, draws and shows as this.
+MAX_SELECTION_GLOW_OPACITY = 50
 
 # The range of real-world lengths a micron-pinned scale bar can be pinned to:
 # a picometre to a metre, against specimen sections measured in tens of microns.

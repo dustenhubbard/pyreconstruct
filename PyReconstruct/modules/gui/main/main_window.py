@@ -19,6 +19,8 @@ from PyReconstruct.modules.datatypes.series import (
     SeriesClosedError,
     SeriesOpenError,
 )
+from PyReconstruct.modules.backend.crop_zarr import CropError, CropStopped, LOG_NAME
+from PyReconstruct.modules.gui.dialog.crop_zarr import cropWithProgress
 from PyReconstruct.modules.backend.func.window_geometry import (
     default_window_rect,
     window_geometry_is_usable,
@@ -1035,6 +1037,44 @@ class MainWindow(QMainWindow):
             series, match["names"], f"Use the image names in {zarr_name}"
         )
 
+    def cropScaledImages(self):
+        """Crop the series' scaled images around one object into a new zarr.
+
+        `Series > Images > Crop scaled images around an object...`, in the
+        Dev build. The dialog checks the inputs the way crop_zarr.py does,
+        before anything is written. The crop then reads the sections from
+        the working folder, so the field's unsaved edits are written first,
+        and runs on a worker thread behind the progress dialog, whose Cancel
+        stops it after the section being written. A stopped crop leaves its
+        partial output, without a log. A series opened meanwhile (a .jser
+        from the Finder) closes this one, which stops the crop the same way.
+        """
+        series = self.series
+        selected = {trace.name for trace in self.field.section.selected_traces}
+        offered = selected.pop() if len(selected) == 1 else ""
+        settings, confirmed = CropZarrDialog(self, series, offered).exec()
+        if not confirmed:
+            return
+        # the dialog ran its own event loop, where a .jser opened from the
+        # Finder closes this series and opens another in its place
+        if series is not self.series or series.closed:
+            notify(f"{series.name} was closed, so its images were not cropped.")
+            return
+        self.saveAllData()
+        try:
+            summary = cropWithProgress(series, settings)
+        except (CropStopped, CropError) as stopped:
+            notify(str(stopped))
+            return
+        except SeriesClosedError as closed:
+            left = ""
+            if os.path.lexists(settings.out_fp):
+                left = (f" The partial output {settings.out_fp!r} has no "
+                        f"{LOG_NAME}; remove it to use its name again.")
+            notify(f"{closed}{left}")
+            return
+        notify("\n".join(summary))
+
     def setImageNames(self, series, names : dict, event : str = None) -> bool:
         """Set the image name of every section in the open series.
 
@@ -1869,18 +1909,21 @@ class MainWindow(QMainWindow):
         ) # set the current trace
 
     def offerHomeIfViewOffImage(self):
-        """Offer to set the view to the image when the view misses it.
+        """Offer to set the view to the image when the view shows nothing.
 
         Asked after the image loads: when a series opens with its image
         found, and when its images are located. The saved view is the
         user's, so it moves only when they pick "Set view to image";
         declining or dismissing the prompt leaves the position and zoom as
-        saved. A view that overlaps the image at all asks nothing.
+        saved. A view that overlaps the image at all asks nothing, and
+        neither does a view over any shown trace of the current section,
+        with or without image: the 3D scene's double-click parks the view
+        on a trace, which can lie outside the image.
 
             Returns:
                 (bool): True if the view was moved
         """
-        if not self.field.viewIsOffImage():
+        if not self.field.viewShowsNothing():
             return False
         if not viewOffImageNotify(self):
             return False

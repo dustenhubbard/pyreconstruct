@@ -12,7 +12,6 @@ from PyReconstruct.modules.datatypes import Trace, Transform, Series
 from PyReconstruct.modules.datatypes.transform import alignment_tform
 from PyReconstruct.modules.calc.nesting import (  # noqa: F401 (tests import them from here)
     _covers,
-    _cutsIsland,
     _traceLine,
     _tracePolygon,
     islandCuts,
