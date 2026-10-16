@@ -34,6 +34,9 @@ from PyReconstruct.modules.constants import (
     fast_loads,
     fast_dumps,
     write_jser,
+    JserSplice,
+    KeyedSection,
+    section_digest,
     canon_keys_inplace,
     JSER_SCHEMA_VERSION,
     SERIES_KEYS,
@@ -1161,7 +1164,7 @@ class Series():
             # The document is written as it is read, one section at a time
             # (fork #437). Only the section being written is in memory, never
             # every section plus the joined bytes. write_jser may call both of
-            # these twice; see its comment in jser_format.py.
+            # these more than once; see its comment in jser_format.py.
             def sections():
                 progress = 0
                 for snum in slots:
@@ -1171,21 +1174,34 @@ class Series():
                     fp = os.path.join(self.hidden_dir, self.sections[snum])
                     try:
                         with open(fp, "rb") as f:
-                            section_data = fast_loads(f.read())
-                    except (OSError, ValueError) as e:
-                        # Same reasoning as a missing file: refuse rather than
-                        # write the section out as null. The temp file is
-                        # removed and the existing .jser is not touched.
-                        self._refuseSave(
-                            jser_fp,
-                            f"the working file for section {snum} could not be read "
-                            f"({e}). Saving now would write a series without it."
-                        )
+                            raw = f.read()
+                    except OSError as e:
+                        refuseUnreadable(snum, e)
 
                     progress += 1
                     reporter.set_progress(progress/final_value * 100)
-                    yield section_data
-                    del section_data
+                    # parsed only if this section is encoded, not copied
+                    yield KeyedSection(
+                        section_digest(raw),
+                        lambda raw=raw, snum=snum: parseSection(raw, snum)
+                    )
+                    del raw
+
+            def parseSection(raw, snum):
+                try:
+                    return fast_loads(raw)
+                except ValueError as e:
+                    refuseUnreadable(snum, e)
+
+            def refuseUnreadable(snum, e):
+                # Same reasoning as a missing file: refuse rather than write
+                # the section out as null. The temp file is removed and the
+                # existing .jser is not touched.
+                self._refuseSave(
+                    jser_fp,
+                    f"the working file for section {snum} could not be read "
+                    f"({e}). Saving now would write a series without it."
+                )
 
             def tail():
                 # the series file itself (self.filepath is the .ser in the hidden dir)
@@ -1259,12 +1275,25 @@ class Series():
             # The structural pretty printer is opt-in via PYRECON_JSER_PRETTY=1
             # for when a human is going to read the diff. Either way the bytes
             # are exactly what dumps_jser returns for the same document.
+            #
+            # A section whose working file is unchanged since the last save is
+            # copied from the file that save wrote (see jser_splice.py). The
+            # index is checked against the file on disk first, and every
+            # copied range against its digest; any doubt makes a full write.
+            index = getattr(self, "_jser_splice_index", None)
+            if index is not None and not index.matchesDisk():
+                index = None
+            splice = JserSplice(index)
             try:
                 # atomic: the previous .jser stays intact until the new one is complete
-                _atomicWrite(jser_fp, lambda f: write_jser(f, sections, tail))
+                _atomicWrite(jser_fp, lambda f: write_jser(f, sections, tail, splice=splice))
             except OSError as e:
                 self._surfaceSaveError(jser_fp, e)
                 raise
+            # A save to another path (a backup) leaves the index on the
+            # series' own file, which that save did not touch.
+            if jser_fp == self.jser_fp:
+                self._jser_splice_index = splice.indexFor(jser_fp)
 
             if close:
                 self.close()

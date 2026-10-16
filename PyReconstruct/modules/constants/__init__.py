@@ -61,6 +61,12 @@ from .fast_json import (
     fast_dumps
 )
 
+from .jser_splice import (
+    JserSplice,
+    KeyedSection,
+    section_digest,
+)
+
 from .jser_format import (
     dumps_jser,
     write_jser,

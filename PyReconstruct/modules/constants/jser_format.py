@@ -84,6 +84,7 @@ before turning it on.
 import os
 
 from .fast_json import fast_dumps, have_orjson, orjson_dumps, stdlib_dumps
+from .jser_splice import JserSplice, SpliceMismatch, loaded
 
 
 #: Environment variable that opts a whole process into pretty output.
@@ -726,18 +727,27 @@ def _orjson_part(obj) -> bytes:
         raise _NeedsStdlib() from e
 
 
-def _write_compact(f, sections, tail, encode, item_sep : bytes, key_sep : bytes):
-    """One pass of the minified form, every part through `encode`."""
+def _write_section(f, sd, encode):
+    raw = encode([[sd]])
+    f.write(memoryview(raw)[2:-2])
+
+
+def _write_compact(f, sections, tail, encode, item_sep : bytes, key_sep : bytes,
+                   write_section=_write_section):
+    """One pass of the minified form, every part through `encode`.
+
+    `write_section(f, sd, encode)` writes one section's bytes; the splice save
+    passes its own, which copies a section it can and encodes the rest.
+    """
     f.write(b'{"sections"' + key_sep + b"[")
     first = True
     for sd in sections:
         if not first:
             f.write(item_sep)
         first = False
-        raw = encode([[sd]])
-        f.write(memoryview(raw)[2:-2])
+        write_section(f, sd, encode)
         # drop this section before the next one is read
-        del raw, sd
+        del sd
     f.write(b"]")
     for k, v in tail().items():
         raw = encode({k: v})
@@ -780,11 +790,37 @@ def _write_pretty(f, sections, tail) -> None:
     f.write(_NL + b"}")
 
 
-def write_jser(f, sections, tail, pretty : bool = None) -> None:
+def _write_spliced(f, sections, tail, splice : JserSplice) -> None:
+    """The orjson pass with `splice` copying what it can (see jser_splice.py).
+
+    A copied range that fails its check starts the pass over with nothing
+    copied, so the file is a full write. ``_NeedsStdlib`` passes through.
+    """
+    start = f.tell()
+    for attempt in range(2):
+        writer = splice.startPass()
+        try:
+            _write_compact(f, sections(), tail, _orjson_part, b",", b":",
+                           write_section=writer)
+            splice.endPass(f)
+            return
+        except SpliceMismatch:
+            if attempt:
+                raise  # nothing was copied, so this cannot happen
+            splice.forgetIndex()
+            f.seek(start)
+            f.truncate()
+        finally:
+            writer.close()
+
+
+def write_jser(f, sections, tail, pretty : bool = None,
+               splice : JserSplice = None) -> None:
     """Write a .jser document into the binary file `f` without building it whole.
 
     The bytes are exactly ``dumps_jser({"sections": list(sections()),
-    **tail()}, pretty)``.
+    **tail()}, pretty)``, with every ``KeyedSection`` in place of the dict it
+    loads.
 
     `sections` and `tail` are callables so that the reads stay in the order a
     save has always done them (every section, then the series and the log) and
@@ -793,24 +829,35 @@ def write_jser(f, sections, tail, pretty : bool = None) -> None:
 
         Params:
             f: a binary file opened for writing, at position 0, seekable
-            sections (callable): returns an iterable of section dicts (or None
-                for a gap), in order
+            sections (callable): returns an iterable of section dicts or
+                KeyedSections (or None for a gap), in order
             tail (callable): returns a dict of the other top-level members, in
                 order, normally ``{"series": ..., "log": ...}``; called after
                 the sections are consumed
             pretty (bool): force pretty on/off; None consults the environment
+            splice (JserSplice): copy unchanged sections from the previous
+                .jser, and record this file's layout for the next save. Only
+                the minified orjson form splices; any other form writes in
+                full and records no layout.
     """
     if pretty is None:
         pretty = pretty_default()
     if pretty:
-        _write_pretty(f, sections(), tail)
+        if splice is not None:
+            splice.noLayout()
+        _write_pretty(f, loaded(sections()), tail)
         return
     if have_orjson():
         start = f.tell()
         try:
-            _write_compact(f, sections(), tail, _orjson_part, b",", b":")
+            if splice is not None:
+                _write_spliced(f, sections, tail, splice)
+            else:
+                _write_compact(f, loaded(sections()), tail, _orjson_part, b",", b":")
             return
         except _NeedsStdlib:
             f.seek(start)
             f.truncate()
-    _write_compact(f, sections(), tail, stdlib_dumps, b", ", b": ")
+    if splice is not None:
+        splice.noLayout()
+    _write_compact(f, loaded(sections()), tail, stdlib_dumps, b", ", b": ")
