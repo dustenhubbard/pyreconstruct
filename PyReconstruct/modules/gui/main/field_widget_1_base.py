@@ -75,6 +75,11 @@ class FieldWidgetBase:
         self.roi_box_on : bool              = False
         self.roi_box_center : tuple         = None
         self.roi_box_size : tuple           = (5.0, 5.0)
+        # A drag in the ROI box mode, in field coordinates: where the press
+        # was, and where the pointer is once the press has become a drag
+        # (None until then, and no preview is drawn).
+        self.roi_box_drag_start : tuple     = None
+        self.roi_box_drag_end : tuple       = None
         self.hide_image : bool              = False
         self.blend_sections : bool          = False
 
@@ -184,6 +189,8 @@ class FieldWidgetBase:
         self.hide_image = False
         self.roi_box_on = False
         self.roi_box_center = None
+        self.roi_box_drag_start = None
+        self.roi_box_drag_end = None
 
         ## Propagate tform defaults
         self.propagate_tform = False

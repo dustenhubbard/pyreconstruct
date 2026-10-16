@@ -20,6 +20,7 @@ class _Field:
     pointerPress = FieldWidgetMouse.pointerPress
     pointerMove = FieldWidgetMouse.pointerMove
     isSingleClicking = FieldWidgetMouse.isSingleClicking
+    cancelRoiBoxDrag = FieldWidgetMouse.cancelRoiBoxDrag
 
     def __init__(self):
         FieldWidgetBase.initAttrs(self, SimpleNamespace(getOption=lambda _: ("lasso",)), None)

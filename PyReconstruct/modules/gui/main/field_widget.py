@@ -323,8 +323,10 @@ class FieldWidget(QWidget, FieldWidgetView):
 
             # The menu takes the press, and a lasso under way ends as it does
             # on a tool change. Mid-lasso, this is a second button or a
-            # tablet's barrel button.
+            # tablet's barrel button. An ROI box drag ends without changing
+            # the box.
             self.cancelLasso()
+            self.cancelRoiBoxDrag()
 
             clicked_label = None
 
@@ -433,6 +435,8 @@ class FieldWidget(QWidget, FieldWidgetView):
             self.mousePanzoomMove(event)
         elif self.mouse_mode == KNIFE:
             self.knifeMove(event)
+        elif self.mouse_mode == ROI_BOX:
+            self.roiBoxMove(event)
 
         elif self.usingLocked():
             pass
@@ -448,6 +452,16 @@ class FieldWidget(QWidget, FieldWidgetView):
             self.hostMove(event)
         elif self.mouse_mode == ZTOOL:
             self.ztoolMove(event)
+
+    def keyPressEvent(self, event):
+        """Called when a key is pressed with the field focused.
+
+        Overwritten from QWidget class. Escape during an ROI box drag cancels
+        it.
+        """
+        if event.key() == Qt.Key_Escape and self.cancelRoiBoxDrag():
+            return
+        super().keyPressEvent(event)
 
     def mouseReleaseEvent(self, event):
         """Called when mouse button is released.
@@ -499,6 +513,8 @@ class FieldWidget(QWidget, FieldWidgetView):
             self.knifeRelease(event)
         elif self.mouse_mode == FLAG:
             self.flagRelease(event)
+        elif self.mouse_mode == ROI_BOX:
+            self.roiBoxRelease(event)
 
         elif self.usingLocked():
             pass
