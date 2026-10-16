@@ -38,12 +38,14 @@ class Answer:
     def __init__(self, answer):
         self.answer = answer
         self.asked = []
+        self.told = []
 
     def confirm(self, message):
         self.asked.append(message)
         return self.answer
 
     def notify(self, message):
+        self.told.append(message)
         return False
 
 
@@ -308,8 +310,7 @@ def test_unsaved_work_after_a_crash_is_offered_back(answer, tmp_path, store_on):
     series = _open(fp)
     before = {n: series.loadSection(n).getDict() for n in series.sections}
     snum, name, edited = _edit_one_trace(series)
-    series.store.con.close()  # the process dies: no close, no Save
-    series.store.con = None
+    _die(series)
 
     asked = Answer(answer)
     series = _open(fp, notifier=asked)
@@ -321,6 +322,14 @@ def test_unsaved_work_after_a_crash_is_offered_back(answer, tmp_path, store_on):
         assert series.modified is answer
     finally:
         series.close()
+
+
+def _die(series):
+    """The process dies: no close, no Save; the OS drops its lock."""
+    series.store.con.close()
+    series.store.con = None
+    os.close(series.store._lock_fd)
+    series.store._lock_fd = None
 
 
 def test_a_changed_jser_is_imported_again(tmp_path, monkeypatch, store_on):
@@ -349,10 +358,12 @@ def test_a_changed_jser_under_unexported_work_keeps_the_store_aside(tmp_path, mo
     series.close()
     os.utime(fp, ns=(1, 1))  # the .jser changes under it
 
-    series = _open(fp)
+    told = Answer(True)
+    series = _open(fp, notifier=told)
     series.close()
     kept = [p for p in store_on.iterdir() if ".conflict-" in p.name and p.suffix == ".pyrstore"]
     assert len(kept) == 1
+    assert len(told.told) == 1 and str(kept[0]) in told.told[0]
     con = sqlite3.connect(kept[0])
     assert con.execute("SELECT value FROM meta WHERE key='dirty'").fetchone() == ("1",)
     con.close()
@@ -411,3 +422,56 @@ def test_the_store_is_keyed_by_the_real_path_and_lives_in_the_store_folder(tmp_p
     assert hybrid_store.storePaths(str(fp)) == hybrid_store.storePaths(str(link))
     db_fp, work = hybrid_store.storePaths(str(fp))
     assert Path(db_fp).parent == store_on
+
+
+# ---------------------------------------------------------------------------
+# unexported work, two windows, a busy store
+# ---------------------------------------------------------------------------
+
+def test_open_says_when_the_jser_lacks_the_last_save(tmp_path, store_on):
+    fp = _copy(SERIES_FILES[1], tmp_path)
+    series = _open(fp)
+    _edit_one_trace(series)
+    series.store.commit(series)  # Save to the store only, no export
+    series.close()
+
+    told = Answer(True)
+    _open(fp, notifier=told).close()
+    assert len(told.told) == 1 and "local store" in told.told[0]
+
+    series = _open(fp)
+    series.saveJser()  # the export
+    series.close()
+    told = Answer(True)
+    _open(fp, notifier=told).close()
+    assert told.told == []
+
+
+def test_a_second_window_is_told_the_series_is_open_elsewhere(tmp_path, store_on):
+    from PyReconstruct.modules.datatypes.series import SeriesOpenError
+
+    fp = _copy(SERIES_FILES[0], tmp_path)
+    first = _open(fp)
+    try:
+        with pytest.raises(SeriesOpenError, match="open in another PyReconstruct window"):
+            _open(fp)
+    finally:
+        first.close()
+    _open(fp).close()  # free again once the first closes
+
+
+def test_a_busy_store_is_reported_as_busy_never_as_damage(tmp_path, store_on):
+    fp = _copy(SERIES_FILES[0], tmp_path)
+    series = _open(fp)
+    try:
+        series.store.con.execute("PRAGMA busy_timeout=50")
+        other = sqlite3.connect(series.store.db_fp, isolation_level=None)
+        other.execute("BEGIN EXCLUSIVE")
+        try:
+            with pytest.raises(hybrid_store.StoreBusyError, match="another"):
+                series.store.writePendingSeries({"x": 1})
+        finally:
+            other.execute("ROLLBACK")
+            other.close()
+    finally:
+        series.close()

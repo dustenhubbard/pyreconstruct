@@ -12,6 +12,7 @@ from PySide6.QtCore import QEvent
 from .main_imports import *
 
 from PyReconstruct.modules.datatypes.section import Section, zarrHasScaleLevels
+from PyReconstruct.modules.datatypes import hybrid_store
 from PyReconstruct.modules.backend.image_name_match import (
     matchByNumber, zarrImageNames,
 )
@@ -3122,9 +3123,12 @@ class MainWindow(QMainWindow):
             # the hidden dir holding the only copy of the work.
             if self.saveAsToJser(close=close) == "cancel":
                 return "cancel"
-        elif self.series.store is not None and not close:
-            # PROTOTYPE: Save writes the local store; the .jser is written on
-            # close or export (Series.saveJser)
+        elif (
+            self.series.store is not None and not close
+            and not hybrid_store.saveWritesJser()
+        ):
+            # PROTOTYPE, PYRECON_HYBRID_STORE_SAVE=store: Save writes the local
+            # store only; the .jser is written on close (Series.saveJser)
             self.series.store.commit(self.series)
         else:
             # save the real jser once, then copy those bytes to the backup

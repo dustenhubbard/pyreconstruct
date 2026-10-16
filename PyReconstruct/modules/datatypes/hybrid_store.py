@@ -36,6 +36,13 @@ from PyReconstruct.modules.constants import fast_loads, fast_dumps
 
 ENV_SWITCH = "PYRECON_HYBRID_STORE"
 ENV_DIR = "PYRECON_HYBRID_STORE_DIR"
+## What Save does with the switch on. "jser" (the default): Save writes the
+## store and then the .jser, as Save writes the .jser today. "store": Save
+## writes the store only, and the .jser is written on close or export. Which
+## one a user gets is the maintainer's call (hub #247); both are here so both
+## can be measured.
+ENV_SAVE = "PYRECON_HYBRID_STORE_SAVE"
+BUSY_TIMEOUT_MS = 5000
 SCHEMA_VERSION = 1
 
 ## File systems a SQLite file must not sit on (Linux names, /proc/self/mountinfo)
@@ -85,6 +92,46 @@ TRACE_COLS = "snum, cpos, ord, name, shape, npts, xy, rest, xmin, ymin, xmax, ym
 def enabled() -> bool:
     """True when the prototype switch is on."""
     return os.environ.get(ENV_SWITCH) == "1"
+
+
+def saveWritesJser() -> bool:
+    """True unless PYRECON_HYBRID_STORE_SAVE=store: Save writes the .jser too."""
+    return os.environ.get(ENV_SAVE, "jser") != "store"
+
+
+class StoreBusyError(OSError):
+    """Another process holds the store. Never a sign of damage."""
+
+
+IN_USE = (
+    "This series is open in another PyReconstruct window (or another program "
+    "is saving it). Close it there first."
+)
+
+
+def _isBusy(err : Exception) -> bool:
+    text = str(err).lower()
+    return "locked" in text or "busy" in text
+
+
+def _lockFile(path : str):
+    """Hold an exclusive lock on path for the life of the process, or None.
+
+    The operating system drops the lock when the process ends, so a crash
+    never leaves a series locked.
+    """
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
 
 
 def storeRoot() -> Path:
@@ -203,15 +250,26 @@ class HybridStore():
         folder = os.path.dirname(db_fp)
         os.makedirs(folder, exist_ok=True)
         refuseNetworkFolder(folder)
+        self.con = None
+        self._lock_fd = _lockFile(db_fp + ".lock")
+        if self._lock_fd is None:
+            raise StoreBusyError(IN_USE)
         os.makedirs(work_dir, exist_ok=True)
-        self.con = sqlite3.connect(db_fp, isolation_level=None)
-        self.con.execute("PRAGMA journal_mode=WAL")
-        self.con.execute("PRAGMA synchronous=FULL")
-        self.con.executescript(SCHEMA)
-        if self.meta("schema_version") is None:
-            self.setMeta("schema_version", SCHEMA_VERSION)
-            self.setMeta("created_utc", _now())
-            self.con.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+        try:
+            self.con = sqlite3.connect(db_fp, isolation_level=None)
+            self.con.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+            self.con.execute("PRAGMA journal_mode=WAL")
+            self.con.execute("PRAGMA synchronous=FULL")
+            self.con.executescript(SCHEMA)
+            if self.meta("schema_version") is None:
+                self.setMeta("schema_version", SCHEMA_VERSION)
+                self.setMeta("created_utc", _now())
+                self.con.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+        except sqlite3.OperationalError as e:
+            self.close()
+            if _isBusy(e):
+                raise StoreBusyError(IN_USE) from e
+            raise
 
     @staticmethod
     def forJser(jser_fp : str) -> "HybridStore":
@@ -221,6 +279,9 @@ class HybridStore():
         if self.con is not None:
             self.con.close()
             self.con = None
+        if self._lock_fd is not None:
+            os.close(self._lock_fd)
+            self._lock_fd = None
 
     ## meta -----------------------------------------------------------------
 
@@ -679,12 +740,23 @@ class _Transaction():
         self.con, self.sync = con, sync
 
     def __enter__(self):
-        self.con.execute(f"PRAGMA synchronous={self.sync}")
-        self.con.execute("BEGIN IMMEDIATE")
+        try:
+            self.con.execute(f"PRAGMA synchronous={self.sync}")
+            self.con.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError as e:
+            if _isBusy(e):
+                raise StoreBusyError(IN_USE) from e
+            raise
 
     def __exit__(self, exc_type, exc, tb):
         if exc_type is None:
-            self.con.execute("COMMIT")
+            try:
+                self.con.execute("COMMIT")
+            except sqlite3.OperationalError as e:
+                self.con.execute("ROLLBACK")
+                if _isBusy(e):
+                    raise StoreBusyError(IN_USE) from e
+                raise
         else:
             self.con.execute("ROLLBACK")
         return False
@@ -697,15 +769,24 @@ def _now() -> str:
 def openSeries(jser_fp : str, progress, notifier):
     """Series.openJser with the switch on. Returns a Series, or None if declined."""
     from .series import (
-        Series, _default_progress_reporter_factory, _default_notifier, _openingText,
+        Series, SeriesOpenError, _default_progress_reporter_factory, _default_notifier,
+        _openingText,
     )
 
-    store = HybridStore.forJser(jser_fp)
+    asker = notifier if notifier is not None else _default_notifier()
+    try:
+        store = HybridStore.forJser(jser_fp)
+    except StoreBusyError as e:
+        raise SeriesOpenError(str(e)) from e
     if store.isImported() and not store.matchesJser(jser_fp):
         if store.hasUnexportedWork():
             # both the .jser and the store changed: keep the store, read the file
             kept = store.setAside()
-            print(f"hybrid store: the .jser changed under unexported work; kept {kept}")
+            asker.notify(
+                f"{os.path.basename(jser_fp)} changed on disk while the local store "
+                f"held changes that were never written to it. Those changes are "
+                f"kept, untouched, in\n{kept}\nThe series opens from the file on disk."
+            )
             store = HybridStore.forJser(jser_fp)
         else:
             # the .jser is newer and the store holds nothing it lacks: import again
@@ -723,12 +804,17 @@ def openSeries(jser_fp : str, progress, notifier):
             store.importJser(jser_fp, jser_data, collisions, reporter)
             del jser_data
         elif store.hasPending():
-            asker = notifier if notifier is not None else _default_notifier()
             if asker.confirm(
                 f"{sname} has unsaved work from a session that did not close.\n"
                 "Open it with that work?"
             ) is False:
                 store.clearPending()
+        elif store.meta("dirty") == "1":
+            asker.notify(
+                f"{sname}.jser does not have the changes saved last time yet. "
+                "They are in the local store, and the .jser is written when you "
+                "close the series."
+            )
         series = store.buildSeries(jser_fp)
         # numbers measured just now are kept, so the next open skips them
         store.writeStatsFor(series, store.recomputed)
