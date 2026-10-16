@@ -16,8 +16,8 @@ large autosegmented series. Small series gain much less.
 Open is `Series.openJser`, which reads the series and builds every trace's
 geometry: what PyReconstruct does when you open a series. "First open" parses
 the whole `.jser`; "reopen" uses the unpacked copy PyReconstruct keeps beside
-it. The benchmark then runs one extra full `SeriesData.refresh()`, the same
-pass PyReconstruct repeats after some edits; the second table includes it.
+it. The benchmark then runs one extra full `SeriesData.refresh()`, the same pass
+PyReconstruct repeats after some edits; the second table includes it.
 
 I measured on October 9, 2026 at fork commit `d021a9ec` against upstream commit
 `af3f8176` (they share `5f324e2b`; upstream has 56 commits since that are not in
@@ -44,8 +44,8 @@ median:
 | class_series (small example) | 145 MiB -> 115 MiB | 142 MiB -> 113 MiB |
 | WVHJM (autosegmented) | 2,010 MiB -> 2,937 MiB | 434 MiB -> 873 MiB |
 
-Peak memory is higher here than upstream: about 1.5x on a first open of the large
-series and 2x on a reopen.
+Peak memory is higher here than upstream: about 1.5x on a first open of the
+large series and 2x on a reopen.
 
 Both versions read the same sections, objects and traces. Total area and length
 agree to floating-point rounding. Total radius differs by about 2 parts in 10
