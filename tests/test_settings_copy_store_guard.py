@@ -1,10 +1,11 @@
 """While a store is owed its copy from ``KHLab``, every call that can change it
 waits unless it is a user action.
 
-``GuardedSettings`` checks each such call: ``setValue``, ``remove``,
-``clear`` and an array write. An automatic writer of any of these, including
-one the app does not have yet, must leave the store as the copy will expect
-it. The user's own changes save at once and win over the retry.
+``GuardedSettings`` checks each such call when it is made: ``setValue``,
+``remove``, ``clear`` and each call of an array write. An automatic writer of
+any of these, including one the app does not have yet and one that follows a
+user action, must leave the store as the copy will expect it. The user's own
+changes save at once and win over the retry.
 """
 
 import pytest
@@ -198,3 +199,117 @@ def test_user_actions_save_and_win_the_retry(main_window, monkeypatch, tmp_path,
             s.remove(D.LEGACY_COPY_MARKER)
             s.sync()
         D._copy_pending.pop(GLOBAL, None)
+
+
+@SCOPES
+def test_an_automatic_end_of_a_user_array_waits(owed):
+    code, app, new = owed
+    guarded = QSettingsStore()._settings(code)
+    with user_action():
+        guarded.beginWriteArray("guard/cache")
+    guarded.endArray()
+    guarded.sync()
+    new.sync()
+    assert new.allKeys() == []
+    assert _copy(code).complete
+    assert _array_size(new, "guard/cache") == 2
+
+
+@SCOPES
+def test_an_automatic_array_index_waits(owed):
+    code, app, new = owed
+    guarded = QSettingsStore()._settings(code)
+    with user_action():
+        guarded.beginWriteArray("guard/cache")
+        guarded.setArrayIndex(0)
+        guarded.setValue("name", "chosen")
+    guarded.setArrayIndex(8)
+    guarded.setValue("name", "automatic")
+    with user_action():
+        guarded.endArray()
+    guarded.sync()
+    new.sync()
+    assert _array_size(new, "guard/cache") == 1
+    assert new.value("guard/cache/1/name") == "chosen"
+    assert not new.contains("guard/cache/9/name")
+    assert _copy(code).complete
+    assert _array_size(new, "guard/cache") == 1
+
+
+@SCOPES
+@pytest.mark.parametrize("group", ["guard/cache", "scratch"])
+def test_an_automatic_write_in_a_group_waits(owed, group):
+    code, app, new = owed
+    guarded = QSettingsStore()._settings(code)
+    guarded.beginGroup(group)
+    guarded.setValue("size", 0)
+    guarded.remove("1")
+    guarded.endGroup()
+    guarded.beginReadArray("missing")
+    guarded.setArrayIndex(6)
+    guarded.endArray()
+    guarded.sync()
+    new.sync()
+    assert new.allKeys() == []
+    assert _copy(code).complete
+    assert _array_size(new, "guard/cache") == 2
+
+
+@pytest.mark.parametrize("size", [-1, 3])
+def test_a_guarded_array_write_stores_what_qt_stores(qapp, size):
+    empty_stores(GLOBAL, SERIES)
+    plain = QSettings(D.SETTINGS_ORG, GLOBAL)
+    guarded = QSettingsStore()._settings(SERIES_CODE)
+    assert not D.store_copy_pending(SERIES)
+    for settings in (plain, guarded):
+        settings.setValue("guard/cache/size", 7)
+        settings.beginGroup("outer")
+        settings.beginWriteArray("list", size)
+        settings.setValue("before", "first")
+        for i, name in ((0, "a"), (2, "c")):
+            settings.setArrayIndex(i)
+            settings.setValue("name", name)
+        settings.endArray()
+        settings.endGroup()
+        settings.beginWriteArray("guard/cache", size)
+        settings.endArray()
+        settings.sync()
+    stored = QSettings(D.SETTINGS_ORG, SERIES)
+    assert {k: stored.value(k) for k in stored.allKeys()} == {
+        k: plain.value(k) for k in plain.allKeys()
+    }
+    assert stored.allKeys()
+    empty_stores(GLOBAL, SERIES)
+
+
+def test_reading_or_grouping_inside_an_array_write_is_refused(qapp):
+    guarded = QSettingsStore()._settings(SERIES_CODE)
+    guarded.beginWriteArray("guard/cache")
+    for call in (
+        lambda: guarded.value("name"), lambda: guarded.beginGroup("g"),
+        lambda: guarded.beginReadArray("r"), guarded.clear,
+    ):
+        with pytest.raises(RuntimeError):
+            call()
+    guarded.endArray()
+    assert guarded.group() == ""
+
+
+def test_every_public_qsettings_call_is_checked_or_not_offered(qapp):
+    import qsettings_isolation
+
+    guarded = GuardedSettings(QSettings(D.SETTINGS_ORG, GLOBAL))
+    checked = {
+        "setValue", "remove", "clear", "beginReadArray", "beginWriteArray",
+        "setArrayIndex", "endArray",
+    }
+    for name in dir(qsettings_isolation._real_qsettings):
+        if name.startswith("_"):
+            continue
+        if name in checked:
+            assert name in GuardedSettings.__dict__, name
+        elif name in GuardedSettings.READS:
+            getattr(guarded, name)
+        else:
+            with pytest.raises(AttributeError):
+                getattr(guarded, name)
