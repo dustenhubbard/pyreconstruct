@@ -158,7 +158,11 @@ class FieldWidgetMouse(FieldWidgetData):
         if not new_trace.closed or new_trace not in self.section.selected_traces:
             return
 
-        selected_only = self.series.getOption("auto_merge_selected_only")
+        # with the ROI box on, only the selected traces, which are inside it:
+        # a trace the box hides is never merged away
+        selected_only = (
+            self.series.getOption("auto_merge_selected_only") or self.roi_box_on
+        )
         traces_to_merge = []
         for t in contour:
             if t is new_trace or not t.closed:
@@ -1189,7 +1193,6 @@ class FieldWidgetMouse(FieldWidgetData):
             self.series.window,
             self.section.mag
         )
-        self.dropSelectedOutsideRoiBox()
         self.generateView()
 
     def flagRelease(self, event):

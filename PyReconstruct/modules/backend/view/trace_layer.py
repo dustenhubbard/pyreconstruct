@@ -191,13 +191,19 @@ class TraceLayer():
         else:
             traces_in_view = None
 
-        return self.section.findClosest(
+        closest, closest_type = self.section.findClosest(
             field_x,
             field_y,
             radius=radius,
             traces_in_view=traces_in_view,
             include_hidden=self.show_all_traces
         )
+
+        # the list is from the last draw; the box may have moved since
+        if closest_type == "trace" and not self.insideRoiBox(closest):
+            return None, None
+
+        return closest, closest_type
     
     def getTraces(self, pix_poly : list) -> list[Trace]:
         """"Select all traces that are completely in a polygon

@@ -12,6 +12,7 @@ same three a little shifted. The default box below covers part of d03 only.
 """
 import pytest
 from PySide6.QtCore import QPoint, QSettings, Qt
+from PySide6.QtWidgets import QWidget
 from PySide6.QtTest import QTest
 
 from PyReconstruct.modules.backend.view.trace_layer import (
@@ -22,7 +23,14 @@ from PyReconstruct.modules.backend.view.trace_layer import (
 from PyReconstruct.modules.calc import fieldPointToPixmap
 from PyReconstruct.modules.datatypes import Trace, Transform
 from PyReconstruct.modules.datatypes.default_settings import default_settings
-from PyReconstruct.modules.gui.main.field_widget_5_mouse import POINTER, ROI_BOX
+from PyReconstruct.modules.backend.view.trace_layer import TraceLayer
+from PyReconstruct.modules.gui.main import field_widget_2_trace as fwt
+from PyReconstruct.modules.gui.main import field_widget_3_object as fwo
+from PyReconstruct.modules.gui.main.field_widget_5_mouse import (
+    POINTER,
+    ROI_BOX,
+    SCISSORS,
+)
 
 pytestmark = pytest.mark.gui
 
@@ -306,6 +314,7 @@ def test_select_all_invert_and_find_skip_outside_traces(mw, qapp):
     field.invertTraceSelection()
     assert [t.name for t in field.section.selected_traces] == ["d03"]
 
+    field.section.selected_traces = []
     field.findContour("d03sp14")
     assert field.section.selected_traces == []
     field.findTrace("d03sp14")
@@ -392,3 +401,341 @@ def test_status_bar_says_the_box_is_on_and_its_size(mw, qapp):
     mw.roibox_act.trigger()
     field.updateStatusBar()
     assert "ROI box" not in mw.status_readout.text()
+
+
+# --- round 2: one selection rule ----------------------------------------------
+
+def _outside_copy(section, name="d03", dx=3.0):
+    """Add a copy of a trace moved dx field units east, well outside the box."""
+    tform = section.tform
+    (src,) = [t for t in section.tracesAsList() if t.name == name]
+    copy = src.copy()
+    copy.points = [
+        tform.map(tform.map(*p)[0] + dx, tform.map(*p)[1], inverted=True)
+        for p in src.points
+    ]
+    section.addTrace(copy)
+    return copy
+
+
+@pytest.fixture
+def notices(monkeypatch):
+    """The messages notify would have shown from the field."""
+    shown = []
+    monkeypatch.setattr(fwt, "notify", shown.append)
+    monkeypatch.setattr(fwo, "notify", shown.append)
+    return shown
+
+
+def test_focus_mode_selects_only_inside_traces_and_keeps_that_on_pgup(mw, qapp):
+    """Focus mode selects the object's traces inside the box only, on this
+    section and on the next one after PgUp."""
+    field = mw.field
+    outside_52 = _outside_copy(field.section)
+    sec53 = mw.series.loadSection(53)
+    _outside_copy(sec53)
+    sec53.save()
+    field.generateView()
+
+    _turn_on(mw, qapp)
+    mw.mouse_palette.activateModeButton("Pointer")
+    field.section.selected_traces = [
+        t for t in field.section.tracesAsList()
+        if t.name == "d03" and t is not outside_52
+    ]
+    field.toggleFocusMode()
+    assert field.section.selected_traces
+    assert outside_52 not in field.section.selected_traces
+    assert all(field.inRoiBox(t) for t in field.section.selected_traces)
+
+    mw.incrementSection()  # PgUp
+    qapp.processEvents()
+    assert mw.series.current_section == 53
+    names = [t.name for t in field.section.tracesAsList()]
+    assert names.count("d03") == 2
+    assert len(field.section.selected_traces) == 1
+    assert all(field.inRoiBox(t) for t in field.section.selected_traces)
+
+
+def test_new_trace_outside_the_box_is_kept_not_selected_and_named(mw, qapp):
+    field = mw.field
+    _turn_on(mw, qapp)
+    base = field.tracing_trace.copy()
+    base.name = "roi_out"
+    r = 0.05
+    field.newTrace(
+        [(15.5 - r, 25 - r), (15.5 + r, 25 - r), (15.5 + r, 25 + r), (15.5 - r, 25 + r)],
+        base, points_as_pix=False, reduce_points=False,
+    )
+    (new,) = [t for t in field.section.tracesAsList() if t.name == "roi_out"]
+    assert new not in field.section.selected_traces
+    assert "outside the ROI box" in mw.statusBar().currentMessage()
+
+    field.copy()
+    assert all(t.name != "roi_out" for t in (field.clipboard or []))
+
+
+def test_box_moved_with_a_name_selected_keeps_only_inside_traces(mw, qapp):
+    """Every redraw keeps the rule, whatever filled the selection."""
+    field = mw.field
+    outside = _outside_copy(field.section)
+    _turn_on(mw, qapp)
+    field.section.selected_traces = [
+        t for t in field.section.tracesAsList() if t.name == "d03"
+    ]
+    field.generateView()
+    assert outside not in field.section.selected_traces
+    assert [t.name for t in field.section.selected_traces] == ["d03"]
+
+
+# --- round 2: auto-merge -------------------------------------------------------
+
+def test_auto_merge_leaves_a_trace_outside_the_box(mw, qapp):
+    """With "Only merge selected traces" off, a new trace inside the box that
+    overlaps a same-name trace outside it does not merge that trace away."""
+    field = mw.field
+    mw.series.setOption("auto_merge", True)
+    mw.series.setOption("auto_merge_selected_only", False)
+    base = field.tracing_trace.copy()
+    base.name = "roi_m"
+    base.closed = True
+    field.setTracingTrace(base)
+
+    # outside: x 13.8-14.0, past the box's east edge at 13.7
+    field.newTrace(
+        [(13.8, 23.6), (14.0, 23.6), (14.0, 23.8), (13.8, 23.8)],
+        field.tracing_trace, points_as_pix=False, reduce_points=False,
+    )
+    field.section.selected_traces = []
+    _turn_on(mw, qapp)
+    outside = [t for t in field.section.tracesAsList() if t.name == "roi_m"]
+    assert len(outside) == 1 and not field.inRoiBox(outside[0])
+
+    # inside, and overlapping the outside one
+    field.newTrace(
+        [(13.6, 23.65), (13.9, 23.65), (13.9, 23.75), (13.6, 23.75)],
+        field.tracing_trace, points_as_pix=False, reduce_points=False,
+    )
+    field.autoMerge()
+
+    assert len([t for t in field.section.tracesAsList() if t.name == "roi_m"]) == 2
+    assert outside[0] in field.section.tracesAsList()
+
+
+# --- round 2: no stale picking state -------------------------------------------
+
+def test_hidden_layer_leaves_no_stale_traces_in_view(mw, qapp):
+    """With H on, moving the box leaves nothing to pick from the last draw."""
+    field = mw.field
+    tform = field.section.tform
+    _turn_on(mw, qapp)
+    assert [t.name for t in field.section_layer.traces_in_view] == ["d03"]
+
+    field.toggleHideAllTraces()
+    _click(field, qapp, 11.0, 25.0)  # move the box away from every trace
+    assert field.section_layer.traces_in_view == []
+
+    d03 = _trace(field.section, "d03")
+    p = _pix(field, *_on_trace(d03, tform))
+    assert field.section_layer.getTrace(p.x(), p.y()) == (None, None)
+
+    # scissors on d03 starts no cut
+    field.setMouseMode(SCISSORS)
+    _click(field, qapp, *_on_trace(d03, tform))
+    assert not field.is_scissoring
+    assert d03 in field.section.tracesAsList()
+
+
+def test_a_cached_candidate_is_checked_against_the_current_box(mw, qapp):
+    """A trace in the last draw's list is not picked once the box has moved
+    off it, even before the next draw."""
+    field = mw.field
+    tform = field.section.tform
+    _turn_on(mw, qapp)
+    d03 = _trace(field.section, "d03")
+    assert field.section_layer.traces_in_view == [d03]
+
+    field.section_layer.roi_box = (11.0, 25.0, *SIZE)  # moved, not redrawn
+    p = _pix(field, *_on_trace(d03, tform))
+    assert field.section_layer.getTrace(p.x(), p.y()) == (None, None)
+
+
+# --- round 2: name-wide commands -----------------------------------------------
+
+def test_delete_from_sections_refuses_while_the_box_is_on(mw, qapp, notices, monkeypatch):
+    field = mw.field
+    asked = []
+
+    class _Dialog:
+        def __init__(self, *a, **k):
+            asked.append(1)
+
+        def get(self):
+            return {52, 53}, True
+
+    monkeypatch.setattr(fwt, "CopyToSectionsDialog", _Dialog)
+    _outside_copy(field.section)
+    _turn_on(mw, qapp)
+    field.section.selected_traces = [_trace_inside(field, "d03")]
+
+    field.deleteTracesFromSections()
+
+    assert notices == ["Turn off the ROI box first."]
+    assert asked == []
+    assert [t.name for t in field.section.tracesAsList()].count("d03") == 2
+
+
+def _trace_inside(field, name):
+    (trace,) = [
+        t for t in field.section.tracesAsList()
+        if t.name == name and field.inRoiBox(t)
+    ]
+    return trace
+
+
+def test_create_copy_of_object_refuses_while_the_box_is_on(mw, qapp, notices):
+    field = mw.field
+    _turn_on(mw, qapp)
+    field.section.selected_traces = [_trace(field.section, "d03")]
+    objects_before = set(mw.series.data["objects"])
+
+    field.copyObjects()
+
+    assert notices == ["Turn off the ROI box first."]
+    assert set(mw.series.data["objects"]) == objects_before
+
+
+def test_every_field_object_command_refuses_but_3d(mw, qapp, notices, monkeypatch):
+    """Every object command reached from the field acts on whole objects, so
+    each refuses while the box is on; the 3D ones are left alone."""
+    field = mw.field
+    _turn_on(mw, qapp)
+    field.section.selected_traces = [_trace(field.section, "d03")]
+    added = []
+    monkeypatch.setattr(mw, "addTo3D", added.append)
+
+    # removeAllTags first: it opens no dialog, so without the refusal the
+    # test fails at once instead of waiting on a modal
+    for fn in (
+        field.removeAllTags, field.editAttributes, field.smoothObject, field.editComment,
+        field.editAlignment, field.editRadius, field.editShape, field.hideObj,
+        field.hideOtherObjects, field.addToGroup, field.removeFromGroup,
+        field.removeFromAllGroups, field.viewHistory,
+        field.createZtrace, field.deleteObjects, field.copyObjects,
+        field.bulkCurateAssign, field.lockObjects, field.setPaletteButtonFromObj,
+        field.splitObject, field.displayHostTree, field.setHosts,
+        field.clearHosts, field.reapplyAutosegColors,
+        lambda: field.bulkCurate("Curated"),
+        lambda: field.setUserCol("c", "o"),
+    ):
+        notices.clear()
+        fn()
+        assert notices == ["Turn off the ROI box first."], fn
+
+    notices.clear()
+    field.addTo3D()
+    assert notices == [] and added == [["d03"]]
+
+
+def test_object_list_commands_are_not_limited_by_the_box(mw, qapp, notices, monkeypatch):
+    """With the object list focused, its own selection is used, box or not."""
+    field = mw.field
+    _turn_on(mw, qapp)
+
+    class _List:
+        table = QWidget()
+
+        def getSelected(self):
+            return ["d03"]
+
+    monkeypatch.setattr(fwo, "ObjectTableWidget", _List)
+    monkeypatch.setattr(field.table_manager, "hasFocus", lambda: _List())
+    seen = []
+    monkeypatch.setattr(
+        fwo.FieldWidgetObject, "viewHistory",
+        fwo.FieldWidgetObject.object_function(False, False)(
+            lambda self, names: seen.append(names)
+        ),
+    )
+    _List.table.verticalScrollBar = lambda: _Bar()
+
+    field.viewHistory()
+    assert notices == [] and seen == [["d03"]]
+
+
+class _Bar:
+    def value(self):
+        return 0
+
+    def setValue(self, v):
+        pass
+
+
+def test_section_wide_field_commands_refuse_while_the_box_is_on(mw, qapp, notices):
+    field = mw.field
+    outside = _trace(field.section, "d03sp14")
+    outside.hidden = True
+    _turn_on(mw, qapp)
+    field.section.selected_traces = [_trace(field.section, "d03")]
+
+    field.unhideAllTraces()
+    assert outside.hidden
+    field.hideOtherTraces()
+    assert not _trace(field.section, "d03p14").hidden
+    assert notices == ["Turn off the ROI box first."] * 2
+
+
+def test_field_series_wide_visibility_rows_are_off_while_the_box_is_on(mw, qapp):
+    field = mw.field
+    field.visibility_snapshot = {"d03": {}}
+    # the object rows are live with a selection
+    field.section.selected_traces = [_trace(field.section, "d03")]
+    mw.checkActions()
+    assert mw.hideallobj_act.isEnabled() and mw.restorevisibility_act.isEnabled()
+
+    _turn_on(mw, qapp)
+    mw.checkActions()
+    assert not mw.hideallobj_act.isEnabled()
+    assert not mw.showallobj_act.isEnabled()
+    assert not mw.restorevisibility_act.isEnabled()
+
+    assert field.section.selected_traces  # d03 is inside
+    mw.roibox_act.trigger()  # off
+    mw.checkActions()
+    assert mw.hideallobj_act.isEnabled() and mw.showallobj_act.isEnabled()
+
+
+# --- round 2: Find -------------------------------------------------------------
+
+def test_find_does_not_frame_a_trace_outside_the_box(mw, qapp):
+    field = mw.field
+    _turn_on(mw, qapp)
+    field.section.selected_traces = [_trace(field.section, "d03")]
+    window = list(field.series.window)
+
+    field.findTrace("d03sp14")
+    assert list(field.series.window) == window
+    field.findContour("d03sp14")
+    assert list(field.series.window) == window
+    assert [t.name for t in field.section.selected_traces] == ["d03"]
+
+
+def test_find_frames_only_the_inside_traces_of_a_contour(mw, qapp):
+    field = mw.field
+    outside = _outside_copy(field.section)
+    _turn_on(mw, qapp)
+
+    field.findContour("d03")
+
+    x, y, w, h = field.series.window
+    oxmin, _, oxmax, _ = outside.getBounds(field.section.tform)
+    assert x + w < oxmin  # the moved copy is not framed
+    assert outside not in field.section.selected_traces
+
+
+# --- round 2: merged with the selected trace style ---------------------------
+
+def test_trace_layer_keeps_both_initializations():
+    layer = TraceLayer(None, None)
+    assert layer.roi_box is None
+    assert layer.selected_style_preview is None

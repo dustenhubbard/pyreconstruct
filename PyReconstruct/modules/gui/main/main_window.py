@@ -822,6 +822,16 @@ class MainWindow(QMainWindow):
         ## ObjectTableWidget.contextMenuEvent.
         sync_restore_visibility_action(self, self.field.visibility_snapshot)
 
+        ## The field's series-wide visibility rows reach the traces the ROI
+        ## box hides, so they wait for it to be off; the object list's own
+        ## copies are not limited by the box. Every other field command that
+        ## acts by object name refuses while the box is on (refuseWhileRoiBox).
+        box_off = not self.field.roi_box_on
+        self.hideallobj_act.setEnabled(box_off)
+        self.showallobj_act.setEnabled(box_off)
+        if not box_off:
+            self.restorevisibility_act.setEnabled(False)
+
         # ## Zarr layer
         # self.removezarrlayer_act.setEnabled(bool(self.series.zarr_overlay_fp))
             

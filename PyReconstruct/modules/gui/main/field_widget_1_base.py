@@ -309,6 +309,10 @@ class FieldWidgetBase:
         ## Resize series window to match view proportions
         self.resizeWindow(self.pixmap_dim)
 
+        ## A redraw follows every selection change, so the ROI box's one
+        ## selection rule is kept here
+        self.dropSelectedOutsideRoiBox()
+
         ## Calculate scaling
         _, _, window_w, window_h = tuple(self.series.window)
         pixmap_w, pixmap_h = tuple(self.pixmap_dim)
@@ -397,6 +401,27 @@ class FieldWidgetBase:
         """Whether a trace on the current section is inside the ROI box
         (always True while the box is off)."""
         return traceInRoiBox(trace, self.section.tform, self.roiBox())
+
+    def dropSelectedOutsideRoiBox(self) -> list:
+        """Deselect the traces outside the ROI box, which are not drawn.
+
+        The box's one selection rule: while it is on, the section's selected
+        traces are all inside it. Every way of building the selection (click,
+        lasso, Select all, Invert, focus mode, Find, a new trace) ends in a
+        redraw, and generateView calls this first.
+
+            Returns:
+                (list): the traces that were deselected
+        """
+        if self.roiBox() is None:
+            return []
+        selected = self.section.selected_traces
+        inside = [t for t in selected if self.inRoiBox(t)]
+        if len(inside) == len(selected):
+            return []
+        dropped = [t for t in selected if t not in inside]
+        self.section.selected_traces = inside
+        return dropped
 
     def focusHintText(self) -> str:
         """The focus mode label's text, naming the live `focus_act` shortcut."""

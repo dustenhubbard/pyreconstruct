@@ -86,7 +86,6 @@ class FieldWidgetView(FieldWidgetPaint):
             return False
         self.roi_box_size = (float(response[0]), float(response[1]))
         if self.roiBox() is not None:
-            self.dropSelectedOutsideRoiBox()
             self.generateView()
         return True
 
