@@ -975,8 +975,10 @@ class Series():
         # directory would already be emptied (createHiddenDir), and whatever
         # it held was lost to an open that then failed. Reading the file whole
         # never had that gap, because it failed before creating anything.
+        # The name leaves out the series name: a name as long as the system
+        # allows leaves no room to add to it.
         try:
-            work_dir = tempfile.mkdtemp(prefix=f".{sname}.opening-", dir=sdir)
+            work_dir = tempfile.mkdtemp(prefix=".opening-", suffix=".tmp", dir=sdir)
         except BaseException:
             source.close()
             reporter.finish()
