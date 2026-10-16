@@ -229,6 +229,9 @@ class _FakeSection:
     def __init__(self, obj_names):
         self.selected_traces = [Trace(n, (0, 0, 0)) for n in obj_names]
 
+    def clearTracking(self):
+        pass
+
 
 class _FieldStub:
     """The minimum `FieldWidgetObject.editAttributes` and its decorator touch."""

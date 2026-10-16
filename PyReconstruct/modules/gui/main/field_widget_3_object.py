@@ -188,6 +188,7 @@ class FieldWidgetObject(FieldWidgetTrace):
                 # call to update objects
                 if update_objects:
                     self.table_manager.updateObjects(selected_names)
+                    self.section.clearTracking()
                     self.mainwindow.seriesModified(True)
                 
                 # reset the scroll bar position if applicable
@@ -1050,6 +1051,7 @@ class FieldWidgetObject(FieldWidgetTrace):
         
         # manual call to update ztraces
         self.mainwindow.field.table_manager.updateZtraces()
+        self.series.clearTracking()
 
         return True
 
@@ -1237,6 +1239,7 @@ class FieldWidgetObject(FieldWidgetTrace):
             self.series.setAttr(name, "locked", lock)
 
         self.table_manager.updateObjects(names)
+        self.section.clearTracking()
         self.mainwindow.field.deselectAllTraces()
         self.mainwindow.seriesModified(True)
 

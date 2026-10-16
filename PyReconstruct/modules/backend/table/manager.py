@@ -415,8 +415,11 @@ class TableManager():
         else:
             viewer.markStale(obj_names, ztrace_names)
 
-    def updateObjects(self, obj_names : list = None, clear_tracking=True):
+    def updateObjects(self, obj_names : list = None):
         """Update the object info for the OBJECT AND TRACE LISTS ONLY.
+
+        Reads the section's tracking when no names are given, and never
+        clears it: the undo history does (SeriesStates.commitSection).
 
             Params:
                 obj_names (list): the list objects to update
@@ -433,9 +436,6 @@ class TableManager():
         for table in self.tables["object"] + self.tables["trace"]:
 
             table.updateData(obj_names)
-
-        if clear_tracking:
-            self.section.clearTracking()
     
     def selectedObjectNames(self, section : Section = None):
         """The names of the objects with a trace selected on a section.
@@ -490,8 +490,11 @@ class TableManager():
             for snum in section_numbers:
                 table.updateData(snum)
     
-    def updateZtraces(self, ztrace_names : list = None, clear_tracking=True):
+    def updateZtraces(self, ztrace_names : list = None):
         """Update ONLY THE ZTRACE LIST.
+
+        Reads the series' tracking when no names are given, and never
+        clears it.
         
             Params:
                 ztrace_names (list): the list of ztrace names to update
@@ -503,11 +506,8 @@ class TableManager():
 
         for table in self.tables["ztrace"]:
             table.updateData(ztrace_names)
-
-        if clear_tracking:
-            self.series.clearTracking()
     
-    def updateFlags(self, section : Section = None, clear_tracking=True):
+    def updateFlags(self, section : Section = None):
         """Update ONLY THE FLAG LIST for a specific section."""
         if section is None:
             section = self.section
@@ -515,15 +515,18 @@ class TableManager():
         for table in self.tables["flag"]:
             table.updateData(section)
     
-    def updateAll(self, clear_tracking=True):
+    def updateAll(self, obj_names=None, ztrace_names=None):
         """Update the tables from the series data (SeriesData and tracking).
         
             Params:
-                section (Section): the section object
+                obj_names (iterable): the objects to update (default: the
+                    section's tracking)
+                ztrace_names (iterable): the z-traces to update (default: the
+                    series' tracking)
         """
-        self.updateObjects(clear_tracking=clear_tracking)
+        self.updateObjects(obj_names)
         self.updateSections()
-        self.updateZtraces(clear_tracking=clear_tracking)
+        self.updateZtraces(ztrace_names)
         self.updateFlags()
     
     def changeSection(self, section : Section):
