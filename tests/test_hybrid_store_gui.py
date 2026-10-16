@@ -151,9 +151,13 @@ def test_the_store_menu_rows_exist_only_with_the_store():
     from types import SimpleNamespace
     from PyReconstruct.modules.gui.main.menubar import _storeExportOpts
 
+    from unittest.mock import MagicMock
+    from PyReconstruct.modules.datatypes.hybrid_store import HybridStore
+
     assert _storeExportOpts(SimpleNamespace(series=SimpleNamespace(store=None))) == []
+    assert _storeExportOpts(SimpleNamespace(series=MagicMock())) == []  # a stand-in series
     rows = _storeExportOpts(SimpleNamespace(
-        series=SimpleNamespace(store=object()),
+        series=SimpleNamespace(store=HybridStore.__new__(HybridStore)),
         exportStoreToJser=None, exportSetAsideStore=None,
     ))
     assert [r[0] for r in rows if r] == ["exportstorejser_act", "exportsetaside_act"]
