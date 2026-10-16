@@ -32,10 +32,7 @@ skipped in C.
 import json
 import re
 
-try:
-    import orjson
-except ImportError:  # pragma: no cover - orjson is a listed dependency
-    orjson = None
+from . import fast_json
 
 
 _CHUNK = 8 << 20  # read buffer; the consumed prefix is dropped on each refill
@@ -95,8 +92,8 @@ def strict_loads(raw):
     sends the whole open back to the whole-file read.
     """
     try:
-        if orjson is not None:
-            return orjson.loads(raw)
+        if fast_json.have_orjson():
+            return fast_json.orjson.loads(raw)
         return json.loads(raw.decode("utf-8"))
     except Exception as e:
         raise NotStreamable(f"value the scan will not decode: {e}") from e
@@ -301,7 +298,7 @@ class _Reader:
         and the names it holds are the same either way.
         """
         self.expect(_LBRACE)
-        keys = []
+        keys : list = []
         if self.peek() == _RBRACE:
             self.pos += 1
             return keys
