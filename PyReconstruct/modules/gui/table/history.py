@@ -13,6 +13,18 @@ def _count(n, noun):
     return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
 
 
+def setAsideText(n : int) -> str:
+    """Say that n lines of the history were set aside and are still on disk.
+
+    Shared by the history views and the notice when a series opens.
+    """
+    return (
+        f"{_count(n, 'line')} of this series' history could not be read and "
+        f"{'is' if n == 1 else 'are'} not shown. The series file still holds "
+        f"{'it' if n == 1 else 'them'}."
+    )
+
+
 def historyNotice(log_set : LogSet) -> str:
     """Say what the reader did not show as written, or "" if nothing.
 
@@ -21,15 +33,8 @@ def historyNotice(log_set : LogSet) -> str:
     among the rows shown.
     """
     parts = []
-    skipped = len(log_set.skipped_rows)
-    if skipped:
-        parts.append(
-            f"{_count(skipped, 'line')} of this series' history could not be "
-            "read and {} not shown. The series file still holds {}.".format(
-                "is" if skipped == 1 else "are",
-                "it" if skipped == 1 else "them",
-            )
-        )
+    if log_set.skipped_rows:
+        parts.append(setAsideText(len(log_set.skipped_rows)))
     rebuilt_ids = {id(log) for log in log_set.rebuilt_logs}
     rebuilt = sum(id(log) in rebuilt_ids for log in log_set.all_logs)
     if rebuilt:

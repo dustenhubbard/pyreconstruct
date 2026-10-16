@@ -24,6 +24,7 @@ from PyReconstruct.modules.backend.func.window_geometry import (
     window_geometry_is_usable,
 )
 from .status_readout import FieldStatusReadout, StatusSegment
+from PyReconstruct.modules.gui.table.history import setAsideText
 from .wheel_steps import WheelSteps, zoom_factor
 from PyReconstruct.modules.constants.settings_domain import (
     domain_for, fold_series_settings_once,
@@ -456,6 +457,10 @@ class MainWindow(QMainWindow):
 
         ## Resolve the username silently -- no prompt on launch
         self.resolveUsernameStartup()
+
+        ## The open-time notices skipped above for the first open, now that
+        ## the window is up (resolveUsernameStartup runs notifyNewEditor)
+        self.notifyUnreadableHistory()
 
         ## One-time settings correction, before anything reads the option below
         self.applyUpdateCheckDefaultStartup()
@@ -1527,6 +1532,7 @@ class MainWindow(QMainWindow):
         # notify new users of any warnings
         if not first_open:
             self.notifyNewEditor()
+            self.notifyUnreadableHistory()
 
         # create the menus
         self.createMenuBar()
@@ -5336,6 +5342,22 @@ class MainWindow(QMainWindow):
         2026-08-25. The hook stays so a future notice has a home.
         """
     
+    def notifyUnreadableHistory(self):
+        """Say once, on open, how many history lines could not be read.
+
+        The history is read by the block rule (LogSet.fromList); a block that
+        does not parse is set aside. The history views say the same thing each
+        time they open. Nothing in the file is changed.
+        """
+        if self.series.isWelcomeSeries():
+            return
+        try:
+            skipped = len(self.series.getFullHistory(skip_corrupt=True).skipped_rows)
+        except OSError:
+            return
+        if skipped:
+            notify(setAsideText(skipped) + " Nothing in the file was changed.")
+
     def editSeriesCodePattern(self):
         """Edit the regex pattern used to automatically detect series codes."""
         response, confirmed = QInputDialog.getText(

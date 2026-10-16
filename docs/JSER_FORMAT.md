@@ -421,9 +421,10 @@ Parsing rules that a generator must respect:
   does. The lines of a block are joined with LF, which gives back the row the older build
   wrote, and the block is parsed once. So `26-01-01, 10:00, alice, foo,bar,baz` followed by
   `qux, 1, Modified trace(s)` loads as object `foo,bar,baz` LF `qux`, section `1`.
-- A block that does not parse is set aside whole. The history view says how many lines
-  it set aside, and how many rows it rebuilt from several lines, since some older split
-  rows can be read more than one way. The file keeps every line.
+- A block that does not parse is set aside whole. Opening the series says how many lines
+  were set aside. The history view says the same, and how many rows it rebuilt from
+  several lines, since some older split rows can be read more than one way. The file
+  keeps every line.
 - Blank lines between rows are skipped. A blank line inside a block is part of the row.
 - Leading and trailing whitespace in the Event column is stripped.
 - A negative number cannot appear in the Sections column, because `-` is both the null
@@ -1608,6 +1609,7 @@ re-checked.
 | A newline inside a field is written as `_` | `PyReconstruct/modules/datatypes/log.py` (`Log.__str__`) |
 | A row starts only at the date and time stamp and runs to the next one (the block rule) | `PyReconstruct/modules/datatypes/log.py` (`ROW_START`, `logBlocks`, `LogSet.fromList`) |
 | The history view reports lines set aside and rows rebuilt | `PyReconstruct/modules/gui/table/history.py` (`historyNotice`) |
+| Opening a series reports lines set aside | `PyReconstruct/modules/gui/main/main_window.py` (`MainWindow.notifyUnreadableHistory`) |
 | Section range encoding, inclusive, space separated | `PyReconstruct/modules/datatypes/log.py` (`Log.__str__`, `Log._fromStr`, `Log.containsSection`) |
 | `-` as the null marker for Obj and Sections | `PyReconstruct/modules/datatypes/log.py` (`Log.__str__`, `Log._fromStr`) |
 | Commas are safe in the Event column | `PyReconstruct/modules/datatypes/log.py` (`splitRow`) |

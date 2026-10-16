@@ -13,6 +13,7 @@ renamed. Each shape below is a row of the table in the hub design note for issue
 169, read the way that table's B column says.
 """
 
+import json
 import os
 import shutil
 from types import SimpleNamespace
@@ -401,3 +402,24 @@ def test_a_clean_history_shows_no_notice(qapp):
     assert widget.widget() is widget.table
     widget.close()
     parent.deleteLater()
+
+
+def test_opening_a_series_says_how_many_lines_were_set_aside(
+    main_window, main_window_dialogs, shapes1_jser
+):
+    from PyReconstruct.modules.constants import fast_loads
+
+    with open(shapes1_jser, "rb") as f:
+        data = fast_loads(f.read())
+    data["log"] = "\n".join(BROKEN_LOG)
+    shapes1_jser.write_text(json.dumps(data), encoding="utf-8")
+
+    main_window_dialogs.notices.clear()
+    main_window.openSeries(jser_fp=str(shapes1_jser), query_prev=False)
+
+    assert main_window_dialogs.notices == [
+        "2 lines of this series' history could not be read and are not shown. "
+        "The series file still holds them. Nothing in the file was changed."
+    ]
+    with open(shapes1_jser, encoding="utf-8") as f:
+        assert json.load(f)["log"] == "\n".join(BROKEN_LOG)

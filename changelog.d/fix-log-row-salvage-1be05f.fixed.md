@@ -4,4 +4,5 @@
   entry from its date and time to the next one, so the whole entry is read back
   as written. Lists > Series history and an object's history no longer stop on
   an entry that cannot be read: they show the rest, and say how many lines they
-  left out and how many entries they rebuilt. The series file keeps every line.
+  left out and how many entries they rebuilt. Opening a series with such lines
+  says how many there are, once. The series file keeps every line.
