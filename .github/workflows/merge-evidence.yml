@@ -31,10 +31,9 @@
 # rule that pins a check to one workflow file ("Require workflows to pass") is for
 # organization repos only, so it is not open to this one. The cover here: a PR that
 # changes anything under .github/workflows/ fails this check until it also carries the
-# `workflows-reviewed` label (step below). Tested 2026-10-16 on a throwaway PR: with
-# this check red and a same-named `pull_request` job green and newer, both counted as
-# required and the PR stayed blocked. A red run here blocks whatever else reports the
-# name. I apply that label myself, after reading the workflow change.
+# `workflows-reviewed` label (step below). Every check of the name counts, so a red
+# run here blocks whatever else reports the name. I apply that label myself, after
+# reading the workflow change.
 #
 # Limit: GitHub may skip `pull_request_target` for a branch whose name looks like a
 # commit SHA. Such a PR gets no `merge-evidence` report and cannot merge until its
@@ -48,8 +47,9 @@
 # passed before the hold stays green, and one failed by the hold stays red after it is
 # cleared. merge-hold-sync.yml closes that gap: every 15 minutes, or at once with
 #   gh workflow run merge-hold-sync.yml -R dustenhubbard/pyreconstruct
-# it re-runs this check on each open PR whose result no longer matches the hold. Any
-# new push or label change on a PR re-runs it too.
+# it adds a failed `merge-evidence` check run to each open PR while the hold is set,
+# and on clearing marks those passed and re-runs this check where the hold failed it.
+# Any new push or label change on a PR runs this check again too.
 
 name: merge-evidence
 
@@ -68,8 +68,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: merge hold
-        # First, so a hold stops every PR, Dependabot's included. merge-hold-sync.yml
-        # finds a hold failure by this step's name; rename both together.
+        # First, so a hold stops every PR, Dependabot's included. The sync script
+        # (scripts/merge_hold_sync.py) finds a hold failure by this step's name;
+        # rename both together.
         env:
           MERGE_HOLD: ${{ vars.MERGE_HOLD }}
         run: |

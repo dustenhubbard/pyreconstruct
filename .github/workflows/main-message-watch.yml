@@ -11,8 +11,12 @@
 # `workflow_run` after the tests and only when they fail. A message check needs
 # neither, and a separate trigger keeps both files simple.
 #
-# The checkout is main's own code after the push, never a pull request's. The
-# commit messages reach the script as a file, never spliced into a shell line.
+# The checkout is main's own code after the push, never a pull request's, with
+# its full history: the script reads every commit the push adds from the clone,
+# however many there are. No commit message is spliced into a shell line.
+#
+# Fork only: on any other repository the job is skipped, so a copy of this file
+# never opens issues there.
 #
 # The repository variable MESSAGE_SCAN_EXTRA, when set, adds one more pattern
 # (see the script). An issue says only that it matched, not what matched.
@@ -29,8 +33,9 @@ permissions:
 
 jobs:
   scan:
+    if: github.repository == 'dustenhubbard/pyreconstruct'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
@@ -40,26 +45,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
-      - name: Collect the new commit messages
-        run: |
-          set -euo pipefail
-          out="$RUNNER_TEMP/commits.json"
-          # The compare API lists up to 250 commits, far more than one push to
-          # main carries. With no usable base, check the pushed commit alone.
-          if [[ "$BEFORE" =~ ^0+$ ]] \
-             || ! gh api "repos/$REPO/compare/$BEFORE...$AFTER" \
-                  --jq '[.commits[] | {sha, message: .commit.message}]' > "$out"; then
-            gh api "repos/$REPO/commits/$AFTER" \
-              --jq '[{sha, message: .commit.message}]' > "$out"
-          fi
-          echo "$(jq length "$out") commit(s) to check"
-
-      - name: Check them
+      - name: Check the new commit messages
         env:
           MESSAGE_SCAN_EXTRA: ${{ vars.MESSAGE_SCAN_EXTRA }}
         run: |
-          python3 scripts/check_commit_messages.py "$RUNNER_TEMP/commits.json" \
+          set -euo pipefail
+          python3 scripts/check_commit_messages.py "$BEFORE" "$AFTER" \
             > "$RUNNER_TEMP/hits.json"
           echo "$(jq length "$RUNNER_TEMP/hits.json") commit(s) break a rule"
 
