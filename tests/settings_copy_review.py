@@ -16,6 +16,8 @@ from PyReconstruct.modules.datatypes.series import Series
 
 DEV = "PyReconstruct Dev"
 DAMAGED = "[broken\nentry=value\n"
+# the global stores, and the per-series stores of the bare series below
+_APPS = (D.SHARED_APP, DEV, f"{D.SHARED_APP}-REVIEW", f"{DEV}-REVIEW")
 
 
 def _empty(settings):
@@ -41,7 +43,7 @@ def review_store(monkeypatch):
     QSettings store. Yields the series and the old and new shared stores; a
     test module makes it its ``setup_store`` fixture."""
     monkeypatch.delenv("PYRECON_APP_NAME", raising=False)
-    empty_stores(D.SHARED_APP, DEV)
+    empty_stores(*_APPS)
     series = Series.__new__(Series)
     series.options = {}
     series.code = "REVIEW"
@@ -53,7 +55,7 @@ def review_store(monkeypatch):
     old.setFallbacksEnabled(False)
     new.setFallbacksEnabled(False)
     yield series, old, new
-    empty_stores(D.SHARED_APP, DEV)
+    empty_stores(*_APPS)
 
 
 def fail_copy(monkeypatch, app=D.SHARED_APP):
