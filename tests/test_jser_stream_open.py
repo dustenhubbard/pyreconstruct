@@ -381,3 +381,186 @@ def test_a_corrupt_section_fails_like_a_corrupt_file(tmp_path):
 
     assert not (tmp_path / ".probe").exists()
     assert os.stat(fp).st_mtime_ns == before
+
+
+# ---------------------------------------------------------------------------
+# a failed open leaves what was beside the file alone
+# ---------------------------------------------------------------------------
+
+PRIOR = {
+    "probe.999": b"pre-existing section bytes",
+    "existing_log.csv": b"pre-existing history",
+}
+
+
+def folder_bytes(folder):
+    if not folder.exists():
+        return None
+    return {p.name: p.read_bytes() for p in folder.iterdir()}
+
+
+def with_prior_folder(tmp_path, data):
+    """A .jser and a `.probe` folder beside it with no .ser in it."""
+    fp = write(tmp_path, data)
+    hidden = tmp_path / ".probe"
+    hidden.mkdir()
+    for name, content in PRIOR.items():
+        (hidden / name).write_bytes(content)
+    return fp, hidden
+
+
+def work_folders(tmp_path):
+    return sorted(p.name for p in tmp_path.iterdir() if ".opening-" in p.name)
+
+
+def corrupt_section():
+    data = as_bytes(shapes1(), "compact")
+    data = data.replace(b'"thickness":0.05', b'"thickness":0.0.5', 1)
+    assert b"0.0.5" in data
+    return data
+
+
+def test_a_corrupt_section_leaves_the_folder_beside_it(tmp_path):
+    """The whole-file read failed before touching it; so must this."""
+    data = corrupt_section()
+    fp, hidden = with_prior_folder(tmp_path, data)
+
+    with pytest.raises(SeriesOpenError, match="corrupt or is not JSON"):
+        Series.openJser(fp, progress=NullProgressReporter, notifier=NullNotifier())
+
+    assert folder_bytes(hidden) == PRIOR
+    assert work_folders(tmp_path) == []
+    assert (tmp_path / "probe.jser").read_bytes() == data
+
+
+class CancelAfterOne(NullProgressReporter):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.calls = 0
+
+    def set_progress(self, value):
+        self.calls += 1
+
+    def was_canceled(self):
+        return self.calls >= 1
+
+
+def test_a_cancel_mid_unpack_leaves_the_folder_beside_it(tmp_path):
+    fp, hidden = with_prior_folder(tmp_path, as_bytes(shapes1(), "compact"))
+
+    result = Series.openJser(fp, progress=CancelAfterOne, notifier=NullNotifier())
+
+    assert result is None
+    assert folder_bytes(hidden) == PRIOR
+    assert work_folders(tmp_path) == []
+
+
+def test_a_good_open_replaces_the_folder_as_before(tmp_path, monkeypatch):
+    """No .ser, so not unsaved work: a successful open empties it, as main."""
+    data = as_bytes(shapes1(), "compact")
+    fp, hidden = with_prior_folder(tmp_path / "a", data)
+    clean = write(tmp_path / "b", data)
+
+    files = open_and_read(fp, monkeypatch, whole=False)
+
+    assert "probe.999" not in files
+    assert files == open_and_read(clean, monkeypatch, whole=False)
+    assert work_folders(tmp_path / "a") == []
+
+
+def test_another_series_folder_is_left_alone(tmp_path):
+    """A .ser that is not this file's: the open goes into a folder of its own."""
+    fp, hidden = with_prior_folder(tmp_path, as_bytes(shapes1(), "compact"))
+    (hidden / "other.ser").write_bytes(b"{}")
+    before = folder_bytes(hidden)
+
+    series = Series.openJser(fp, progress=NullProgressReporter, notifier=NullNotifier())
+    try:
+        assert os.path.dirname(series.filepath) != str(hidden)
+    finally:
+        series.close()
+    assert folder_bytes(hidden) == before
+    assert work_folders(tmp_path) == []
+
+
+# ---------------------------------------------------------------------------
+# a file that changes while it opens
+# ---------------------------------------------------------------------------
+
+def two_versions():
+    """Equal-length documents whose sections differ in two contour names."""
+    doc = shapes1()
+    filled = [sd for sd in doc["sections"] if sd and sd["contours"]]
+    for sd, name in zip(filled[:2], ["one name", "one,name"]):
+        sd["contours"][name] = sd["contours"].pop(next(iter(sd["contours"])))
+    doc["series"]["code"] = "OLD"
+    old = json.dumps(doc).encode()
+    new = old.replace(b"one name", b"two name").replace(b"one,name", b"two,name")
+    new = new.replace(b'"OLD"', b'"NEW"')
+    assert len(new) == len(old) and new != old
+    return old, new
+
+
+def overwrite_in_place(fp, data):
+    """Rewrite the same file through r+b: no rename, the handle sees it."""
+    with open(fp, "r+b") as f:
+        f.write(data)
+        f.truncate()
+
+
+def test_a_file_rewritten_during_the_question_does_not_open(tmp_path):
+    """The question is an unbounded wait between the scan and the reads."""
+    old, new = two_versions()
+    fp, hidden = with_prior_folder(tmp_path, old)
+
+    class Rewrite(NullNotifier):
+        def confirm(self, *args, **kwargs):
+            overwrite_in_place(fp, new)
+            return True
+
+    with pytest.raises(SeriesOpenError, match="changed while it was being opened"):
+        Series.openJser(fp, progress=NullProgressReporter, notifier=Rewrite())
+
+    assert folder_bytes(hidden) == PRIOR
+    assert work_folders(tmp_path) == []
+
+
+def test_a_file_rewritten_between_sections_does_not_open(tmp_path):
+    old, new = two_versions()
+    fp = write(tmp_path, old)
+
+    class RewriteOnFirstStep(NullProgressReporter):
+        done = False
+
+        def set_progress(self, value):
+            if not RewriteOnFirstStep.done:
+                RewriteOnFirstStep.done = True
+                overwrite_in_place(fp, new)
+
+    with pytest.raises(SeriesOpenError, match="changed while it was being opened"):
+        Series.openJser(fp, progress=RewriteOnFirstStep, notifier=NullNotifier())
+
+    assert RewriteOnFirstStep.done
+    assert not (tmp_path / ".probe").exists()
+    assert work_folders(tmp_path) == []
+
+
+def test_a_range_checks_its_bytes_and_the_file_its_stamp(tmp_path):
+    fp = write(tmp_path, as_bytes(shapes1(), "compact"))
+    with open(fp, "rb") as f:
+        index = scan_jser(f)
+        first = next(r for r in index.sections if r is not None)
+        read_range(f, first)
+        jser_scan.check_unchanged(f, index)
+
+        start = first[0] + 1
+        raw = bytearray(open(fp, "rb").read())
+        raw[start] = ord(" ") if raw[start] != ord(" ") else ord("\t")
+        overwrite_in_place(fp, bytes(raw))
+        with pytest.raises(jser_scan.FileChanged):
+            read_range(f, first)
+
+        with open(fp, "ab") as g:
+            g.write(b" ")
+        with pytest.raises(jser_scan.FileChanged):
+            jser_scan.check_unchanged(f, index)

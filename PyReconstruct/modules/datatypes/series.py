@@ -4,6 +4,7 @@ import re
 import json
 import shutil
 import secrets
+import tempfile
 from datetime import datetime, timezone
 from contextlib import contextmanager
 from copy import copy, deepcopy
@@ -40,7 +41,9 @@ from PyReconstruct.modules.constants import (
     default_traces,
 )
 from PyReconstruct.modules.constants.jser_scan import (
+    FileChanged,
     NotStreamable,
+    check_unchanged,
     read_range,
     scan_jser,
 )
@@ -395,6 +398,12 @@ class _StreamedJser:
     section decodes through `fast_loads` exactly as the whole file would, so
     the hidden copy it writes is byte for byte the one a whole-file read writes.
 
+    The open asks about merged names between the scan and the reads, so the
+    file can change on disk in between. Every range is checked against the
+    scan's checksum as it is read, and the size and modification time once
+    more after the last one: a changed file fails the open (see `_changed`)
+    rather than open as a mix of two versions.
+
     One difference, on a file no build writes: `fast_loads` retries with the
     stdlib parser when orjson refuses a value, and a whole-file read retries
     the whole file. Here only the refused section is retried. The two parsers
@@ -415,6 +424,9 @@ class _StreamedJser:
         f = open(fp, "rb")
         try:
             return cls(f, scan_jser(f))
+        except FileChanged as e:
+            f.close()
+            raise _changed(fp) from e
         except BaseException:
             f.close()
             raise
@@ -436,6 +448,8 @@ class _StreamedJser:
                 continue
             try:
                 section_data = fast_loads(read_range(self._f, byte_range))
+            except FileChanged as e:
+                raise _changed(self._f.name) from e
             except ValueError as e:
                 raise SeriesOpenError(
                     f"{os.path.basename(self._f.name)} is not a valid series "
@@ -443,9 +457,21 @@ class _StreamedJser:
                 ) from e
             yield snum, section_data
             section_data = None
+        try:
+            check_unchanged(self._f, self._index)
+        except FileChanged as e:
+            raise _changed(self._f.name) from e
 
     def close(self):
         self._f.close()
+
+
+def _changed(fp : str) -> SeriesOpenError:
+    """The error for a .jser that changed on disk while it was being opened."""
+    return SeriesOpenError(
+        f"{os.path.basename(fp)} changed while it was being opened, so it "
+        f"was not opened. Open it again."
+    )
 
 
 def _default_settings_store():
@@ -942,26 +968,26 @@ class Series():
         final_value *= 2  # for loading section data
         final_value += 2  # unpacking series and log
 
-        # create the hidden directory. A .ser in it that is not this file's
-        # (the fast path above takes this file's) means the folder is the
-        # working folder of a different series, so it is left alone and the
-        # file is unpacked into a folder of its own.
+        # Unpack into a new folder of our own beside the file, and touch the
+        # hidden directory only once every section has been read and written.
+        # A section is decoded only here, so a corrupt one, or a file changed
+        # on disk since the scan, is found partway through; by then the hidden
+        # directory would already be emptied (createHiddenDir), and whatever
+        # it held was lost to an open that then failed. Reading the file whole
+        # never had that gap, because it failed before creating anything.
         try:
-            if os.path.isdir(hidden_dir) and any(
-                f.endswith(".ser") for f in os.listdir(hidden_dir)
-            ):
-                hidden_dir = createNewSeriesDir(sdir, sname)
-            else:
-                hidden_dir = createHiddenDir(sdir, sname)
+            work_dir = tempfile.mkdtemp(prefix=f".{sname}.opening-", dir=sdir)
         except BaseException:
             source.close()
+            reporter.finish()
             raise
+        placed = False  # True once hidden_dir is the folder this open made
 
         # The .ser file is written LAST as the completion sentinel: both
         # recovery scans (the fast path above and the GUI's unsaved-work
         # prompt) require it, so a cancelled or crashed open can never leave
         # a partial hidden dir that is later mistaken for unsaved work.
-        # On any cancel or exception, remove the partial hidden dir entirely.
+        # On any cancel or exception, remove what this open made entirely.
         try:
             # extract JSON section data, one section at a time: the source
             # never holds more than the section in hand (see _StreamedJser)
@@ -969,7 +995,7 @@ class Series():
             renames = {}
             for snum, section_data in source.sections():
                 filename = sname + "." + str(snum)
-                section_fp = os.path.join(hidden_dir, filename)
+                section_fp = os.path.join(work_dir, filename)
 
                 # update any missing attributes; collect the contour renames so
                 # the series data can follow them below
@@ -1018,7 +1044,6 @@ class Series():
                 section_data = None
 
                 if reporter.was_canceled():
-                    shutil.rmtree(hidden_dir, ignore_errors=True)
                     return None
                 progress += 1
                 reporter.set_progress(progress/final_value * 100)
@@ -1029,11 +1054,10 @@ class Series():
             # contour renames collected above are NOT applied to its object-name
             # field, deliberately -- see `applyContourRenames` for why.
             log_str = source.log
-            existing_log_fp = os.path.join(hidden_dir, "existing_log.csv")
+            existing_log_fp = os.path.join(work_dir, "existing_log.csv")
             with open(existing_log_fp, "w", encoding="utf-8") as f:
                 f.write(log_str)
             if reporter.was_canceled():
-                shutil.rmtree(hidden_dir, ignore_errors=True)
                 return None
             progress += 1
             reporter.set_progress(progress/final_value * 100)
@@ -1048,12 +1072,30 @@ class Series():
             # what folds the legacy curation / last_user / 3D_modes maps into
             # obj_attrs.
             applyContourRenames(series_data, renames, collisions)
-            series_fp = os.path.join(hidden_dir, sname + ".ser")
-            with open(series_fp, "wb") as f:
+            series_name = sname + ".ser"
+            with open(os.path.join(work_dir, series_name), "wb") as f:
                 f.write(fast_dumps(series_data))
             if reporter.was_canceled():
-                shutil.rmtree(hidden_dir, ignore_errors=True)
                 return None
+
+            # Everything is read and written: now the hidden directory. A .ser
+            # in it that is not this file's (the fast path above takes this
+            # file's) means the folder is the working folder of a different
+            # series, so it is left alone and the file goes into a folder of
+            # its own. The .ser moves last, as it was written last.
+            if os.path.isdir(hidden_dir) and any(
+                f.endswith(".ser") for f in os.listdir(hidden_dir)
+            ):
+                hidden_dir = createNewSeriesDir(sdir, sname)
+            else:
+                hidden_dir = createHiddenDir(sdir, sname)
+            placed = True
+            for name in sorted(os.listdir(work_dir), key=lambda n: n == series_name):
+                os.replace(
+                    os.path.join(work_dir, name), os.path.join(hidden_dir, name)
+                )
+            os.rmdir(work_dir)
+            series_fp = os.path.join(hidden_dir, series_name)
             progress += 1
             reporter.set_progress(progress/final_value * 100)
 
@@ -1074,9 +1116,12 @@ class Series():
             series._repointBCProfile()
 
         except BaseException:
-            shutil.rmtree(hidden_dir, ignore_errors=True)
+            if placed:
+                shutil.rmtree(hidden_dir, ignore_errors=True)
             raise
         finally:
+            # gone already on success; on a cancel or failure, what was unpacked
+            shutil.rmtree(work_dir, ignore_errors=True)
             source.close()
             # The dialog closes only at 100%, which a failure never reaches:
             # the raise above used to leave the window-modal "Opening

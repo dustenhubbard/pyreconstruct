@@ -24,13 +24,21 @@ and skips the values it does not need without validating them. Those values all
 sit inside a section's range, and the caller decodes every range, so the whole
 file is still checked before the open completes.
 
+The file can change on disk after the scan, and the open waits on the user
+between the scan and the reads (the merged-names question). So the scan keeps
+a checksum of every range and the file's size and modification time, and
+``read_range`` and ``check_unchanged`` raise ``FileChanged`` rather than let an
+open mix two versions of the file.
+
 The scan steps between structural bytes with two regexes rather than looking at
 every byte in Python, so the coordinate digits that are nearly all of a file are
 skipped in C.
 """
 
 import json
+import os
 import re
+import zlib
 
 from . import fast_json
 
@@ -61,20 +69,27 @@ class NotStreamable(Exception):
     """The file is not the one shape ``scan_jser`` reads; read it whole."""
 
 
+class FileChanged(Exception):
+    """The file is not what the scan read: it changed on disk since."""
+
+
 class JserIndex:
     """Where everything is in one .jser, and what the open needs before writing.
 
         Attributes:
             sections (list): one entry per slot of ``"sections"``: None for a
-                null slot, else the (start, end) byte range of the section
+                null slot, else the section's (start, end, crc32) byte range
             names (list): one entry per slot: None for a null slot, else the
                 section's contour names as the file spells them, in file order
             series (dict): the decoded ``"series"`` value
             log: the decoded ``"log"`` value; only meaningful when ``has_log``
             has_log (bool): False when the file has no ``"log"`` key
+            stamp (tuple): the file's size and modification time when the
+                scan began, for ``check_unchanged``
     """
 
     def __init__(self):
+        self.stamp = None
         self.sections = []
         self.names = []
         self.series = None
@@ -108,11 +123,32 @@ class _Reader:
         self.pos = 0     # next unread byte in buf
         self.base = 0    # file offset of buf[0]
         self.eof = False
+        self._mark = None  # where in buf the running checksum starts
+        self._crc = 0
+
+    def mark(self):
+        """Start a checksum of the bytes consumed from here on."""
+        self._mark = self.pos
+        self._crc = 0
+
+    def checksum(self) -> int:
+        """The crc32 of the bytes consumed since ``mark``."""
+        crc = self._crc_to(self.pos)
+        self._mark = None
+        return crc
+
+    def _crc_to(self, end) -> int:
+        with memoryview(self.buf) as view:
+            return zlib.crc32(view[self._mark:end], self._crc)
 
     def _fill(self) -> bool:
         if self.eof:
             return False
         if self.pos:
+            if self._mark is not None:
+                # fold in what is about to be dropped
+                self._crc = self._crc_to(self.pos)
+                self._mark = 0
             del self.buf[: self.pos]
             self.base += self.pos
             self.pos = 0
@@ -347,8 +383,9 @@ def _scan_sections(r : _Reader, index : JserIndex):
         c = r.peek()
         if c == _LBRACE:
             start = r.tell()
+            r.mark()
             names = _scan_section(r)
-            index.sections.append((start, r.tell()))
+            index.sections.append((start, r.tell(), r.checksum()))
             index.names.append(names)
         elif c == ord("n"):
             r.literal(b"null")
@@ -366,14 +403,33 @@ def _scan_sections(r : _Reader, index : JserIndex):
         raise NotStreamable(f"expected ',' or ']' at byte {r.tell()}")
 
 
+def _stamp(f) -> tuple:
+    st = os.fstat(f.fileno())
+    return (st.st_size, st.st_mtime_ns)
+
+
 def read_range(f, byte_range) -> bytes:
-    """Read the bytes of one (start, end) range from an open binary file."""
-    start, end = byte_range
+    """Read one (start, end, crc32) range; raise FileChanged if it differs.
+
+    The checksum is the scan's, so the bytes returned are the bytes the scan
+    walked, whatever has happened to the file since.
+    """
+    start, end, crc = byte_range
     f.seek(start)
     data = f.read(end - start)
-    if len(data) != end - start:
-        raise ValueError("the file got shorter while it was being read")
+    if len(data) != end - start or zlib.crc32(data) != crc:
+        raise FileChanged(f"bytes {start} to {end} changed since the scan")
     return data
+
+
+def check_unchanged(f, index : JserIndex):
+    """Raise FileChanged if the file's size or modification time moved.
+
+    Called after the last read: a change to bytes no range covers, or one
+    that a checksum happens to miss, still shows here.
+    """
+    if _stamp(f) != index.stamp:
+        raise FileChanged("the file's size or modification time changed")
 
 
 def scan_jser(f) -> JserIndex:
@@ -385,6 +441,7 @@ def scan_jser(f) -> JserIndex:
     on disk between the scan and the reads cannot mix two files.
     """
     index = JserIndex()
+    index.stamp = _stamp(f)
     spans = {}
     r = _Reader(f)
     for key in r.members():
@@ -396,8 +453,9 @@ def scan_jser(f) -> JserIndex:
             if key == "series" and r.peek() != _LBRACE:
                 raise NotStreamable("series is not an object")
             start = r.tell()
+            r.mark()
             r.skip_value()
-            spans[key] = (start, r.tell())
+            spans[key] = (start, r.tell(), r.checksum())
         else:
             raise NotStreamable(f"top-level key {key!r}")
     if r.peek() is not None:
