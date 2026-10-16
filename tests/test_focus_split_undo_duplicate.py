@@ -86,6 +86,9 @@ class _Field:
         self.series_states = series_states
         self.focus_mode = focus_obj
         self.hide_trace_layer = False
+        self.roi_box_on = False
+        self.roi_box_center = None
+        self.roi_box_size = (5.0, 5.0)
 
         # single-click, left button, on a trace
         self.lclick = True
@@ -109,6 +112,9 @@ class _Field:
             FieldWidgetMouse.isSingleClicking, self
         )
         self.selectTrace = types.MethodType(FieldWidgetTrace.selectTrace, self)
+        # selectTrace refuses a trace outside the ROI box; the box is off here
+        self.roiBox = types.MethodType(FieldWidgetTrace.roiBox, self)
+        self.inRoiBox = types.MethodType(FieldWidgetTrace.inRoiBox, self)
         self.pasteAttributes = types.MethodType(
             FieldWidgetTrace.pasteAttributes, self
         )

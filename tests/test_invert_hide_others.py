@@ -246,7 +246,8 @@ def test_field_invert_selects_complement_and_regenerates():
     s.selected_traces = [a]
     views = []
     stub = types.SimpleNamespace(hide_trace_layer=False, show_all_traces=False,
-                                 section=s, generateView=lambda *a_, **k: views.append(1))
+                                 section=s, generateView=lambda *a_, **k: views.append(1),
+                                 dropSelectedOutsideRoiBox=lambda: None)  # ROI box off
     fwt.FieldWidgetTrace.invertTraceSelection(stub)
     assert s.selected_traces == [b] and views
 
