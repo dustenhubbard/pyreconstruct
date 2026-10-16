@@ -3,14 +3,14 @@
 Older builds wrote a line break in a name or event as it was, so one row
 reached ``LogSet.fromList`` as several physical lines. The reader used to join
 lines until the row had six bare commas, which stopped early on a name such as
-``foo,bar,baz`` and raised (hub issue 169), and joined with no break, which read
+``foo,bar,baz`` and raised, and joined with no break, which read
 ``foo`` and ``bar`` as ``foobar``.
 
 The block rule: a row starts at a line with the date stamp and runs to the next
 such line. The block is joined with the breaks put back and parsed once. A block
 that does not parse is set aside whole and reported; nothing is guessed or
-renamed. Each shape below is a row of the table in the hub design note for issue
-169, read the way that table's B column says.
+renamed. Each shape below is one way an older row can be split, named for where
+it was found, and is read the way the block rule reads it.
 """
 
 import json
@@ -230,7 +230,7 @@ def test_a_one_line_row_is_parsed_once(monkeypatch):
 
 # --------------------------------------------------------------------------- #
 # every way an older build could split a row, read every way the lines arrive.
-# The idea of this matrix comes from the closed fork PR 844; the expected read
+# The idea of this matrix comes from closed pull request 844; the expected read
 # is now the row as written, with no name repaired.
 # --------------------------------------------------------------------------- #
 BREAKS = {
