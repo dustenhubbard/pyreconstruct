@@ -567,7 +567,9 @@ def return_help_menu(self):
 
 def _storeExportOpts(self) -> list:
     """PROTOTYPE: the hybrid store's export rows, only when the series uses it."""
-    if getattr(self.series, "store", None) is None:
+    from PyReconstruct.modules.datatypes.hybrid_store import HybridStore
+
+    if not isinstance(getattr(self.series, "store", None), HybridStore):
         return []
     return [
         None,
