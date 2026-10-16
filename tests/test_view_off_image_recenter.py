@@ -464,7 +464,7 @@ def test_a_saved_view_over_traces_outside_the_image_opens_without_a_prompt(
 def test_a_view_the_3d_scene_parked_on_a_trace_outside_the_image_reopens_unasked(
     series_jser, tmp_path, open_series, view_prompt
 ):
-    """The 3D scene's double-click on an object jumps to a point of one of
+    """Double-clicking an object in the 3D scene jumps to a point of one of
     its traces. With that trace outside the image, the saved view misses the
     image but shows the trace, so reopening does not ask."""
     write_image(tmp_path / "image.png")
