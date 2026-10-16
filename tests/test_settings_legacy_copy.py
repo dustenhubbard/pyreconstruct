@@ -52,7 +52,7 @@ def _wipe():
     from PyReconstruct.modules.constants import settings_domain
 
     getattr(settings_domain, "_copy_pending", {}).clear()
-    getattr(settings_domain, "_unparsable_legacy", {}).clear()
+    getattr(settings_domain, "_unparsable_legacy", set()).clear()
     for org in (SETTINGS_ORG, LEGACY_SETTINGS_ORG):
         for app in _apps():
             s = _settings(org, app)
@@ -992,6 +992,45 @@ def test_a_window_opened_after_a_failed_copy_keeps_the_old_value(
 @pytest.mark.parametrize(
     "failed_copy", [SHARED_APP, DEV], indirect=True, ids=["shared", "dev"],
 )
+def test_a_window_opened_after_a_failed_copy_keeps_the_old_palette_increment(
+    failed_copy, request,
+):
+    """Building the palette shows the stored increment mode, and it saved
+    that mode too. After a failed copy that is the default, and saving it
+    kept the old choice from ever coming back."""
+    app, launch = failed_copy
+    _keep("palette_inc_all", apps=(SHARED_APP, app))
+    _legacy(app, palette_inc_all=False)
+    try:
+        launch()
+        request.getfixturevalue("main_window")
+        assert not _settings(SETTINGS_ORG, SHARED_APP).contains("palette_inc_all")
+        assert _retry().value("palette_inc_all", type=bool) is False
+    finally:
+        _keep("palette_inc_all", apps=(SHARED_APP, app))
+
+
+def test_a_palette_increment_clicked_while_the_copy_is_owed_is_saved(
+    real_store_series, main_window, clean, monkeypatch,
+):
+    _keep("palette_inc_all")
+    _legacy(SHARED_APP, palette_inc_all=True)
+    try:
+        with monkeypatch.context() as broken:
+            _unreadable_legacy(broken, SHARED_APP)
+            assert _launch().complete is False
+
+        # "Increment active only"
+        main_window.mouse_palette.palette_side_buttons[3].click()
+
+        assert _retry().value("palette_inc_all", type=bool) is False
+    finally:
+        _keep("palette_inc_all")
+
+
+@pytest.mark.parametrize(
+    "failed_copy", [SHARED_APP, DEV], indirect=True, ids=["shared", "dev"],
+)
 def test_applying_the_stored_theme_saves_nothing(failed_copy, real_store_series):
     from types import SimpleNamespace
 
@@ -1127,13 +1166,49 @@ def test_a_damaged_old_file_stays_owed_when_opened_again(clean):
         new.sync()
 
 
-def test_a_damaged_old_file_copies_once_it_is_fixed(clean):
+def test_a_damaged_old_file_stays_owed_after_a_touch_qt_cannot_see(clean):
+    """Qt parses a file again only when it sees the file change, and it reads
+    the time to the millisecond. A touch below that is a change to Python and
+    none to Qt, which hands back its first, partial parse."""
+    from PySide6.QtCore import QFileInfo
+
+    code = "LEGACYDAMAGED"
+    path = _damaged_series_store(code)
+    try:
+        assert copy_legacy_series_settings_once(code).complete is False
+        before = path.stat()
+        qt_before = QFileInfo(str(path)).lastModified().toMSecsSinceEpoch()
+        ms = before.st_mtime_ns // 1_000_000 * 1_000_000
+        touched = ms + (2 if before.st_mtime_ns == ms + 1 else 1)
+        os.utime(path, ns=(before.st_atime_ns, touched))
+        assert path.stat().st_mtime_ns != before.st_mtime_ns
+        assert QFileInfo(str(path)).lastModified().toMSecsSinceEpoch() == qt_before
+
+        assert copy_legacy_series_settings_once(code).complete is False
+        assert not _settings(SETTINGS_ORG, f"{SHARED_APP}-{code}").contains(
+            LEGACY_COPY_MARKER
+        )
+    finally:
+        path.unlink()
+        new = _settings(SETTINGS_ORG, f"{SHARED_APP}-{code}")
+        new.remove(LEGACY_COPY_MARKER)
+        new.remove("broken/entry")
+        new.sync()
+
+
+def test_a_damaged_old_file_copies_at_the_next_launch_once_it_is_fixed(clean):
+    from PyReconstruct.modules.constants import settings_domain
+
     code = "LEGACYDAMAGED"
     path = _damaged_series_store(code)
     try:
         assert copy_legacy_series_settings_once(code).complete is False
         path.write_text("[General]\nlegacy_probe_fixed=yes\n")
+        assert copy_legacy_series_settings_once(code).complete is False
 
+        # what a new launch starts without
+        settings_domain._unparsable_legacy.clear()
+        settings_domain._copy_pending.clear()
         assert copy_legacy_series_settings_once(code).complete is True
         new = _settings(SETTINGS_ORG, f"{SHARED_APP}-{code}")
         assert new.value("legacy_probe_fixed") == "yes"

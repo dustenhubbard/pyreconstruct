@@ -403,7 +403,9 @@ class MousePalette():
 
         self.palette_side_buttons = [b_up, b_down, b_all, b_ind, b_opts, b_help]
         self.placePaletteSideButtons()
-        self.setPaletteIncMode(self.series.getOption("palette_inc_all"))
+        self.setPaletteIncMode(
+            self.series.getOption("palette_inc_all"), save=False
+        )
     
     def placeLabel(self):
         """Place the trace palette label."""
@@ -877,14 +879,18 @@ class MousePalette():
         clear_palette_positions(_position_settings())
         self.resize()
     
-    def setPaletteIncMode(self, all : bool):
+    def setPaletteIncMode(self, all : bool, save=True):
         """Set the mode for incrementing the palette buttons.
         
             Params:
                 all (bool): True if all palette buttons should be incremented at once
+                save (bool): False when showing the stored mode at startup,
+                    which must not save the default read while the old
+                    settings are still being copied
         """
         b_all, b_inc = self.palette_side_buttons[2:4]
-        self.series.setOption("palette_inc_all", all)
+        if save:
+            self.series.setOption("palette_inc_all", all)
         if all:
             b_all.setChecked(True)
             b_inc.setChecked(False)
