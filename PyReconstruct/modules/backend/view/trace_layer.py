@@ -91,7 +91,11 @@ class TraceLayer():
         # None draws from the stored options
         self.selected_style_preview = None
         self._selected_pens = None
-    
+        # {trace: (points list, point count, untransformed bounds)}, valid for
+        # one section at one columnar store generation (see _cullMask)
+        self._raw_bounds = {}
+        self._raw_bounds_key = None
+
     def pointToPix(self, pt : tuple, apply_tform=True, tform : Transform = None, qpoint=False) -> tuple:
         """Return the pixel point corresponding to a field point.
         
@@ -623,7 +627,86 @@ class TraceLayer():
         if tform is None:
             tform = self.section.tform
         return traceInRoiBox(trace, tform, self.roi_box)
-        
+
+    def _rawBounds(self, trace : Trace) -> tuple:
+        """The bounds of a trace's own points, before any transform, cached.
+
+        An entry is reused only while the trace still holds the same points
+        list at the same length; _cullMask drops every entry when the
+        section's store generation moves, which covers points edited in place.
+
+            Params:
+                trace (Trace): the trace
+            Returns:
+                (tuple): xmin, ymin, xmax, ymax (all NaN for a trace with no points)
+        """
+        points = trace.points
+        entry = self._raw_bounds.get(trace)
+        if entry is not None and entry[0] is points and entry[1] == len(points):
+            return entry[2]
+        if points:
+            arr = np.asarray(points, dtype=float)
+            xmin, ymin = arr.min(axis=0)
+            xmax, ymax = arr.max(axis=0)
+            bounds = (xmin, ymin, xmax, ymax)
+        else:
+            bounds = (np.nan,) * 4
+        self._raw_bounds[trace] = (points, len(points), bounds)
+        return bounds
+
+    def _cullMask(self, trace_list : list, tform : Transform):
+        """Which traces could reach the screen, without transforming their points.
+
+        Each trace's untransformed bounds box is mapped through the transform;
+        the box of its four corners holds every mapped point under any affine
+        transform (rotation and shear included), so a trace is dropped only
+        when that box misses the window grown by two pixels on each side,
+        wider than the half pixel the draw rounds by. A kept trace still meets
+        the exact pixel test in _drawTrace, so what is drawn and
+        traces_in_view do not change.
+
+            Params:
+                trace_list (list): the traces to test
+                tform (Transform): the section transform
+            Returns:
+                (np.ndarray): one bool per trace, or None to keep every trace
+        """
+        # the store generation moves on every trace add, remove and edit,
+        # undo and redo included; a Section built without a store has none,
+        # and then nothing is culled
+        columns = self.section._columns
+        if columns is None or not trace_list:
+            return None
+        key = (self.section, columns.generation)
+        if key != self._raw_bounds_key:
+            self._raw_bounds = {}
+            self._raw_bounds_key = key
+
+        window_x, window_y, window_w, window_h = tuple(self.series.window)
+        pixmap_w, pixmap_h = tuple(self.pixmap_dim)
+        if window_w <= 0 or window_h <= 0 or pixmap_w <= 0 or pixmap_h <= 0:
+            return None
+        margin_x = 2 * window_w / pixmap_w
+        margin_y = 2 * window_h / pixmap_h
+
+        b = np.array([self._rawBounds(trace) for trace in trace_list])
+        n = len(b)
+        # the four corners of every box, one block of n per corner
+        mapped = tform.mapPointsArray(np.concatenate((
+            b[:, (0, 1)], b[:, (2, 1)], b[:, (0, 3)], b[:, (2, 3)]
+        )))
+        blocks = [mapped[k * n:(k + 1) * n] for k in range(4)]
+        lo = np.minimum.reduce(blocks)
+        hi = np.maximum.reduce(blocks)
+
+        # a NaN box (no points) compares False everywhere and is kept
+        return ~(
+            (hi[:, 0] < window_x - margin_x) |
+            (lo[:, 0] > window_x + window_w + margin_x) |
+            (hi[:, 1] < window_y - margin_y) |
+            (lo[:, 1] > window_y + window_h + margin_y)
+        )
+
     def generateTraceLayer(
             self,
             pixmap_dim :
@@ -721,7 +804,13 @@ class TraceLayer():
         tform = self.section.tform
         painter = QPainter(trace_layer)
 
-        for trace in trace_list:
+        # skip traces whose bounds miss the window before any per-point work
+        in_window = self._cullMask(trace_list, tform)
+
+        for i, trace in enumerate(trace_list):
+
+            if in_window is not None and not in_window[i]:
+                continue
 
             if self.trace_visibile_p(trace) and self.insideRoiBox(trace, tform):
 
