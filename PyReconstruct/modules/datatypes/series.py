@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from contextlib import contextmanager
 from copy import copy, deepcopy
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 from .log import LogSet, LogSetPair
 from .ztrace import Ztrace
@@ -36,6 +36,7 @@ from PyReconstruct.modules.constants import (
     write_jser,
     JserSplice,
     KeyedSection,
+    SpliceIndex,
     section_digest,
     canon_keys_inplace,
     JSER_SCHEMA_VERSION,
@@ -1280,7 +1281,7 @@ class Series():
             # copied from the file that save wrote (see jser_splice.py). The
             # index is checked against the file on disk first, and every
             # copied range against its digest; any doubt makes a full write.
-            index = getattr(self, "_jser_splice_index", None)
+            index : Optional[SpliceIndex] = getattr(self, "_jser_splice_index", None)
             if index is not None and not index.matchesDisk():
                 index = None
             splice = JserSplice(index)

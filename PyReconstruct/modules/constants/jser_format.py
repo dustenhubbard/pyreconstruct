@@ -82,6 +82,7 @@ before turning it on.
 """
 
 import os
+from typing import Optional
 
 from .fast_json import fast_dumps, have_orjson, orjson_dumps, stdlib_dumps
 from .jser_splice import JserSplice, SpliceMismatch, loaded
@@ -815,7 +816,7 @@ def _write_spliced(f, sections, tail, splice : JserSplice) -> None:
 
 
 def write_jser(f, sections, tail, pretty : bool = None,
-               splice : JserSplice = None) -> None:
+               splice : Optional[JserSplice] = None) -> None:
     """Write a .jser document into the binary file `f` without building it whole.
 
     The bytes are exactly ``dumps_jser({"sections": list(sections()),

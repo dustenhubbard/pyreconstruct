@@ -33,6 +33,8 @@ file, so the old .jser is replaced only by a complete file either way.
 
 import hashlib
 import os
+from io import BufferedReader
+from typing import Optional
 
 #: Bytes read per copy step. The copy holds one of these at a time.
 COPY_CHUNK = 8 << 20
@@ -110,7 +112,7 @@ class JserSplice:
                 nothing (the layout is still recorded)
     """
 
-    def __init__(self, index : SpliceIndex = None):
+    def __init__(self, index : Optional[SpliceIndex] = None):
         self.index = index
         self.layout = None
         self._end = None
@@ -133,7 +135,7 @@ class JserSplice:
     def endPass(self, f):
         self._end = f.tell()
 
-    def indexFor(self, path : str) -> SpliceIndex:
+    def indexFor(self, path : str) -> Optional[SpliceIndex]:
         """The index of the file just written to `path`, or None.
 
         None when the write did not record a layout, or the file on disk is
@@ -163,8 +165,8 @@ class _SectionWriter:
 
     def __init__(self, splice : JserSplice):
         self.splice = splice
-        self.src = None
-        self.buf = None
+        self.src : Optional[BufferedReader] = None
+        self.buf = bytearray()
 
     def close(self):
         if self.src is not None:
@@ -192,10 +194,11 @@ class _SectionWriter:
 
     def _copy(self, f, offset : int, length : int, digest : bytes):
         """Copy `length` bytes at `offset` of the previous .jser, checking the digest."""
-        if self.src is None:
-            self.src = open(self.splice.index.path, "rb")
-            self.buf = bytearray(COPY_CHUNK)
         src = self.src
+        if src is None:
+            assert self.splice.index is not None
+            src = self.src = open(self.splice.index.path, "rb")
+            self.buf = bytearray(COPY_CHUNK)
         src.seek(offset)
         h = hashlib.sha256()
         view = memoryview(self.buf)
