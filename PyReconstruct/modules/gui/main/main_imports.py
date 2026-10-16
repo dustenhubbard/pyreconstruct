@@ -64,6 +64,7 @@ from PyReconstruct.modules.gui.dialog import (
     PixelDustDialog,
     DuplicateTracesDialog,
     MatchImageNamesDialog,
+    CropZarrDialog,
 )
 
 from PyReconstruct.modules.gui.popup import (
