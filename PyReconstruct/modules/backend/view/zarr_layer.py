@@ -42,6 +42,7 @@ class ZarrLayer():
             is_label_array,
             label_volume,
         )
+        from PyReconstruct.modules.backend.autoseg.placement import label_placement
 
         group = zarr.open(self.series.zarr_overlay_fp)
         overlay = group[self.series.zarr_overlay_group]
@@ -61,17 +62,18 @@ class ZarrLayer():
         # get relevant data from overlay zarr
         self.offset = get_label_offset(overlay, raw)
 
-        # get the relevant data from the raw in the zarr folder
-        self.zarr_x, self.zarr_y = tuple(raw.attrs["window"][:2])
-        self.zarr_s = raw.attrs["sections"][0]
-        self.zarr_mag = get_true_mag(raw) * (self.resolution[-1] / self.raw_resolution[-1])
-
-        # modify attributes
-        pixel_offset = [o / r for o, r in zip(self.offset, self.resolution)]
-        field_offset = [p * self.zarr_mag for p in pixel_offset]
-        self.zarr_x += field_offset[2]
-        self.zarr_y += field_offset[1]
-        self.zarr_s += pixel_offset[0]
+        # where the overlay sits, from the calculation label import shares
+        self.placement = label_placement(
+            self.resolution,
+            self.raw_resolution,
+            self.offset,
+            raw.attrs["window"],
+            raw.attrs["sections"],
+            get_true_mag(raw),
+            raw.shape[-2],
+        )
+        self.zarr_mag = self.placement.overlay_mag
+        self.zarr_x, self.zarr_y, self.zarr_s = self.placement.overlay_origin()
 
         # defaults
         self.selected_ids = []
