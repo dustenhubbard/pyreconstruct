@@ -18,6 +18,9 @@ class _FieldStub:
     def setMag(self, m):
         self.mag = m
 
+    def refuseWhileRoiBox(self):
+        return False
+
 
 class _MainWindowStub:
     def __init__(self, avg_mag=0.01):

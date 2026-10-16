@@ -181,7 +181,7 @@ def test_menu_import_stops_only_on_a_failed_group(monkeypatch, results, attempte
 
     window = types.SimpleNamespace(
         series=object(),
-        field=types.SimpleNamespace(reload=lambda: None),
+        field=types.SimpleNamespace(reload=lambda: None, refuseWhileRoiBox=lambda: False),
         saveAllData=lambda: None,
     )
 
