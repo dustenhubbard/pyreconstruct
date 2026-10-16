@@ -31,6 +31,7 @@ from PyReconstruct.modules.constants.settings_domain import (
     domain_for, fold_series_settings_once,
 )
 from PyReconstruct.modules.datatypes.series_owner import app_display_name
+from PyReconstruct.modules.gui.utils.app_icon import window_icon, apply_holiday_dock_icon
 
 # The newer version the launch check found and the user has not opened yet.
 # Per app (settings_domain.PER_APP_KEYS): the two flavors follow different
@@ -351,7 +352,8 @@ class MainWindow(QMainWindow):
         sys.excepthook = customExcepthook  # defined in gui.utils
 
         self.setWindowTitle(app_display_name())
-        self.setWindowIcon(QPixmap(icon_path))
+        self.setWindowIcon(window_icon())
+        apply_holiday_dock_icon()
 
         ## Restore the saved window geometry, or fall back to a modest default
         screen = QApplication.primaryScreen()
