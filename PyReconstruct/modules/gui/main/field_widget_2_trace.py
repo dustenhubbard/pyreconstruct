@@ -67,8 +67,8 @@ class FieldWidgetTrace(FieldWidgetBase):
 
         # Set the trace as the only selected trace. A trace nobody can see is
         # not selected; a locked object's trace is, the same as anywhere else
-        # (lock guards edits, not selection).
-        if trace.hidden or self.hide_trace_layer:
+        # (lock guards edits, not selection). Nor is one outside the ROI box.
+        if trace.hidden or self.hide_trace_layer or not self.inRoiBox(trace):
             self.section.selected_traces = []
         else:
             self.section.selected_traces = [trace]
@@ -155,7 +155,8 @@ class FieldWidgetTrace(FieldWidgetBase):
         # set the selected traces
         self.section.selected_traces = []
         for trace in contour.getTraces():
-            if not trace.hidden and not self.hide_trace_layer:
+            if (not trace.hidden and not self.hide_trace_layer and
+                self.inRoiBox(trace)):
                 self.section.addSelectedTrace(trace)
 
         self.generateView()
@@ -285,6 +286,10 @@ class FieldWidgetTrace(FieldWidgetBase):
         if not trace:
             return
 
+        ## A trace outside the ROI box is not drawn, so it is not selected
+        if not self.inRoiBox(trace):
+            return
+
         ## Remove trace is already selected
         if trace in self.section.selected_traces:
             self.section.selected_traces.remove(trace)
@@ -305,6 +310,8 @@ class FieldWidgetTrace(FieldWidgetBase):
             return
 
         for trace in traces:
+            if not self.inRoiBox(trace):
+                continue
             if trace not in self.section.selected_traces:
                 self.section.addSelectedTrace(trace)
                 
@@ -435,6 +442,7 @@ class FieldWidgetTrace(FieldWidgetBase):
         if self.hide_trace_layer:
             return
         self.section.selectAllTraces()
+        self.dropSelectedOutsideRoiBox()
         self.generateView(generate_image=False)
 
     def invertTraceSelection(self):
@@ -443,7 +451,16 @@ class FieldWidgetTrace(FieldWidgetBase):
         if self.hide_trace_layer:
             return
         self.section.invertTraceSelection(include_hidden=self.show_all_traces)
+        self.dropSelectedOutsideRoiBox()
         self.generateView(generate_image=False)
+
+    def dropSelectedOutsideRoiBox(self):
+        """Deselect the traces outside the ROI box, which are not drawn."""
+        if self.roiBox() is None:
+            return
+        self.section.selected_traces = [
+            t for t in self.section.selected_traces if self.inRoiBox(t)
+        ]
 
     ############################################################################
     ## The lock check ##########################################################

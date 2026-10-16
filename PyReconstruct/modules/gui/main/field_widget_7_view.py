@@ -10,7 +10,8 @@ from PyReconstruct.modules.gui.utils import notify
 
 from .field_widget_5_mouse import (
     CLOSEDTRACE, 
-    OPENTRACE
+    OPENTRACE,
+    ROI_BOX
 )
 from .field_widget_6_paint import FieldWidgetPaint
 from .status_readout import SEPARATOR
@@ -48,6 +49,67 @@ class FieldWidgetView(FieldWidgetPaint):
         self.blend_sections = not self.blend_sections
         self.generateView()
     
+    def toggleRoiBox(self):
+        """Turn the ROI box on or off.
+
+        On asks for the size, then the next click in the field sets the
+        center. Off shows every trace again. Neither saves an undo state or
+        marks the series modified: the box only changes what is drawn.
+        """
+        if self.roi_box_on:
+            self.roi_box_on = False
+            self.roi_box_center = None
+            if self.mouse_mode == ROI_BOX:
+                self.mainwindow.mouse_palette.activateModeButton("Pointer")
+            self.generateView()
+            return
+
+        if not self.setRoiBoxSize():
+            return
+        self.roi_box_on = True
+        self.roi_box_center = None
+        self.moveRoiBox()
+
+    def setRoiBoxSize(self) -> bool:
+        """Ask for the ROI box's width and height (kept for the session).
+
+            Returns:
+                (bool): True if the user confirmed a size
+        """
+        w, h = self.roi_box_size
+        structure = [
+            ["Width (μm):", (True, "float", w, (1e-6, 1e6))],
+            ["Height (μm):", (True, "float", h, (1e-6, 1e6))],
+        ]
+        response, confirmed = QuickDialog.get(self, structure, "ROI box size")
+        if not confirmed:
+            return False
+        self.roi_box_size = (float(response[0]), float(response[1]))
+        if self.roiBox() is not None:
+            self.dropSelectedOutsideRoiBox()
+            self.generateView()
+        return True
+
+    def moveRoiBox(self):
+        """Switch to the ROI box mouse mode: each click sets the center."""
+        if not self.roi_box_on:
+            return
+        self.setMouseMode(ROI_BOX)
+        # no palette button owns this mode
+        for button, _, __ in self.mainwindow.mouse_palette.mode_buttons.values():
+            button.setChecked(False)
+        self.update()
+
+    def roiBoxStatus(self) -> str:
+        """The status-bar text for the ROI box, or None while it is off."""
+        if not self.roi_box_on:
+            return None
+        w, h = self.roi_box_size
+        size = f"{w:g} x {h:g} μm"
+        if self.roi_box_center is None:
+            return f"ROI box {size}: click to place"
+        return f"ROI box {size}"
+
     def setViewMagnification(self, new_mag : float = None):
         """Set the scaling for the section view.
         
@@ -128,6 +190,11 @@ class FieldWidgetView(FieldWidgetPaint):
         position = "x = " + str("{:.4f}".format(x)) + ", "
         position += "y = " + str("{:.4f}".format(y))
         detail_list = [position]
+
+        # say the box is on, so a user never wonders where the traces went
+        roi_box_status = self.roiBoxStatus()
+        if roi_box_status:
+            detail_list.insert(0, roi_box_status)
 
         # display the distance between the current position and the last point if line tracing
         #
