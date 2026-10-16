@@ -37,9 +37,11 @@ def _move_a_trace(window):
     raise AssertionError("no traces")
 
 
-def test_save_writes_the_store_and_closing_writes_the_jser(
-    qapp, store_on, series_jser, qsettings_snapshot, main_window_dialogs, monkeypatch,  # noqa: F811
+@pytest.mark.parametrize("save_mode", ["store", "jser"])
+def test_save_and_close_write_what_the_save_mode_says(
+    save_mode, qapp, store_on, series_jser, qsettings_snapshot, main_window_dialogs, monkeypatch,  # noqa: F811
 ):
+    monkeypatch.setenv(hybrid_store.ENV_SAVE, save_mode)
     before = series_jser.read_bytes()
     window = _window(series_jser)
     try:
@@ -49,10 +51,14 @@ def test_save_writes_the_store_and_closing_writes_the_jser(
 
         window.saveToJser()
 
-        assert series_jser.read_bytes() == before
         assert not series.store.hasPending()
-        assert series.store.meta("dirty") == "1"
         assert not series.modified
+        if save_mode == "store":
+            assert series_jser.read_bytes() == before
+            assert series.store.meta("dirty") == "1"
+        else:
+            assert series_jser.read_bytes() != before
+            assert not series.store.hasUnexportedWork()
     finally:
         window.close()
 
