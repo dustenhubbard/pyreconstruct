@@ -64,9 +64,10 @@ class _FieldStub:
         self.reloads += 1
         self.section_layer.loadImage()
 
-    def viewIsOffImage(self):
-        # changeSrcDir asks whether the view misses the newly found image;
-        # this stub has no view to miss it, so nothing is offered
+    def viewShowsNothing(self):
+        # changeSrcDir asks whether the view misses the newly found image
+        # and every trace; this stub has no view to miss them, so nothing
+        # is offered
         return False
 
 

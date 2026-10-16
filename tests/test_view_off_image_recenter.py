@@ -14,6 +14,13 @@ scene's double-click writes a one-micron view at the point clicked). A view
 that overlaps the image at all asks nothing, and neither does any view when
 no image is found, since a series without images is viewed by its traces.
 
+Nor does a view over any shown trace of the current section, image or not.
+The 3D scene's double-click parks a one-micron view on the trace clicked,
+and that trace can lie outside the image; the field shows the trace, so the
+view is not lost. A trace is in view when its bounding box after the section
+transform shares area with the window. Hidden traces, and traces of a hidden
+group, are not drawn and do not count.
+
 The window came from the legacy XML import, which kept the lower-left
 corner of the Reconstruct viewport and gave it a one-micron size. The import
 now writes the window a new series gets, and the import path sets the view
@@ -36,8 +43,11 @@ from PySide6.QtGui import QColor, QImage
 from PyReconstruct.modules.backend.func import xml_json_conversions as conv
 from PyReconstruct.modules.backend.progress import NullProgressReporter
 from PyReconstruct.modules.constants import blank_section, blank_series
-from PyReconstruct.modules.datatypes import Series
-from PyReconstruct.modules.gui.main.field_widget_7_view import viewMissesBounds
+from PyReconstruct.modules.datatypes import Series, Trace, Transform
+from PyReconstruct.modules.gui.main.field_widget_7_view import (
+    FieldWidgetView,
+    viewMissesBounds,
+)
 from PyReconstruct.modules.gui.utils import utils as gui_utils
 
 
@@ -50,6 +60,11 @@ IMAGE_MAG = 0.06
 IMAGE_BOUNDS = (0.0, 0.0, IMAGE_SIZE[0] * IMAGE_MAG, IMAGE_SIZE[1] * IMAGE_MAG)
 IDENTITY_ALIGNMENT = "LOCAL_d03"
 
+# under the identity alignment the fixture's open section carries its traces
+# at about x 5.0 to 6.5 and y 5.0 to 6.2, above the 4.8-micron image: this
+# one-micron view misses the image and lies over those traces
+TRACE_SIDE_WINDOW = [5.2, 5.2, 1.0, 1.0]
+
 
 def write_image(path):
     image = QImage(*IMAGE_SIZE, QImage.Format.Format_RGB32)
@@ -57,12 +72,13 @@ def write_image(path):
     assert image.save(str(path))
 
 
-def prepare(series_jser, window, image_dir=None):
+def prepare(series_jser, window, image_dir=None, hide_traces=False):
     """Save `window` into the fixture series.
 
     With `image_dir`, every section is pointed at ``image.png`` in that folder
     at IMAGE_MAG, and the series is put on its identity alignment, so the
-    image sits at IMAGE_BOUNDS wherever the field opens.
+    image sits at IMAGE_BOUNDS wherever the field opens. With `hide_traces`,
+    every trace of the open section is hidden.
     """
     series = Series.openJser(str(series_jser), progress=NullProgressReporter)
     series.setProgressReporter(NullProgressReporter)
@@ -76,6 +92,11 @@ def prepare(series_jser, window, image_dir=None):
                 section.src = "image.png"
                 section.mag = IMAGE_MAG
                 section.save()
+        if hide_traces:
+            section = series.loadSection(series.current_section)
+            for trace in section.tracesAsList():
+                trace.hidden = True
+            section.save()
         series.saveJser()
     finally:
         series.close()
@@ -175,6 +196,109 @@ def test_a_window_that_overlaps_the_image_does_not_miss_it(window):
 ])
 def test_a_window_that_only_touches_or_leaves_the_image_misses_it(window):
     assert viewMissesBounds(window, IMAGE_BOUNDS)
+
+
+def shown_trace_bounds(field):
+    """The bounding box of the shown traces on the field's section, in field
+    coordinates, as the field draws them."""
+    tform = field.section.tform
+    boxes = []
+    for trace in field.section.tracesAsList():
+        if trace.hidden or not trace.points:
+            continue
+        pts = tform.mapPointsArray(trace.points)
+        boxes.append((pts[:, 0].min(), pts[:, 1].min(),
+                      pts[:, 0].max(), pts[:, 1].max()))
+    return (
+        min(b[0] for b in boxes), min(b[1] for b in boxes),
+        max(b[2] for b in boxes), max(b[3] for b in boxes),
+    )
+
+
+# ---- the traces ----------------------------------------------------------
+
+def _trace(points, hidden=False, name="dendrite"):
+    trace = Trace(name, (255, 0, 0), closed=True)
+    trace.points = list(points)
+    trace.hidden = hidden
+    return trace
+
+
+def _field(window, traces, tform=None, hidden_groups=()):
+    """Just enough of a field for `viewIsOffTraces`: a series window and a
+    section with traces, a transform and the names of hidden groups."""
+    section = types.SimpleNamespace(
+        tform=tform or Transform([1, 0, 0, 0, 1, 0]),
+        tracesAsList=lambda: list(traces),
+        groupHiddenNames=lambda: set(hidden_groups),
+    )
+    return types.SimpleNamespace(
+        series=types.SimpleNamespace(window=list(window)), section=section
+    )
+
+
+SQUARE = [(2.0, 2.0), (3.0, 2.0), (3.0, 3.0), (2.0, 3.0)]
+
+
+def test_a_section_with_no_traces_is_off_traces():
+    assert FieldWidgetView.viewIsOffTraces(_field([2.0, 2.0, 1.0, 1.0], []))
+
+
+def test_a_view_over_a_trace_is_not_off_traces():
+    field = _field([2.5, 2.5, 1.0, 1.0], [_trace(SQUARE)])
+    assert not FieldWidgetView.viewIsOffTraces(field)
+
+
+def test_a_view_beside_every_trace_is_off_traces():
+    field = _field([4.0, 4.0, 1.0, 1.0], [_trace(SQUARE), _trace(
+        [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]
+    )])
+    assert FieldWidgetView.viewIsOffTraces(field)
+
+
+def test_a_view_that_only_touches_a_trace_box_is_off_traces():
+    field = _field([3.0, 2.0, 1.0, 1.0], [_trace(SQUARE)])
+    assert FieldWidgetView.viewIsOffTraces(field)
+
+
+def test_a_view_inside_a_trace_box_but_away_from_its_points_counts():
+    """The test is against the trace's bounding box, as the field draws it,
+    so a view inside a large open trace is over that trace."""
+    big = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]
+    field = _field([4.0, 4.0, 1.0, 1.0], [_trace(big)])
+    assert not FieldWidgetView.viewIsOffTraces(field)
+
+
+def test_a_hidden_trace_under_the_view_does_not_count():
+    field = _field([2.5, 2.5, 1.0, 1.0], [_trace(SQUARE, hidden=True)])
+    assert FieldWidgetView.viewIsOffTraces(field)
+
+
+def test_a_trace_of_a_hidden_group_under_the_view_does_not_count():
+    field = _field(
+        [2.5, 2.5, 1.0, 1.0], [_trace(SQUARE, name="axon")],
+        hidden_groups=["axon"],
+    )
+    assert FieldWidgetView.viewIsOffTraces(field)
+
+
+def test_a_trace_with_no_points_is_skipped():
+    field = _field([2.5, 2.5, 1.0, 1.0], [_trace([]), _trace(SQUARE)])
+    assert not FieldWidgetView.viewIsOffTraces(field)
+
+
+def test_traces_are_tested_where_the_section_transform_puts_them():
+    """The section transform moves the trace by ten in x: the view over the
+    trace's stored points is off it, and the view over its drawn place is
+    not."""
+    shifted = Transform([1, 0, 10, 0, 1, 0])
+    traces = [_trace(SQUARE)]
+    assert FieldWidgetView.viewIsOffTraces(
+        _field([2.5, 2.5, 1.0, 1.0], traces, tform=shifted)
+    )
+    assert not FieldWidgetView.viewIsOffTraces(
+        _field([12.5, 2.5, 1.0, 1.0], traces, tform=shifted)
+    )
 
 
 # ---- the prompt itself ---------------------------------------------------
@@ -318,6 +442,69 @@ def test_a_view_chosen_in_the_3d_scene_survives_a_reopen_when_kept(
     assert window.series.window == pytest.approx(chosen)
 
 
+def test_a_saved_view_over_traces_outside_the_image_opens_without_a_prompt(
+    series_jser, tmp_path, open_series, view_prompt
+):
+    write_image(tmp_path / "image.png")
+    prepare(series_jser, TRACE_SIDE_WINDOW, image_dir=tmp_path)
+
+    window = open_series(series_jser)
+    field = window.field
+
+    assert view_prompt.seen == []
+    assert field.section_layer.image_found
+    assert field.viewIsOffImage()
+    assert not viewMissesBounds(field.series.window, shown_trace_bounds(field))
+    assert not field.viewIsOffTraces()
+    assert not field.viewShowsNothing()
+    assert center(field.series.window) == pytest.approx(center(TRACE_SIDE_WINDOW))
+    assert max(field.series.window[2:]) == pytest.approx(1.0, abs=0.1)
+
+
+def test_a_view_the_3d_scene_parked_on_a_trace_outside_the_image_reopens_unasked(
+    series_jser, tmp_path, open_series, view_prompt
+):
+    """The 3D scene's double-click on an object jumps to a point of one of
+    its traces. With that trace outside the image, the saved view misses the
+    image but shows the trace, so reopening does not ask."""
+    write_image(tmp_path / "image.png")
+    prepare(series_jser, [1.0, 1.0, 2.0, 1.5], image_dir=tmp_path)
+    window = open_series(series_jser)
+    assert view_prompt.seen == []
+
+    min_x, min_y, max_x, max_y = shown_trace_bounds(window.field)
+    assert viewMissesBounds([min_x, min_y, max_x - min_x, max_y - min_y],
+                            IMAGE_BOUNDS)
+    on_trace = ((min_x + max_x) / 2, (min_y + max_y) / 2)
+    window.field.moveTo(window.series.current_section, *on_trace)
+    chosen = list(window.series.window)
+    assert center(chosen) == pytest.approx(on_trace)
+    window.saveToJser()
+
+    window.openSeries(jser_fp=str(series_jser))
+
+    assert view_prompt.seen == []
+    assert window.field.viewIsOffImage()
+    assert window.series.window == pytest.approx(chosen)
+
+
+def test_a_view_over_nothing_but_hidden_traces_offers_the_image(
+    series_jser, tmp_path, open_series, view_prompt
+):
+    """Hidden traces are not drawn, so the field is as black as with none."""
+    write_image(tmp_path / "image.png")
+    prepare(series_jser, TRACE_SIDE_WINDOW, image_dir=tmp_path, hide_traces=True)
+    view_prompt.answers.append(True)
+
+    window = open_series(series_jser)
+    field = window.field
+
+    assert len(view_prompt.seen) == 1
+    assert center(view_prompt.seen[0]) == pytest.approx(center(TRACE_SIDE_WINDOW))
+    assert all(t.hidden for t in field.section.tracesAsList())
+    assert covers(field.series.window, IMAGE_BOUNDS)
+
+
 @pytest.mark.parametrize("saved", [
     [1.0, 1.0, 2.0, 1.5],        # a zoomed-in view inside the image
     [-0.5, -0.5, 1.0, 1.0],      # a view over one corner of the image
@@ -420,6 +607,24 @@ def test_locating_the_images_keeps_a_view_that_overlaps_them_unasked(
     assert field.section_layer.image_found
     assert center(field.series.window) == pytest.approx(center(saved))
     assert not covers(field.series.window, IMAGE_BOUNDS)
+
+
+def test_locating_the_images_keeps_a_view_over_traces_outside_them_unasked(
+    series_jser, tmp_path, open_series, view_prompt
+):
+    window, images = _open_without_images(
+        series_jser, tmp_path, open_series, TRACE_SIDE_WINDOW
+    )
+    before = list(window.series.window)
+
+    window.changeSrcDir(str(images))
+    field = window.field
+
+    assert view_prompt.seen == []
+    assert field.section_layer.image_found
+    assert field.viewIsOffImage()
+    assert not field.viewIsOffTraces()
+    assert field.series.window == before
 
 
 # ---- the writer: the legacy XML import -----------------------------------
