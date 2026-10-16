@@ -381,3 +381,23 @@ def test_pieces_with_a_wall_between_them_are_two_holes():
     assert _at(arr, 51, 50) == ids["a"]  # the wall
     assert _at(arr, 30, 50) == 0
     np.testing.assert_array_equal(arr, old)
+
+
+def test_a_self_crossing_negative_beside_a_piece_draws_as_before():
+    ## the union of some self-crossing outlines fails in GEOS; such a
+    ## negative is no piece of a hole, and the drawing is the two passes
+    crossing = Trace("a", (255, 0, 0), closed=True)
+    crossing.points = [(10, 10), (60, 90), (10, 90), (40, 10)]
+    crossing.negative = True
+    traces = [
+        _square("a", 0, 100),
+        crossing,
+        _rect("a", 50, 10, 90, 90, negative=True),
+        _square("a", 20, 80),
+    ]
+
+    arr, ids = _labels(traces)
+    old, _ = _labels(traces, draw=_twoPassDraw)
+
+    assert arr.any()
+    np.testing.assert_array_equal(arr, old)

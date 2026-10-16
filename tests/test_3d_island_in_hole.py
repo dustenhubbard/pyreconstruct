@@ -645,12 +645,21 @@ def test_island_cuts_lists_a_hole_drawn_as_two_traces():
         _square(3.2, 0.5, 4.5, 4.5),
     )),
     ("a fraction of a voxel apart", (H_A, _square(2.52, 0.5, 4.5, 4.5))),
+    ("a fraction of a voxel apart and barely larger than the island", (
+        _square(1, 0.999, 2.5, 4.001), _square(2.52, 0.999, 4, 4.001),
+    )),
+    ("joined below the island with a slit through it", (
+        H_A,
+        [(2.5, 0.5), (4.5, 0.5), (4.5, 4.5), (2.52, 4.5), (2.52, 0.8), (2.5, 0.8)],
+    )),
     ("one piece drawn twice", (H_A, H_A, H_B)),
 ])
 def test_hole_drawn_as_several_traces_is_around_the_island(name, pieces):
     """The pieces of a hole together cover the island, so none of them cuts
     it: it fills completely. Two pieces a fraction of a voxel apart both
-    reach into the voxels between them, so they count as one hole."""
+    reach into the voxels between them, so they count as one hole, whether
+    the gap is between the pieces or a slit through them, and whatever their
+    areas add up to before the gap is closed."""
     neg = list(pieces)
     assert islandCuts([WIDE, BIG_ISLAND], neg, REACH) == [(BIG_ISLAND, [])], name
     surf = _surface([(WIDE, False)] + [(p, True) for p in neg] + [(BIG_ISLAND, False)])
@@ -709,6 +718,22 @@ def test_two_traces_with_the_island_outline_between_them_cancel_it():
     half_a, half_b = _square(1, 1, 2.5, 4), _square(2.5, 1, 4, 4)
     assert islandCuts([WIDE, BIG_ISLAND], [half_a, half_b], REACH) == []
     surf = _surface([(WIDE, False), (half_a, True), (half_b, True), (BIG_ISLAND, False)])
+    volume, _ = surf.generateVolume()
+    assert (volume == _reference_volume(surf)).all()
+
+
+# a negative whose outline crosses itself; GEOS cannot join it with another
+SELF_CROSSING = [(0.5, 0.5), (3, 4.5), (0.5, 4.5), (2, 0.5)]
+
+
+def test_a_self_crossing_negative_beside_a_piece_fills_as_before():
+    """GEOS cannot take the union of some self-crossing outlines. Such a
+    negative is not a piece of a hole, so the positive is no island, and the
+    fill is the two passes, as it was."""
+    assert islandCuts([WIDE, BIG_ISLAND], [SELF_CROSSING, H_B], REACH) == []
+    surf = _surface([
+        (WIDE, False), (SELF_CROSSING, True), (H_B, True), (BIG_ISLAND, False),
+    ])
     volume, _ = surf.generateVolume()
     assert (volume == _reference_volume(surf)).all()
 

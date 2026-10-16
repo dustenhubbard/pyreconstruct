@@ -103,27 +103,40 @@ def _reaches(island, negative, reach=0.0) -> bool:
         return False
 
 
-def _joined(polys : list, reach=0.0):
-    """Return the union of several negatives as one shape, with any gap
-    narrower than ``reach`` between them closed.
+def _aroundTogether(island, polys : list, reach=0.0) -> bool:
+    """Return whether several negatives together are a hole around an island:
+    their union, with any gap narrower than ``reach`` closed, covers it, and
+    the union is not the island's own outline.
 
     Two pieces of a hole drawn a fraction of a voxel apart both reach into
-    the voxels between them, so the fill shows no wall there; closing the gap
-    (a mitre buffer out and back in by half the reach) makes the union cover
-    what the two pieces clear. The closed shape is joined with the plain
-    union so the pieces' own outlines stay exact.
+    the voxels between them, so the fill shows no wall there, and the same
+    holds for a slit that narrow through the pieces; closing the gaps (a
+    mitre buffer out and back in by half the reach) makes the union cover
+    what the pieces clear. The closing runs only when the plain union does
+    not already cover the island, and the outline test uses the plain union,
+    whose coordinates are exact. GEOS cannot join some self-crossing
+    outlines and raises; the caller decides what that means.
     """
     from shapely.ops import unary_union
 
+    # closing a gap adds nothing outside the pieces' boxes
+    bounds = [poly.bounds for poly in polys]
+    joint = (
+        min(b[0] for b in bounds), min(b[1] for b in bounds),
+        max(b[2] for b in bounds), max(b[3] for b in bounds),
+    )
+    if not _boxAround(joint, island.bounds):
+        return False
     union = unary_union(polys)
-    if reach <= 0 or union.geom_type == "Polygon":
-        return union
-    try:
-        closed = union.buffer(reach / 2, join_style="mitre")
-        closed = closed.buffer(-reach / 2, join_style="mitre")
-        return unary_union([union, closed])
-    except Exception:
-        return union
+    if union.equals(island):
+        return False
+    if union.covers(island):
+        return True
+    if reach <= 0:
+        return False
+    closed = union.buffer(reach / 2, join_style="mitre")
+    closed = closed.buffer(-reach / 2, join_style="mitre")
+    return closed.covers(island)
 
 
 def _holeAround(island, negatives : list, reach=0.0) -> list:
@@ -137,7 +150,9 @@ def _holeAround(island, negatives : list, reach=0.0) -> list:
     without being its outline, the hole is drawn as several traces, and its
     pieces are the negatives the covering needs: those without which the rest
     no longer covers the island. A negative drawn twice counts once for that,
-    so a duplicated piece is still a piece.
+    so a duplicated piece is still a piece. When GEOS cannot join the
+    negatives (some self-crossing outlines), none of them is a piece of a
+    hole, as before.
 
         Params:
             island: the island's polygon
@@ -158,38 +173,32 @@ def _holeAround(island, negatives : list, reach=0.0) -> list:
     if alone or len(near) < 2:
         return alone
 
-    # a quick no: the pieces' boxes must hold the island's box, and their
-    # areas must add up to at least its area
-    bounds = [negatives[j].bounds for j in near]
-    joint = (
-        min(b[0] for b in bounds), min(b[1] for b in bounds),
-        max(b[2] for b in bounds), max(b[3] for b in bounds),
-    )
-    if not _boxAround(joint, island.bounds):
-        return []
-    if sum(negatives[j].area for j in near) < island.area:
-        return []
-    if not _around(_joined([negatives[j] for j in near], reach), island):
-        return []
+    try:
+        if not _aroundTogether(island, [negatives[j] for j in near], reach):
+            return []
 
-    # the same outline drawn twice is one piece
-    groups : list[list[int]] = []
-    for j in near:
+        # the same outline drawn twice is one piece
+        groups : list[list[int]] = []
+        for j in near:
+            for group in groups:
+                try:
+                    same = negatives[group[0]].equals(negatives[j])
+                except Exception:
+                    same = False
+                if same:
+                    group.append(j)
+                    break
+            else:
+                groups.append([j])
+        pieces = []
         for group in groups:
-            try:
-                same = negatives[group[0]].equals(negatives[j])
-            except Exception:
-                same = False
-            if same:
-                group.append(j)
-                break
-        else:
-            groups.append([j])
-    pieces = []
-    for group in groups:
-        rest = [negatives[j] for other in groups if other is not group for j in other]
-        if not rest or not _around(_joined(rest, reach), island):
-            pieces.extend(group)
+            rest = [negatives[j] for other in groups if other is not group for j in other]
+            if not rest or not _aroundTogether(island, rest, reach):
+                pieces.extend(group)
+    except Exception:
+        # GEOS cannot join some self-crossing outlines; then no hole is
+        # around the island, and it fills the way it did before
+        return []
     return sorted(pieces)
 
 
