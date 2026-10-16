@@ -1,4 +1,5 @@
 import os
+import errno
 import uuid
 import re
 import json
@@ -464,6 +465,56 @@ class _StreamedJser:
 
     def close(self):
         self._f.close()
+
+
+def _setAside(folder : str) -> str:
+    """Rename `folder` to a free name beside it and return that name.
+
+    For openJser, which replaces a working folder that has no .ser and must
+    be able to put it back. `createHiddenDir` would empty it in place, and it
+    stops at a subfolder after deleting the files around it; this refuses a
+    folder holding a subfolder before touching anything instead.
+    """
+    with os.scandir(folder) as entries:
+        for entry in entries:
+            if entry.is_dir(follow_symlinks=False):
+                raise OSError(
+                    errno.ENOTEMPTY,
+                    f"{folder} holds a folder ({entry.name}), so it was not replaced",
+                )
+    parent = os.path.dirname(folder)
+    while True:
+        aside = os.path.join(parent, f".opening-{secrets.token_hex(4)}.old")
+        if not os.path.lexists(aside):
+            break
+    os.rename(folder, aside)
+    return aside
+
+
+def _putBack(aside : str, folder : str):
+    """Rename a folder set aside by `_setAside` back to where it was.
+
+    Called while an exception may be on its way out, so a failure here is
+    swallowed: the files are still whole under the set-aside name.
+    """
+    try:
+        os.rename(aside, folder)
+    except OSError:
+        pass
+
+
+def _deleteSetAside(aside : str):
+    """Delete a set-aside folder once the open that replaced it is done.
+
+    It holds only files (`_setAside` checked). One that cannot be removed is
+    left where it is rather than failing an open that has succeeded.
+    """
+    try:
+        for name in os.listdir(aside):
+            os.remove(os.path.join(aside, name))
+        os.rmdir(aside)
+    except OSError:
+        pass
 
 
 def _changed(fp : str) -> SeriesOpenError:
@@ -984,6 +1035,8 @@ class Series():
             reporter.finish()
             raise
         placed = False  # True once hidden_dir is the folder this open made
+        aside = None  # the folder that was at hidden_dir, kept until the open is done
+        opened = False  # True once the series is built
 
         # The .ser file is written LAST as the completion sentinel: both
         # recovery scans (the fast path above and the GUI's unsaved-work
@@ -1084,12 +1137,19 @@ class Series():
             # in it that is not this file's (the fast path above takes this
             # file's) means the folder is the working folder of a different
             # series, so it is left alone and the file goes into a folder of
-            # its own. The .ser moves last, as it was written last.
+            # its own. Any other folder there is replaced, as it always was,
+            # but not emptied in place: it is renamed aside whole, and only
+            # deleted once the series is built. A failed move or build, or a
+            # cancel, puts it back (see the finally below), so at every point
+            # either its files or a complete new copy exist. The .ser moves
+            # last, as it was written last.
             if os.path.isdir(hidden_dir) and any(
                 f.endswith(".ser") for f in os.listdir(hidden_dir)
             ):
                 hidden_dir = createNewSeriesDir(sdir, sname)
             else:
+                if os.path.isdir(hidden_dir):
+                    aside = _setAside(hidden_dir)
                 hidden_dir = createHiddenDir(sdir, sname)
             placed = True
             for name in sorted(os.listdir(work_dir), key=lambda n: n == series_name):
@@ -1109,21 +1169,26 @@ class Series():
             for snum, section in series.enumerateSections(show_progress=False):
                 series.data.updateSection(section, update_traces=True, log_events=False, read_store=True)
                 if reporter.was_canceled():
-                    shutil.rmtree(hidden_dir, ignore_errors=True)
                     return None
                 progress += 1
                 reporter.set_progress(progress/final_value * 100)
             # the series data is complete here, as after the refresh in
             # __init__: a displayed profile no section has is repointed now
             series._repointBCProfile()
+            opened = True
 
-        except BaseException:
-            if placed:
-                shutil.rmtree(hidden_dir, ignore_errors=True)
-            raise
         finally:
             # gone already on success; on a cancel or failure, what was unpacked
             shutil.rmtree(work_dir, ignore_errors=True)
+            if not opened:
+                # a cancel or a failure: remove what this open made, and put
+                # back what it set aside
+                if placed:
+                    shutil.rmtree(hidden_dir, ignore_errors=True)
+                if aside is not None:
+                    _putBack(aside, os.path.join(sdir, f".{sname}"))
+            elif aside is not None:
+                _deleteSetAside(aside)
             source.close()
             # The dialog closes only at 100%, which a failure never reaches:
             # the raise above used to leave the window-modal "Opening

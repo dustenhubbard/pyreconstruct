@@ -18,6 +18,7 @@ What is pinned here:
 * the collision question still comes before the hidden directory exists.
 """
 
+import errno
 import json
 import os
 
@@ -564,3 +565,129 @@ def test_a_range_checks_its_bytes_and_the_file_its_stamp(tmp_path):
             g.write(b" ")
         with pytest.raises(jser_scan.FileChanged):
             jser_scan.check_unchanged(f, index)
+
+
+# ---------------------------------------------------------------------------
+# installing the unpacked folder: the old one survives every failure
+# ---------------------------------------------------------------------------
+
+def leftovers(tmp_path):
+    """Folders this open made beside the file: work and set-aside copies."""
+    return sorted(p.name for p in tmp_path.iterdir() if p.name.startswith(".opening-"))
+
+
+def staged_moves(monkeypatch, fail_at=None, error=None):
+    """Count the moves out of the work folder; raise `error` at move `fail_at`.
+
+    `fail_at` is 1-based, or "last" for the final move, which is the .ser.
+    """
+    real = os.replace
+    moves = []
+
+    def replace(src, dst):
+        if os.path.basename(os.path.dirname(src)).startswith(".opening-"):
+            moves.append(os.path.basename(src))
+            total = len(os.listdir(os.path.dirname(src)))
+            if fail_at == len(moves) or (fail_at == "last" and total == 1):
+                raise OSError(error, os.strerror(error))
+        return real(src, dst)
+
+    monkeypatch.setattr(os, "replace", replace)
+    return moves
+
+
+def test_the_moves_end_with_the_ser(tmp_path, monkeypatch):
+    fp, hidden = with_prior_folder(tmp_path, as_bytes(shapes1(), "compact"))
+    moves = staged_moves(monkeypatch)
+
+    series = Series.openJser(fp, progress=NullProgressReporter, notifier=NullNotifier())
+    series.close()
+
+    assert len(moves) > 2 and moves[-1] == "probe.ser"
+    assert leftovers(tmp_path) == []
+
+
+@pytest.mark.parametrize("error", [errno.ENOSPC, errno.EACCES, errno.EIO])
+@pytest.mark.parametrize("fail_at", [1, 2, "last"])
+def test_a_failed_move_puts_the_old_folder_back(tmp_path, monkeypatch, fail_at, error):
+    """A rename on a full, locked or dropped share: the old bytes come back."""
+    data = as_bytes(shapes1(), "compact")
+    fp, hidden = with_prior_folder(tmp_path, data)
+    moves = staged_moves(monkeypatch, fail_at, error)
+
+    with pytest.raises(OSError) as raised:
+        Series.openJser(fp, progress=NullProgressReporter, notifier=NullNotifier())
+
+    assert raised.value.errno == error
+    assert moves, "no move was attempted"
+    assert folder_bytes(hidden) == PRIOR
+    assert leftovers(tmp_path) == []
+    assert (tmp_path / "probe.jser").read_bytes() == data
+
+
+def test_a_failed_set_aside_leaves_the_old_folder(tmp_path, monkeypatch):
+    fp, hidden = with_prior_folder(tmp_path, as_bytes(shapes1(), "compact"))
+    real = os.rename
+
+    def rename(src, dst):
+        if src == str(hidden):
+            raise OSError(errno.EACCES, os.strerror(errno.EACCES))
+        return real(src, dst)
+
+    monkeypatch.setattr(os, "rename", rename)
+    with pytest.raises(OSError):
+        Series.openJser(fp, progress=NullProgressReporter, notifier=NullNotifier())
+
+    assert folder_bytes(hidden) == PRIOR
+    assert leftovers(tmp_path) == []
+
+
+def test_a_failed_build_puts_the_old_folder_back(tmp_path, monkeypatch):
+    """The moves are done; the series build after them fails."""
+    from PyReconstruct.modules.datatypes.series_data import SeriesData
+
+    fp, hidden = with_prior_folder(tmp_path, as_bytes(shapes1(), "compact"))
+
+    def broken(self, *args, **kwargs):
+        raise RuntimeError("build failed")
+
+    monkeypatch.setattr(SeriesData, "updateSection", broken)
+    with pytest.raises(RuntimeError, match="build failed"):
+        Series.openJser(fp, progress=NullProgressReporter, notifier=NullNotifier())
+
+    assert folder_bytes(hidden) == PRIOR
+    assert leftovers(tmp_path) == []
+
+
+class CancelInBuild(NullProgressReporter):
+    """Cancels once the series build has started, after every move."""
+
+    def was_canceled(self):
+        return any(
+            p.name == "probe.ser" for p in self.hidden.iterdir()
+        ) if self.hidden.exists() else False
+
+
+def test_a_cancel_during_the_build_puts_the_old_folder_back(tmp_path):
+    fp, hidden = with_prior_folder(tmp_path, as_bytes(shapes1(), "compact"))
+    CancelInBuild.hidden = hidden
+
+    result = Series.openJser(fp, progress=CancelInBuild, notifier=NullNotifier())
+
+    assert result is None
+    assert folder_bytes(hidden) == PRIOR
+    assert leftovers(tmp_path) == []
+
+
+def test_a_folder_holding_a_folder_is_not_replaced(tmp_path):
+    """Emptying it in place used to delete its files and then stop at the folder."""
+    fp, hidden = with_prior_folder(tmp_path, as_bytes(shapes1(), "compact"))
+    (hidden / "sub").mkdir()
+    (hidden / "sub" / "kept").write_bytes(b"kept")
+
+    with pytest.raises(OSError):
+        Series.openJser(fp, progress=NullProgressReporter, notifier=NullNotifier())
+
+    assert {p.name: p.read_bytes() for p in hidden.iterdir() if p.is_file()} == PRIOR
+    assert (hidden / "sub" / "kept").read_bytes() == b"kept"
+    assert leftovers(tmp_path) == []
