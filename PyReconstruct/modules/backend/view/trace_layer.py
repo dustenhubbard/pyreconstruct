@@ -81,6 +81,12 @@ class TraceLayer():
         self._temp_hide_set = set()
         self._group_hide_set = set()
         self._group_hidden_names = set()
+        # the field's ROI box (center x, center y, width, height in field
+        # units), or None. View-only: set by every draw, never saved
+        self.roi_box = None
+        # True while every trace is hidden (H): nothing is drawn, so
+        # nothing can be picked
+        self.traces_hidden = False
         # the (style, glow percent) the options dialog shows while it is open;
         # None draws from the stored options
         self.selected_style_preview = None
@@ -192,13 +198,28 @@ class TraceLayer():
         window_size = max(self.series.window[2:])
         radius = window_size * (0.05)
 
-        return self.section.findClosest(
+        # findClosest searches the whole section when it gets no traces. With
+        # the ROI box on, no traces in view means none inside the box, and
+        # the traces outside it must not be picked. With every trace hidden,
+        # none is on the screen to pick.
+        if self.traces_in_view or self.roi_box is not None or self.traces_hidden:
+            traces_in_view = self.traces_in_view
+        else:
+            traces_in_view = None
+
+        closest, closest_type = self.section.findClosest(
             field_x,
             field_y,
             radius=radius,
-            traces_in_view=self.traces_in_view,
+            traces_in_view=traces_in_view,
             include_hidden=self.show_all_traces
         )
+
+        # the list is from the last draw; the box may have moved since
+        if closest_type == "trace" and not self.insideRoiBox(closest):
+            return None, None
+
+        return closest, closest_type
     
     def getTraces(self, pix_poly : list) -> list[Trace]:
         """"Select all traces that are completely in a polygon
@@ -608,6 +629,19 @@ class TraceLayer():
             show_trace = False
 
         return show_trace
+
+    def insideRoiBox(self, trace : Trace, tform : Transform = None) -> bool:
+        """Whether a trace is inside this layer's ROI box (see traceInRoiBox).
+
+            Params:
+                trace (Trace): the trace to test
+                tform (Transform): the section transform (read here if not given)
+            Returns:
+                (bool): True if the trace is inside the box or the box is off
+        """
+        if tform is None:
+            tform = self.section.tform
+        return traceInRoiBox(trace, tform, self.roi_box)
         
     def generateTraceLayer(
             self,
@@ -616,6 +650,7 @@ class TraceLayer():
             show_all_traces=False,
             window_moved=True,
             focus_on=False,
+            roi_box=None,
     ) -> QPixmap:
         """Draw traces on a transparent background.
         
@@ -625,12 +660,15 @@ class TraceLayer():
                 show_all_traces (bool): True if all traces are displayed regardless of hidden status
                 focus_mode (bool): True if in focus mode
                 window_moved (bool): True if the window has moved (upstream: same as generate_image)
+                roi_box (tuple): the ROI box (center x, center y, width,
+                    height in field units); only traces inside it are drawn
             Returns:
                 (QPixmap): the pixmap with traces drawn in
         """
         self.series.window = window
         self.pixmap_dim = pixmap_dim
         self.show_all_traces = show_all_traces
+        self.roi_box = roi_box
         pixmap_w, pixmap_h = tuple(pixmap_dim)
         trace_layer = QPixmap(pixmap_w, pixmap_h)
         trace_layer.fill(Qt.transparent)
@@ -704,7 +742,7 @@ class TraceLayer():
 
         for trace in trace_list if self.draw_traces else ():
 
-            if self.trace_visibile_p(trace):
+            if self.trace_visibile_p(trace) and self.insideRoiBox(trace, tform):
 
                 color = None  # default to assigned color
 
@@ -930,6 +968,44 @@ def labelIds(names) -> dict:
             (dict): name to label
     """
     return {name: i for i, name in enumerate(sorted(set(names)), start=1)}
+
+def traceInRoiBox(trace : Trace, tform : Transform, roi_box : tuple) -> bool:
+    """Whether a trace is shown and can be picked under an ROI box.
+
+    A trace is inside when its bounds in field coordinates (the section
+    transform applied, as Trace.getBounds does) touch or overlap the box. It
+    is then drawn whole, not clipped.
+
+        Params:
+            trace (Trace): the trace to test
+            tform (Transform): the section transform
+            roi_box (tuple): center x, center y, width, height, or None (off)
+        Returns:
+            (bool): True if the trace is inside the box or the box is off
+    """
+    if roi_box is None:
+        return True
+    if not trace.points:
+        return False
+    # vectorized: the same bounds as trace.getBounds(tform), without its
+    # per-point Python loop, which every draw would pay for every trace
+    pts = tform.mapPointsArray(trace.points)
+    xmin, ymin = pts.min(axis=0)
+    xmax, ymax = pts.max(axis=0)
+    return boundsOverlap((xmin, ymin, xmax, ymax), roiBoxBounds(roi_box))
+
+
+def roiBoxBounds(roi_box : tuple) -> tuple:
+    """The bounds of an ROI box.
+
+        Params:
+            roi_box (tuple): center x, center y, width, height
+        Returns:
+            (tuple): xmin, ymin, xmax, ymax
+    """
+    cx, cy, w, h = roi_box
+    return cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2
+
 
 def boundsOverlap(b1 : tuple, b2 : tuple):
     """Check if two bounding boxes intersect.

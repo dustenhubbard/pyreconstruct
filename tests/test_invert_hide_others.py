@@ -256,6 +256,7 @@ def _trace_field_stub(section):
     stub = types.SimpleNamespace(
         section=section,
         hide_trace_layer=False,
+        refuseWhileRoiBox=lambda: False,  # the ROI box is off
         saveState=lambda: events.append("saveState"),
         generateView=lambda *a_, **k: events.append("generateView"),
     )
@@ -346,6 +347,7 @@ def _obj_field_stub(series, selected_names):
     events = []
     stub = types.SimpleNamespace(
         visibility_snapshot=None,
+        refuseWhileRoiBox=lambda: False,  # the ROI box is off
         series=series,
         series_states="STATES",
         section=types.SimpleNamespace(
@@ -576,6 +578,7 @@ def _hidden_by_section(series, name):
 def _real_field_stub(series, states, selected_names):
     return types.SimpleNamespace(
         visibility_snapshot=None,
+        refuseWhileRoiBox=lambda: False,  # the ROI box is off
         series=series,
         series_states=states,
         section=types.SimpleNamespace(
