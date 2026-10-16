@@ -394,26 +394,71 @@ class GuardedSettings:
     (``settings_for``, and ``QSettingsStore`` for ``Series.setOption``), so
     one rule holds every write that is not the user's (``may_write``): a
     writer nobody listed cannot fill a key the copy still has to bring.
-    Reads pass straight through. The copy and the fold in this module write
-    through plain ``QSettings``.
+    The copy and the fold in this module write through plain ``QSettings``.
 
-    Wraps rather than subclasses, so the ``QSettings`` class is looked up when
-    a store is opened, not when this module is imported.
+    Only the reads in ``READS`` pass straight through. Every call that can
+    change the store is checked here: ``setValue``, ``remove``, ``clear``, and
+    an array write (``beginWriteArray``, ``setArrayIndex``, ``endArray``, the
+    last of which stores the array's size). Anything else is not offered, so
+    a mutator added to Qt later fails loudly instead of writing past the
+    check. Wraps rather than subclasses, so the ``QSettings`` class is looked
+    up when a store is opened, not when this module is imported.
     """
+
+    READS = frozenset({
+        "allKeys", "applicationName", "beginGroup", "childGroups",
+        "childKeys", "contains", "endGroup", "fallbacksEnabled", "fileName",
+        "format", "group", "isAtomicSyncRequired", "isWritable",
+        "organizationName", "scope", "status", "sync", "value",
+    })
 
     def __init__(self, settings):
         self._settings = settings
+        # one entry per open array: whether its calls reach the store. A read
+        # array always does; a write array only if it was allowed to begin
+        self._arrays = []
 
     def __getattr__(self, name):
-        return getattr(self._settings, name)
+        if name in GuardedSettings.READS:
+            return getattr(self._settings, name)
+        raise AttributeError(
+            f"GuardedSettings does not offer {name!r}; a call that can change "
+            "the store needs its own check here"
+        )
 
     def setValue(self, key, value):
-        if may_write(self._settings):
+        if self._writing() and may_write(self._settings):
             self._settings.setValue(key, value)
 
     def remove(self, key):
-        if may_write(self._settings):
+        if self._writing() and may_write(self._settings):
             self._settings.remove(key)
+
+    def clear(self):
+        if may_write(self._settings):
+            self._settings.clear()
+
+    def beginReadArray(self, prefix):
+        self._arrays.append(True)
+        return self._settings.beginReadArray(prefix)
+
+    def beginWriteArray(self, prefix, size=-1):
+        allowed = self._writing() and may_write(self._settings)
+        self._arrays.append(allowed)
+        if allowed:
+            self._settings.beginWriteArray(prefix, size)
+
+    def setArrayIndex(self, i):
+        if self._writing():
+            self._settings.setArrayIndex(i)
+
+    def endArray(self):
+        if self._arrays.pop() if self._arrays else True:
+            self._settings.endArray()
+
+    def _writing(self):
+        """False inside a write array that was refused, whose calls all wait."""
+        return not self._arrays or self._arrays[-1]
 
 
 def settings_for(*keys):
