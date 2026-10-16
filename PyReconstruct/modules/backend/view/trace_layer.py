@@ -690,12 +690,14 @@ class TraceLayer():
         margin_y = 2 * window_h / pixmap_h
 
         b = np.array([self._rawBounds(trace) for trace in trace_list])
-        corners = np.stack((
+        n = len(b)
+        # the four corners of every box, one block of n per corner
+        mapped = tform.mapPointsArray(np.concatenate((
             b[:, (0, 1)], b[:, (2, 1)], b[:, (0, 3)], b[:, (2, 3)]
-        ), axis=1).reshape(-1, 2)
-        mapped = tform.mapPointsArray(corners).reshape(-1, 4, 2)
-        lo = mapped.min(axis=1)
-        hi = mapped.max(axis=1)
+        )))
+        blocks = [mapped[k * n:(k + 1) * n] for k in range(4)]
+        lo = np.minimum.reduce(blocks)
+        hi = np.maximum.reduce(blocks)
 
         # a NaN box (no points) compares False everywhere and is kept
         return ~(
