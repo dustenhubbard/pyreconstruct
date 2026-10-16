@@ -1,0 +1,68 @@
+# Bring each open PR's `merge-evidence` check in line with the merge hold.
+#
+# merge-evidence.yml fails while the repository variable MERGE_HOLD is `1`. A
+# variable change is not an event, so on its own it re-runs nothing: a PR whose
+# check passed before the hold could still merge, and a PR failed by the hold
+# would stay red after it is cleared. This re-runs the latest `merge-evidence`
+# run on each open PR where the two disagree:
+#
+#   hold set:     a run that passed is re-run, and now fails on the hold;
+#   hold cleared: a run that failed at the `merge hold` step is re-run.
+#
+# A run that failed for any other reason is left alone. Nothing here approves,
+# labels or merges anything; the re-run is merge-evidence.yml from main, with the
+# event the run first had.
+#
+# On a schedule, so a hold takes effect within about 15 minutes with nothing
+# else to do. To make it take effect at once, run it by hand after the change:
+#   gh workflow run merge-hold-sync.yml -R dustenhubbard/pyreconstruct
+
+name: merge-hold-sync
+
+on:
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+
+# actions: write lets it re-run a run; pull-requests: read lists open PRs.
+permissions:
+  actions: write
+  pull-requests: read
+
+concurrency:
+  group: merge-hold-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      MERGE_HOLD: ${{ vars.MERGE_HOLD }}
+    steps:
+      - name: Re-run checks that disagree with the hold
+        run: |
+          set -euo pipefail
+          if [ "$MERGE_HOLD" = 1 ]; then echo "merge hold in force"; else echo "no merge hold"; fi
+          gh api "repos/$REPO/pulls?state=open&per_page=100" --paginate \
+            --jq '.[] | "\(.number) \(.head.sha)"' |
+          while read -r pr sha; do
+            # Newest first, so this is the run whose check the PR shows.
+            run=$(gh api "repos/$REPO/actions/workflows/merge-evidence.yml/runs?head_sha=$sha&event=pull_request_target&per_page=1" \
+              --jq '.workflow_runs[0] // empty | "\(.id) \(.status) \(.conclusion)"')
+            [ -n "$run" ] || continue
+            read -r id status conclusion <<<"$run"
+            [ "$status" = completed ] || continue
+            if [ "$MERGE_HOLD" = 1 ]; then
+              [ "$conclusion" = success ] || continue
+            else
+              [ "$conclusion" = failure ] || continue
+              held=$(gh api "repos/$REPO/actions/runs/$id/jobs" \
+                --jq '[.jobs[].steps[]? | select(.name == "merge hold" and .conclusion == "failure")] | length')
+              [ "$held" -gt 0 ] || continue
+            fi
+            gh api -X POST "repos/$REPO/actions/runs/$id/rerun" > /dev/null
+            echo "re-ran merge-evidence for #$pr (run $id, was $conclusion)"
+          done

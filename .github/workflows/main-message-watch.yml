@@ -1,0 +1,88 @@
+# Report a commit message on main that breaks the commit message rules.
+#
+# The rules are checked before a commit is made, on the machine that makes it.
+# A squash merge from the web page, or from a machine without that check, lands
+# unchecked. This runs on every push to main, checks each new commit message
+# with scripts/check_commit_messages.py, and opens one issue per commit that
+# breaks a rule, labeled `message-check`. It never blocks, edits or reverts
+# anything: main's history is not rewritten for a message.
+#
+# Its own workflow, not a job in main-break-watch.yml: that one runs on
+# `workflow_run` after the tests and only when they fail. A message check needs
+# neither, and a separate trigger keeps both files simple.
+#
+# The checkout is main's own code after the push, never a pull request's. The
+# commit messages reach the script as a file, never spliced into a shell line.
+#
+# The repository variable MESSAGE_SCAN_EXTRA, when set, adds one more pattern
+# (see the script). An issue says only that it matched, not what matched.
+
+name: main-message-watch
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      BEFORE: ${{ github.event.before }}
+      AFTER: ${{ github.event.after }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Collect the new commit messages
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/commits.json"
+          # The compare API lists up to 250 commits, far more than one push to
+          # main carries. With no usable base, check the pushed commit alone.
+          if [[ "$BEFORE" =~ ^0+$ ]] \
+             || ! gh api "repos/$REPO/compare/$BEFORE...$AFTER" \
+                  --jq '[.commits[] | {sha, message: .commit.message}]' > "$out"; then
+            gh api "repos/$REPO/commits/$AFTER" \
+              --jq '[{sha, message: .commit.message}]' > "$out"
+          fi
+          echo "$(jq length "$out") commit(s) to check"
+
+      - name: Check them
+        env:
+          MESSAGE_SCAN_EXTRA: ${{ vars.MESSAGE_SCAN_EXTRA }}
+        run: |
+          python3 scripts/check_commit_messages.py "$RUNNER_TEMP/commits.json" \
+            > "$RUNNER_TEMP/hits.json"
+          echo "$(jq length "$RUNNER_TEMP/hits.json") commit(s) break a rule"
+
+      - name: Open an issue for each
+        run: |
+          set -euo pipefail
+          hits="$RUNNER_TEMP/hits.json"
+          [ "$(jq length "$hits")" -eq 0 ] && exit 0
+          gh label create message-check -R "$REPO" --force \
+            --color FBCA04 --description "A commit message on main breaks the message rules"
+          # A rerun must not open a second issue for the same commit.
+          titles=$(gh api "repos/$REPO/issues?labels=message-check&state=all&per_page=100" \
+            --paginate --jq '.[].title')
+          for i in $(seq 0 $(( $(jq length "$hits") - 1 ))); do
+            sha=$(jq -r ".[$i].sha" "$hits")
+            title="Commit message check: ${sha:0:8}"
+            if grep -qxF "$title" <<<"$titles"; then
+              echo "$title already has an issue."
+              continue
+            fi
+            body=$(jq -r --arg url "https://github.com/$REPO/commit/$sha" ".[$i] |
+              \"The message of \(\$url) on main breaks the commit message rules:\n\n\"
+              + (.problems | map(\"- \" + .) | join(\"\n\"))
+              + \"\n\nThe commit is not changed. Close this once it is dealt with.\"" "$hits")
+            gh issue create -R "$REPO" --title "$title" --label message-check --body "$body"
+          done

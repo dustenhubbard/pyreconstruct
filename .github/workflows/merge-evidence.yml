@@ -25,15 +25,31 @@
 # runs code from the PR head. Every step reads the event payload or the GitHub API, and
 # every value reaches the shell through `env:`, never spliced into a script.
 #
-# Limit: branch protection matches a required check by name alone, so a PR that adds its
-# own `pull_request` workflow with a job named `merge-evidence` reports a second check of
-# that name. Running only from main's copy here does not close that; only a GitHub
-# ruleset does, and none is set up. Read any change under .github/workflows/ with that
-# in mind.
+# Limit: branch protection matches a required check by name and app (GitHub Actions)
+# alone, so a PR that adds its own `pull_request` workflow with a job named
+# `merge-evidence` reports a second check of that name from the same app. The ruleset
+# rule that pins a check to one workflow file ("Require workflows to pass") is for
+# organization repos only, so it is not open to this one. The cover here: a PR that
+# changes anything under .github/workflows/ fails this check until it also carries the
+# `workflows-reviewed` label (step below). Tested 2026-10-16 on a throwaway PR: with
+# this check red and a same-named `pull_request` job green and newer, both counted as
+# required and the PR stayed blocked. A red run here blocks whatever else reports the
+# name. I apply that label myself, after reading the workflow change.
 #
 # Limit: GitHub may skip `pull_request_target` for a branch whose name looks like a
 # commit SHA. Such a PR gets no `merge-evidence` report and cannot merge until its
 # branch is renamed. It fails closed, so no unreviewed change can merge that way.
+#
+# Merge hold: while the repository variable MERGE_HOLD is `1`, this check fails on
+# every PR, so nothing merges. Set and clear it on the repository's Settings page
+# (Secrets and variables, Actions, Variables) or with
+#   gh variable set MERGE_HOLD -R dustenhubbard/pyreconstruct --body 1   (0 clears it)
+# A variable change is not an event, so it re-runs nothing by itself. A check that
+# passed before the hold stays green, and one failed by the hold stays red after it is
+# cleared. merge-hold-sync.yml closes that gap: every 15 minutes, or at once with
+#   gh workflow run merge-hold-sync.yml -R dustenhubbard/pyreconstruct
+# it re-runs this check on each open PR whose result no longer matches the hold. Any
+# new push or label change on a PR re-runs it too.
 
 name: merge-evidence
 
@@ -51,6 +67,18 @@ jobs:
   merge-evidence:
     runs-on: ubuntu-latest
     steps:
+      - name: merge hold
+        # First, so a hold stops every PR, Dependabot's included. merge-hold-sync.yml
+        # finds a hold failure by this step's name; rename both together.
+        env:
+          MERGE_HOLD: ${{ vars.MERGE_HOLD }}
+        run: |
+          if [ "$MERGE_HOLD" = 1 ]; then
+            echo "::error::Merge hold in force (repository variable MERGE_HOLD is 1). Nothing merges until it is cleared."
+            exit 1
+          fi
+          echo "no merge hold"
+
       - name: read the dependabot update type
         # Dependabot's own action, pinned as in dependabot-auto.yml. It reads the PR's
         # first commit through the API and reports no update type unless that commit is
@@ -116,6 +144,39 @@ jobs:
             echo "reviewed label present -- evidence recorded"
           else
             echo "::error::No 'reviewed' label. A merge to main needs it."
+            exit 1
+          fi
+
+      - name: changes under .github/workflows need `workflows-reviewed`
+        # A PR that adds or edits a workflow can add a second check named
+        # `merge-evidence` (see the limit above). This copy runs from main, so it can
+        # ask for a second label on any such PR, one the PR cannot give itself. It
+        # applies to Dependabot too: its action bumps edit workflow files, and the
+        # checks above do not prove a commit came from Dependabot.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          CHANGED: ${{ github.event.pull_request.changed_files }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          # The API lists at most 3000 files per PR.
+          if [ "$CHANGED" -gt 3000 ]; then
+            echo "::error::This PR changes $CHANGED files and the API lists only 3000. Split it so every file can be checked."
+            exit 1
+          fi
+          # A rename counts at both ends: moving a workflow out is a change to it.
+          hits=$(gh api "repos/$REPO/pulls/$PR/files" --paginate \
+            --jq '.[] | .filename, (.previous_filename // empty) | select(startswith(".github/workflows/"))')
+          if [ -z "$hits" ]; then
+            echo "no change under .github/workflows/"
+            exit 0
+          fi
+          echo "$hits"
+          if jq -e 'any(.[]; . == "workflows-reviewed")' <<<"$LABELS" >/dev/null; then
+            echo "workflows-reviewed label present"
+          else
+            echo "::error::This PR changes files under .github/workflows/. A merge needs the 'workflows-reviewed' label as well as 'reviewed'."
             exit 1
           fi
 
