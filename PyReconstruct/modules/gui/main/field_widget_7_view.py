@@ -90,7 +90,8 @@ class FieldWidgetView(FieldWidgetPaint):
         return True
 
     def moveRoiBox(self):
-        """Switch to the ROI box mouse mode: each click sets the center."""
+        """Switch to the ROI box mouse mode: each click sets the center, and
+        each drag sets the center and the size."""
         if not self.roi_box_on:
             return
         self.setMouseMode(ROI_BOX)
@@ -106,7 +107,7 @@ class FieldWidgetView(FieldWidgetPaint):
         w, h = self.roi_box_size
         size = f"{w:g} x {h:g} μm"
         if self.roi_box_center is None:
-            return f"ROI box {size}: click to place"
+            return f"ROI box {size}: click or drag to place"
         return f"ROI box {size}"
 
     def setViewMagnification(self, new_mag : float = None):
@@ -310,6 +311,9 @@ class FieldWidgetView(FieldWidgetPaint):
         # drag, so it ends here rather than being committed later against
         # whatever the field has become (issue #108).
         self.cancelTraceMove()
+
+        # an ROI box drag ends the same way, with the box as it was
+        self.cancelRoiBoxDrag()
     
     def backspace(self):
         """Called when backspace OR Del is pressed: either delete traces or undo line trace."""
