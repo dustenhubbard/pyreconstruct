@@ -17,10 +17,10 @@ domain ``PyReconstruct / <settings_app()>``. For the stable app the two domains 
 the same name, so its behavior is unchanged: same file, same keys, same
 values as before the Dev app started sharing.
 
-Every raw ``QSettings`` construction in the app goes through
-``domain_for(key)``; ``QSettingsStore`` (backend/settings_store.py), which
-carries ``Series.getOption``, addresses the shared domain directly. A test
-scans the sources for any construction that bypasses this module.
+Every settings object the app opens comes from ``settings_for(key)``, which
+routes by ``domain_for(key)``; ``QSettingsStore`` (backend/settings_store.py),
+which carries ``Series.getOption``, addresses the shared domain directly. A
+test scans the sources for any construction that bypasses this module.
 
 Forward compatibility is the one real hazard of sharing: a nightly runs
 against a store the stable build also reads, and stable coerces each value
@@ -40,6 +40,7 @@ matter.
 """
 import json
 import os
+from contextlib import contextmanager
 
 SETTINGS_ORG = "PyReconstruct"
 
@@ -118,9 +119,9 @@ def is_per_app_key(key):
 
 
 def domain_for(*keys):
-    """(org, app) for a raw ``QSettings`` that reads or writes ``keys``.
+    """(org, app) for a ``QSettings`` that reads or writes ``keys``.
 
-    Unpack into ``QSettings(*domain_for(key))``. Several keys can be named
+    ``settings_for(key)`` opens it. Several keys can be named
     when one settings object serves them all; they must all land in the same
     domain, and a mix raises rather than silently routing half of them to the
     wrong store.
@@ -268,8 +269,12 @@ LEGACY_COPY_MARKER = "meta/copied_from_khlab"
 # legacy_copy_pending; tests clear it between cases.
 _copy_pending: dict[str, bool] = {}
 
-# Old stores whose file failed to parse this session, by application name.
-_unparsable_legacy: set[str] = set()
+# Old stores whose file failed to parse in this process, by application name.
+# The in-app Restart reloads every PyReconstruct.modules module in the same
+# process, and Qt's parse of the file outlives that reload, so this set must
+# too: a reload runs this line again with the module's old namespace, and
+# keeps the set it finds there.
+_unparsable_legacy: set[str] = globals().get("_unparsable_legacy", set())
 
 
 def _read_legacy_keys(app, old=None):
@@ -307,12 +312,11 @@ def legacy_copy_pending(app):
     store carries no marker while the old one holds something or cannot be
     read. An old store that cannot be read is a copy to retry, as it is in
     the copy itself, not a store with nothing to give. While a store is
-    pending, the program saves nothing of its own into it (see
-    ``shared_copy_pending``), because the retry never overwrites a key the
-    new store already holds, and a value written in the meantime would win
-    over the one the retry was meant to bring back. Never raises; when the
-    stores cannot be read the answer is True, which only means such a value
-    is not saved yet.
+    pending, it takes only the user's own writes (``GuardedSettings``),
+    because the retry never overwrites a key the new store already holds,
+    and a value written in the meantime would win over the one the retry was
+    meant to bring back. Never raises; when the stores cannot be read the
+    answer is True, which only means such a value is not saved yet.
     """
     if app in _copy_pending:
         return _copy_pending[app]
@@ -330,6 +334,93 @@ def legacy_copy_pending(app):
         return True
     _copy_pending[app] = pending
     return pending
+
+
+def store_copy_pending(app):
+    """True while ``PyReconstruct / <app>`` is still owed values from ``KHLab``.
+
+    The shared stores (``PyReconstruct`` and ``PyReconstruct-<code>``) are
+    owed them by their own copy and by the Dev fold (``shared_copy_pending``);
+    any other store, such as the Dev app's own, only by its own copy.
+    """
+    if app == SHARED_APP or app.startswith(f"{SHARED_APP}-"):
+        return shared_copy_pending(app[len(SHARED_APP):])
+    return legacy_copy_pending(app)
+
+
+# How many ``user_action`` blocks are open. Settings are written on the GUI
+# thread only.
+_user_actions = 0
+
+
+@contextmanager
+def user_action():
+    """Mark the settings writes inside as the user's own choice.
+
+    While a store is owed its copy from ``KHLab``, it takes no other write
+    (``GuardedSettings``): the copy never replaces a key the store already
+    holds, so a value the program saved on its own would win over the one the
+    copy brings. A choice the user makes is newer than anything the copy can
+    bring, so it is saved as usual. Wrap only the writes of what the user
+    chose: a default read on a miss inside the block is still not saved
+    (``Series.getOption``).
+    """
+    global _user_actions
+    _user_actions += 1
+    try:
+        yield
+    finally:
+        _user_actions -= 1
+
+
+def may_write(settings):
+    """Whether a write to ``settings`` goes through now: always inside a
+    ``user_action``, otherwise only once its store owes no copy. Never
+    raises."""
+    if _user_actions:
+        return True
+    try:
+        if settings.organizationName() != SETTINGS_ORG:
+            return True
+        return not store_copy_pending(settings.applicationName())
+    except Exception:
+        return False
+
+
+class GuardedSettings:
+    """A ``QSettings`` whose writes wait while its store is owed its copy.
+
+    Every settings object the app writes through is one of these
+    (``settings_for``, and ``QSettingsStore`` for ``Series.setOption``), so
+    one rule holds every write that is not the user's (``may_write``): a
+    writer nobody listed cannot fill a key the copy still has to bring.
+    Reads pass straight through. The copy and the fold in this module write
+    through plain ``QSettings``.
+
+    Wraps rather than subclasses, so the ``QSettings`` class is looked up when
+    a store is opened, not when this module is imported.
+    """
+
+    def __init__(self, settings):
+        self._settings = settings
+
+    def __getattr__(self, name):
+        return getattr(self._settings, name)
+
+    def setValue(self, key, value):
+        if may_write(self._settings):
+            self._settings.setValue(key, value)
+
+    def remove(self, key):
+        if may_write(self._settings):
+            self._settings.remove(key)
+
+
+def settings_for(*keys):
+    """The store for ``keys`` (``domain_for``), with its writes guarded."""
+    from PySide6.QtCore import QSettings
+
+    return GuardedSettings(QSettings(*domain_for(*keys)))
 
 
 def per_app_copy_pending():
@@ -350,8 +441,7 @@ def shared_copy_pending(suffix=""):
     that flavor's store, which waits for the flavor's copy. Until both are
     done, a value the program writes on its own (a default read on a miss,
     the username it picks at launch, a list it rebuilds from what it read)
-    would block the stored one, so those wait. A change the user makes is
-    saved as usual: it is newer than anything the copy can bring. ``suffix``
+    would block the stored one, so those wait (``user_action``). ``suffix``
     is ``""`` for the global store and ``"-<code>"`` for a series' store.
     """
     return any(

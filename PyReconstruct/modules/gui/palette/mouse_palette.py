@@ -5,7 +5,9 @@ import math
 from PySide6.QtWidgets import QWidget, QSlider
 from PySide6.QtGui import QIcon, QPixmap, QFont
 from PySide6.QtCore import QSize, Qt, QSettings
-from PyReconstruct.modules.constants.settings_domain import domain_for
+from PyReconstruct.modules.constants.settings_domain import (
+    settings_for, user_action,
+)
 
 # Palette-visibility preferences are global (a UI choice, not per-series) and
 # persist across launches. Map each in-memory flag to its QSettings key.
@@ -19,7 +21,7 @@ PALETTE_VIS_KEYS = {
 
 def _visibility_settings():
     """The store the visibility flags live in (shared between the two apps)."""
-    return QSettings(*domain_for(*PALETTE_VIS_KEYS.values()))
+    return settings_for(*PALETTE_VIS_KEYS.values())
 
 
 def load_palette_visibility(settings : QSettings) -> dict:
@@ -54,7 +56,7 @@ PALETTE_POS_KEYS = tuple(
 
 def _position_settings():
     """The store the palette positions live in (shared between the two apps)."""
-    return QSettings(*domain_for(*PALETTE_POS_KEYS))
+    return settings_for(*PALETTE_POS_KEYS)
 
 
 def load_palette_positions(settings : QSettings) -> dict:
@@ -731,7 +733,9 @@ class MousePalette():
     def saveVisibilityState(self):
         """Persist the current palette-visibility flags so they survive a restart."""
         state = {attr: getattr(self, attr) for attr in PALETTE_VIS_KEYS}
-        save_palette_visibility(_visibility_settings(), state)
+        # only the toggles call this, so it is always the user's choice
+        with user_action():
+            save_palette_visibility(_visibility_settings(), state)
         # every toggle road ends here, so this is where the View menu's
         # checkboxes learn about a change they did not make
         self.notifyVisibilityChanged()
@@ -748,7 +752,9 @@ class MousePalette():
             f"{group}_{axis}": getattr(self, f"{group}_{axis}")
             for group in PALETTE_POS_GROUPS for axis in ("x", "y")
         }
-        save_palette_positions(_position_settings(), positions)
+        # only the end of a drag calls this
+        with user_action():
+            save_palette_positions(_position_settings(), positions)
 
     # Right-click to hide, group by group: the View
     # menu keeps every toggle, and this adds the direct road from the widget
@@ -876,7 +882,8 @@ class MousePalette():
         self.inc_x,   self.inc_y   = 0.99, 0.99
         self.bc_x,    self.bc_y    = 0.99, 0.8
         self.sb_x,    self.sb_y    = 0.01, 0.99
-        clear_palette_positions(_position_settings())
+        with user_action():
+            clear_palette_positions(_position_settings())
         self.resize()
     
     def setPaletteIncMode(self, all : bool, save=True):
@@ -884,13 +891,13 @@ class MousePalette():
         
             Params:
                 all (bool): True if all palette buttons should be incremented at once
-                save (bool): False when showing the stored mode at startup,
-                    which must not save the default read while the old
-                    settings are still being copied
+                save (bool): True when the user picked the mode; False
+                    when showing the stored mode at startup
         """
         b_all, b_inc = self.palette_side_buttons[2:4]
         if save:
-            self.series.setOption("palette_inc_all", all)
+            with user_action():
+                self.series.setOption("palette_inc_all", all)
         if all:
             b_all.setChecked(True)
             b_inc.setChecked(False)
@@ -1042,7 +1049,8 @@ class MousePalette():
         elif response[3][2][1]: show_flags = "none"
         else: show_flags = "unresolved"
         
-        self.setFlag(response[0], response[1], response[2], show_flags)
+        with user_action():
+            self.setFlag(response[0], response[1], response[2], show_flags)
     
     def displayHelp(self):
         """Display the help associated with the trace palette."""

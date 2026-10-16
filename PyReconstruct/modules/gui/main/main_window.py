@@ -5,6 +5,7 @@ import math
 import shutil
 import struct
 import traceback
+from contextlib import nullcontext
 
 from shiboken6 import isValid
 from PySide6.QtCore import QEvent
@@ -26,8 +27,8 @@ from PyReconstruct.modules.backend.func.window_geometry import (
 from .status_readout import FieldStatusReadout, StatusSegment
 from .wheel_steps import WheelSteps, zoom_factor
 from PyReconstruct.modules.constants.settings_domain import (
-    copy_legacy_series_settings_once, domain_for, fold_series_settings_once,
-    per_app_copy_pending, shared_copy_pending,
+    copy_legacy_series_settings_once, fold_series_settings_once,
+    settings_for, user_action,
 )
 from PyReconstruct.modules.datatypes.series_owner import app_display_name
 
@@ -45,7 +46,7 @@ def windowGeometrySettings():
     real `PyReconstruct/PyReconstruct` domain. Per app: the two flavors run side by
     side, and a shared blob would put one window exactly over the other.
     """
-    return QSettings(*domain_for("window/geometry"))
+    return settings_for("window/geometry")
 
 
 def remappedBCProfile(current : str, profiles_dict : dict) -> str:
@@ -534,7 +535,8 @@ class MainWindow(QMainWindow):
 
         self.setGeometry(*self.defaultWindowGeometry())
 
-        windowGeometrySettings().setValue("window/geometry", self.saveGeometry())
+        with user_action():
+            windowGeometrySettings().setValue("window/geometry", self.saveGeometry())
 
     def openWelcomeSeries(self):
         """Open a welcome series."""
@@ -1171,10 +1173,7 @@ class MainWindow(QMainWindow):
         ``self.series.user``.
         """
         from PyReconstruct.modules.gui.main.first_launch import resolve_username
-        # while the copy from the old settings is owed, the stored name may
-        # still arrive; the OS login is the default meanwhile, unsaved
-        if not shared_copy_pending():
-            resolve_username(QSettings(*domain_for("username")), self.series)
+        resolve_username(settings_for("username"), self.series)
         self.notifyNewEditor()
 
     def applyUpdateCheckDefaultStartup(self):
@@ -1259,7 +1258,7 @@ class MainWindow(QMainWindow):
         from PyReconstruct.modules.gui.main.first_launch import (
             WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT, whats_new_suppressed,
         )
-        settings = QSettings(*domain_for(WHATSNEW_SUPPRESS_KEY))
+        settings = settings_for(WHATSNEW_SUPPRESS_KEY)
         self.togglewhatsnew_act.setChecked(
             whats_new_suppressed(
                 settings.value(WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT)
@@ -1283,7 +1282,8 @@ class MainWindow(QMainWindow):
         if getattr(self, "series", None) is None:
             return
         checked = self.toggleupdatecheck_act.isChecked()
-        self.series.setOption("update_check_on_startup", checked)
+        with user_action():
+            self.series.setOption("update_check_on_startup", checked)
         if not checked:
             # the notice comes from the automatic check, so it goes with it
             self.clearUpdateNotice()
@@ -1317,10 +1317,10 @@ class MainWindow(QMainWindow):
         next launch, and a version already seen stays seen.
         """
         from PyReconstruct.modules.gui.main.first_launch import WHATSNEW_SUPPRESS_KEY
-        settings = QSettings(*domain_for(WHATSNEW_SUPPRESS_KEY))
-        settings.setValue(
-            WHATSNEW_SUPPRESS_KEY, self.togglewhatsnew_act.isChecked()
-        )
+        with user_action():
+            settings_for(WHATSNEW_SUPPRESS_KEY).setValue(
+                WHATSNEW_SUPPRESS_KEY, self.togglewhatsnew_act.isChecked()
+            )
         from PyReconstruct.modules.gui.dialog.whats_new import sync_show_boxes
         sync_show_boxes(self)
 
@@ -1335,13 +1335,14 @@ class MainWindow(QMainWindow):
                 self,
                 "Username",
                 "Enter your username:",
-                text=QSettings(*domain_for("username")).value("username", self.series.user),
+                text=settings_for("username").value("username", self.series.user),
             )
             if not confirmed or not new_name:
                 return
         
-        QSettings(*domain_for("username")).setValue("username", new_name)
-        self.series.user = new_name
+        with user_action():
+            settings_for("username").setValue("username", new_name)
+            self.series.user = new_name
 
         self.notifyNewEditor()
     
@@ -1369,7 +1370,8 @@ class MainWindow(QMainWindow):
         if not (0 <= opacity <= 1):
             return
         
-        self.series.setOption("fill_opacity", opacity)
+        with user_action():
+            self.series.setOption("fill_opacity", opacity)
         self.field.generateView(generate_image=False)
 
     def recolorAllObjectsFromPalette(self):
@@ -1439,7 +1441,6 @@ class MainWindow(QMainWindow):
         if (
             not self.series or self.series.isWelcomeSeries()
             or field is None or not hasattr(field, "table_manager")
-            or not self.series.maySaveOwnValue("list_layout")
         ):
             return
         self.series.setOption(
@@ -1847,7 +1848,7 @@ class MainWindow(QMainWindow):
         """Point the file explorer at the folder the series was opened from."""
         # set explorer filepath
         if not self.series.isWelcomeSeries() and self.series.jser_fp:
-            settings = QSettings(*domain_for("last_folder"))
+            settings = settings_for("last_folder")
             settings.setValue("last_folder", os.path.dirname(self.series.jser_fp))
 
     def _buildFieldAndPalette(self):
@@ -2493,13 +2494,13 @@ class MainWindow(QMainWindow):
         else:
             new_shape = "trace"
         
-        self.series.setOption("trace_mode", new_mode)
+        with user_action():
+            self.series.setOption("trace_mode", new_mode)
+            self.series.setOption("auto_merge", response[2][0][1])
+            self.series.setOption("auto_merge_selected_only", response[3][0][1])
+            self.series.setOption("roll_average", response[4][0][1])
+            self.series.setOption("roll_window", response[5])
         self.field.closed_trace_shape = new_shape
-        
-        self.series.setOption("auto_merge", response[2][0][1])
-        self.series.setOption("auto_merge_selected_only", response[3][0][1])
-        self.series.setOption("roll_average", response[4][0][1])
-        self.series.setOption("roll_window", response[5])
 
     def changeTracingTrace(self, trace):
         """Change trace utilized by the user.
@@ -3244,7 +3245,9 @@ class MainWindow(QMainWindow):
     def toggleZtraces(self):
         """Toggle whether ztraces are shown."""
         self.field.deselectAllTraces()
-        self.series.setOption("show_ztraces", not self.series.getOption("show_ztraces"))
+        shown = self.series.getOption("show_ztraces")
+        with user_action():
+            self.series.setOption("show_ztraces", not shown)
         self.field.generateView(generate_image=False)
     
     def setToObject(self, obj_name : str, section_num : int):
@@ -3731,8 +3734,9 @@ class MainWindow(QMainWindow):
         
         s = "rect" if response[0][0][1] else "lasso"
         t = "inc" if response[1][0][1] else "exc"
-        self.series.setOption("pointer", [s, t])
-        self.series.setOption("display_closest", response[2][0][1])
+        with user_action():
+            self.series.setOption("pointer", [s, t])
+            self.series.setOption("display_closest", response[2][0][1])
         self.seriesModified()
     
     def modifyGrid(self, event=None):
@@ -3746,8 +3750,9 @@ class MainWindow(QMainWindow):
             return
         
         grid_response, sf_grid = response
-        self.series.setOption("grid", grid_response)
-        self.series.setOption("sampling_frame_grid", sf_grid)
+        with user_action():
+            self.series.setOption("grid", grid_response)
+            self.series.setOption("sampling_frame_grid", sf_grid)
         self.seriesModified()
     
     def modifyKnife(self, event=None):
@@ -3784,10 +3789,11 @@ class MainWindow(QMainWindow):
         if not confirmed:
             return
 
-        self.series.setOption("knife_del_threshold", response[0])
-        self.series.setOption("roll_knife_average", response[1][0][1])
-        self.series.setOption("roll_knife_window", response[2])
-        self.series.setOption("knife_ignore_secondary_click", response[3][0][1])
+        with user_action():
+            self.series.setOption("knife_del_threshold", response[0])
+            self.series.setOption("roll_knife_average", response[1][0][1])
+            self.series.setOption("roll_knife_window", response[2])
+            self.series.setOption("knife_ignore_secondary_click", response[3][0][1])
 
         self.seriesModified()
     
@@ -4224,10 +4230,9 @@ class MainWindow(QMainWindow):
         # default range when the overlay can't supply present ids.
         zarr_layer = self.field.zarr_layer
         present_ids = zarr_layer.getPresentIds() if zarr_layer else None
-        self.series.setOption(
-            "autoseg_color_seed",
-            next_shuffle_seed(current, palette, ids=present_ids)
-        )
+        seed = next_shuffle_seed(current, palette, ids=present_ids)
+        with user_action():
+            self.series.setOption("autoseg_color_seed", seed)
         self.field.generateView()
 
     def mergeLabels(self):
@@ -4345,7 +4350,8 @@ class MainWindow(QMainWindow):
         if not confirmed:
             return
 
-        self.series.setOption("find_zoom", z)
+        with user_action():
+            self.series.setOption("find_zoom", z)
     
     def reviewDuplicateTraces(self):
         """Find duplicate traces and open them for review.
@@ -4817,7 +4823,8 @@ class MainWindow(QMainWindow):
         if not confirmed:
             return
         
-        self.resetShortcuts(response)
+        with user_action():
+            self.resetShortcuts(response)
 
     def openWebsite(self, site):
         """Open website in user's browser."""
@@ -4965,7 +4972,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
             import time
-            settings = QSettings(*domain_for("last_update_check_epoch"))
+            settings = settings_for("last_update_check_epoch")
             try:
                 last = float(settings.value("last_update_check_epoch", 0) or 0)
             except (TypeError, ValueError):
@@ -5043,12 +5050,12 @@ class MainWindow(QMainWindow):
     def showUpdateNotice(self, version):
         """Show the status bar update notice for ``version`` and remember it,
         so it is back at the next launch until it is clicked."""
-        QSettings(*domain_for(UPDATE_NOTICE_KEY)).setValue(UPDATE_NOTICE_KEY, str(version))
+        settings_for(UPDATE_NOTICE_KEY).setValue(UPDATE_NOTICE_KEY, str(version))
         self._setUpdateNotice(str(version))
 
     def clearUpdateNotice(self):
         """Hide the update notice and forget its version."""
-        QSettings(*domain_for(UPDATE_NOTICE_KEY)).remove(UPDATE_NOTICE_KEY)
+        settings_for(UPDATE_NOTICE_KEY).remove(UPDATE_NOTICE_KEY)
         self._setUpdateNotice(None)
 
     def restoreUpdateNotice(self):
@@ -5060,7 +5067,7 @@ class MainWindow(QMainWindow):
         """
         from PyReconstruct.modules.backend.updater.install_info import current_version
         from PyReconstruct.modules.backend.updater.updater import is_newer_than
-        stored = QSettings(*domain_for(UPDATE_NOTICE_KEY)).value(UPDATE_NOTICE_KEY, "")
+        stored = settings_for(UPDATE_NOTICE_KEY).value(UPDATE_NOTICE_KEY, "")
         if not stored:
             return
         if is_newer_than(str(stored), current_version()):
@@ -5143,7 +5150,8 @@ class MainWindow(QMainWindow):
         if not confirmed or not branch.strip():
             return
         branch = branch.strip()
-        self.series.setOption("update_branch", branch)
+        with user_action():
+            self.series.setOption("update_branch", branch)
         from PyReconstruct import cli
         progbar = getProgbar(f"Updating from '{branch}'… (progress in console)", cancel=False, maximum=0)
         pool = ThreadPool()
@@ -5360,7 +5368,8 @@ class MainWindow(QMainWindow):
         if not confirmed:
             return
         
-        self.series.setOption("series_code_pattern", response)
+        with user_action():
+            self.series.setOption("series_code_pattern", response)
     
     def setSeriesCode(self, cancelable=True):
         """Set the series code (ensure that user enters a valid series code)."""
@@ -5466,7 +5475,8 @@ class MainWindow(QMainWindow):
 
         # saved before the lists re-measure below, which read it
         if save:
-            self.series.setOption("theme", theme)
+            with user_action():
+                self.series.setOption("theme", theme)
         if theme == "default":
             app.setStyleSheet("")
             app.setPalette(app.style().standardPalette())
@@ -5489,11 +5499,6 @@ class MainWindow(QMainWindow):
                 return
             series_fp = self.series.jser_fp
 
-        # the list is rebuilt from what was read, so saving it before the old
-        # settings are copied would drop the stored one
-        if not self.series.maySaveOwnValue("recently_opened_series"):
-            return
-        
         opened = self.series.getOption("recently_opened_series")
 
         # remove redundant filepaths
@@ -5516,7 +5521,8 @@ class MainWindow(QMainWindow):
         empty "Open recent series" submenu is visible immediately rather than
         after the next series open.
         """
-        self.series.setOption("recently_opened_series", [])
+        with user_action():
+            self.series.setOption("recently_opened_series", [])
         self.createMenuBar()
 
     def importFromSeries(self):
@@ -5880,14 +5886,13 @@ class MainWindow(QMainWindow):
         # without deleting them.
         self.update_check_timer.stop()
         self.whats_new_timer.stop()
-        # persist window geometry so size/position survive a restart. While
-        # this app's store still owes its copy from the old settings, a window
-        # left where it opened is not saved: the copy brings the old position
+        # persist window geometry so size/position survive a restart. A window
+        # the user moved is their choice; one left where it opened is not, and
+        # waits while this app's store still owes its copy from the old
+        # settings, which brings the old position
         geometry = self.saveGeometry()
-        if (
-            geometry != getattr(self, "_shown_geometry", None)
-            or not per_app_copy_pending()
-        ):
+        moved = geometry != getattr(self, "_shown_geometry", None)
+        with user_action() if moved else nullcontext():
             windowGeometrySettings().setValue("window/geometry", geometry)
         if self.viewer and not self.viewer.is_closed:
             self.viewer.close()

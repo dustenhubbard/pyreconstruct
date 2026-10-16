@@ -17,7 +17,7 @@ The organization was ``"KHLab"`` until 2026-10-03; the startup copy in
 Both scopes are the SHARED domain (`constants/settings_domain.py`): the
 stable app and the Dev app read and write the same store, so a preference
 set in one is what the other sees. The few keys that stay per app never
-pass through here; they are raw `QSettings` sites routed by `domain_for`.
+pass through here; they are `settings_for` sites routed by `domain_for`.
 
 Pass ``code=None`` to address the global scope; pass a series ``code`` to
 address that series' per-series scope.
@@ -80,8 +80,13 @@ class QSettingsStore(SettingsStore):
 
     def _settings(self, code: Optional[str]):
         from PySide6.QtCore import QSettings
+        from PyReconstruct.modules.constants.settings_domain import (
+            GuardedSettings,
+        )
         app = self.APP if code is None else f"{self.APP}-{code}"
-        return QSettings(self.ORG, app)
+        # guarded: while the store is owed its copy from the old KHLab
+        # settings, only a user action writes to it
+        return GuardedSettings(QSettings(self.ORG, app))
 
     def contains(self, code, key):
         return self._settings(code).contains(key)
@@ -94,9 +99,9 @@ class QSettingsStore(SettingsStore):
 
     def may_save_defaults(self, code):
         from PyReconstruct.modules.constants.settings_domain import (
-            shared_copy_pending,
+            store_copy_pending,
         )
-        return not shared_copy_pending("" if code is None else f"-{code}")
+        return not store_copy_pending(self.APP if code is None else f"{self.APP}-{code}")
 
 
 class DictSettingsStore(SettingsStore):
