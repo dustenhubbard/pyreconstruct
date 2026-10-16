@@ -3014,8 +3014,7 @@ class MainWindow(QMainWindow):
         # the per-section trackers are a safety net for section-level changes
         # that have not yet flipped it; when in doubt, write
         if not self.series.modified and not any(
-            s.getAllModifiedNames() or s.tformsModified() or s.flags_modified
-            for s in sections
+            s.isModified() for s in sections
         ):
             return
 
