@@ -778,6 +778,112 @@ def test_redoing_both_sections_of_a_copy_reaches_its_tree(
     assert _saved_host_tree(window, tmp_path / "both.jser") == copied
 
 
+@pytest.mark.parametrize("whole_first", [False, True])
+def test_undoing_both_sections_of_a_copy_gives_back_a_host_refused_at_first(
+        window, main_window_dialogs, monkeypatch, tmp_path, whole_first):
+    """A_COPY is hosted by Z_COPY through M, and Z by A_COPY. Copying A and
+    Z clears A_COPY's host M and gives Z_COPY the host A_COPY. Undo on s3
+    alone cannot give A_COPY back M while Z_COPY is hosted by A_COPY; undo
+    on s2 after it takes that link away, and A_COPY gets M back. Also after
+    an undo and a redo on every section first."""
+    M = "hl_middle"
+    s1, s2, s3, s4 = _sections(window)
+    for snum, name in [(s1, A_COPY), (s1, M), (s2, Z), (s3, A), (s4, Z_COPY)]:
+        _draw_on(window, snum, name)
+    window.series.setObjHosts([M], [Z_COPY])
+    window.series.setObjHosts([A_COPY], [M])
+    window.series.setObjHosts([Z], [A_COPY])
+    before = _saved_host_tree(window, tmp_path / "before.jser")
+    _copy_or_split(window, monkeypatch, "copy", [A, Z])
+    if whole_first:
+        _trigger_on(window, main_window_dialogs, s2, window.undo_act, "all")
+        _trigger_on(window, main_window_dialogs, s2, window.redo_act, "all")
+    _trigger_on(window, main_window_dialogs, s3, window.undo_act, "section")
+    assert A_COPY not in _saved_host_tree(window, tmp_path / "s3.jser")
+    _trigger_on(window, main_window_dialogs, s2, window.undo_act, "section")
+    assert _saved_host_tree(window, tmp_path / "both.jser") == before
+
+
+def _check_host_links(window, record, in_force):
+    """The tree meets the copy's record: each link a section where it
+    stands made is there, or refused as a cycle; each other link it made
+    is not; each link its clears took on such a section is not; each other
+    link they took is there, or refused as a cycle."""
+    tree = window.series.host_tree
+    assert record.in_force == in_force
+
+    def cycle(t, h):
+        pair = tree._pairOf(t, h)
+        return bool(pair) and pair[0] in tree.getHosts(pair[1], True)
+
+    made = set().union(*record.made.values())
+    needed = set().union(*(record.made[s] for s in in_force))
+    taken = set().union(*record.taken.values())
+    needed_taken = set().union(*(record.taken[s] for s in in_force))
+    for edge in made - needed:
+        assert edge not in tree._edges
+    for edge in needed:
+        assert edge in tree._edges or (edge in record.refused and cycle(*edge))
+    assert not needed_taken & tree._edges
+    for edge in taken - needed_taken:
+        assert edge in tree._edges or (edge in record.refused and cycle(*edge))
+    for edge in record.refused:
+        assert edge in needed | (taken - needed_taken) | record.trimmed
+        assert cycle(*edge)
+
+
+def _fixed_sets(record):
+    return (
+        {s: frozenset(v) for s, v in record.made.items()},
+        {s: frozenset(v) for s, v in record.taken.items()},
+        frozenset(record.trimmed),
+    )
+
+
+@pytest.mark.parametrize("seed", range(8))
+@pytest.mark.parametrize("shape", ["shared", "middle", "refused"])
+def test_undo_and_redo_walks_on_two_sections_of_a_copy_keep_its_links(
+        window, main_window_dialogs, monkeypatch, tmp_path, shape, seed):
+    """Sixteen undos and redos on one of the copy's two sections at a time,
+    chosen from a fixed seed. After each the tree meets the copy's record,
+    and the record's fixed sets stay the same. The copy is of T on two
+    sections, of A and Z with A_COPY hosted by Z_COPY through M, or of the
+    longer cycle above."""
+    import random
+
+    if shape == "shared":
+        _, a, b, _ = _setup(window)
+        _draw_on(window, b, T)
+        _copy_or_split(window, monkeypatch, "copy", [T])
+    elif shape == "middle":
+        a, b, _, _ = _copy_into_names_that_exist(
+            window, main_window_dialogs, monkeypatch, tmp_path, middle="hl_middle"
+        )
+        _trigger_on(window, main_window_dialogs, a, window.redo_act, "all")
+    else:
+        K, M = "hl_k", "hl_middle"
+        s1, a, b, s4 = _sections(window)
+        for snum, name in [(s1, K), (s1, A_COPY), (s1, M), (a, Z), (b, A), (s4, Z_COPY)]:
+            _draw_on(window, snum, name)
+        for traveler, host in [(M, Z_COPY), (A_COPY, M), (K, A_COPY), (Z, K)]:
+            window.series.setObjHosts([traveler], [host])
+        _copy_or_split(window, monkeypatch, "copy", [A, Z])
+    record = window.field.series_states[a].current_state.host_links
+    assert record is window.field.series_states[b].current_state.host_links
+    fixed = _fixed_sets(record)
+    in_force = {a, b}
+    _check_host_links(window, record, in_force)
+    rng = random.Random(seed)
+    for _ in range(16):
+        snum = rng.choice([a, b])
+        redo = snum not in in_force
+        act = window.redo_act if redo else window.undo_act
+        _trigger_on(window, main_window_dialogs, snum, act, "section")
+        (in_force.add if redo else in_force.discard)(snum)
+        _check_host_links(window, record, in_force)
+        assert _fixed_sets(record) == fixed
+
+
 @pytest.mark.parametrize("then", ["clear", "draw", "reopen"])
 @pytest.mark.parametrize("action", ["copy", "split"])
 def test_redoing_a_copy_or_split_on_one_section_clears_a_host_still_reachable(

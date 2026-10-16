@@ -249,13 +249,12 @@ class HostTree():
                 add: (traveler id, host id) pairs to make
                 give_back: (traveler id, host id) pairs to make after them
             Returns:
-                (set): the pairs of add refused
+                (set): the pairs of add and give_back refused
         """
         self._removeEdges(set(remove))
         add, give_back = set(add), set(give_back)
         self._addMembers({oid for edge in add | give_back for oid in edge})
-        refused = self._addOneByOne(add)
-        self._addOneByOne(give_back)
+        refused = self._addOneByOne(add) | self._addOneByOne(give_back)
         self.checkRedundantHosts()
         return refused
 

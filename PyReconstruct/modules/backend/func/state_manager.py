@@ -432,25 +432,36 @@ class HostLinkRecord():
         self.trimmed = trimmed
         # the section numbers where the action stands: not undone there
         self.in_force = set(made)
-        # links the action made that a section redo could not make again,
-        # as they would have made an object a host of itself then
+        # links a section undo or redo could not make or give back, as they
+        # would have made an object a host of itself then: each later
+        # section step of the action tries them again
         self.refused = set()
 
     def _needed(self, links : dict) -> set:
         """The links of the sections where the action stands."""
         return set().union(*(links.get(snum, ()) for snum in self.in_force))
 
+    def _replay(self, series : Series, remove, add, give_back=()):
+        """Take away the links in remove, make those in add, then give back
+        those in give_back, with the refused links the action still needs
+        made or given back tried again (HostTree.replayLinks)."""
+        needed = self._needed(self.made)
+        unowned = set().union(*self.taken.values()) - self._needed(self.taken)
+        retry = self.refused
+        self.refused = series.host_tree.replayLinks(
+            remove,
+            set(add) | (retry & needed),
+            set(give_back) | (retry & (unowned | self.trimmed)),
+        )
+
     def redo(self, series : Series, snum : int):
         """The action is redone on a section: take away the links its
-        clears took there, make its links there again, and the links a
-        redo refused before if the action still needs them."""
+        clears took there and make its links there again."""
         self.in_force.add(snum)
         if series.seriesStepRunning():
             return
-        needed = self._needed(self.made)
-        self.refused = series.host_tree.replayLinks(
-            self.taken.get(snum, ()),
-            self.made.get(snum, set()) | (self.refused & needed),
+        self._replay(
+            series, self.taken.get(snum, ()), self.made.get(snum, ())
         )
 
     def undo(self, series : Series, snum : int):
@@ -460,10 +471,10 @@ class HostLinkRecord():
         self.in_force.discard(snum)
         if series.seriesStepRunning():
             return
-        needed = self._needed(self.made)
-        self.refused = series.host_tree.replayLinks(
-            self.made.get(snum, set()) - needed,
-            self.refused & needed,
+        self._replay(
+            series,
+            set(self.made.get(snum, ())) - self._needed(self.made),
+            (),
             (set(self.taken.get(snum, ())) - self._needed(self.taken))
             | self.trimmed,
         )
