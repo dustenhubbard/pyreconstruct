@@ -2150,6 +2150,7 @@ dependencies = [
 test = [
     { name = "pytest" },
     { name = "pytest-qt" },
+    { name = "pyyaml" },
     { name = "setuptools-scm" },
 ]
 
@@ -2177,6 +2178,7 @@ requires-dist = [
     { name = "pyside6", specifier = "==6.9.3" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9,<10" },
     { name = "pytest-qt", marker = "extra == 'test'", specifier = ">=4" },
+    { name = "pyyaml", marker = "extra == 'test'", specifier = ">=6" },
     { name = "qdarkstyle", specifier = "==3.2.3" },
     { name = "scikit-image", marker = "python_full_version < '3.13'", specifier = "==0.23.2" },
     { name = "scikit-image", marker = "python_full_version >= '3.13'", specifier = "==0.25.2" },
