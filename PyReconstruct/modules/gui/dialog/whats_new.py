@@ -324,10 +324,9 @@ MENU_LABELS = (
     "Import alignments", "Online resources", "Show What's new after each update",
     "Object list of selected traces", "Delete from sections...",
     "Copy to sections...", "Edit attributes of traces...",
-    # the Help menu toggle's names before 1.23 and before 1.25, and the View
-    # toggle's before 1.24; older notes still say them
-    "Show what's new after updates", "Turn off What's new pop-up",
-    "Show/hide lists",
+    # the Help menu toggle's name before 1.23, and the View toggle's before
+    # 1.24; older notes still say them
+    "Show what's new after updates", "Show/hide lists",
 )
 
 # Menu paths in the notes: two or more labels joined by " ▸ ". A label is

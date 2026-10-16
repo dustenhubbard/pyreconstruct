@@ -31,7 +31,7 @@ full release notes on GitHub (linked from the dialog).
 - **One Duplicates finder replaces the two old ones** in Series ▸ Clean up.
 - **Updates show in the status bar** instead of a dialog at launch.
 - **PyReconstruct Dev is a nightly build** you can install beside PyReconstruct.
-- **What's new has a new look, is back on, and opens once after an update.** To turn it off again, untick the box at the bottom or use Help ▸ Turn off What's new pop-up.
+- **What's new has a new look, is back on, and opens once after an update.** To turn it off again, untick the box at the bottom or untick Help ▸ Show What's new after each update.
 
 #### Fixed
 
