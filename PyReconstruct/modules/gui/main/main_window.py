@@ -2323,6 +2323,20 @@ class MainWindow(QMainWindow):
             notify(f"No transforms were imported. {e}")
             return
 
+        self._finishTransformImport(alignments_before)
+
+        notify("Transforms imported successfully.")
+
+    def _finishTransformImport(self, alignments_before):
+        """Refresh the window after a transform import succeeds.
+
+        Shared by importTransforms and importSwiftTransforms. Called only
+        once the import has returned, never after a cancel or a failure.
+
+            Params:
+                alignments_before (set): the alignment names as they were
+                    before the import
+        """
         # reload the section
         self.field.reload()
 
@@ -2331,8 +2345,6 @@ class MainWindow(QMainWindow):
 
         # the import adds an alignment and makes it current
         self.refreshAlignmentActions(alignments_before)
-
-        notify("Transforms imported successfully.")
 
     def importSwiftTransforms(self, swift_fp=None):
         """Import transforms from a text file.
@@ -2381,13 +2393,7 @@ class MainWindow(QMainWindow):
             notify(f"No transforms were imported. {e}")
             return
 
-        self.field.reload()
-
-        # refresh the data and lists
-        self.field.table_manager.recreateTables()
-
-        # the import adds an alignment and makes it current
-        self.refreshAlignmentActions(alignments_before)
+        self._finishTransformImport(alignments_before)
 
         if note:
             notify(f"Transforms imported successfully. {note}")
