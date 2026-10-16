@@ -81,13 +81,16 @@ def _field(series, viewer=None):
     return types.SimpleNamespace(
         series=series,
         series_states=states,
+        refuseWhileRoiBox=lambda: False,  # the ROI box is off
         # not an ObjectTableWidget, so the wrapper falls back to the field
         table_manager=types.SimpleNamespace(
             hasFocus=lambda: None,
             updateObjects=lambda names: None,
             refresh=lambda: None,
         ),
-        section=types.SimpleNamespace(selected_traces=[]),
+        section=types.SimpleNamespace(
+            selected_traces=[], clearTracking=lambda: None
+        ),
         mainwindow=types.SimpleNamespace(
             saveAllData=lambda: None,
             seriesModified=lambda b: None,

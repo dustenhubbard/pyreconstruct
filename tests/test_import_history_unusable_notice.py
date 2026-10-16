@@ -320,6 +320,7 @@ def importWindow(monkeypatch, self_lines, other_lines, check_history=True):
         saveAllData=lambda: None,
         field=types.SimpleNamespace(
             series_states={},
+            refuseWhileRoiBox=lambda: False,
             reload=lambda: None,
             table_manager=types.SimpleNamespace(refresh=lambda: None),
         ),

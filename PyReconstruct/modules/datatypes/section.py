@@ -1550,6 +1550,15 @@ class Section():
                     return True
         return False
     
+    def isModified(self) -> bool:
+        """True if a trace, a transform or a flag changed since the tracking
+        was last cleared."""
+        return bool(
+            self.getAllModifiedNames()
+            or self.tformsModified()
+            or self.flags_modified
+        )
+
     def clearTracking(self):
         """Clear the added_traces and removed_traces lists."""
         self.added_traces = []
@@ -2556,7 +2565,8 @@ class Section():
                 field_x (float): x coordinate of search center
                 field_y (float): y coordinate of search center
                 radius (float): 1/2 of the side length of search square
-                traces_in_view (list): the traces in the window viewed by the user
+                traces_in_view (list): the traces in the window viewed by the
+                    user; None to check every trace on the section
                 include_hidden (bool): True if hidden traces can be returned
             Returns:
                 (tuple): the object closest to the point and the type
@@ -2569,8 +2579,9 @@ class Section():
         closest_trace_interior = None
         tform = self.tform
 
-        # only check the traces within the view if provided
-        if traces_in_view:
+        # only check the traces within the view if provided (an empty list
+        # is provided too: no trace in view is none to check)
+        if traces_in_view is not None:
             traces = traces_in_view
         else:
             traces = self.tracesAsList()

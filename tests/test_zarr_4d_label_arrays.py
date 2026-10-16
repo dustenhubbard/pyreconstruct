@@ -241,7 +241,8 @@ def test_a_four_entry_offset_moves_the_overlay_one_section(tmp_path):
     })
 
     assert layer.is_labels
-    assert (layer.zarr_s, layer.zarr_y, layer.zarr_x) == (1, 0, 0)
+    assert [layer.placement.slice_index(n) for n in (0, 1)] == [None, 0]
+    assert layer.placement.to_label(0, 0.128) == (0, 0)
 
 
 def test_three_channel_image_stays_an_image(qapp, tmp_path):

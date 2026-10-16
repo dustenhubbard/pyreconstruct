@@ -24,7 +24,6 @@ QApplication.instance() or QApplication(["test"])
 from PyReconstruct.modules.backend.volume.objects_3D import (  # noqa: E402
     Surface,
     _covers,
-    _cutsIsland,
     _traceLine,
     _tracePolygon,
     islandCuts,
@@ -467,20 +466,26 @@ def test_no_island_loses_more_than_its_cuts_against_the_old_order(seed):
 
 
 def _pairwise_cuts(pos, neg, reach=0.0):
-    """The islands and their cuts with every pair compared, no index; the
-    shipped search must give the same answer."""
+    """The islands and their cuts with every negative looked at for every
+    positive, no index; the shipped search must give the same answer."""
+    from PyReconstruct.modules.calc.nesting import _holeAround, _reaches
+
     pos_polys = [_tracePolygon(pts) for pts in pos]
     neg_polys = [_tracePolygon(pts) for pts in neg]
     neg_shapes = [poly if poly is not None else _traceLine(pts)
                   for poly, pts in zip(neg_polys, neg)]
     if not pos or not neg:
         return []
-    return [
-        (pos[i], [neg[j] for j in range(len(neg))
-                  if _cutsIsland(pos_polys[i], neg_shapes[j], reach)])
-        for i in range(len(pos))
-        if any(_covers(n, pos_polys[i]) for n in neg_polys)
-    ]
+    found = []
+    for i, island in enumerate(pos_polys):
+        hole = set(_holeAround(island, neg_polys, reach))
+        if not hole:
+            continue
+        found.append((pos[i], [
+            neg[j] for j in range(len(neg))
+            if j not in hole and _reaches(island, neg_shapes[j], reach)
+        ]))
+    return found
 
 
 @pytest.mark.parametrize("reach", [0.0, 0.05])
@@ -513,6 +518,15 @@ def test_indexed_search_matches_the_pairwise_search(seed, reach):
     for k in range(5):
         neg.append([(k * 2.0 + 0.8, k * 2.0 + 0.1), (k * 2.0 + 0.8, k * 2.0 + 1.5)])
         neg.append([(k * 2.0 + 0.8, k * 2.0 + 0.8)] * 3)
+    # holes drawn as two abutting traces, each around an island, one with a
+    # negative inside the island and one with a piece drawn twice
+    for k in range(3):
+        base = 11.0 + k * 3.0
+        neg.append(_square(base, base, base + 1.0, base + 2.0))
+        neg.append(_square(base + 1.0, base, base + 2.0, base + 2.0))
+        pos.append(_square(base + 0.3, base + 0.3, base + 1.7, base + 1.7))
+    neg.append(_square(11.8, 11.8, 12.2, 12.2))
+    neg.append(_square(14.0, 14.0, 15.0, 16.0))
 
     got = islandCuts(pos, neg, reach)
     assert got == _pairwise_cuts(pos, neg, reach)
@@ -588,3 +602,147 @@ def test_fixture_series_fill_unchanged(tmp_path, fixture):
             assert (volume == _reference_volume(surf)).all(), name
     finally:
         series.close()
+
+
+# ------------------------------------------ a hole drawn as several traces
+# the hole around this island is two negatives sharing the edge x = 2.5;
+# neither covers the island on its own
+WIDE = _square(0, 0, 5, 5)
+BIG_ISLAND = _square(1, 1, 4, 4)
+H_A, H_B = _square(0.5, 0.5, 2.5, 4.5), _square(2.5, 0.5, 4.5, 4.5)
+
+
+def _island_only(surf, island):
+    """A volume with only the voxels of ``island`` set, on every section."""
+    return _order_volume(surf, lambda pos, neg: [(island, True)])
+
+
+def test_island_in_a_hole_drawn_as_two_traces_fills():
+    surf = _surface([(WIDE, False), (H_A, True), (H_B, True), (BIG_ISLAND, False)])
+    volume, _ = surf.generateVolume()
+    full = np.ones_like(volume)
+    assert _count(volume, BIG_ISLAND, surf) == _count(full, BIG_ISLAND, surf) > 0
+    # the two passes clear the island with the hole; the fill is those two
+    # passes with the island put back, and nothing else
+    assert (volume == (_reference_volume(surf) | _island_only(surf, BIG_ISLAND))).all()
+
+
+def test_two_passes_lose_the_island_in_a_two_trace_hole():
+    surf = _surface([(WIDE, False), (H_A, True), (H_B, True), (BIG_ISLAND, False)])
+    assert _count(_reference_volume(surf), BIG_ISLAND, surf) == 0
+
+
+def test_island_cuts_lists_a_hole_drawn_as_two_traces():
+    assert islandCuts([WIDE, BIG_ISLAND], [H_A, H_B]) == [(BIG_ISLAND, [])]
+    assert islandCuts([WIDE, BIG_ISLAND], [H_A, H_B], REACH) == [(BIG_ISLAND, [])]
+
+
+@pytest.mark.parametrize("name, pieces", [
+    ("sharing an edge", (H_A, H_B)),
+    ("overlapping", (_square(0.5, 0.5, 2.8, 4.5), _square(2.2, 0.5, 4.5, 4.5))),
+    ("three strips", (
+        _square(0.5, 0.5, 1.8, 4.5), _square(1.8, 0.5, 3.2, 4.5),
+        _square(3.2, 0.5, 4.5, 4.5),
+    )),
+    ("a fraction of a voxel apart", (H_A, _square(2.52, 0.5, 4.5, 4.5))),
+    ("a fraction of a voxel apart and barely larger than the island", (
+        _square(1, 0.999, 2.5, 4.001), _square(2.52, 0.999, 4, 4.001),
+    )),
+    ("joined below the island with a slit through it", (
+        H_A,
+        [(2.5, 0.5), (4.5, 0.5), (4.5, 4.5), (2.52, 4.5), (2.52, 0.8), (2.5, 0.8)],
+    )),
+    ("one piece drawn twice", (H_A, H_A, H_B)),
+])
+def test_hole_drawn_as_several_traces_is_around_the_island(name, pieces):
+    """The pieces of a hole together cover the island, so none of them cuts
+    it: it fills completely. Two pieces a fraction of a voxel apart both
+    reach into the voxels between them, so they count as one hole, whether
+    the gap is between the pieces or a slit through them, and whatever their
+    areas add up to before the gap is closed."""
+    neg = list(pieces)
+    assert islandCuts([WIDE, BIG_ISLAND], neg, REACH) == [(BIG_ISLAND, [])], name
+    surf = _surface([(WIDE, False)] + [(p, True) for p in neg] + [(BIG_ISLAND, False)])
+    volume, _ = surf.generateVolume()
+    assert _count(volume, BIG_ISLAND, surf) == _count(np.ones_like(volume), BIG_ISLAND, surf), name
+    assert (volume == (_reference_volume(surf) | _island_only(surf, BIG_ISLAND))).all(), name
+
+
+def test_negative_inside_an_island_in_a_two_trace_hole_still_cuts_it():
+    inner = _square(2, 2, 3, 3)  # across the seam between the two pieces
+    assert islandCuts([WIDE, BIG_ISLAND], [H_A, H_B, inner], REACH) == [
+        (BIG_ISLAND, [inner]),
+    ]
+    surf = _surface([
+        (WIDE, False), (H_A, True), (H_B, True), (BIG_ISLAND, False), (inner, True),
+    ])
+    volume, _ = surf.generateVolume()
+    full = np.ones_like(volume)
+    assert _count(volume, inner, surf) == 0
+    assert _count(volume, BIG_ISLAND, surf) == (
+        _count(full, BIG_ISLAND, surf) - _count(full, inner, surf)
+    )
+
+
+def test_negative_across_the_edge_of_an_island_in_a_two_trace_hole_cuts_it():
+    """A negative that crosses the island's edge, inside the hole, is not a
+    piece of the hole: the hole covers the island without it."""
+    across = _square(3.5, 2, 4.4, 3)
+    assert islandCuts([WIDE, BIG_ISLAND], [H_A, H_B, across], REACH) == [
+        (BIG_ISLAND, [across]),
+    ]
+    cut = _surface([(WIDE, False), (BIG_ISLAND, False), (across, True)])
+    cut_ref = _reference_volume(cut)
+    volume, _ = _surface([
+        (WIDE, False), (H_A, True), (H_B, True), (BIG_ISLAND, False), (across, True),
+    ]).generateVolume()
+    assert 0 < _count(volume, BIG_ISLAND, cut) == _count(cut_ref, BIG_ISLAND, cut)
+
+
+def test_pieces_further_apart_than_the_reach_are_not_one_hole():
+    """Two negatives with a wall between them wider than a voxel's diagonal
+    are two holes, and a positive across the wall is no island: the fill
+    stays the two passes, wall included."""
+    apart = _square(2.55, 0.5, 4.5, 4.5)
+    assert islandCuts([WIDE, BIG_ISLAND], [H_A, apart], REACH) == []
+    surf = _surface([(WIDE, False), (H_A, True), (apart, True), (BIG_ISLAND, False)])
+    volume, _ = surf.generateVolume()
+    reference = _reference_volume(surf)
+    assert 0 < _count(reference, BIG_ISLAND, surf) < _count(np.ones_like(volume), BIG_ISLAND, surf)
+    assert (volume == reference).all()
+
+
+def test_two_traces_with_the_island_outline_between_them_cancel_it():
+    """Two negatives that together have the island's own outline are not a
+    hole around it, the same as one negative with that outline."""
+    half_a, half_b = _square(1, 1, 2.5, 4), _square(2.5, 1, 4, 4)
+    assert islandCuts([WIDE, BIG_ISLAND], [half_a, half_b], REACH) == []
+    surf = _surface([(WIDE, False), (half_a, True), (half_b, True), (BIG_ISLAND, False)])
+    volume, _ = surf.generateVolume()
+    assert (volume == _reference_volume(surf)).all()
+
+
+# a negative whose outline crosses itself; GEOS cannot join it with another
+SELF_CROSSING = [(0.5, 0.5), (3, 4.5), (0.5, 4.5), (2, 0.5)]
+
+
+def test_a_self_crossing_negative_beside_a_piece_fills_as_before():
+    """GEOS cannot take the union of some self-crossing outlines. Such a
+    negative is not a piece of a hole, so the positive is no island, and the
+    fill is the two passes, as it was."""
+    assert islandCuts([WIDE, BIG_ISLAND], [SELF_CROSSING, H_B], REACH) == []
+    surf = _surface([
+        (WIDE, False), (SELF_CROSSING, True), (H_B, True), (BIG_ISLAND, False),
+    ])
+    volume, _ = surf.generateVolume()
+    assert (volume == _reference_volume(surf)).all()
+
+
+def test_one_covering_negative_keeps_the_others_as_cuts():
+    """When one negative covers the island on its own, the others are cuts,
+    whatever their union covers: a negative from inside the island out past
+    the hole's edge still clears its part of the island."""
+    out = _square(2.5, 2, 4.8, 3)
+    assert islandCuts([WIDE, BIG_ISLAND], [_square(0.5, 0.5, 4.5, 4.5), out], REACH) == [
+        (BIG_ISLAND, [out]),
+    ]

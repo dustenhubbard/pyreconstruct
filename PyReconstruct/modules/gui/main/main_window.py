@@ -20,6 +20,8 @@ from PyReconstruct.modules.datatypes.series import (
     SeriesClosedError,
     SeriesOpenError,
 )
+from PyReconstruct.modules.backend.crop_zarr import CropError, CropStopped, LOG_NAME
+from PyReconstruct.modules.gui.dialog.crop_zarr import cropWithProgress
 from PyReconstruct.modules.backend.func.window_geometry import (
     default_window_rect,
     window_geometry_is_usable,
@@ -31,6 +33,7 @@ from PyReconstruct.modules.constants.settings_domain import (
     settings_for, user_action,
 )
 from PyReconstruct.modules.datatypes.series_owner import app_display_name
+from PyReconstruct.modules.gui.utils.app_icon import window_icon, apply_holiday_dock_icon
 
 # The newer version the launch check found and the user has not opened yet.
 # Per app (settings_domain.PER_APP_KEYS): the two flavors follow different
@@ -351,7 +354,8 @@ class MainWindow(QMainWindow):
         sys.excepthook = customExcepthook  # defined in gui.utils
 
         self.setWindowTitle(app_display_name())
-        self.setWindowIcon(QPixmap(icon_path))
+        self.setWindowIcon(window_icon())
+        apply_holiday_dock_icon()
 
         ## Restore the saved window geometry, or fall back to a modest default
         screen = QApplication.primaryScreen()
@@ -774,6 +778,8 @@ class MainWindow(QMainWindow):
         self.showall_act.setChecked(self.field.show_all_traces)
         self.hideimage_act.setChecked(self.field.hide_image)
         self.blend_act.setChecked(self.field.blend_sections)
+        # nothing to move until the ROI box is on
+        self.moveroibox_act.setEnabled(self.field.roi_box_on)
 
         ## Focus mode needs a selection to turn ON (it focuses the selected
         ## object); disabling the checkbox when nothing is selected avoids the
@@ -823,6 +829,16 @@ class MainWindow(QMainWindow):
         ## surface; the object list's own copy is synced in
         ## ObjectTableWidget.contextMenuEvent.
         sync_restore_visibility_action(self, self.field.visibility_snapshot)
+
+        ## The field's series-wide visibility rows reach the traces the ROI
+        ## box hides, so they wait for it to be off; the object list's own
+        ## copies are not limited by the box. Every other field command that
+        ## acts by object name refuses while the box is on (refuseWhileRoiBox).
+        box_off = not self.field.roi_box_on
+        self.hideallobj_act.setEnabled(box_off)
+        self.showallobj_act.setEnabled(box_off)
+        if not box_off:
+            self.restorevisibility_act.setEnabled(False)
 
         # ## Zarr layer
         # self.removezarrlayer_act.setEnabled(bool(self.series.zarr_overlay_fp))
@@ -1038,6 +1054,44 @@ class MainWindow(QMainWindow):
         return self.setImageNames(
             series, match["names"], f"Use the image names in {zarr_name}"
         )
+
+    def cropScaledImages(self):
+        """Crop the series' scaled images around one object into a new zarr.
+
+        `Series > Images > Crop scaled images around an object...`, in the
+        Dev build. The dialog checks the inputs the way crop_zarr.py does,
+        before anything is written. The crop then reads the sections from
+        the working folder, so the field's unsaved edits are written first,
+        and runs on a worker thread behind the progress dialog, whose Cancel
+        stops it after the section being written. A stopped crop leaves its
+        partial output, without a log. A series opened meanwhile (a .jser
+        from the Finder) closes this one, which stops the crop the same way.
+        """
+        series = self.series
+        selected = {trace.name for trace in self.field.section.selected_traces}
+        offered = selected.pop() if len(selected) == 1 else ""
+        settings, confirmed = CropZarrDialog(self, series, offered).exec()
+        if not confirmed:
+            return
+        # the dialog ran its own event loop, where a .jser opened from the
+        # Finder closes this series and opens another in its place
+        if series is not self.series or series.closed:
+            notify(f"{series.name} was closed, so its images were not cropped.")
+            return
+        self.saveAllData()
+        try:
+            summary = cropWithProgress(series, settings)
+        except (CropStopped, CropError) as stopped:
+            notify(str(stopped))
+            return
+        except SeriesClosedError as closed:
+            left = ""
+            if os.path.lexists(settings.out_fp):
+                left = (f" The partial output {settings.out_fp!r} has no "
+                        f"{LOG_NAME}; remove it to use its name again.")
+            notify(f"{closed}{left}")
+            return
+        notify("\n".join(summary))
 
     def setImageNames(self, series, names : dict, event : str = None) -> bool:
         """Set the image name of every section in the open series.
@@ -1394,6 +1448,10 @@ class MainWindow(QMainWindow):
         (this pass names its own objects) and the object list scroll-position
         restore (updateObjects edits rows in place here; nothing scrolls).
         """
+        # acts across the series, outside the ROI box too
+        if self.field.refuseWhileRoiBox():
+            return
+
         self.saveAllData()
 
         all_names = sorted(self.series.data["objects"].keys())
@@ -1876,18 +1934,21 @@ class MainWindow(QMainWindow):
         ) # set the current trace
 
     def offerHomeIfViewOffImage(self):
-        """Offer to set the view to the image when the view misses it.
+        """Offer to set the view to the image when the view shows nothing.
 
         Asked after the image loads: when a series opens with its image
         found, and when its images are located. The saved view is the
         user's, so it moves only when they pick "Set view to image";
         declining or dismissing the prompt leaves the position and zoom as
-        saved. A view that overlaps the image at all asks nothing.
+        saved. A view that overlaps the image at all asks nothing, and
+        neither does a view over any shown trace of the current section,
+        with or without image: the 3D scene's double-click parks the view
+        on a trace, which can lie outside the image.
 
             Returns:
                 (bool): True if the view was moved
         """
-        if not self.field.viewIsOffImage():
+        if not self.field.viewShowsNothing():
             return False
         if not viewOffImageNotify(self):
             return False
@@ -2983,8 +3044,7 @@ class MainWindow(QMainWindow):
         # the per-section trackers are a safety net for section-level changes
         # that have not yet flipped it; when in doubt, write
         if not self.series.modified and not any(
-            s.getAllModifiedNames() or s.tformsModified() or s.flags_modified
-            for s in sections
+            s.isModified() for s in sections
         ):
             return
 
@@ -3662,6 +3722,10 @@ class MainWindow(QMainWindow):
             Params:
                 trace_lengths (dict): the lengths of traces to calibrate
         """
+        # reads every trace of the selected names, outside the ROI box too
+        if self.field.refuseWhileRoiBox():
+            return
+
         self.saveAllData()
         
         if trace_lengths is None:
@@ -3700,6 +3764,10 @@ class MainWindow(QMainWindow):
     
     def setSeriesMag(self):
         """Manually set (or view) the series magnification."""
+        # acts across the series, outside the ROI box too
+        if self.field.refuseWhileRoiBox():
+            return
+
         response, confirmed = QInputDialog.getDouble(
             self, 
             "Set Magnification", 
@@ -4266,6 +4334,10 @@ class MainWindow(QMainWindow):
             Params:
                 hidden (bool) True if traces will be hidden
         """
+        # acts across the series, outside the ROI box too
+        if self.field.refuseWhileRoiBox():
+            return
+
         self.saveAllData()
         self.series.hideAllTraces(hidden)
         self.field.reload()
@@ -4361,6 +4433,10 @@ class MainWindow(QMainWindow):
         asks which name to keep in each row and changes nothing until the
         user combines; combining is one undoable step per press.
         """
+        # acts across the series, outside the ROI box too
+        if self.field.refuseWhileRoiBox():
+            return
+
         self.saveAllData()
 
         structure = [
@@ -4407,6 +4483,10 @@ class MainWindow(QMainWindow):
         "smaller than N pixels on its own image" regardless of section scale.
         Deletion is a single undoable operation (see deleteMalformedContours).
         """
+        # acts across the series, outside the ROI box too
+        if self.field.refuseWhileRoiBox():
+            return
+
         self.saveAllData()
 
         # Default 10 px^2: a stray speck of a few pixels (up to roughly a 3x3
@@ -4460,6 +4540,10 @@ class MainWindow(QMainWindow):
         is skipped and named, because only the scissors should decide which
         loop lives. Locked objects are left alone, like the other clean-ups.
         """
+        # acts across the series, outside the ROI box too
+        if self.field.refuseWhileRoiBox():
+            return
+
         self.saveAllData()
 
 
@@ -4542,6 +4626,10 @@ class MainWindow(QMainWindow):
         confirmation rather than a review list. Locked objects are left alone.
         Removal is one undoable operation.
         """
+        # acts across the series, outside the ROI box too
+        if self.field.refuseWhileRoiBox():
+            return
+
         self.saveAllData()
 
         series = self.series
@@ -5183,6 +5271,10 @@ class MainWindow(QMainWindow):
 
     def updateCurationFromHistory(self):
         """Update the series curation from the history."""
+        # acts across the series, outside the ROI box too
+        if self.field.refuseWhileRoiBox():
+            return
+
         self.field.series_states.addState()
         self.series.updateCurationFromHistory()
         self.field.table_manager.recreateTables()
@@ -5527,6 +5619,10 @@ class MainWindow(QMainWindow):
 
     def importFromSeries(self):
         """Import from another series."""
+        # acts across the series, outside the ROI box too
+        if self.field.refuseWhileRoiBox():
+            return
+
         jser_fp = FileDialog.get(
             "file",
             self,
@@ -5688,6 +5784,10 @@ class MainWindow(QMainWindow):
 
     def importFromZarrLabels(self):
         """Import label data from a neuroglancer zarr."""
+        # acts across the series, outside the ROI box too
+        if self.field.refuseWhileRoiBox():
+            return
+
         zarr_fp = FileDialog.get(
             "dir",
             self,

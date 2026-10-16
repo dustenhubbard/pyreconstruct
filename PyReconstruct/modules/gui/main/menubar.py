@@ -1,5 +1,6 @@
 from PyReconstruct.modules.gui.utils import getOpenRecentMenu, getGroupsMenu
 
+from PyReconstruct.modules.constants.build_flavor import is_dev_build
 from PyReconstruct.modules.constants import (
     kh_web,
     kh_atlas,
@@ -159,7 +160,12 @@ def return_series_menu(self):
                     ("change_src_act", "Find/change image directory", "", self.changeSrcDir),
                     ("zarrimage_act", "Convert to scaled images", "", self.srcToZarr),
                     ("scalezarr_act", "Update image scales", "", lambda : self.srcToZarr(create_new=False)),
-                ]
+                ] + (
+                    # Dev build only (a nightly or a source checkout): the
+                    # stable app has no row here until the crop is released
+                    [("cropzarr_act", "Crop scaled images around an object...", "", self.cropScaledImages)]
+                    if is_dev_build() else []
+                )
             },
             {
                 "attr_name": "serieshidemenu",
