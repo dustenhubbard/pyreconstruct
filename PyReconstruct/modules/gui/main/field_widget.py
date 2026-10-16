@@ -39,7 +39,8 @@ from .field_widget_5_mouse import (
     GRID, 
     FLAG, 
     HOST,
-    ZTOOL
+    ZTOOL,
+    ROI_BOX
 )
 from .field_widget_7_view import FieldWidgetView
 
@@ -168,6 +169,7 @@ class FieldWidget(QWidget, FieldWidgetView):
         # draw the field
         field_painter.drawPixmap(0, 0, self.field_pixmap)
         self.paintBorder(field_painter)
+        self.paintRoiBox(field_painter)
         self.paintWorkingTrace(field_painter)
         self.paintText(field_painter)
 
@@ -361,6 +363,9 @@ class FieldWidget(QWidget, FieldWidgetView):
 
         elif self.mouse_mode == ZTOOL:
             self.ztoolPress(event)
+
+        elif self.mouse_mode == ROI_BOX:
+            self.roiBoxPress(event)
         
         elif self.usingLocked():
             notify(
