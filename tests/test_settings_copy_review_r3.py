@@ -31,6 +31,24 @@ TESTS = Path(__file__).resolve().parent
 REPO = TESTS.parent
 
 
+@pytest.fixture
+def series_code(series_jser):
+    """The fixture series' code, with its per-series stores emptied before and
+    after. Left behind, an old ``autobackup`` would be copied into every later
+    window on this series, and its Save would stop on Backup Settings."""
+    data = json.loads(Path(series_jser).read_text())
+    raw = next(value for key, value in data.items() if key.endswith(".ser"))
+    code = raw.get("code") or Path(series_jser).stem
+    apps = (D.SHARED_APP + "-" + code, DEV + "-" + code)
+    empty_stores(*apps)
+    yield code
+    empty_stores(*apps)
+    defaults = QSettings(D.SETTINGS_ORG, D.SHARED_APP)
+    defaults.remove("default_autobackup")
+    defaults.remove("default_backup_dir")
+    defaults.sync()
+
+
 def test_a_damaged_old_file_stays_owed_across_the_in_app_restart():
     child = subprocess.run(
         [
@@ -116,7 +134,7 @@ def test_access_error_stays_retryable_within_this_process(qapp, monkeypatch):
 
 @pytest.mark.parametrize("copy_fails", [False, True])
 def test_cancelled_auto_backup_must_not_replace_owed_series_preferences(
-    main_window, tmp_path, monkeypatch, copy_fails,
+    series_code, main_window, tmp_path, monkeypatch, copy_fails,
 ):
     from PyReconstruct.modules.gui.dialog.backup import BackupDialog
 
@@ -149,23 +167,15 @@ def test_cancelled_auto_backup_must_not_replace_owed_series_preferences(
     assert D.copy_legacy_series_settings_once(series.code).complete
     assert new.value("autobackup", type=bool) is True
     assert new.value("backup_dir") == str(valid)
-    defaults = QSettings(D.SETTINGS_ORG, D.SHARED_APP)
-    defaults.remove("default_autobackup")
-    defaults.remove("default_backup_dir")
-    defaults.sync()
-    empty_stores(app)
 
 
 @pytest.mark.parametrize("dev_only", [False, True])
 def test_pending_series_store_has_no_startup_or_unmoved_close_defaults(
-    qapp, series_jser, monkeypatch, request, dev_only,
+    qapp, series_code, monkeypatch, request, dev_only,
 ):
     from PyReconstruct.modules.gui.main.main_window import MainWindow
 
-    data = json.loads(Path(series_jser).read_text())
-    raw = next(value for key, value in data.items() if key.endswith(".ser"))
-    code = raw.get("code") or Path(series_jser).stem
-    empty_stores(D.SHARED_APP + "-" + code, DEV + "-" + code)
+    code = series_code
     source_app = (DEV if dev_only else D.SHARED_APP) + "-" + code
     if dev_only:
         monkeypatch.setenv("PYRECON_APP_NAME", DEV)
