@@ -26,7 +26,7 @@ file is still checked before the open completes.
 
 The scan steps between structural bytes with two regexes rather than looking at
 every byte in Python, so the coordinate digits that are nearly all of a file are
-skipped in C (the "A4 scanner" design, faithful on 17.3 million coordinates).
+skipped in C.
 """
 
 import json
