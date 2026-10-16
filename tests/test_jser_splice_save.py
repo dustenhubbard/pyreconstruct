@@ -95,7 +95,10 @@ def test_one_trace_edit_encodes_only_its_section(tmp_path, copies, source):
 
     section = first_traced_section(series)
     trace = section.tracesAsList()[0]
-    trace.points = [(x + 0.5, y) for x, y in trace.points]
+    moved = trace.copy()
+    moved.points = [(x + 0.5, y) for x, y in trace.points]
+    section.removeTrace(trace, log_event=False)
+    section.addTrace(moved, log_event=False)
     section.save()
 
     assert save_and_check(series, copies) == len(series.sections) - 1
