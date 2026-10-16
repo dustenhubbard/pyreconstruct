@@ -135,6 +135,32 @@ def test_scan_matches_the_whole_parse(tmp_path, monkeypatch, form, chunk):
     assert index.has_log and index.log == whole["log"]
 
 
+SKIPPED_VALUES = [
+    b"[]", b"[1, -2.5E+3, 1e-7]", b"[ ]", b"{}", b'{"a": [1, 2]}',
+    b"[[1], [2]]", b'["]", "[", "}"]', b'"s \\" ]"', b"123", b"-0.5e2",
+    b"true", b"null", b'[{"x": []}, []]',
+]
+
+
+@pytest.mark.parametrize("chunk", [1, 2, 3, None])
+@pytest.mark.parametrize("value", SKIPPED_VALUES)
+def test_skipping_a_value_stops_at_its_end(tmp_path, monkeypatch, value, chunk):
+    """A value skipped whole, flat arrays included, ends exactly where it ends.
+
+    The scan matches a flat array of numbers in one step. When that array is
+    the value being skipped, it is the whole value, and the scan must stop
+    there rather than run on into whatever follows.
+    """
+    if chunk is not None:
+        monkeypatch.setattr(jser_scan, "_CHUNK", chunk)
+    fp = tmp_path / "v.json"
+    fp.write_bytes(value + b', {"next": 1}]')
+    with open(fp, "rb") as f:
+        r = jser_scan._Reader(f)
+        r.skip_value()
+        assert r.tell() == len(value)
+
+
 def test_scan_without_a_log(tmp_path):
     doc = shapes1()
     doc.pop("log", None)
