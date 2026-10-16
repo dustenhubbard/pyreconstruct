@@ -81,6 +81,11 @@ class FieldState():
         # contour it changed here (a rename copies its links to the new
         # name): the redo of this section alone makes them again
         self.links_made = set()
+        # what a copy or a split did to the host links, shared with the
+        # other sections of the action (HostLinkRecord): a section undo or
+        # redo of this state changes the links as the record says. None for
+        # any other action.
+        self.host_links = None
         if updated_contours is None:
             if contours is None:
                 updated_contours = []
@@ -183,6 +188,8 @@ class FieldState():
         c.kept_after = self.kept_after
         c.keeps_emptied = self.keeps_emptied
         c.links_made = set(self.links_made)
+        # shared with the other sections of the action, not copied
+        c.host_links = self.host_links
         c.group_viz = dict(self.group_viz)
         c.undo_group_viz = dict(self.undo_group_viz)
         return c
@@ -378,6 +385,100 @@ def captureLinksMade(series : Series, names, before) -> set:
     if not (hasattr(tree, "linksMadeSince") and hasattr(before, "linksMadeSince")):
         return set()
     return tree.linksMadeSince(before, names)
+
+
+def captureLinksTaken(series : Series, names, cleared) -> set:
+    """The links of cleared the series' host tree has not now, with an end
+    under one of the names (HostTree.linksTaken)."""
+    tree = getattr(series, "host_tree", None)
+    if not cleared or not hasattr(tree, "linksTaken"):
+        return set()
+    return tree.linksTaken(cleared, names)
+
+
+def captureLinksTrimmed(series : Series, before, cleared) -> set:
+    """The links the tree before has and the series' host tree has not,
+    other than those in cleared: the links the tree took off because their
+    host became a host of another host (HostTree.checkRedundantHosts)."""
+    tree = getattr(series, "host_tree", None)
+    if not hasattr(tree, "linksLostSince") or before is None:
+        return set()
+    return tree.linksLostSince(before) - set(cleared)
+
+
+class HostLinkRecord():
+
+    def __init__(self, made : dict, taken : dict, trimmed : set):
+        """What one copy or split did to the host links, shared by the
+        section states of the action (FieldState.host_links).
+
+        A copy or a split gives its new objects hosts after its sections
+        are recorded, and clears the hosts of a name that exists first.
+        A section undo or redo of the action changes only the links that
+        section owns: those with an end under a name the action changed
+        there. A link another section of the action needs stays while the
+        action stands on that section. A series undo or redo puts back the
+        whole tree, so it only marks where the action stands.
+
+            Params:
+                made (dict): section number -> the links the action made
+                    there (FieldState.links_made)
+                taken (dict): section number -> the links its clears took
+                    away there and did not make again
+                trimmed (set): the links the tree took off during the
+                    action because their host became a host of another host
+        """
+        self.made = made
+        self.taken = taken
+        self.trimmed = trimmed
+        # the section numbers where the action stands: not undone there
+        self.in_force = set(made)
+        # links a section undo or redo could not make or give back, as they
+        # would have made an object a host of itself then: each later
+        # section step of the action tries them again
+        self.refused = set()
+
+    def _needed(self, links : dict) -> set:
+        """The links of the sections where the action stands."""
+        return set().union(*(links.get(snum, ()) for snum in self.in_force))
+
+    def _replay(self, series : Series, remove, add, give_back=()):
+        """Take away the links in remove, make those in add, then give back
+        those in give_back, with the refused links the action still needs
+        made or given back tried again (HostTree.replayLinks)."""
+        needed = self._needed(self.made)
+        unowned = set().union(*self.taken.values()) - self._needed(self.taken)
+        retry = self.refused
+        self.refused = series.host_tree.replayLinks(
+            remove,
+            set(add) | (retry & needed),
+            set(give_back) | (retry & (unowned | self.trimmed)),
+        )
+
+    def redo(self, series : Series, snum : int):
+        """The action is redone on a section: take away the links its
+        clears took there and make its links there again."""
+        self.in_force.add(snum)
+        if series.seriesStepRunning():
+            return
+        self._replay(
+            series, self.taken.get(snum, ()), self.made.get(snum, ())
+        )
+
+    def undo(self, series : Series, snum : int):
+        """The action is undone on a section: take away the links it made
+        there, and give back the links its clears took there and the ones
+        the tree trimmed, unless a section where it stands needs them."""
+        self.in_force.discard(snum)
+        if series.seriesStepRunning():
+            return
+        self._replay(
+            series,
+            set(self.made.get(snum, ())) - self._needed(self.made),
+            (),
+            (set(self.taken.get(snum, ())) - self._needed(self.taken))
+            | self.trimmed,
+        )
 
 
 def restoreLinksMade(series : Series, links) -> None:
@@ -841,6 +942,9 @@ class SectionStates():
 
         restoreObjectIds(series, section, modified_contours, restored_oids)
         restoreKeptIds(series, getattr(self.current_state, "kept_before", {}))
+        record = getattr(self.current_state, "host_links", None)
+        if record is not None:
+            record.undo(series, section.n)
 
         recreated = [
             n for n in modified_contours
@@ -886,7 +990,11 @@ class SectionStates():
             for n in linkEndNames(series, links) - set(modified_contours)
             if n in kept_after
         })
-        restoreLinksMade(series, links)
+        record = getattr(redo_state, "host_links", None)
+        if record is None:
+            restoreLinksMade(series, links)
+        else:
+            record.redo(series, section.n)
         # objects this redo brings back from nothing get their attributes and
         # groups back too (see objectSnapshot)
         recreated = [
@@ -1429,16 +1537,25 @@ class SeriesStates():
         data = getattr(self.series, "data", None)
         state.keeps_emptied = bool(getattr(data, "supress_logging", False))
 
-    def recordLinksMade(self):
+    def recordLinksMade(self, cleared=None):
         """Bring each section state of the newest series action up to date
         with the links the action made for the names it changed there
         (FieldState.links_made). An import merges the other series' host
-        tree after its sections are recorded (Series.importTraces), so
-        addSectionUndo saw none of those links."""
+        tree after its sections are recorded (Series.importTraces), and a
+        copy or a split gives the new objects hosts after (Series.copyObjects,
+        splitObject), so addSectionUndo saw none of those links.
+
+            Params:
+                cleared: for a copy or a split, (traveler id, host id) for
+                    each link it cleared to give the new objects their
+                    hosts (Objects.assignCopyAttrs). Its section states
+                    then share one record of the action (HostLinkRecord).
+        """
         if not self.undos:
             return
         series_state = self.undos[-1]
         before = series_state.series_attrs.get("host_tree")
+        made, taken = {}, {}
         for snum in series_state.undo_lens:
             state = self[snum].current_state
             names = state.getModifiedContours()
@@ -1446,6 +1563,15 @@ class SeriesStates():
             recordKeptLinkEnds(
                 self.series, series_state.kept_after, state.links_made, names
             )
+            made[snum] = state.links_made
+            taken[snum] = captureLinksTaken(self.series, names, cleared)
+        if cleared is None:
+            return
+        record = HostLinkRecord(
+            made, taken, captureLinksTrimmed(self.series, before, cleared)
+        )
+        for snum in series_state.undo_lens:
+            self[snum].current_state.host_links = record
 
     def clear(self):
         """Clear all state tracking."""
