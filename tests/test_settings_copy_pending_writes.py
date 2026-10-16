@@ -6,7 +6,8 @@ When a copy fails, the values PyReconstruct saves on its own in that session
 What's new seen version, an unmoved window's position, the palette's increment
 mode, a series' list layout, the backup fallback after a canceled Backup
 Settings dialog) must not win over the stored ones when the copy is retried.
-A change the user makes is saved at once and wins. The rest are controls: a
+A change the user makes, in a dialog such as the scale bar settings or
+from a menu, is saved at once and wins. The rest are controls: a
 plain copy, a per-series copy, and a script that reads settings without
 opening the app.
 """
@@ -318,3 +319,62 @@ def test_pending_series_store_has_no_startup_or_unmoved_close_defaults(
     window.series.modified = False
     assert window.close()
     assert set(new.allKeys()) == before
+
+
+@pytest.mark.parametrize("pending", [False, True], ids=["copied", "owed"])
+def test_a_choice_accepted_in_the_scale_bar_dialog_saves(main_window, monkeypatch, pending):
+    from PySide6.QtCore import QTimer, Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QDialogButtonBox
+
+    from PyReconstruct.modules.gui.dialog.scale_bar_settings import (
+        ScaleBarSettingsDialog,
+    )
+
+    main_window.series.setSettingsStore(QSettingsStore())
+    new = QSettings(D.SETTINGS_ORG, D.SHARED_APP)
+    old = QSettings(D.LEGACY_SETTINGS_ORG, D.SHARED_APP)
+    old.setValue("scale_bar_width", 60)
+    old.sync()
+    new.remove("scale_bar_width")
+    new.remove(D.LEGACY_COPY_MARKER)
+    new.sync()
+    try:
+        if pending:
+            with monkeypatch.context() as broken:
+                fail_copy(broken, D.SHARED_APP)
+                assert not D.copy_legacy_settings_once().complete
+            assert D.store_copy_pending(D.SHARED_APP)
+        else:
+            assert D.copy_legacy_settings_once().complete
+        # the real dialog and its modal loop; a timer moves the width slider
+        # and clicks OK, as the user would
+        real_exec = ScaleBarSettingsDialog.exec
+        accepted = []
+
+        def drive(dialog):
+            def choose():
+                dialog.inputs[2].widget.slider.setValue(80)
+                ok = dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok)
+                QTest.mouseClick(ok, Qt.LeftButton)
+                accepted.append(dialog.responses)
+            QTimer.singleShot(0, choose)
+            return real_exec(dialog)
+
+        monkeypatch.setattr(ScaleBarSettingsDialog, "exec", drive)
+        main_window.mouse_palette.openSBSettings()
+        assert accepted
+        new.sync()
+        assert new.value("scale_bar_width", type=int) == 80
+        assert D.copy_legacy_settings_once().complete
+        assert new.value("scale_bar_width", type=int) == 80
+    finally:
+        for org in (D.SETTINGS_ORG, D.LEGACY_SETTINGS_ORG):
+            s = QSettings(org, D.SHARED_APP)
+            for key in ("scale_bar_width", "show_scale_bar_text",
+                        "show_scale_bar_ticks", "scale_bar_mode",
+                        "scale_bar_length_um", "scale_bar_thickness",
+                        D.LEGACY_COPY_MARKER):
+                s.remove(key)
+            s.sync()
+        D._copy_pending.pop(D.SHARED_APP, None)
