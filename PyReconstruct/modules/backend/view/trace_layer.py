@@ -95,7 +95,19 @@ class TraceLayer():
         # one section at one columnar store generation (see _cullMask)
         self._raw_bounds = {}
         self._raw_bounds_key = None
+        # an offscreen render at k times the screen size sets these: every
+        # width drawn in screen pixels is multiplied by pen_scale, and the
+        # traces, selection, z-traces and flags can each be left out
+        self.pen_scale = 1
+        self.draw_traces = True
+        self.draw_selection = True
+        self.draw_ztraces = True
+        self.draw_flags = True
 
+    def penWidth(self, width):
+        """A pen width in screen pixels, times pen_scale."""
+        return width * self.pen_scale
+    
     def pointToPix(self, pt : tuple, apply_tform=True, tform : Transform = None, qpoint=False) -> tuple:
         """Return the pixel point corresponding to a field point.
         
@@ -343,14 +355,16 @@ class TraceLayer():
         draw_color = color if color else trace.color
 
         selected = trace in self._selected_set
+        # the fill follows the selection whether or not it is highlighted
+        highlighted = selected and self.draw_selection
 
         ## Set up painter (shared: reset state left over from the previous trace)
         painter.setOpacity(1)
         painter.setBrush(Qt.NoBrush)
-        painter.setPen(QPen(QColor(*draw_color), 1))
+        painter.setPen(QPen(QColor(*draw_color), self.penWidth(1)))
 
         ## Draw trace (another selected style draws its own line after the fill)
-        pens = self._selected_pens if selected else None
+        pens = self._selected_pens if highlighted else None
         if not pens:
             if trace.closed:
                 painter.drawPolygon(qpoints)
@@ -358,9 +372,9 @@ class TraceLayer():
                 painter.drawPolyline(qpoints)
 
         ## Draw highlight
-        if selected and not pens:
+        if highlighted and not pens:
 
-            painter.setPen(QPen(QColor(*draw_color), 8))
+            painter.setPen(QPen(QColor(*draw_color), self.penWidth(8)))
             painter.setOpacity(0.4)
 
             if trace.closed:
@@ -390,7 +404,7 @@ class TraceLayer():
         ## Fill in shape if requested
         if fill:
 
-            painter.setPen(QPen(QColor(*draw_color), 1))
+            painter.setPen(QPen(QColor(*draw_color), self.penWidth(1)))
             painter.setBrush(QBrush(QColor(*draw_color)))
 
             ## determine fill type
@@ -426,7 +440,7 @@ class TraceLayer():
         for color, width, opacity in pens:
             if not opacity:
                 continue
-            pen = QPen(QColor(*(color or draw_color)), width)
+            pen = QPen(QColor(*(color or draw_color)), self.penWidth(width))
             # round joins cost about twice the stroke time on long traces, so
             # corners keep the default bevel; round caps only on open ends
             if not closed:
@@ -487,11 +501,11 @@ class TraceLayer():
         
         # set up painter
         painter = QPainter(trace_layer)
-        painter.setPen(QPen(QColor(*ztrace.color), 6))
+        painter.setPen(QPen(QColor(*ztrace.color), self.penWidth(6)))
 
         # draw points and lines
         painter.drawPoints(qpoints)
-        painter.setPen(QPen(QColor(*ztrace.color), 1))
+        painter.setPen(QPen(QColor(*ztrace.color), self.penWidth(1)))
         for line in qlines:
             p1 = line.p1()
             p2 = line.p2()
@@ -505,7 +519,8 @@ class TraceLayer():
                 painter,
                 line,
                 p1_arrow,
-                p2_arrow
+                p2_arrow,
+                self.penWidth(5)
             )
             self.zsegments_in_view += [(
                 ((p1.x(), p1.y()),
@@ -544,7 +559,7 @@ class TraceLayer():
 
         # draw points
         for qpoint, color in zip(qpoints, colors):
-            painter.setPen(QPen(QColor(*color), 15))
+            painter.setPen(QPen(QColor(*color), self.penWidth(15)))
             painter.drawPoint(qpoint)
         painter.end()
     
@@ -562,6 +577,10 @@ class TraceLayer():
         c = flag.color
 
         painter = QPainter(trace_layer)
+        if self.pen_scale != 1:
+            # the glyph, its outline and the highlight box all grow together
+            painter.scale(self.pen_scale, self.pen_scale)
+            x, y = x / self.pen_scale, y / self.pen_scale
         drawOutlinedText(
             painter,
             x,
@@ -572,7 +591,7 @@ class TraceLayer():
             flag_size
         )
         # draw highlight if necessary
-        if flag in self.section.selected_flags:
+        if self.draw_selection and flag in self.section.selected_flags:
             painter.setPen(QPen(QColor(*flag.color), 2))
             painter.setOpacity(1)
             painter.setBrush(Qt.transparent)
@@ -807,7 +826,7 @@ class TraceLayer():
         # skip traces whose bounds miss the window before any per-point work
         in_window = self._cullMask(trace_list, tform)
 
-        for i, trace in enumerate(trace_list):
+        for i, trace in enumerate(trace_list if self.draw_traces else ()):
 
             if in_window is not None and not in_window[i]:
                 continue
@@ -840,7 +859,7 @@ class TraceLayer():
         ## Draw ztraces
         self.zsegments_in_view = []
 
-        if show_ztraces and not focus_on:
+        if show_ztraces and self.draw_ztraces and not focus_on:
 
             for ztrace in self.series.ztraces.values():
 
@@ -848,11 +867,12 @@ class TraceLayer():
 
                     self._drawZtrace(trace_layer, ztrace)
 
-            self._drawZtraceHighlights(trace_layer, fill_opacity)
+            if self.draw_selection:
+                self._drawZtraceHighlights(trace_layer, fill_opacity)
 
         ## Draw flags
         self.flags_in_view = []
-        if show_flags != "none" and not focus_on:
+        if show_flags != "none" and self.draw_flags and not focus_on:
             for flag in self.section.flags:
                 if show_flags == "unresolved" and flag.resolved:
                     continue
@@ -1142,7 +1162,7 @@ def drawArrowHead(painter : QPainter, pt : QPoint, theta : float, l = 5):
     painter.drawLine(l1)
     painter.drawLine(l2)
 
-def drawArrow(painter : QPainter, line : QLine, p1_arrow=True, p2_arrow=True):
+def drawArrow(painter : QPainter, line : QLine, p1_arrow=True, p2_arrow=True, l=5):
     """Draw an line with one or two arrowheads.
     
         Params:
@@ -1150,13 +1170,14 @@ def drawArrow(painter : QPainter, line : QLine, p1_arrow=True, p2_arrow=True):
             line (QLine): the ztrace qline
             p1_arrow (bool): True if arrowhead on the first point
             p2_arrow (bool): True if arrowhead on the second point
+            l (int): the length of each arrowhead
     """
     painter.drawLine(line)
     theta = getTheta(line)
     if theta is not None:
         if p1_arrow:
-            drawArrowHead(painter, line.p1(), theta)
+            drawArrowHead(painter, line.p1(), theta, l)
         if p2_arrow:
-            drawArrowHead(painter, line.p2(), theta)
+            drawArrowHead(painter, line.p2(), theta, l)
 
         
