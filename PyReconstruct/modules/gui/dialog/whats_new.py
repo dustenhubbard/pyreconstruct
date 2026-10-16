@@ -268,7 +268,10 @@ def restyle_code_runs(cursor, block, base_font, base_pt, color, tint):
     is the weight the markdown gave the words it sits among, and it never
     breaks: spaces become no-break spaces and a word joiner follows each "/"
     or "-", so a command such as ``pyreconstruct /path/to/series.jser`` wraps
-    as one word instead of splitting across two lines. A run that is a link,
+    as one word instead of splitting across two lines. The one break kept is
+    the space after a "|": a pipeline too long for the line (``curl ... |
+    bash``) has to break, Qt already breaks after the "|", and a no-break
+    space there started the next line with a tinted blank. A run that is a link,
     as in ``[`changelog`](url)``, stays one: its anchor and target carry over.
     """
     runs = []
@@ -287,9 +290,11 @@ def restyle_code_runs(cursor, block, base_font, base_pt, color, tint):
     for start, length, run_weight, old in reversed(runs):
         cursor.setPosition(start)
         cursor.setPosition(start + length, QTextCursor.KeepAnchor)
+        selected = cursor.selectedText()
         text = "".join(
-            "\u00a0" if ch == " " else ch + WORD_JOINER if ch in "/-" else ch
-            for ch in cursor.selectedText())
+            (" " if i and selected[i - 1] == "|" else "\u00a0") if ch == " "
+            else ch + WORD_JOINER if ch in "/-" else ch
+            for i, ch in enumerate(selected))
         fmt = code_char_format(base_font, base_pt, run_weight, color, tint)
         if old.isAnchor():
             fmt.setAnchor(True)
@@ -310,12 +315,15 @@ KEY_COMBO = (
 # pattern so "What's new?" wins over "What's new". A label of one word, or of
 # capitalized words only ("Mouse Tools"), needs no entry; a lowercase second
 # word cannot be told from the sentence going on ("View picks which data")
-# without one.
+# without one. A label ending in "..." is also set on its own, outside a path
+# ("with Delete from sections..."): the dots mark it as a menu item.
 MENU_LABELS = (
     "Show/Hide lists", "Clean up", "Shortcuts list", "Reset window",
     "Search menus", "What's new?", "What's new", "Recolor all objects from palette",
     "View log file", "Color filter", "Set filter...", "Autoseg import colors",
-    "Import alignments", "Online resources", "Turn off What's new pop-up",
+    "Import alignments", "Online resources", "Show What's new after each update",
+    "Object list of selected traces", "Delete from sections...",
+    "Copy to sections...", "Edit attributes of traces...",
     # the Help menu toggle's name before 1.23, and the View toggle's before
     # 1.24; older notes still say them
     "Show what's new after updates", "Show/hide lists",
@@ -324,7 +332,8 @@ MENU_LABELS = (
 # Menu paths in the notes: two or more labels joined by " ▸ ". A label is
 # one of MENU_LABELS or a run of capitalized words, except the first, which
 # is one word, so a capitalized word before the path ("In Series ▸ Options")
-# stays out of it.
+# stays out of it. The last label may end in "..." ("File ▸ Backup ▸
+# Settings..."); a sentence's own period after it stays out.
 _KNOWN_LABEL = (
     "(?:" + "|".join(re.escape(label) for label in
                      sorted(MENU_LABELS, key=len, reverse=True))
@@ -333,10 +342,15 @@ _KNOWN_LABEL = (
 _WORD = r"[A-Z][\w'’/&-]*"
 MENU_PATH = (
     rf"(?<![\w'’])(?:{_KNOWN_LABEL}|{_WORD})"
-    rf"(?: \u25b8 (?:{_KNOWN_LABEL}|{_WORD}(?: {_WORD})*))+"
+    rf"(?: \u25b8 (?:{_KNOWN_LABEL}|{_WORD}(?: {_WORD})*(?:\.\.\.)?))+"
+)
+MENU_ITEM = (
+    r"(?<![\w'’])(?:" + "|".join(re.escape(label) for label in
+                                 sorted(MENU_LABELS, key=len, reverse=True)
+                                 if label.endswith("...")) + ")"
 )
 
-KEY_OR_MENU = re.compile(rf"{KEY_COMBO}|{MENU_PATH}")
+KEY_OR_MENU = re.compile(rf"{KEY_COMBO}|{MENU_PATH}|{MENU_ITEM}")
 
 
 def unbreakable_key_or_menu(text):
