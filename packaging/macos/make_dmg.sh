@@ -18,11 +18,13 @@ if [ "$FLAVOR" = "dev" ]; then
     APP_NAME="PyReconstruct Dev"
     GUIDE="dev"
     ICON="PyReconstruct/assets/img/PyReconstructDev.png"
+    VOLUME_ICON="PyReconstructDev.icns"
     OUT="PyReconstruct-${PYR_PUBLIC}-macOS-${ARCH}-Dev.dmg"
 else
     APP_NAME="PyReconstruct"
     GUIDE="stable"
     ICON="PyReconstruct/assets/img/PyReconstruct.png"
+    VOLUME_ICON="PyReconstruct.icns"
     OUT="PyReconstruct-${PYR_PUBLIC}-macOS-${ARCH}.dmg"
 fi
 APP="dist/${APP_NAME}.app"
@@ -32,7 +34,8 @@ rm -f "$OUT"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 STAGE="$(mktemp -d)"
-DEFINES=(-D "app=$APP" -D "background=$HERE/dmg-background.png")
+# The mounted volume shows the app's icon on the desktop and in Finder's sidebar.
+DEFINES=(-D "app=$APP" -D "background=$HERE/dmg-background.png" -D "icon=$HERE/$VOLUME_ICON")
 # Render the first-launch help for the app actually included in this image.
 # Only an unsigned app needs it: the guide walks users past Gatekeeper, and a
 # Developer ID app opens with no extra steps once it is notarized.

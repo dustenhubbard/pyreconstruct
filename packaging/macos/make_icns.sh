@@ -1,29 +1,23 @@
 #!/usr/bin/env bash
-# Generate packaging/PyReconstruct.icns from the app logo (macOS only; uses the
-# system `sips` + `iconutil`). Run from the repo root before PyInstaller.
+# Put the app icon for this build's flavor at packaging/PyReconstruct.icns,
+# where the spec reads it. Run from the repo root before PyInstaller.
+#
+# The .icns files beside this script hold every size macOS asks for. The 16 and
+# 32 point slots carry simplified artwork that stays clear in Finder's list
+# view and the Dock's smallest size, which scaling one 1024 px image down cannot
+# give. Their 1024 px slots match PyReconstruct/assets/img/PyReconstruct.png and
+# PyReconstructDev.png (tests/test_macos_icons.py checks).
 set -euo pipefail
 
-# The Dev flavor (packaging/FLAVOR says "dev") gets the dark-glass icon; the
-# output path stays the same either way, since the spec reads one location.
+# The Dev flavor (packaging/FLAVOR says "dev") gets the icon with the DEV badge;
+# the output path stays the same either way, since the spec reads one location.
 FLAVOR="$(cat packaging/FLAVOR 2>/dev/null | tr -d '[:space:]' || true)"
 if [ "$FLAVOR" = "dev" ]; then
-    SRC="PyReconstruct/assets/img/PyReconstructDev.png"
+    SRC="packaging/macos/PyReconstructDev.icns"
 else
-    SRC="PyReconstruct/assets/img/PyReconstruct.png"
-    [ -f "$SRC" ] || SRC="PyReconstruct/assets/img/logo.png"
+    SRC="packaging/macos/PyReconstruct.icns"
 fi
 
-WORK="$(mktemp -d)"
-ICONSET="$WORK/PyReconstruct.iconset"
-mkdir -p "$ICONSET"
-
-for s in 16 32 64 128 256 512; do
-    d=$((s * 2))
-    sips -z "$s" "$s" "$SRC" --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
-    sips -z "$d" "$d" "$SRC" --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
-done
-
 mkdir -p packaging
-iconutil -c icns "$ICONSET" -o packaging/PyReconstruct.icns
-rm -rf "$WORK"
-echo "wrote packaging/PyReconstruct.icns"
+cp "$SRC" packaging/PyReconstruct.icns
+echo "wrote packaging/PyReconstruct.icns (from $SRC)"
