@@ -1867,18 +1867,21 @@ class MainWindow(QMainWindow):
         ) # set the current trace
 
     def offerHomeIfViewOffImage(self):
-        """Offer to set the view to the image when the view misses it.
+        """Offer to set the view to the image when the view shows nothing.
 
         Asked after the image loads: when a series opens with its image
         found, and when its images are located. The saved view is the
         user's, so it moves only when they pick "Set view to image";
         declining or dismissing the prompt leaves the position and zoom as
-        saved. A view that overlaps the image at all asks nothing.
+        saved. A view that overlaps the image at all asks nothing, and
+        neither does a view over any shown trace of the current section,
+        with or without image: the 3D scene's double-click parks the view
+        on a trace, which can lie outside the image.
 
             Returns:
                 (bool): True if the view was moved
         """
-        if not self.field.viewIsOffImage():
+        if not self.field.viewShowsNothing():
             return False
         if not viewOffImageNotify(self):
             return False
