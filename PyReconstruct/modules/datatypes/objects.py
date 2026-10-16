@@ -87,26 +87,53 @@ class Objects():
             self.series.getObjHosts(source_obj)  # hosts
         )
 
-    def assignCopyAttrs(self, target_obj, alignment: str, groups: list, hosts: str) -> None:
-        """Assign relevant attributes to copied objects."""
+    def assignCopyAttrs(self, targets: dict) -> set:
+        """Assign relevant attributes to copied objects.
 
-        ## Alignments
-        self.series.setAttr(
-            target_obj, "alignment", alignment, ztrace=False
-        )
+        Every target's hosts are cleared before any target gets its new
+        ones: two copies can each have the other as a host, and only the
+        clear of one lets the other take it. The host tree takes a host
+        with no traces, and refuses one that would make an object a host
+        of itself.
 
-        ## Groups
-        for group in groups:  # groups
-            self.series.object_groups.add(group, target_obj)  # groups
+            Params:
+                targets (dict): name -> its source's attributes, read
+                    before any is assigned (getSourceAttrs)
+            Returns:
+                (set): (traveler id, host id) for each link the clears took
+                    away (HostTree.clearHosts)
+        """
+        for target_obj, (alignment, groups, _) in targets.items():
+
+            ## Alignments
+            self.series.setAttr(
+                target_obj, "alignment", alignment, ztrace=False
+            )
+
+            ## Groups
+            for group in groups:  # groups
+                self.series.object_groups.add(group, target_obj)  # groups
 
         ## Hosts
-        self.series.setObjHosts([target_obj], hosts)
+        tree = self.series.host_tree
+        cleared = set()
+        for target_obj in targets:
+            cleared |= tree.clearHosts(target_obj)
+        for target_obj, (_, _, hosts) in targets.items():
+            tree.add(target_obj, list(hosts))
+        return cleared
 
-    def copyObjAttrs(self, source_obj: str, target_obj: str) -> None:
-        """Copy relavant obj attrs to another obj."""
+    def copyObjAttrs(self, pairs) -> set:
+        """Copy relavant obj attrs from each source obj to its target, and
+        return the host links the clears took away (assignCopyAttrs).
 
-        alignment, groups, hosts = self.getSourceAttrs(source_obj)
-        self.assignCopyAttrs(target_obj, alignment, groups, hosts)        
+            Params:
+                pairs: (source name, target name) for each copy
+        """
+        return self.assignCopyAttrs({
+            target_obj: self.getSourceAttrs(source_obj)
+            for source_obj, target_obj in pairs
+        })
         
     
 class SeriesObject():
