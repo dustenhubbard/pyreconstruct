@@ -57,6 +57,10 @@ class FieldWidgetTrace(FieldWidgetBase):
             trace = self.section.contours[trace_name][index]
         except IndexError:
             return
+
+        # a trace outside the ROI box is not drawn: there is nothing to find
+        if not self.inRoiBox(trace):
+            return
         
         # set the window to frame the object
         tform = self.section.tform
@@ -89,10 +93,14 @@ class FieldWidgetTrace(FieldWidgetBase):
         # min_window_w = self.section.mag * self.section_layer.pixmap_dim[0]
         # min_window_h = self.section.mag * self.section_layer.pixmap_dim[1]
         
-        # get the bounds of the contour and set the window
+        # get the bounds of the contour and set the window; with the ROI box
+        # on, only the traces inside it, which are the ones drawn
         contour = self.section.contours[contour_name]
+        traces = [trace for trace in contour.getTraces() if self.inRoiBox(trace)]
+        if not traces:
+            return
         tform = self.section.tform
-        vals = [trace.getBounds(tform) for trace in contour]
+        vals = [trace.getBounds(tform) for trace in traces]
         
         min_x = min([v[0] for v in vals])
         min_y = min([v[1] for v in vals])
@@ -154,7 +162,7 @@ class FieldWidgetTrace(FieldWidgetBase):
 
         # set the selected traces
         self.section.selected_traces = []
-        for trace in contour.getTraces():
+        for trace in traces:
             if not trace.hidden and not self.hide_trace_layer:
                 self.section.addSelectedTrace(trace)
 
@@ -396,6 +404,9 @@ class FieldWidgetTrace(FieldWidgetBase):
     # no field_interaction decorator: this function is able to override the disabled trace layer
     def unhideAllTraces(self):
         """Unhide every trace on the section."""
+        # every trace on the section, the ones outside the ROI box too
+        if self.refuseWhileRoiBox():
+            return
         if self.hide_trace_layer:
             self.hide_trace_layer = False
         modified = self.section.unhideAllTraces()
@@ -444,6 +455,19 @@ class FieldWidgetTrace(FieldWidgetBase):
             return
         self.section.invertTraceSelection(include_hidden=self.show_all_traces)
         self.generateView(generate_image=False)
+
+    def refuseWhileRoiBox(self) -> bool:
+        """Refuse a command that acts on whole objects, the whole section or
+        the series while the ROI box is on: it would reach traces the box
+        hides.
+
+            Returns:
+                (bool): True if the command was refused
+        """
+        if not self.roi_box_on:
+            return False
+        notify("Turn off the ROI box first.")
+        return True
 
     ############################################################################
     ## The lock check ##########################################################
@@ -638,6 +662,13 @@ class FieldWidgetTrace(FieldWidgetBase):
         # add the trace to the section and select
         self.section.addTrace(new_trace, log_event=log_event)
         self.section.addSelectedTrace(new_trace)
+        # a trace drawn outside the ROI box is kept but not drawn, so not
+        # selected either; say where it went
+        if new_trace in self.dropSelectedOutsideRoiBox():
+            self.mainwindow.statusBar().showMessage(
+                "The new trace is outside the ROI box, so it is not shown or selected.",
+                8000
+            )
 
         if defaults and is_new_object:
             self.applyObjectDefaults(new_trace.name, defaults)
@@ -1258,6 +1289,11 @@ class FieldWidgetTrace(FieldWidgetBase):
         every other section, and undo covers it through series_states."""
         if self.hide_trace_layer:
             return False
+        # by name, so the traces outside the ROI box too; the trace list's
+        # own selection is not limited by the box
+        if (not isinstance(self.table_manager.hasFocus(), TraceTableWidget)
+                and self.refuseWhileRoiBox()):
+            return False
 
         names = sorted(set(t.name for t in traces))
 
@@ -1361,6 +1397,9 @@ class FieldWidgetTrace(FieldWidgetBase):
     @field_interaction
     def hideOtherTraces(self):
         """Hide every trace on the current section except the selected one(s)."""
+        # the others include the traces outside the ROI box
+        if self.refuseWhileRoiBox():
+            return False
         return self.section.hideOtherTraces()
 
     @trace_function
@@ -1680,6 +1719,7 @@ class FieldWidgetTrace(FieldWidgetBase):
 
             # call to update ztraces
             self.table_manager.updateZtraces()
+            self.series.clearTracking()
             self.mainwindow.seriesModified(True)
             self.generateView()
 

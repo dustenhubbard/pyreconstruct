@@ -6384,11 +6384,7 @@ class SeriesIterator():
         """Add the last section's change to the undo history, once."""
         section, self.section = self.section, None
         self.written = False
-        if self.series_states and section and (
-            section.getAllModifiedNames() or
-            section.tformsModified() or
-            section.flags_modified
-        ):
+        if self.series_states and section and section.isModified():
             self.series_states[section.n].addState(section, self.series)
             self.series_states.addSectionUndo(section.n)
 

@@ -25,6 +25,10 @@ from PyReconstruct.modules.constants.settings_domain import user_action
 from PyReconstruct.modules.backend.func.utils import (
     zarr_worker_count, MAX_ZARR_WORKERS,
 )
+from PyReconstruct.modules.datatypes.default_settings import (
+    MAX_SELECTION_GLOW_OPACITY,
+)
+from PyReconstruct.modules.backend.view.trace_layer import SELECTED_TRACE_STYLES
 from .scale_bar_settings import (
     scaleBarStructure,
     storeScaleBarResponse,
@@ -148,6 +152,8 @@ class AllOptionsDialog(QDialog):
                 ["show_ztraces"],
                 ["show_flags"],
                 ["fill_opacity"],
+                ["selected_trace_style"],
+                ["selection_glow_opacity"],
                 ["find_zoom"],
                 ["hover_columns"],
                 ["smoothing_3D"]
@@ -408,6 +414,52 @@ class AllOptionsDialog(QDialog):
             self.series.setOption("fill_opacity", response[0])
         self.addOptionWidget("fill_opacity", structure, setOption)
 
+        # selected_trace_style: how a selected trace is drawn, one radio button
+        # per name in SELECTED_TRACE_STYLES, in that order. An unknown stored
+        # name shows as the first, which is also how it draws.
+        style = self.series.getOption("selected_trace_style", use_defaults)
+        if style not in SELECTED_TRACE_STYLES:
+            style = SELECTED_TRACE_STYLES[0]
+        labels = (
+            "Standard (a wide see-through stroke)",
+            "Black and white outline",
+            "Glow with a solid line",
+        )
+        structure = [
+            [("radio", *(
+                (label, name == style)
+                for label, name in zip(labels, SELECTED_TRACE_STYLES)
+            ))],
+        ]
+        def setOption(response):
+            self.series.setOption("selected_trace_style", self._checkedStyle())
+        self.addOptionWidget("selected_trace_style", structure, setOption)
+
+        # selection_glow_opacity: how see-through the glow style's wide stroke
+        # is, shown only while that style is chosen. The slider stops at 50%;
+        # a larger stored value shows as 50%, which is also how it draws.
+        glow = min(
+            self.series.getOption("selection_glow_opacity", use_defaults),
+            MAX_SELECTION_GLOW_OPACITY,
+        )
+        structure = [
+            ["Glow opacity:",
+             ("slider", glow, 10,
+              {"maximum": MAX_SELECTION_GLOW_OPACITY, "suffix": "%"})],
+        ]
+        def setOption(response):
+            self.series.setOption("selection_glow_opacity", response[0])
+        self.addOptionWidget("selection_glow_opacity", structure, setOption)
+        self.all_widgets["selection_glow_opacity"].setHidden(style != "glow")
+
+        # the field previews the style as it changes (see _previewSelectedStyle)
+        # (a radio change unchecks one button and checks another; redraw once)
+        for button in self._styleButtons():
+            button.toggled.connect(
+                lambda checked: checked and self._previewSelectedStyle()
+            )
+        self._glowSlider().valueChanged.connect(self._previewSelectedStyle)
+
         # find_zoom
         structure = [
             ["Zoom level for finding contours:", (True, "float", self.series.getOption("find_zoom", use_defaults))]
@@ -578,13 +630,73 @@ class AllOptionsDialog(QDialog):
             palette.previewScaleBar(settings)
             self._scale_bar_previewed = True
 
+    def _styleButtons(self):
+        """The selected trace style's radio buttons, in SELECTED_TRACE_STYLES order."""
+        layout = self.all_widgets["selected_trace_style"].inputs[0].widget.layout()
+        return [layout.itemAt(i).widget() for i in range(layout.count())]
+
+    def _checkedStyle(self) -> str:
+        """The selected trace style the radio buttons show."""
+        for button, name in zip(self._styleButtons(), SELECTED_TRACE_STYLES):
+            if button.isChecked():
+                return name
+        return SELECTED_TRACE_STYLES[0]
+
+    def _glowSlider(self):
+        return self.all_widgets["selection_glow_opacity"].inputs[0].widget.slider
+
+    def _styleLayers(self):
+        """The field and the section layers it draws (two when blending).
+
+        Returns (None, []) when there is no window.
+        """
+        field = getattr(self.parent(), "field", None)
+        if field is None:
+            return None, []
+        layers = (field.section_layer, getattr(field, "b_section_layer", None))
+        return field, [layer for layer in layers if layer is not None]
+
+    def _previewSelectedStyle(self, *_):
+        """Redraw the field with the selected trace style the window shows; nothing is stored.
+
+        Which look reads best depends on the image under the traces, so it is
+        judged on the field while the window is open. OK stores the options;
+        Cancel redraws from the stored ones (_endStylePreview).
+        """
+        style = self._checkedStyle()
+        self.all_widgets["selection_glow_opacity"].setHidden(style != "glow")
+        field, layers = self._styleLayers()
+        if field is None:
+            return
+        for layer in layers:
+            layer.selected_style_preview = (style, self._glowSlider().value())
+        field.generateView(generate_image=False)
+        self._style_previewed = True
+
+    def _endStylePreview(self, redraw : bool):
+        """Hand the selected trace style back to the stored options.
+
+            Params:
+                redraw (bool): True to redraw the field now
+        """
+        if not getattr(self, "_style_previewed", False):
+            return
+        field, layers = self._styleLayers()
+        if field is not None:
+            for layer in layers:
+                layer.selected_style_preview = None
+            if redraw:
+                field.generateView(generate_image=False)
+        self._style_previewed = False
+
     def reject(self):
-        """Overwritten: a previewed scale bar goes back to its stored size."""
+        """Overwritten: previewed views go back to their stored settings."""
         if getattr(self, "_scale_bar_previewed", False):
             palette = self._palette()
             if palette is not None:
                 palette.restoreScaleBar()
             self._scale_bar_previewed = False
+        self._endStylePreview(redraw=True)
         super().reject()
 
     def accept(self):
@@ -598,6 +710,8 @@ class AllOptionsDialog(QDialog):
         with user_action():
             for w in widgets:
                 w.set()
+        # the caller redraws the field after OK, now from the stored options
+        self._endStylePreview(redraw=False)
         super().accept()
         return True
 
@@ -611,6 +725,9 @@ class AllOptionsDialog(QDialog):
         self.placeWidgets()
         # set the tab
         self.tabs.setCurrentIndex(current_tab)
+        # the new style widgets start at the defaults without a signal, so show
+        # the field that way too
+        self._previewSelectedStyle()
 
 # all widgets used in the options MUST have a accept() and set() method
 # accept is used to check if the response are valid
