@@ -181,10 +181,11 @@ class FieldWidgetMouse(FieldWidgetData):
             # the merge saves into it so the whole gesture (draw plus
             # auto-merge) is one undo step and one Ctrl+Z restores the section
             # as it was before the draw (upstream issue #137)
-            section_states = self.series_states[self.series.current_section]
-            n_states = len(section_states.undo_states)
-            self.mergeTraces(restrict=traces_to_merge)
-            section_states.dropStatesAfter(n_states)
+            self.merge_undo_step = True
+            try:
+                self.mergeTraces(restrict=traces_to_merge)
+            finally:
+                self.merge_undo_step = False
 
     def pointerPress(self, event):
         """Called when mouse is pressed in pointer mode.
@@ -1261,6 +1262,7 @@ class FieldWidgetMouse(FieldWidgetData):
                         [host],
                     )
                     self.table_manager.updateObjects(self.series.host_tree.getObjToUpdate([hosted, host]))
+                    self.section.clearTracking()
             self.hosted_trace = None
             self.current_trace = []
         else:
@@ -1332,6 +1334,7 @@ class FieldWidgetMouse(FieldWidgetData):
                 )
                 
                 self.mainwindow.field.table_manager.updateZtraces()
+                self.series.clearTracking()
                     
                 self.current_trace = []
                 self.current_ztrace = []

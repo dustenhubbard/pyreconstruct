@@ -1550,6 +1550,15 @@ class Section():
                     return True
         return False
     
+    def isModified(self) -> bool:
+        """True if a trace, a transform or a flag changed since the tracking
+        was last cleared."""
+        return bool(
+            self.getAllModifiedNames()
+            or self.tformsModified()
+            or self.flags_modified
+        )
+
     def clearTracking(self):
         """Clear the added_traces and removed_traces lists."""
         self.added_traces = []

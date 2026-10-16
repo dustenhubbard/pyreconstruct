@@ -1718,6 +1718,7 @@ class FieldWidgetTrace(FieldWidgetBase):
 
             # call to update ztraces
             self.table_manager.updateZtraces()
+            self.series.clearTracking()
             self.mainwindow.seriesModified(True)
             self.generateView()
 

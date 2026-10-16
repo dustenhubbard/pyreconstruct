@@ -21,7 +21,6 @@ from PyReconstruct.modules.datatypes import Series, Section, Trace, Transform
 from PyReconstruct.modules.backend.view import SectionLayer, ZarrLayer
 from PyReconstruct.modules.backend.view.trace_layer import traceInRoiBox
 from PyReconstruct.modules.backend.func import SeriesStates
-from PyReconstruct.modules.backend.func.state_manager import dropEmptiedGroups
 from PyReconstruct.modules.backend.table import TableManager
 
 
@@ -47,6 +46,10 @@ class FieldWidgetBase:
         self.section_layer : SectionLayer   = None
 
         self.table_manager : TableManager   = None
+
+        # True while an action's undo steps fold into the step before it
+        # (autoMerge)
+        self.merge_undo_step : bool         = False
 
         self.propagate_tform : bool         = False
         self.tform_before_change : tuple    = None
@@ -476,24 +479,10 @@ class FieldWidgetBase:
         # lineRelease clears is_line_tracing before that, so it is left alone.
         self.cancelOpenScissorsCut()
 
-        # save the current state
-        section_states = self.series_states[self.series.current_section]
-        section_states.addState(self.section, self.series)
-
-        # update the data/tables
-        groups_before = set(self.series.object_groups.getGroupList())
-        self.updateData()
-
-        # updateData deletes an object whose last trace the action took, and
-        # its groups with it; their visibility entries go too, so the Groups
-        # menu loses the row. The state keeps each value for its undo.
-        dropped = dropEmptiedGroups(self.series, groups_before)
-        section_states.current_state.undo_group_viz = dict(dropped)
-        if dropped and hasattr(self.mainwindow, "createMenuBar"):
-            self.mainwindow.createMenuBar()
-
-        # check if a series undo/redo has been overwritten
-        self.series_states.checkOverwrite(self.section.n)
+        step = self.series_states.commitSection(
+            self.section, merge=getattr(self, "merge_undo_step", False)
+        )
+        self.showSectionStep(step)
 
         # notify that the series has been edited
         self.mainwindow.seriesModified(True)
@@ -513,64 +502,27 @@ class FieldWidgetBase:
         self.section.selected_ztraces = []
         self.section.selected_flags = []
 
-        # get the last undo state
-        groups_before = set(self.series.object_groups.getGroupList())
-        tform_before = self.section.tform.copy()
-        section_states = self.series_states[self.section.n]
-        undos_before = len(section_states.undo_states)
-        redos_before = len(section_states.redo_states)
-        section_states.restored_alignments = {}
-        self.series_states.undoSection(self.section, redo)
+        step = self.series_states.undoSection(self.section, redo)
 
         # an undo or redo that moves the section leaves no change to pick up
         # when propagation recording starts
-        if not self.section.tform.equals(tform_before):
+        if step.tform_moved:
             self.tform_before_change = None
 
-        # update the data/tables. A redo of an action that kept the objects
-        # it emptied (an import) keeps them again, with their attributes,
-        # rather than deleting them as an erase would
-        redone = redo and len(section_states.undo_states) > undos_before
-        keeps_emptied = redone and getattr(
-            section_states.current_state, "keeps_emptied", False
-        )
-        self.updateData(log_events=not keeps_emptied)
-
-        # updateData gave each object the step recreated the current
-        # alignment; put back the pin the object had, and show it in the lists
-        pinned = [
-            name for name in section_states.restored_alignments
-            if name in self.series.data["objects"]
-        ]
-        for name in pinned:
-            self.series.setAttr(
-                name, "alignment", section_states.restored_alignments[name]
-            )
-        if pinned:
-            self.table_manager.updateObjects(pinned)
-        section_states.restored_alignments = {}
-
-        # updateData deletes an object whose last trace the step took, and
-        # its groups with it; their visibility entries go too. The dropped
-        # values also go to the state whose opposite step brings the groups
-        # back: an undo's to the state it put on the redo stack, a redo's to
-        # the state it redid. Replaced every time, even when the step empties
-        # nothing: a value left from an earlier step of the same state no
-        # longer describes it.
-        dropped = dropEmptiedGroups(self.series, groups_before)
-        if not redo and len(section_states.redo_states) > redos_before:
-            section_states.redo_states[-1].group_viz = dict(dropped)
-        elif redo and len(section_states.undo_states) > undos_before:
-            section_states.current_state.undo_group_viz = dict(dropped)
-
-        # A redo can bring back a group that no object held a moment ago (the
-        # object snapshot in state_manager), and the Groups menu lists groups
-        # from createMenuBar. Rebuild it only when the set of groups changed.
-        if set(self.series.object_groups.getGroupList()) != groups_before:
-            if hasattr(self.mainwindow, "createMenuBar"):
-                self.mainwindow.createMenuBar()
-        
+        self.showSectionStep(step)
         self.generateView()
+
+    def showSectionStep(self, step) -> None:
+        """Show a section edit, undo or redo in the lists and menus, once
+        its data work is done (SeriesStates.commitSection, undoSection).
+
+            Params:
+                step (SectionStep): what the step changed
+        """
+        self.table_manager.updateAll(step.objects, step.ztraces)
+        # the Groups menu lists groups from createMenuBar
+        if step.groups_changed and hasattr(self.mainwindow, "createMenuBar"):
+            self.mainwindow.createMenuBar()
     
     def seriesUndo(self, redo=False) -> None:
         """Undo an action across the series.
@@ -782,22 +734,18 @@ class FieldWidgetBase:
         """
         self.table_manager.newTable(list_type, self.section, selected_only=selected_only)
     
-    def updateData(self, clear_tracking=True, log_events=True) -> None:
-        """Update the series data object and the tables.
-
-            Params:
-                clear_tracking (bool): True if tracking vars in Section and Series should be cleared after they are checked
-                log_events (bool): False to keep an object the section no
-                    longer has traces of, as an import does (SeriesData.updateSection)
-        """
+    def updateData(self) -> None:
+        """Update the series data object and the tables, and clear the
+        Section and Series tracking they read."""
         # update the series data tracker
         self.series.data.updateSection(
             self.section,
             update_traces=True,
             all_traces=False,
-            log_events=log_events
         )
 
-        self.table_manager.updateAll(clear_tracking)
+        self.table_manager.updateAll()
+        self.section.clearTracking()
+        self.series.clearTracking()
         
     def update(self) -> None: ...
