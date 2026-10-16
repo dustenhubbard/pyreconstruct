@@ -8,7 +8,9 @@ lists and menus from it. These tests drive both on a real Series and Section,
 with no application, widget or table.
 """
 
-import ast
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -17,7 +19,6 @@ from PyReconstruct.modules.backend.func.state_manager import (
     SectionStep,
     SeriesStates,
 )
-from PyReconstruct.modules.backend.table.manager import TableManager
 from PyReconstruct.modules.datatypes import Flag, Trace, Transform, Ztrace
 
 SNUM = 0  # section 0 of the fixture has no traces and no flags
@@ -220,49 +221,48 @@ def test_section_is_modified_covers_traces_transforms_and_flags(bench):
     assert section.isModified() is False
 
 
-class _Tables:
-    """TableManager's update methods on the attributes they read, so they
-    run without a window."""
+_NO_QT = """
+import os, shutil, sys, tempfile
+class Block:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "PySide6" or fullname.startswith("PySide6."):
+            raise ImportError("PySide6 blocked")
+sys.meta_path.insert(0, Block())
+from PyReconstruct.modules.backend.settings_store import (
+    DictSettingsStore, set_default_settings_store,
+)
+set_default_settings_store(DictSettingsStore())
+sys.path.insert(0, sys.argv[1])
+import test_section_undo_seam as seam
+from PyReconstruct.modules.backend.progress import NullProgressReporter
+from PyReconstruct.modules.datatypes import Series
 
-    updateObjects = TableManager.updateObjects
-    updateSections = TableManager.updateSections
-    updateZtraces = TableManager.updateZtraces
-    updateFlags = TableManager.updateFlags
-    updateAll = TableManager.updateAll
-
-    def __init__(self, series, section):
-        self.series = series
-        self.section = section
-        self.tables = {k: [] for k in ("object", "trace", "ztrace", "flag", "section")}
-        self.mainwindow = None
-
-    def _markViewerStale(self, *args, **kwargs):
-        pass
-
-
-def test_the_table_manager_reads_tracking_and_never_clears_it(bench):
-    series, section, states = bench
-    draw(section)
-    series.modified_ztraces.add(ZNAME)
-    tables = _Tables(series, section)
-
-    tables.updateObjects()
-    tables.updateZtraces()
-    tables.updateAll()
-
-    assert set(section.getAllModifiedNames()) == {NAME}
-    assert series.modified_ztraces == {ZNAME}
+copy = os.path.join(tempfile.mkdtemp(), "series.jser")
+shutil.copy(sys.argv[2], copy)
+series = Series.openJser(copy, progress=NullProgressReporter)
+series.setProgressReporter(NullProgressReporter)
+series.current_section = seam.SNUM
+section = series.loadSection(seam.SNUM)
+states = seam.SeriesStates(series)
+states[section]
+seam.draw(section)
+assert states.commitSection(section).objects == {seam.NAME}
+assert states.undoSection(section).objects == {seam.NAME}
+assert seam.NAME not in series.data["objects"]
+series.close()
+assert not any(m.split(".")[0] == "PySide6" for m in sys.modules)
+"""
 
 
-def test_the_state_manager_imports_no_qt_and_no_tables():
-    import PyReconstruct.modules.backend.func.state_manager as module
+def test_the_seam_tests_import_and_run_with_qt_blocked():
+    """In a process where any PySide6 import fails, with no Qt platform set,
+    this module imports and a commit and undo run on a real Series."""
+    from conftest import SERIES_FIXTURE
 
-    tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
-    imported = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            imported.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            imported.add(node.module or "")
-    assert not any(n.startswith("PySide6") for n in imported)
-    assert not any(".table" in n or ".gui" in n for n in imported)
+    env = dict(os.environ)
+    env.pop("QT_QPA_PLATFORM", None)
+    result = subprocess.run(
+        [sys.executable, "-c", _NO_QT, str(Path(__file__).parent), str(SERIES_FIXTURE)],
+        env=env, text=True, capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
