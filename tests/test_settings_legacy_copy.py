@@ -648,6 +648,37 @@ def test_a_session_after_a_failed_series_copy_does_not_save_defaults(
             s.sync()
 
 
+def test_an_owed_store_takes_only_the_users_own_writes(clean, monkeypatch):
+    """One rule for every writer: while a store is owed its copy, a write is
+    saved only inside ``user_action``, and a default read there is not."""
+    from PyReconstruct.modules.backend.settings_store import QSettingsStore
+    from PyReconstruct.modules.constants.settings_domain import (
+        settings_for, user_action,
+    )
+
+    _legacy(SHARED_APP, legacy_probe_kept="old")
+    with monkeypatch.context() as broken:
+        _unreadable_legacy(broken, SHARED_APP)
+        assert copy_legacy_settings_once().complete is False
+    new = _settings(SETTINGS_ORG, SHARED_APP)
+    store = QSettingsStore()
+
+    settings_for("username").setValue("legacy_probe_automatic", "no")
+    store.set_value(None, "legacy_probe_kept", "automatic")
+    assert not new.contains("legacy_probe_automatic")
+    assert not new.contains("legacy_probe_kept")
+
+    with user_action():
+        settings_for("username").setValue("legacy_probe_chosen", "yes")
+        assert store.may_save_defaults(None) is False
+    assert new.value("legacy_probe_chosen") == "yes"
+
+    assert copy_legacy_settings_once().complete is True
+    assert new.value("legacy_probe_kept") == "old"
+    settings_for("username").setValue("legacy_probe_automatic", "now")
+    assert new.value("legacy_probe_automatic") == "now"
+
+
 def test_a_store_with_old_values_and_no_marker_is_pending(clean):
     """Before the copy has run at all, the same rule holds."""
     from PyReconstruct.modules.backend.settings_store import QSettingsStore
