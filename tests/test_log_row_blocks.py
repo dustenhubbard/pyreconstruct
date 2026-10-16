@@ -394,6 +394,7 @@ def test_the_object_history_counts_only_its_own_rebuilt_rows(qapp, series):
         series=series,
         mainwindow=mainwindow,
         table_manager=SimpleNamespace(hasFocus=lambda: None),
+        refuseWhileRoiBox=lambda: False,
         section=SimpleNamespace(
             selected_traces=[SimpleNamespace(name="foo,bar,baz\nqux")]
         ),
