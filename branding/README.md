@@ -33,8 +33,8 @@ Notes:
 
 | Folder | What | When |
 |---|---|---|
-| `app-icon/` | The app icon tile (SVG, PNG 16–1024, macOS 1024 with Apple's padding and shadow, Windows `.ico`, Dev icon) | Anywhere the app itself is shown: download pages, docs, store listings. 16–48 px use the simplified small-size artwork. |
-| `mark/` | The stack on its own, no tile (SVG, PNG 256–1024) | Large illustrative use, website hero, slides, stickers. Works on dark and light. |
+| `app-icon/` | The app icon tile (SVG, PNG 16 to 1024, macOS 1024 with Apple's padding and shadow, Windows `.ico`, Dev icon) | Anywhere the app itself is shown: download pages, docs, store listings. 16 to 48 px use the simplified small-size artwork. |
+| `mark/` | The stack on its own, no tile (SVG, PNG 256 to 1024) | Large illustrative use, website hero, slides, stickers. Works on dark and light. |
 | `lockup/horizontal-*` | Icon + wordmark side by side | Headers, footers, posters, slide corners |
 | `lockup/stacked-*` | Icon above wordmark | Square spaces, title slides, posters |
 | `lockup/wordmark-*` | "PyReconstruct" alone | When the icon is already nearby |
