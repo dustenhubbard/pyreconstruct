@@ -21,6 +21,7 @@ from .backup import BackupDialog
 from .autoseg_palette import AutosegColorsWidget
 
 from PyReconstruct.modules.datatypes import Series
+from PyReconstruct.modules.constants.settings_domain import user_action
 from PyReconstruct.modules.backend.func.utils import (
     zarr_worker_count, MAX_ZARR_WORKERS,
 )
@@ -658,8 +659,11 @@ class AllOptionsDialog(QDialog):
         for n, w in self.all_widgets.items():
             if not w.accept(close=False):
                 return False
-        for w in widgets:
-            w.set()
+        # what the user accepted, saved even while the old KHLab settings are
+        # still being copied
+        with user_action():
+            for w in widgets:
+                w.set()
         super().accept()
         return True
 

@@ -7,6 +7,7 @@ from PyReconstruct.modules.datatypes import Trace, Ztrace
 from PyReconstruct.modules.calc import pixmapPointToField, distance
 from PyReconstruct.modules.gui.dialog import QuickDialog
 from PyReconstruct.modules.gui.utils import notify
+from PyReconstruct.modules.constants.settings_domain import user_action
 
 from .field_widget_5_mouse import (
     CLOSEDTRACE, 
@@ -221,10 +222,10 @@ class FieldWidgetView(FieldWidgetPaint):
             Params:
                 left_handed (bool): True if user is left handed
         """
-        if left_handed is not None:
+        if left_handed is None:
+            left_handed = self.mainwindow.lefthanded_act.isChecked()
+        with user_action():
             self.series.setOption("left_handed", left_handed)
-        else:
-            self.series.setOption("left_handed", self.mainwindow.lefthanded_act.isChecked())
 
         # adjust handedness of the cursor
         if (self.mouse_mode == OPENTRACE or
@@ -391,4 +392,5 @@ class FieldWidgetView(FieldWidgetPaint):
         columns, confirmed = HoverColumnsDialog(self, self.hover_columns).exec()
         if confirmed:
             self.hover_columns = columns
-            self.series.setOption("hover_columns", columns)
+            with user_action():
+                self.series.setOption("hover_columns", columns)

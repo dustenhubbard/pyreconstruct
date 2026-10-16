@@ -235,7 +235,7 @@ def reset_whats_new_popup_startup(current=None):
     settings fold: the fresh-install test reads keys that ``MainWindow``
     writes while it is being built (``username`` through the welcome series,
     the update-check marker through its own migration), so this has to look
-    before any of that runs. Resolves both domains through ``domain_for`` so
+    before any of that runs. Resolves both domains through ``settings_for`` so
     the Dev app resets its own popup state and reads the shared store for
     the evidence. Never raises: a settings correction on the startup path
     must not be able to stop PyReconstruct from opening, and an unrecorded
@@ -247,16 +247,16 @@ def reset_whats_new_popup_startup(current=None):
     """
     try:
         from PySide6.QtCore import QSettings
-        from PyReconstruct.modules.constants.settings_domain import domain_for
+        from PyReconstruct.modules.constants.settings_domain import settings_for
         from PyReconstruct.modules.backend.updater.install_info import (
             current_version_str,
         )
         if current is None:
             current = current_version_str()
-        settings = QSettings(*domain_for(
+        settings = settings_for(
             WHATSNEW_KEY, WHATSNEW_SUPPRESS_KEY, WHATSNEW_RESET_MARKER,
-        ))
-        shared = QSettings(*domain_for(*PRIOR_INSTALL_KEYS))
+        )
+        shared = settings_for(*PRIOR_INSTALL_KEYS)
         ran = reset_whats_new_popup_once(settings, current, shared=shared)
         if ran:
             settings.sync()

@@ -95,8 +95,8 @@ def test_every_scope_resolves_inside_the_isolation_root(application):
 
 
 def test_direct_two_argument_construction_writes_into_the_root():
-    """The plain `QSettings("PyReconstruct", "PyReconstruct")` form, as written in
-    `file_dialog.py`, `whats_new.py`, `main_window.py` and `mouse_palette.py`.
+    """The plain `QSettings("PyReconstruct", "PyReconstruct")` form, as
+    `settings_for` and `QSettingsStore` build it.
     """
     _require_isolated()
     import PySide6.QtCore as qtcore
@@ -329,17 +329,29 @@ def test_no_imported_module_still_holds_the_real_qsettings_class():
 
 
 def test_the_production_call_sites_resolve_to_the_isolated_class():
-    """Import every module that constructs a `QSettings` and check what it holds.
+    """Check the stores the app opens, and the modules that still hold the name.
 
-    Enumerated from `git grep QSettings(` rather than discovered, so a new call
-    site in a new module does not quietly get left out of the check: the sweep
-    above is what covers that case, and this is what pins the known ones.
+    The app opens every store through `settings_for` or `QSettingsStore`
+    (`test_settings_domains.py` scans the sources for that); both build theirs
+    when called, so each must come back isolated. The modules below are the
+    ones that still bind `QSettings`, enumerated from `git grep` rather than
+    discovered: the sweep above covers a new one, and this pins the known ones.
     """
     import importlib
 
+    from PyReconstruct.modules.backend.settings_store import QSettingsStore
+    from PyReconstruct.modules.constants.settings_domain import settings_for
+
+    for settings in (
+        settings_for("username"),
+        settings_for("window/geometry"),
+        QSettingsStore()._settings(None),
+        QSettingsStore()._settings("SER1"),
+    ):
+        assert isinstance(settings._settings, qi._isolated_qsettings)
+        assert _under_root(settings.fileName()), settings.fileName()
+
     modules = (
-        "PyReconstruct.modules.gui.dialog.file_dialog",
-        "PyReconstruct.modules.gui.dialog.whats_new",
         "PyReconstruct.modules.gui.palette.mouse_palette",
         "PyReconstruct.modules.gui.main.main_imports",
         "PyReconstruct.modules.gui.main.main_window",
@@ -728,8 +740,8 @@ def test_isolation_needs_the_suite_conftest_to_be_active():
         """
         import os
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        from PyReconstruct.modules.gui.dialog import file_dialog
-        print("CLASSNAME", file_dialog.QSettings.__name__)
+        from PyReconstruct.modules.gui.palette import mouse_palette
+        print("CLASSNAME", mouse_palette.QSettings.__name__)
         """
     )
     result = subprocess.run(
