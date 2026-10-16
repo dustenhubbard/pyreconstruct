@@ -5,6 +5,7 @@ from PySide6.QtCore import (
     QPoint, 
     QLine,
     QRect,
+    QSize,
 )
 from PySide6.QtGui import (
     QPen,
@@ -29,9 +30,9 @@ from .field_widget_5_mouse import (
     HOST
 )
 
-def hoverDisplayPosition(field, size, prefer_right, scale_bar=None, others=(),
-                         text=None, margin=3):
-    """Where the hover box goes: its top-left point, in the field's parent's
+def hoverDisplayRect(field, size, prefer_right, scale_bar=None, others=(),
+                     text=None, margin=3, min_height=1):
+    """Where the hover box goes and how tall it is, in the field's parent's
     coordinates.
 
     The box goes in a bottom corner, the one opposite the tool palette first.
@@ -39,12 +40,15 @@ def hoverDisplayPosition(field, size, prefer_right, scale_bar=None, others=(),
     box is lifted until it sits just above it, so it stays near where it
     always was without covering the bar. The corner text (the selected trace
     and z-trace names) is on the same side at the top, and the box must not
-    cover it either. If that side has no room, the other bottom corner is
-    tried the same way, then the two top corners. If no candidate is clear
-    of everything, the one that covers the least wins: the bar and the corner
-    text count worst, then the number of palette widgets covered, and on a
-    tie the unlifted bottom corners come first, where the box always went.
-    The scale bar itself is never moved or hidden.
+    cover it either. If that side has no room, the other side is tried the
+    same way. If neither side has room for the whole box, it is cut to the
+    tallest gap it fits in and its text scrolls.
+
+    The bar and the corner text are never covered while there is a gap of
+    `min_height` beside them. Past that, the spot that covers the least wins:
+    the bar and the corner text count worst, then the number of palette
+    widgets covered, and on a tie the unlifted bottom corners come first,
+    where the box always went. The scale bar itself is never moved or hidden.
 
     Run when the box is placed, not on every paint.
 
@@ -56,46 +60,64 @@ def hoverDisplayPosition(field, size, prefer_right, scale_bar=None, others=(),
             others (list[QRect]): the other palette widgets on show
             text (QRect): the corner text, or None when there is none
             margin (int): the gap kept from the field's edge and from obstacles
+            min_height (int): the shortest the box may be cut to
         Returns:
-            (QPoint): where to move the box
+            (QRect): where to put the box, and its size
     """
     left = field.x() + margin
     right = field.x() + field.width() - size.width() - margin
     top = field.y() + margin
     bottom = field.y() + field.height() - size.height() - margin
+    floor = field.y() + field.height() - margin
     near, far = (right, left) if prefer_right else (left, right)
     worst = [r for r in (scale_bar, text) if r is not None]
-    solid = ([scale_bar] if scale_bar is not None else []) + list(others)
+    min_height = min(min_height, size.height())
 
-    def lifted(x):
-        """The bottom-corner spot at `x`, lifted above anything in the way,
-        or None when it would leave the field."""
-        y = bottom
-        while True:
-            box = QRect(QPoint(x, y), size)
-            hits = [r for r in solid if box.intersects(r)]
-            if not hits:
-                return QPoint(x, y)
-            y = min(r.top() for r in hits) - margin - size.height()
-            if y < top:
-                return None
+    def gaps(x, obstacles):
+        """The free stretches of the field's column at `x`, lowest first,
+        as (top, bottom) pairs with the bottom excluded."""
+        column = QRect(x, top, size.width(), floor - top)
+        blocked = sorted((r.top() - margin, r.bottom() + 1 + margin)
+                         for r in obstacles if r.intersects(column))
+        free, y = [], top
+        for start, end in blocked:
+            if start > y:
+                free.append((y, start))
+            y = max(y, end)
+        if floor > y:
+            free.append((y, floor))
+        return free[::-1]
 
-    candidates = [lifted(near), lifted(far), QPoint(near, top), QPoint(far, top)]
-    candidates = [c for c in candidates if c is not None]
-    fallback = [QPoint(near, bottom), QPoint(far, bottom)]
+    def place(obstacles):
+        """The box clear of `obstacles`: whole and as low as it goes, near
+        side first, else cut to the tallest gap, or None."""
+        for x in (near, far):
+            for y, end in gaps(x, obstacles):
+                if end - y >= size.height():
+                    return QRect(x, end - size.height(), size.width(), size.height())
+        tallest = max(((end - y, x, y) for x in (near, far)
+                       for y, end in gaps(x, obstacles)),
+                      key=lambda g: g[0], default=None)
+        if tallest is None or tallest[0] < min_height:
+            return None
+        h, x, y = tallest
+        return QRect(x, y, size.width(), h)
 
-    def cost(point):
-        box = QRect(point, size)
+    def cost(box):
         return (sum(box.intersects(r) for r in worst),
                 sum(box.intersects(r) for r in others))
 
-    for point in candidates:
-        if cost(point) == (0, 0):
-            return point
+    clear = place(worst + list(others))
+    if clear is not None:
+        return clear
     # nothing is clear: the least covered, and on a tie the box's usual
     # bottom corners before anything else, as it was placed before
-    pool = fallback + candidates
-    return min(pool, key=lambda p: (cost(p), pool.index(p)))
+    pool = [QRect(QPoint(x, y), size) for x, y in (
+        (near, bottom), (far, bottom), (near, top), (far, top))]
+    protected = place(worst)
+    if protected is not None:
+        pool.append(protected)
+    return min(pool, key=lambda box: (cost(box), pool.index(box)))
 
 
 class FieldWidgetPaint(FieldWidgetMouse):
@@ -540,18 +562,21 @@ class FieldWidgetPaint(FieldWidgetMouse):
             self.hover_display.setText("")
         elif h > self.height() - 6:
             h = self.height() - 6
-        self.hover_display.resize(self.width() // 5, h)
+        one_line = (self.hover_display.fontMetrics().lineSpacing() + 3
+                    + int(2 * self.hover_display.document().documentMargin()))
         # a bottom corner, opposite the tool palette when there is room,
-        # clear of the scale bar, the palette and the corner text
+        # clear of the scale bar, the palette and the corner text, and cut
+        # shorter (its text scrolls) when it is too tall for the room left
         palette = self.mainwindow.mouse_palette
         scale_bar, others = palette.hoverObstacles()
-        self.hover_display.move(hoverDisplayPosition(
+        self.hover_display.setGeometry(hoverDisplayRect(
             self.geometry(),
-            self.hover_display.size(),
+            QSize(self.width() // 5, h),
             prefer_right=palette.mode_x <= .5,
             scale_bar=scale_bar,
             others=others,
             text=self.cornerTextRect(),
+            min_height=one_line,
         ))
         # scroll all the way down
         sb = self.hover_display.verticalScrollBar()
