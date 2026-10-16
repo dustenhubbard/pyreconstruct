@@ -1053,6 +1053,11 @@ class MainWindow(QMainWindow):
         settings, confirmed = CropZarrDialog(self, series, offered).exec()
         if not confirmed:
             return
+        # the dialog ran its own event loop, where a .jser opened from the
+        # Finder closes this series and opens another in its place
+        if series is not self.series or series.closed:
+            notify(f"{series.name} was closed, so its images were not cropped.")
+            return
         self.saveAllData()
         try:
             summary = cropWithProgress(series, settings)

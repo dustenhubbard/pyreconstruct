@@ -22,7 +22,9 @@ What is pinned here:
     so far and no log, and says so; the Cancel button sets the stop flag and
     relabels the progress dialog; a series closed under the crop stops it
   * the window writes the field's unsaved edits before the crop, offers the
-    selected object, and shows the summary
+    selected object, and shows the summary; a series opened from the Finder
+    while the dialog is up closes the one the crop was set up for, and
+    nothing is written
   * the row is in the Dev build's menus and not in the stable app's, in the
     menu dicts and in a live window; ``is_dev_build`` reads the flavor stamp
     and the version
@@ -468,6 +470,83 @@ def test_cancelling_the_dialog_crops_nothing(main_window, main_window_dialogs, a
     assert len(answer.built) == 1
     assert _files(src.parent) == before
     assert main_window_dialogs.notices == []
+
+
+# --------------------------------------------------------------------------- #
+# a series replaced while the dialog is up
+# --------------------------------------------------------------------------- #
+FILES = Path(__file__).resolve().parents[1] / "dev" / "assets" / "checker" / "files"
+
+
+@pytest.fixture
+def finder(qapp, main_window):
+    """Route a .jser opened from the Finder to the window, as the app does."""
+    from PyReconstruct.run import FileOpenWatcher
+
+    watcher = FileOpenWatcher()
+    watcher.main_window = main_window
+    qapp.installEventFilter(watcher)
+    yield watcher
+    qapp.removeEventFilter(watcher)
+
+
+def _open_from_finder(window, tmp_path):
+    """Open a copy of shapes1 as another series, the way a Finder double-click does."""
+    import shutil
+
+    from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QFileOpenEvent
+    from PySide6.QtWidgets import QApplication
+
+    folder = tmp_path / "series_b"
+    folder.mkdir()
+    fp = folder / "series_b.jser"
+    shutil.copy(FILES / "shapes1.jser", fp)
+    for image in FILES.glob("shapes_*.tif"):
+        shutil.copy(image, folder / image.name)
+    app = QApplication.instance()
+    app.sendEvent(app, QFileOpenEvent(QUrl.fromLocalFile(str(fp))))
+    assert window.series.jser_fp == str(fp)
+    return window.series
+
+
+def test_a_series_opened_while_the_dialog_is_up_is_not_cropped(
+    main_window, main_window_dialogs, finder, monkeypatch, case, tmp_path  # noqa: F811  (fixture)
+):
+    """The dialog's event loop lets a .jser from the Finder open meanwhile.
+    The crop was set up for the series that closed, so nothing is written
+    and the series now open is left alone."""
+    from PyReconstruct.modules.gui.main import main_window as mw
+
+    jser, src = case
+    first = main_window.series
+    opened = []
+
+    def exec_(dialog):
+        dialog.radius_input.setText(str(RADIUS))
+        settings = dialog.values()
+        assert settings is not None
+        second = _open_from_finder(main_window, tmp_path)
+        opened.append((second, second.modified))
+        return settings, True
+
+    monkeypatch.setattr(mw.CropZarrDialog, "exec", exec_)
+    before = _files(src.parent)
+    main_window_dialogs.notices.clear()
+
+    main_window.cropScaledImages()
+
+    [(second, modified)] = opened
+    assert main_window.series is second is not first
+    assert first.closed
+    # series_b is the Finder's copy, in the same temp folder as the case
+    written = [name for name in _files(src.parent) if name != "series_b"]
+    assert written == before, "the crop was written for a closed series"
+    assert not (src.parent / f"imgs_{OBJECT}_crop.zarr").exists()
+    assert second.modified == modified
+    assert main_window_dialogs.notices == [
+        f"{first.name} was closed, so its images were not cropped."
+    ]
 
 
 # --------------------------------------------------------------------------- #
