@@ -387,6 +387,24 @@ def may_write(settings):
         return False
 
 
+class _WriteArray:
+    """An array ``GuardedSettings`` is writing, kept by the wrapper rather
+    than opened in Qt, so each call can be checked when it is made."""
+
+    def __init__(self, prefix, size):
+        self.prefix = prefix
+        self.size = size
+        self.index = None
+        # the size Qt would store at the end of an array begun without one:
+        # one past the highest index selected
+        self.guess = 0 if size < 0 else None
+
+    def key(self, key):
+        if self.index is None:
+            return f"{self.prefix}/{key}"
+        return f"{self.prefix}/{self.index + 1}/{key}"
+
+
 class GuardedSettings:
     """A ``QSettings`` whose writes wait while its store is owed its copy.
 
@@ -397,12 +415,19 @@ class GuardedSettings:
     The copy and the fold in this module write through plain ``QSettings``.
 
     Only the reads in ``READS`` pass straight through. Every call that can
-    change the store is checked here: ``setValue``, ``remove``, ``clear``, and
-    an array write (``beginWriteArray``, ``setArrayIndex``, ``endArray``, the
-    last of which stores the array's size). Anything else is not offered, so
-    a mutator added to Qt later fails loudly instead of writing past the
-    check. Wraps rather than subclasses, so the ``QSettings`` class is looked
-    up when a store is opened, not when this module is imported.
+    change the store is checked here, each when it is made: ``setValue``,
+    ``remove``, ``clear``, and the calls of an array write. An array write is
+    never opened in Qt: the wrapper keeps its prefix, index and size and
+    writes the same keys Qt would (``<prefix>/<index + 1>/<key>`` and
+    ``<prefix>/size``), so a ``beginWriteArray``, ``setArrayIndex`` or
+    ``endArray`` made outside a user action changes nothing, whatever the
+    calls before it were allowed, and Qt's own groups stay as they were.
+    Inside an array write only writes, ``endArray``, ``sync`` and ``status``
+    are offered; reading or grouping there would need the wrapper's prefix,
+    and raises instead. Anything else is not offered, so a mutator added to
+    Qt later fails loudly instead of writing past the check. Wraps rather
+    than subclasses, so the ``QSettings`` class is looked up when a store is
+    opened, not when this module is imported.
     """
 
     READS = frozenset({
@@ -412,53 +437,85 @@ class GuardedSettings:
         "organizationName", "scope", "status", "sync", "value",
     })
 
+    # reads that do not depend on the current group, so still right inside
+    # an array write
+    _ANYWHERE = frozenset({
+        "applicationName", "fallbacksEnabled", "fileName", "format",
+        "isAtomicSyncRequired", "isWritable", "organizationName", "scope",
+        "status", "sync",
+    })
+
     def __init__(self, settings):
         self._settings = settings
-        # one entry per open array: whether its calls reach the store. A read
-        # array always does; a write array only if it was allowed to begin
+        # open arrays, innermost last: a _WriteArray, or None for a read
+        # array, which Qt keeps
         self._arrays = []
 
     def __getattr__(self, name):
-        if name in GuardedSettings.READS:
-            return getattr(self._settings, name)
-        raise AttributeError(
-            f"GuardedSettings does not offer {name!r}; a call that can change "
-            "the store needs its own check here"
-        )
+        if name not in GuardedSettings.READS:
+            raise AttributeError(
+                f"GuardedSettings does not offer {name!r}; a call that can "
+                "change the store needs its own check here"
+            )
+        if self._writing() is not None and name not in GuardedSettings._ANYWHERE:
+            raise RuntimeError(f"{name!r} inside an array write")
+        return getattr(self._settings, name)
+
+    def _writing(self):
+        """The innermost array, when it is an array write."""
+        return self._arrays[-1] if self._arrays else None
+
+    def _key(self, key):
+        array = self._writing()
+        return key if array is None else array.key(key)
 
     def setValue(self, key, value):
-        if self._writing() and may_write(self._settings):
-            self._settings.setValue(key, value)
+        if may_write(self._settings):
+            self._settings.setValue(self._key(key), value)
 
     def remove(self, key):
-        if self._writing() and may_write(self._settings):
-            self._settings.remove(key)
+        if may_write(self._settings):
+            self._settings.remove(self._key(key))
 
     def clear(self):
+        if self._writing() is not None:
+            raise RuntimeError("'clear' inside an array write")
         if may_write(self._settings):
             self._settings.clear()
 
     def beginReadArray(self, prefix):
-        self._arrays.append(True)
+        if self._writing() is not None:
+            raise RuntimeError("'beginReadArray' inside an array write")
+        self._arrays.append(None)
         return self._settings.beginReadArray(prefix)
 
     def beginWriteArray(self, prefix, size=-1):
-        allowed = self._writing() and may_write(self._settings)
-        self._arrays.append(allowed)
-        if allowed:
-            self._settings.beginWriteArray(prefix, size)
+        if self._writing() is not None:
+            raise RuntimeError("'beginWriteArray' inside an array write")
+        array = _WriteArray(prefix, size)
+        self._arrays.append(array)
+        # what Qt does on beginning an array write
+        if may_write(self._settings):
+            if size < 0:
+                self._settings.remove(f"{prefix}/size")
+            else:
+                self._settings.setValue(f"{prefix}/size", size)
 
     def setArrayIndex(self, i):
-        if self._writing():
+        array = self._writing()
+        if array is None:
             self._settings.setArrayIndex(i)
+        elif may_write(self._settings):
+            array.index = max(i, 0)
+            if array.guess is not None:
+                array.guess = max(array.guess, array.index + 1)
 
     def endArray(self):
-        if self._arrays.pop() if self._arrays else True:
+        array = self._arrays.pop() if self._arrays else None
+        if array is None:
             self._settings.endArray()
-
-    def _writing(self):
-        """False inside a write array that was refused, whose calls all wait."""
-        return not self._arrays or self._arrays[-1]
+        elif array.guess is not None and may_write(self._settings):
+            self._settings.setValue(f"{array.prefix}/size", array.guess)
 
 
 def settings_for(*keys):
