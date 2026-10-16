@@ -104,7 +104,7 @@ def test_b_opening_under_a_deletes_identical_traces_notice_drops_the_rest(
     # two identical traces can be told to be it
     unplaced = {
         k: v for k, v in dust.items()
-        if k not in ("index", "lookalikes", "lookalike_ordinal")
+        if k not in ("index", "lookalikes", "lookalike_ordinal", "trace_id")
     }
     trace = window.field.section.contours["SWITCH_GONE"][0]
     window.field.section.removeTrace(trace, log_event=False)

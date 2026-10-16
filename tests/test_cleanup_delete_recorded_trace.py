@@ -80,6 +80,13 @@ def _states(series):
     return SeriesStates(series)
 
 
+def _without_id(record):
+    """A row from a scan that did not note the trace's id: the rules below
+    are the ones it falls back to when the id is gone (hub #52)."""
+    record.pop("trace_id", None)
+    return record
+
+
 def test_the_second_of_two_identical_traces_is_the_one_deleted(tmp_path):
     """A pixel-dust record for the second trace deletes the second trace."""
     series = _load_series(tmp_path)
@@ -161,10 +168,10 @@ def test_a_moved_index_with_two_lookalikes_deletes_nothing(tmp_path):
         ("DUST", DUST, "same"),
         ("DUST", DUST, "same"),
     ])
-    record = [
+    record = _without_id([
         r for r in series.findPixelDustTraces(1e9)
         if r["name"] == "DUST" and r["section"] == snum
-    ][2]
+    ][2])
     _remove_first(series, snum, "DUST")
 
     ambiguous = []
@@ -202,7 +209,7 @@ def test_one_record_twice_with_no_index_does_not_guess(tmp_path):
     # a record from before the count existed, with nothing to place it by
     no_index = {
         k: v for k, v in record.items()
-        if k not in ("index", "lookalikes", "lookalike_ordinal")
+        if k not in ("index", "lookalikes", "lookalike_ordinal", "trace_id")
     }
 
     ambiguous = []
@@ -264,10 +271,10 @@ def test_a_cleanup_list_is_told_which_row_was_left(tmp_path, monkeypatch):
         ("DUST", DUST, "same"),
         ("DUST", DUST, "same"),
     ])
-    record = [
+    record = _without_id([
         r for r in series.findPixelDustTraces(1e9)
         if r["name"] == "DUST" and r["section"] == snum
-    ][2]
+    ][2])
     _remove_first(series, snum, "DUST")
     mod, notices = _notices(monkeypatch)
 
@@ -364,6 +371,7 @@ def test_a_record_without_a_count_keeps_the_index(tmp_path):
     ])
     record = _dust_records(series, snum)[1]
     del record["lookalikes"]
+    _without_id(record)
     _remove_first(series, snum, "DUST")
 
     assert series.deleteMalformedTraces([record]) == [record]
@@ -449,7 +457,7 @@ def test_an_index_that_lands_on_an_identical_trace_deletes_nothing(tmp_path):
         ("DUST", DUST, "same"),
         ("DUST", DUST, "same"),
     ])
-    record = _dust_records(series, snum)[1]
+    record = _without_id(_dust_records(series, snum)[1])
     _remove_first(series, snum, "DUST")
 
     ambiguous = []
@@ -468,7 +476,9 @@ def test_editing_a_twin_after_the_scan_never_deletes_it_for_me(tmp_path):
         ("DUST", DUST, "b"),
         ("DUST", FAR, "x"),
     ])
-    record = next(r for r in _dust_records(series, snum) if r["index"] == 1)
+    record = _without_id(
+        next(r for r in _dust_records(series, snum) if r["index"] == 1)
+    )
     section = series.loadSection(snum)
     section.editTraceAttributes(
         [section.contours["DUST"][0]], None, None, {"b", "edited"}, None,

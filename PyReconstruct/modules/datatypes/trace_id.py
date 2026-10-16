@@ -63,6 +63,14 @@ is worse; content is the better of the two available keys.
 Until then: an id survives a reload, a scroll and a save of unchanged content,
 and does not survive an edit of the row it names.
 
+~~Re-derivation is all a load has.~~ Within one session it is not (hub #52):
+`TraceIDIssuer.recordSaved` keeps the ids each section file was last saved
+with, and a load of those same bytes gets them back before anything is
+derived. So in a session an id survives a save and a load whatever the row's
+content, as long as the trace held it when the section was saved (an edit
+that replaces the trace, as `editTraceAttributes` does, already gave it a new
+one). The measurement above is what a new session sees.
+
 THE FROZEN DERIVATION -- `tid-v1`
 ---------------------------------
 Written down before it was implemented, and frozen: changing any line of this
@@ -403,6 +411,10 @@ class TraceIDIssuer():
         self._adoptions = {}
         ## Ids a file offered that could not be decoded, as (id, name) pairs.
         self._malformed = []
+        ## The ids each section file was last written with by this session:
+        ## {section number: (digest of the bytes written, {contour name:
+        ## [id per row, in row order]})}. See `recordSaved`.
+        self._saved = {}
 
     @property
     def taken(self) -> frozenset:
@@ -649,3 +661,65 @@ class TraceIDIssuer():
                     recorded.append(trace_id)
                 out[(cname, i)] = trace_id
         return out
+
+    def recordSaved(self, section_number: int, digest, ids_by_contour) -> None:
+        """Remember the ids a section file was just written with.
+
+        The working copy stores positional rows with no ids, so a section
+        loaded again would otherwise get its ids by derivation, which hands
+        identical rows their ids in row order and gives an edited row a new
+        one. A clean-up list that recorded a trace's id at its scan then
+        cannot find that trace after any save in between (hub #52). This
+        record lets `restoreForSection` give the same rows their same ids
+        back, for as long as this issuer lives: one session.
+
+        Keyed on the digest of the exact bytes written, so a file anything
+        else wrote misses it and loads as before. A later save of the section
+        replaces the record, so it holds one entry per section and one id per
+        saved row, each id a reference to a string the store already holds.
+
+            Params:
+                section_number (int): the section written
+                digest (bytes): `sectionFileDigest` of the bytes written
+                ids_by_contour (dict): {contour name: [id, ...]} in the row
+                    order written, or None to forget the section (a save that
+                    could not name every row's id)
+        """
+        if ids_by_contour is None:
+            self._saved.pop(section_number, None)
+        else:
+            self._saved[section_number] = (digest, ids_by_contour)
+
+    def restoreForSection(
+            self, section_number: int, digest, contours: dict
+        ):
+        """The ids a section file was last saved with, if it is that file.
+
+            Params:
+                section_number (int): the section loaded
+                digest (bytes): `sectionFileDigest` of the bytes read
+                contours (dict): {contour name: [stored row, ...]}, as
+                    `Section.updateJSON` left them
+            Returns:
+                (dict): {(contour name, index): id} for every row, or None
+                    when this session did not write these exact bytes or the
+                    rows no longer line up with the ones written
+        """
+        saved = self._saved.get(section_number)
+        if saved is None or saved[0] != digest:
+            return None
+        ids_by_contour = saved[1]
+        if set(ids_by_contour) != {c for c in contours if contours[c]}:
+            return None
+        out = {}
+        for cname, ids in ids_by_contour.items():
+            if len(ids) != len(contours[cname]):
+                return None
+            for i, trace_id in enumerate(ids):
+                out[(cname, i)] = trace_id
+        return out
+
+
+def sectionFileDigest(data: bytes) -> bytes:
+    """A digest of a section file's bytes, for `TraceIDIssuer.recordSaved`."""
+    return hashlib.blake2b(data, digest_size=16).digest()

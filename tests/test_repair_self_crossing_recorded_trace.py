@@ -184,8 +184,8 @@ def test_every_listed_trace_is_repaired_once_in_place(tmp_path):
 
 
 def test_a_changed_lookalike_count_skips_and_reports(tmp_path):
-    """A lookalike added after the scan: nothing is repaired for the record,
-    and it is reported as ambiguous."""
+    """A lookalike added after the scan: nothing is repaired for a record
+    that did not note its trace's id, and it is reported as ambiguous."""
     series = _load_series(tmp_path)
     snum = _seed(series, [
         (SPIKED_SQUARE, "first", True),
@@ -193,6 +193,7 @@ def test_a_changed_lookalike_count_skips_and_reports(tmp_path):
     ])
     records = _records(series, snum)
     assert [r["lookalikes"] for r in records] == [2, 2]
+    records[1].pop("trace_id", None)
 
     # a third, fully identical trace arrives before the repair runs
     section = series.loadSection(snum)
@@ -205,6 +206,30 @@ def test_a_changed_lookalike_count_skips_and_reports(tmp_path):
     ) == []
     assert ambiguous == [records[1]]
     assert _contour(series, snum) == [("first", True, True)] * 3
+
+
+def test_a_changed_lookalike_count_repairs_the_trace_by_its_id(tmp_path):
+    """A lookalike added after the scan: the record still names its trace by
+    id (hub #52), so that trace is repaired and the other two are not."""
+    series = _load_series(tmp_path)
+    snum = _seed(series, [
+        (SPIKED_SQUARE, "first", True),
+        (SPIKED_SQUARE, "first", True),
+    ])
+    records = _records(series, snum)
+
+    section = series.loadSection(snum)
+    section.addTrace(section.contours[NAME][0].copy(), log_event=False)
+    section.save()
+
+    ambiguous = []
+    assert series.repairSelfCrossingTraces(
+        [records[1]], ambiguous=ambiguous
+    ) == [records[1]]
+    assert ambiguous == []
+    assert _contour(series, snum) == [
+        ("first", True, True), ("first", False, True), ("first", True, True),
+    ]
 
 
 def test_a_trace_that_moved_is_still_found(tmp_path):

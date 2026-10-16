@@ -48,9 +48,11 @@ flip is a harness that will not notice.
   `trace_id.py`'s module docstring records why the alternative is worse. The
   neighbours keep their ids and the superseded id stays spoken for in `taken`;
   all three halves are asserted.
-* **An id issued during a session does not survive a save and a reload.** The
-  issued id is opaque and random, nothing writes it to a file, and the reload
-  derives a fresh one from content. Same cause, other direction.
+* ~~**An id issued during a session does not survive a save and a reload.**~~
+  It does now, within the session: the issuer records the ids each section
+  file was saved with and gives them back when this session loads those same
+  bytes (`TraceIDIssuer.recordSaved`, hub #52). Across sessions it still does
+  not, because nothing writes the id to the file.
 
 TWO ROWS ARE RESERVED BY DESIGN AND ARE NOT GUESSED AT
 ---------------------------------------------------------------
@@ -185,21 +187,20 @@ CARRY_TABLE = (
         reason="",
     ),
     dict(
-        row="an id issued in-session does not survive a save and a reload "
-            "(inherent while ids are not saved)",
+        row="an id issued in-session survives a save and a reload in the "
+            "same session (hub #52)",
         entry_point="Section.addTrace + Section.save + Series.loadSection",
-        verdict="known and intended while ids are not saved; the second red "
-                "test that saving ids flips",
-        tests=("test_an_id_issued_in_session_does_not_survive_a_save_and_reload",),
+        verdict="holds within the session; across sessions only saving ids "
+                "would keep it",
+        tests=("test_an_id_issued_in_session_survives_a_save_and_reload",),
         reason="",
     ),
     dict(
-        row="two byte-identical rows in one contour: deleting the first transfers "
-            "the survivor's id",
+        row="two byte-identical rows in one contour: deleting the first keeps "
+            "the survivor's own id (hub #52)",
         entry_point="Section.addTrace + Section.removeTrace + save + reload",
-        verdict="inherent to any content-derived scheme over indistinguishable "
-                "rows; reproduced end to end here",
-        tests=("test_deleting_one_of_two_identical_rows_transfers_the_survivors_id",),
+        verdict="holds within the session",
+        tests=("test_deleting_one_of_two_identical_rows_keeps_the_survivors_id",),
         reason="",
     ),
     dict(
@@ -1079,19 +1080,15 @@ def test_an_edit_then_save_then_reload_moves_only_the_edited_traces_id(
     )
 
 
-def test_an_id_issued_in_session_does_not_survive_a_save_and_reload(real_series):
-    """KNOWN AND INTENDED while ids are not saved. Saving ids turns this over.
+def test_an_id_issued_in_session_survives_a_save_and_reload(real_series):
+    """Turned over by hub #52: the id survives within the session.
 
     A trace created during a session is handed an opaque RANDOM id, because
     identity has to survive an edit and a content hash does not
     (`trace_id.py`'s "two schemes" section). Nothing writes that id to the
-    section file, so the reload finds a row it has never seen and DERIVES one
-    from its content -- a different id, and the issued one is orphaned.
-
-    This is the mirror image of the edit case and the same cause: while ids are
-    not saved, the only thing that crosses a save is the row's content. Both
-    stop being true the moment a keyed row carries the id, which is why both
-    are here.
+    section file, but the issuer records the ids the file was saved with and
+    gives them back when the session loads those same bytes, so the reload
+    holds the issued id rather than one derived from content.
     """
     snum, section = _aWorkingSection(real_series)
     newcomer = _newTrace("harness_persistence_probe")
@@ -1103,39 +1100,23 @@ def test_an_id_issued_in_session_does_not_survive_a_save_and_reload(real_series)
     reloaded = real_series.loadSection(snum)
     derived = _idsByPosition(reloaded)[("harness_persistence_probe", 0)]
 
-    assert derived is not None and len(derived) == TRACE_ID_LENGTH
-    assert derived != issued, (
-        "an id issued during the session survived a save and a reload. "
-        "Nothing persists it today, so this can only mean the writer now "
-        "carries the id. Turn this pin over."
-    )
-    assert issued in real_series.trace_id_issuer.taken, (
-        "the issued id was released when the reload replaced it"
+    assert derived == issued, (
+        "an id issued during the session did not survive a save and a "
+        "reload: the issuer did not give the saved file its ids back"
     )
 
 
-def test_deleting_one_of_two_identical_rows_transfers_the_survivors_id(
+def test_deleting_one_of_two_identical_rows_keeps_the_survivors_id(
     real_series,
 ):
-    """Deleting one of two identical rows hands the survivor the first id.
+    """Deleting one of two identical rows leaves the survivor its own id.
 
-    This follows from `deriveForSection`'s occurrence counter, and it is
-    reproduced here rather than only listed because it is reachable end to
-    end: add a
-    byte-identical twin, save, reload (the twin now holds the second recorded
-    id), delete the FIRST of the pair, save, reload -- and the survivor is
-    handed the FIRST id while its own is orphaned.
-
-    No duplicate is ever minted, which is the property that keeps this
-    informational rather than a defect: within one `deriveForSection` call the
-    occurrence counter strictly increments per key, so two live rows can never
-    draw the same list position. Asserted below.
-
-    Inherent to any content-derived scheme over genuinely indistinguishable
-    rows, and not fixable while ids are not saved: the two rows are the same
-    bytes, so the derivation has nothing to tell them apart with except the
-    order they appear in. A persisted id is what distinguishes them, which puts
-    this on the same list as the two tests above.
+    Turned over by hub #52. Derivation alone tells two byte-identical rows
+    apart only by the order they appear in, so deleting the first of a pair,
+    saving and reloading used to hand the survivor the FIRST id. The issuer
+    now gives a file this session saved the ids it was saved with, so the
+    survivor keeps its own id within the session, and the deleted trace's id
+    is orphaned. No two live rows ever share an id; asserted below.
     """
     snum, section = _aWorkingSection(real_series)
     cname = sorted(section.contours, key=str)[0]
@@ -1165,18 +1146,16 @@ def test_deleting_one_of_two_identical_rows_transfers_the_survivors_id(
         for trace in section.contours[cname].getTraces()
     ]
     assert len(survivors) == len(pair) - 1
-    assert survivors[0] == first_id, (
-        "the survivor did not receive the deleted row's id. That would mean "
-        "the derivation now distinguishes two byte-identical rows by something "
-        f"other than occurrence order: expected {first_id}, got {survivors[0]}"
+    assert survivors[0] == second_id, (
+        "the survivor did not keep its own id across the save and reload: "
+        f"expected {second_id}, got {survivors[0]}"
     )
-    assert second_id in real_series.trace_id_issuer.taken, (
-        "the transferred-away id was released instead of orphaned"
+    assert first_id in real_series.trace_id_issuer.taken, (
+        "the deleted trace's id was released instead of orphaned"
     )
-    assert second_id not in set(_idsByPosition(section).values()), (
-        "the id the survivor used to hold is still live somewhere, so nothing "
-        "was transferred and this test is measuring the wrong thing"
-    )
+    live = list(_idsByPosition(section).values())
+    assert first_id not in live, "the deleted trace's id is still live"
+    assert len(live) == len(set(live)), "two live rows share an id"
 
 
 ## --------------------------------------------------------------------------
