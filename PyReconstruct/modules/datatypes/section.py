@@ -14,6 +14,7 @@ from .trace import Trace, normalizeObjectName
 from .flag import Flag, LegacyFlagIDs
 from .transform import Transform
 from .log import LogSetPair
+from .trace_id import sectionFileDigest
 
 from PyReconstruct.modules.calc import (
     getDistanceFromTrace,
@@ -607,6 +608,11 @@ class Section():
     ## on a bare `__new__` instance for the same reason the two defaults above
     ## exist.
     _loaded_trace_ids = None
+    ## True only when every trace's id was given back from the ids this
+    ## session saved the file with (`TraceIDIssuer.restoreForSection`). A
+    ## derived id tells identical traces apart only by row order, so it is
+    ## not proof of which trace a clean-up row named.
+    trace_ids_trusted = False
 
     def __init__(self, n : int, series):
         """Load the section file.
@@ -638,7 +644,8 @@ class Section():
         self.traces_group_hide = []  # traces to hide by group viz
 
         with open(self.filepath, "rb") as f:
-            section_data = fast_loads(f.read())
+            raw = f.read()
+        section_data = fast_loads(raw)
         
         ## `stored_ids` collects the ids the section file's own keyed rows
         ## assert. Empty for every positional file, which is every file written
@@ -685,23 +692,39 @@ class Section():
         ## the adoption that followed would report every row in the file as
         ## clashing with itself.
         issuer = getattr(series, "trace_id_issuer", None)
-        ## The issuer is handed plain ids: the fill-mode spelling riding in the
-        ## record is the unpack path's business (`reattachTraceIDs`) and means
-        ## nothing to an id index.
-        adopted_ids = (
-            issuer.adoptForSection(
-                n,
-                section_data["contours"],
-                {key: record.trace_id for key, record in stored_ids.items()},
-            )
-            if issuer is not None else {}
-        )
-        derived_ids = (
-            issuer.deriveForSection(
-                n, section_data["contours"], skip=adopted_ids
+        ## Before both: a file this session wrote gets back the ids its rows
+        ## were saved with (`TraceIDIssuer.recordSaved`), so a save and a load
+        ## in between do not move any trace's id. Every row is in it or none.
+        restored_ids = (
+            issuer.restoreForSection(
+                n, sectionFileDigest(raw), section_data["contours"]
             )
             if issuer is not None else None
         )
+        del raw
+        self.trace_ids_trusted = restored_ids is not None
+        ## The issuer is handed plain ids: the fill-mode spelling riding in the
+        ## record is the unpack path's business (`reattachTraceIDs`) and means
+        ## nothing to an id index.
+        adopted_ids : dict
+        derived_ids : Union[dict, None]
+        if restored_ids is not None:
+            adopted_ids, derived_ids = restored_ids, {}
+        else:
+            adopted_ids = (
+                issuer.adoptForSection(
+                    n,
+                    section_data["contours"],
+                    {key: record.trace_id for key, record in stored_ids.items()},
+                )
+                if issuer is not None else {}
+            )
+            derived_ids = (
+                issuer.deriveForSection(
+                    n, section_data["contours"], skip=adopted_ids
+                )
+                if issuer is not None else None
+            )
         self._loaded_trace_ids = {} if derived_ids is not None else None
 
         for name in section_data["contours"]:
@@ -1270,6 +1293,38 @@ class Section():
             for trace, row in self._column_rows.items()
         }
 
+    def traceID(self, trace : Trace):
+        """The trace's id in this session, or None if the store has none."""
+        row = self._column_rows.get(trace)
+        if row is None or self._columns is None:
+            return None
+        return self._columns.getID(row)
+
+    def _recordSavedTraceIDs(self, data : bytes):
+        """Tell the issuer which id each row of the file just written holds.
+
+        Rows in the order `getDict` writes them. If any trace has no id the
+        section is forgotten instead, and its next load derives as before.
+
+            Params:
+                data (bytes): the bytes just written to the section file
+        """
+        issuer = getattr(self.series, "trace_id_issuer", None)
+        if issuer is None:
+            return
+        ids = self._persistedTraceIDs()
+        by_contour = {}
+        for name in sorted(self.contours, key=str):
+            contour = self.contours[name]
+            if contour.isEmpty():
+                continue
+            row_ids = [ids.get(trace) for trace in contour]
+            if None in row_ids:
+                issuer.recordSaved(self.n, sectionFileDigest(data), None)
+                return
+            by_contour[name] = row_ids
+        issuer.recordSaved(self.n, sectionFileDigest(data), by_contour)
+
     def getDict(self, keyed_rows : bool = None) -> dict:
         """Convert section object into a dictionary.
 
@@ -1445,7 +1500,8 @@ class Section():
             with open(tmp_fp, "wb") as f:
                 # internal hidden working file -- write compact bytes to cut
                 # serialization cost and the bytes re-read on every saveJser
-                f.write(fast_dumps(d))
+                data = fast_dumps(d)
+                f.write(data)
             # a save fires on scroll / section switch; retry a transiently-locked
             # replace (Windows AV/indexer/sync) so it doesn't fail spuriously
             from PyReconstruct.modules.backend.func.atomic_io import replace_with_retry
@@ -1503,6 +1559,9 @@ class Section():
         # `test_a_rebuild_that_cannot_be_built_leaves_the_section_usable`
         # pin the two halves.
         self._rebuildColumnarStoreForSave()
+
+        # before the hook below: a field copy it reloads gets these same ids
+        self._recordSavedTraceIDs(data)
 
         # inside a pass over the section files, the field refreshes its own
         # copies of this section from the file now (Series.passWroteSection)
