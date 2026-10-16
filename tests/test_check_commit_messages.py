@@ -1,6 +1,6 @@
 """Behavior of the commit message check that runs on every push to main.
 
-The check lives in ``scripts/check_commit_messages.py`` and runs from
+The check is in ``scripts/check_commit_messages.py`` and runs from
 ``.github/workflows/main-message-watch.yml``. It only reports, so a mistake costs
 nobody a merge, but a check that fires on every ordinary squash subject is
 noise, and noise gets ignored. The cases below pin both sides: each rule fires
@@ -8,7 +8,7 @@ on the message it is for, and an ordinary squash message passes.
 
 The rules are a copy of the pre-commit check's. Set MESSAGE_RULES_SOURCE to the
 path of that check's script to compare the two; without it, that test skips.
-The names the rules look for come from the script, so this file does not carry
+The names the rules look for come from the script, so this file does not contain
 them either.
 
 Loaded by file path, like the other CI scripts in ``scripts/``.
@@ -37,7 +37,7 @@ MODEL = check.NAME_WORDS[2]
 VENDOR = check.VENDOR
 
 ATTRIBUTION = "has an attribution trailer, a session line or a generated-with line"
-NAME = "names a tool or process"
+NAME = "has a tool or process name"
 
 ORDINARY = (
     "fix(undo): keep a traceless imported host on a section redo (#914)\n\n"
@@ -74,7 +74,7 @@ def test_the_pr_number_github_adds_is_not_counted_in_the_subject():
         ("fix: a thing -- and more", "has an em dash or a spaced double hyphen"),
         ("fix: a thing\n\n" + "a" * 701, "message is 715 characters; the cap is 700"),
         ("fix: a thing\n\nThis was his call.",
-         "names the owner in the third person ('his call')"),
+         "refers to the owner in the third person ('his call')"),
         ("fix: a thing\n\nLet us delve into it.", "has a stock phrase ('delve')"),
     ],
 )
@@ -82,14 +82,17 @@ def test_each_rule_fires_on_its_message(message, expected):
     assert expected in check.problems_in(message)
 
 
-# The 700 cap counts the whole message, subject and body, as the pre-commit
-# check does.
+# The 700 cap counts the subject and the body together, as the pre-commit check
+# does. The " (#123)" GitHub adds to a squash subject counts too.
 CAP_CASES = [
     ("fix: short\n\n" + "a" * 688, None),
     ("fix: short\n\n" + "a" * 689, "message is 701 characters; the cap is 700"),
     ("fix: short\n\n" + "a" * 690, "message is 702 characters; the cap is 700"),
     ("fix: " + "s" * 65 + "\n\n" + "a" * 628, None),
     ("fix: " + "s" * 65 + "\n\n" + "a" * 630, "message is 702 characters; the cap is 700"),
+    ("fix: short (#914)\n\n" + "a" * 681, None),
+    ("fix: short (#914)\n\n" + "a" * 682, "message is 701 characters; the cap is 700"),
+    ("fix: short (#914)\n\n" + "a" * 688, "message is 707 characters; the cap is 700"),
 ]
 
 
@@ -98,12 +101,10 @@ def test_the_cap_counts_the_subject_and_the_body(message, expected):
     assert check.problems_in(message) == ([expected] if expected else [])
 
 
-def test_the_pr_number_github_adds_is_not_counted_in_the_whole_message():
+def test_the_pr_number_github_adds_is_counted_in_the_700_cap():
     message = "fix: short (#914)\n\n" + "a" * 688
-    assert check.problems_in(message) == []
-    assert check.problems_in(message + "a") == [
-        "message is 701 characters; the cap is 700"
-    ]
+    assert len(message) == 707
+    assert check.problems_in(message) == ["message is 707 characters; the cap is 700"]
 
 
 def test_a_name_inside_a_longer_word_passes():
@@ -170,14 +171,23 @@ def test_the_copy_has_the_same_patterns_and_caps(source_check):
     assert check.TEXT_MAX == source_check.PUBLIC_TEXT_MAX
 
 
-@pytest.mark.parametrize("message", PROBES)
-def test_the_copy_refuses_what_the_source_refuses(source_check, message):
+def source_refuses(source_check, message):
     try:
         source_check.scan_message(message, True, subject=True)
-        refused = False
     except SystemExit:
-        refused = True
-    assert bool(check.problems_in(message)) == refused
+        return True
+    return False
+
+
+@pytest.mark.parametrize("message", PROBES)
+def test_the_copy_refuses_what_the_source_refuses(source_check, message):
+    assert bool(check.problems_in(message)) == source_refuses(source_check, message)
+
+
+@pytest.mark.parametrize("message, expected", CAP_CASES)
+def test_the_copy_and_the_source_agree_on_the_700_cap(source_check, message, expected):
+    assert source_refuses(source_check, message) == (expected is not None)
+    assert bool(check.problems_in(message)) == (expected is not None)
 
 
 # ---- every commit the push adds ---------------------------------------------

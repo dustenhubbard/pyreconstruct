@@ -30,7 +30,7 @@
 # `merge-evidence` reports a second check of that name from the same app. The ruleset
 # rule that pins a check to one workflow file ("Require workflows to pass") is for
 # organization repos only, so it is not open to this one. The cover here: a PR that
-# changes anything under .github/workflows/ fails this check until it also carries the
+# changes anything under .github/workflows/ fails this check until it also has the
 # `workflows-reviewed` label (step below). Every check of the name counts, so a red
 # run here blocks whatever else reports the name. I apply that label myself, after
 # reading the workflow change.

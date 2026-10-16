@@ -18,8 +18,9 @@ opens an issue for each hit, and nothing is blocked or reverted.
 
 The rules are the ones the pre-commit check applies to this repository, copied
 here: the patterns, the 70 character cap on the subject, and the 700 character
-cap on the whole message, subject and body together. The one difference is that
-the " (#123)" GitHub adds to a squash subject is not counted in either cap.
+cap on the message, subject and body together. The one difference is that the
+" (#123)" GitHub adds to a squash subject is not counted in the subject cap. The
+700 cap counts the same text the pre-commit check counts, that suffix included.
 ``tests/test_check_commit_messages.py`` compares the copy with the original
 when it is given the original's path.
 
@@ -42,7 +43,7 @@ TEXT_MAX = 700
 BRANCH = "main"
 
 # The names the rules look for are split in two, so this file does not itself
-# carry them and trip the same rules where they run on file content.
+# contain them and trip the same rules where they run on file content.
 TOOL = "clau" + "de"
 VENDOR = "anthro" + "pic"
 NAME_WORDS = (TOOL, "fa" + "ble", "op" + "us", "adver" + "sarial")
@@ -108,12 +109,13 @@ def problems_in(message, extra=None):
     """Return a list of the rules ``message`` breaks, each as a short phrase."""
     subject, _ = split_message(message)
     title = PR_SUFFIX.sub("", subject)
-    length = len(message.strip()) - len(subject) + len(title)
+    # git ends a stored message with a newline the pre-commit check did not see.
+    length = len(message.strip())
     found = []
     if ATTRIBUTION.search(message):
         found.append("has an attribution trailer, a session line or a generated-with line")
     if NAMES.search(message):
-        found.append("names a tool or process")
+        found.append("has a tool or process name")
     if EM_DASH.search(message):
         found.append("has an em dash or a spaced double hyphen")
     if len(title) > SUBJECT_MAX:
@@ -122,7 +124,7 @@ def problems_in(message, extra=None):
         found.append(f"message is {length} characters; the cap is {TEXT_MAX}")
     m = THIRD_PERSON.search(message)
     if m:
-        found.append(f"names the owner in the third person ('{m.group(0)}')")
+        found.append(f"refers to the owner in the third person ('{m.group(0)}')")
     m = STOCK_PHRASES.search(message)
     if m:
         found.append(f"has a stock phrase ('{m.group(0)}')")

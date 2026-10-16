@@ -16,7 +16,8 @@
 # nothing. Nothing here approves, labels or merges anything.
 #
 # On a schedule, so a hold takes effect within about 15 minutes with nothing
-# else to do. To make it take effect at once, run it by hand after the change:
+# else to do. To apply a change to the hold at once, run this workflow after
+# changing the variable:
 #   gh workflow run merge-hold-sync.yml -R dustenhubbard/pyreconstruct
 #
 # Fork only: on any other repository the job is skipped.
