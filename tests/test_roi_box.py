@@ -1146,3 +1146,54 @@ def test_the_context_menu_mid_drag_ends_it_with_the_box_as_it_was(mw, qapp, monk
     QTest.mouseRelease(field, Qt.RightButton, Qt.NoModifier, end)
     _release(field, qapp, end)
     assert field.roiBox() == box_before
+
+
+def _undo_mid_drag(mw, qapp, redo):
+    """Start a drag, run Undo (or Redo), then move and release. The box must
+    keep its center and size and the preview must be gone."""
+    field = mw.field
+    box_before = field.roiBox()
+
+    end = _pix(field, 14.3, 24.4)
+    _press_and_drag(field, qapp, _pix(field, 13.2, 23.9), end)
+    assert field.roi_box_drag_end is not None
+
+    mw.undo(redo=redo)
+    qapp.processEvents()
+    assert field.roi_box_drag_start is None and field.roi_box_drag_end is None
+
+    _move(field, qapp, end + QPoint(10, 10))
+    _release(field, qapp, end + QPoint(10, 10))
+    assert field.roiBox() == box_before
+
+
+@pytest.mark.parametrize("redo", [False, True], ids=["undo", "redo"])
+def test_undo_with_the_trace_layer_hidden_mid_drag_ends_it(mw, qapp, redo):
+    """With H on, undoState returns before endPendingEvents, so Undo itself
+    has to end the drag."""
+    field = mw.field
+    field.deleteTraces([_trace(field.section, "d03p14")])
+    field.saveState()  # a section undo state
+    if redo:
+        mw.undo()
+    _turn_on(mw, qapp)
+    field.toggleHideAllTraces()
+    assert field.hide_trace_layer
+    assert field.series_states.canUndo(redo=redo)[1]
+
+    _undo_mid_drag(mw, qapp, redo)
+
+
+@pytest.mark.parametrize("redo", [False, True], ids=["undo", "redo"])
+def test_series_wide_undo_mid_drag_ends_it(mw, qapp, redo):
+    """A series-wide Undo goes through seriesUndo, which never reaches
+    endPendingEvents."""
+    field = mw.field
+    field.series_states.addState()
+    if redo:
+        mw.undo()
+    _turn_on(mw, qapp)
+    can_3D, can_2D, _ = field.series_states.canUndo(redo=redo)
+    assert can_3D and not can_2D
+
+    _undo_mid_drag(mw, qapp, redo)

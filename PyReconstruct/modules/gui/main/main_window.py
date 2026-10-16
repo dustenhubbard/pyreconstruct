@@ -4813,6 +4813,11 @@ class MainWindow(QMainWindow):
             Params:
                 redo (bool): True if redo should be performed
         """
+        # an ROI box drag ends here with the box as it was: with the trace
+        # layer hidden, and on a series-wide undo, nothing below reaches
+        # endPendingEvents, and the release would resize the box
+        self.field.cancelRoiBoxDrag()
+
         # An open scissors cut is settled before the save below, which would
         # otherwise back it out with no undo state and leave this Undo to take
         # the edit made before the cut. Undo finishes the cut, so the cut is
