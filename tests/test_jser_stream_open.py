@@ -17,7 +17,7 @@ What is pinned here:
 * the open never hands the whole file to the parser;
 * the collision question still comes before the hidden directory exists.
 * a folder set aside for the open and not put back is kept, and the error
-  and every later open name it.
+  names it.
 """
 
 import errno
@@ -699,17 +699,6 @@ def test_a_folder_holding_a_folder_is_not_replaced(tmp_path):
 # a set-aside folder that is not put back is kept and named
 # ---------------------------------------------------------------------------
 
-class Told(NullNotifier):
-    """Records every notice."""
-
-    def __init__(self):
-        self.told = []
-
-    def notify(self, message):
-        self.told.append(message)
-        return True
-
-
 def kept_folders(tmp_path):
     return sorted(p for p in tmp_path.iterdir() if p.name.endswith(".old"))
 
@@ -754,25 +743,6 @@ def test_a_failed_put_back_says_where_the_files_are(tmp_path, monkeypatch, how):
     assert (tmp_path / "probe.jser").read_bytes() == data
 
 
-def test_a_later_open_names_a_kept_folder_and_leaves_it(tmp_path, monkeypatch):
-    fp, hidden = with_prior_folder(tmp_path, as_bytes(shapes1(), "compact"))
-    failing_put_back(monkeypatch, errno.EACCES)
-    staged_moves(monkeypatch, 2, errno.EIO)
-    with pytest.raises((SeriesOpenError, OSError)):
-        Series.openJser(fp, progress=NullProgressReporter, notifier=NullNotifier())
-    monkeypatch.undo()
-    [kept] = kept_folders(tmp_path)
-
-    told = Told()
-    series = Series.openJser(fp, progress=NullProgressReporter, notifier=told)
-    series.close()
-
-    assert len(told.told) == 1 and str(kept) in told.told[0]
-    assert "does not use or delete" in told.told[0]
-    assert kept_folders(tmp_path) == [kept]
-    assert folder_bytes(kept) == PRIOR
-
-
 CRASH = """
 import os, sys
 from PyReconstruct.modules.backend.settings_store import (
@@ -794,7 +764,7 @@ os._exit(0)
 """
 
 
-def test_a_crash_mid_open_leaves_files_the_next_open_names(tmp_path):
+def test_a_crash_mid_open_leaves_the_old_files_set_aside(tmp_path):
     import subprocess
     import sys
 
@@ -806,12 +776,4 @@ def test_a_crash_mid_open_leaves_files_the_next_open_names(tmp_path):
     )
     assert done.returncode == 9, done.stderr
     [kept] = kept_folders(tmp_path)
-    assert folder_bytes(kept) == PRIOR
-
-    told = Told()
-    series = Series.openJser(fp, progress=NullProgressReporter, notifier=told)
-    series.close()
-
-    assert len(told.told) == 1 and str(kept) in told.told[0]
-    assert kept_folders(tmp_path) == [kept]
     assert folder_bytes(kept) == PRIOR

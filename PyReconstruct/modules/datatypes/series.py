@@ -521,41 +521,6 @@ def _notPutBack(fp : str, folder : str, aside : str, failure) -> SeriesOpenError
     )
 
 
-_SET_ASIDE_NAME = re.compile(r"\.opening-[0-9a-f]{8}\.old")
-
-
-def _noticeKeptFolders(sdir : str, notifier):
-    """Tell the user about set-aside folders an earlier open did not put back.
-
-    A failed put-back (see `_notPutBack`) or a crash during an open leaves
-    one beside the file. Nothing records which series it came from, so it
-    is never used or deleted here, only named.
-    """
-    try:
-        with os.scandir(sdir or os.curdir) as entries:
-            kept = sorted(
-                e.path for e in entries
-                if _SET_ASIDE_NAME.fullmatch(e.name)
-                and e.is_dir(follow_symlinks=False)
-            )
-    except OSError:
-        return  # the open itself reports a folder it cannot read
-    if not kept:
-        return
-    message = (
-        "PyReconstruct found files that an earlier open set aside and did "
-        "not put back:\n" + "\n".join(kept) + "\n\nPyReconstruct does not "
-        "use or delete these folders. Delete them when you no longer need "
-        "their files."
-    )
-    try:
-        shown = (notifier if notifier is not None else _default_notifier()).notify(message)
-    except Exception:
-        shown = False  # the notice must never stop the open
-    if not shown:
-        print(message)
-
-
 def _deleteSetAside(aside : str):
     """Delete a set-aside folder once the open that replaced it is done.
 
@@ -1036,7 +1001,6 @@ class Series():
         sname = sname[:sname.rfind(".")]
         hidden_dir = os.path.join(sdir, f".{sname}")
         ser_filepath = os.path.join(hidden_dir, f"{sname}.ser")
-        _noticeKeptFolders(sdir, notifier)
         if os.path.isdir(hidden_dir) and os.path.isfile(ser_filepath):
             # gather sections
             sections = {}
