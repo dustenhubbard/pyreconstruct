@@ -16,6 +16,8 @@ What is pinned here:
   read writes, on compact, pretty, renamed and colliding files;
 * the open never hands the whole file to the parser;
 * the collision question still comes before the hidden directory exists.
+* a folder set aside for the open and not put back is kept, and the error
+  and every later open name it.
 """
 
 import errno
@@ -691,3 +693,125 @@ def test_a_folder_holding_a_folder_is_not_replaced(tmp_path):
     assert {p.name: p.read_bytes() for p in hidden.iterdir() if p.is_file()} == PRIOR
     assert (hidden / "sub" / "kept").read_bytes() == b"kept"
     assert leftovers(tmp_path) == []
+
+
+# ---------------------------------------------------------------------------
+# a set-aside folder that is not put back is kept and named
+# ---------------------------------------------------------------------------
+
+class Told(NullNotifier):
+    """Records every notice."""
+
+    def __init__(self):
+        self.told = []
+
+    def notify(self, message):
+        self.told.append(message)
+        return True
+
+
+def kept_folders(tmp_path):
+    return sorted(p for p in tmp_path.iterdir() if p.name.endswith(".old"))
+
+
+def failing_put_back(monkeypatch, error):
+    """Make the rename of a set-aside folder back into place raise `error`."""
+    real = os.rename
+
+    def rename(src, dst):
+        if os.path.basename(src).endswith(".old"):
+            raise OSError(error, os.strerror(error))
+        return real(src, dst)
+
+    monkeypatch.setattr(os, "rename", rename)
+
+
+@pytest.mark.parametrize("how", ["failed move", "cancel"])
+def test_a_failed_put_back_says_where_the_files_are(tmp_path, monkeypatch, how):
+    data = as_bytes(shapes1(), "compact")
+    fp, hidden = with_prior_folder(tmp_path, data)
+    failing_put_back(monkeypatch, errno.EACCES)
+    progress = NullProgressReporter
+    if how == "failed move":
+        staged_moves(monkeypatch, 2, errno.EIO)
+    else:
+        CancelInBuild.hidden = hidden
+        progress = CancelInBuild
+
+    with pytest.raises(SeriesOpenError) as raised:
+        Series.openJser(fp, progress=progress, notifier=NullNotifier())
+
+    [kept] = kept_folders(tmp_path)
+    message = str(raised.value)
+    assert str(kept) in message and str(hidden) in message
+    assert "PyReconstruct also could not put the folder" in message
+    if how == "failed move":
+        assert raised.value.__context__.errno == errno.EIO
+    else:
+        assert message.startswith("The open of probe.jser was canceled.")
+    assert folder_bytes(kept) == PRIOR
+    assert not hidden.exists()
+    assert (tmp_path / "probe.jser").read_bytes() == data
+
+
+def test_a_later_open_names_a_kept_folder_and_leaves_it(tmp_path, monkeypatch):
+    fp, hidden = with_prior_folder(tmp_path, as_bytes(shapes1(), "compact"))
+    failing_put_back(monkeypatch, errno.EACCES)
+    staged_moves(monkeypatch, 2, errno.EIO)
+    with pytest.raises((SeriesOpenError, OSError)):
+        Series.openJser(fp, progress=NullProgressReporter, notifier=NullNotifier())
+    monkeypatch.undo()
+    [kept] = kept_folders(tmp_path)
+
+    told = Told()
+    series = Series.openJser(fp, progress=NullProgressReporter, notifier=told)
+    series.close()
+
+    assert len(told.told) == 1 and str(kept) in told.told[0]
+    assert "does not use or delete" in told.told[0]
+    assert kept_folders(tmp_path) == [kept]
+    assert folder_bytes(kept) == PRIOR
+
+
+CRASH = """
+import os, sys
+from PyReconstruct.modules.backend.settings_store import (
+    DictSettingsStore, set_default_settings_store,
+)
+set_default_settings_store(DictSettingsStore())
+from PyReconstruct.modules.backend.notifier import NullNotifier
+from PyReconstruct.modules.backend.progress import NullProgressReporter
+from PyReconstruct.modules.datatypes.series import Series
+
+real = os.replace
+def replace(src, dst):
+    if os.path.basename(os.path.dirname(src)).startswith(".opening-"):
+        os._exit(9)  # no finally runs, as when the process is killed
+    return real(src, dst)
+os.replace = replace
+Series.openJser(sys.argv[1], progress=NullProgressReporter, notifier=NullNotifier())
+os._exit(0)
+"""
+
+
+def test_a_crash_mid_open_leaves_files_the_next_open_names(tmp_path):
+    import subprocess
+    import sys
+
+    fp, hidden = with_prior_folder(tmp_path, as_bytes(shapes1(), "compact"))
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = {**os.environ, "PYTHONPATH": root, "QT_QPA_PLATFORM": "offscreen"}
+    done = subprocess.run(
+        [sys.executable, "-c", CRASH, fp], env=env, capture_output=True, timeout=120,
+    )
+    assert done.returncode == 9, done.stderr
+    [kept] = kept_folders(tmp_path)
+    assert folder_bytes(kept) == PRIOR
+
+    told = Told()
+    series = Series.openJser(fp, progress=NullProgressReporter, notifier=told)
+    series.close()
+
+    assert len(told.told) == 1 and str(kept) in told.told[0]
+    assert kept_folders(tmp_path) == [kept]
+    assert folder_bytes(kept) == PRIOR

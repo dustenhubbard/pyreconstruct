@@ -491,16 +491,69 @@ def _setAside(folder : str) -> str:
     return aside
 
 
-def _putBack(aside : str, folder : str):
+def _putBack(aside : str, folder : str) -> bool:
     """Rename a folder set aside by `_setAside` back to where it was.
 
-    Called while an exception may be on its way out, so a failure here is
-    swallowed: the files are still whole under the set-aside name.
+    Returns False if the rename fails. The files are then still whole under
+    the set-aside name, and openJser keeps that folder and says where it is
+    (see `_notPutBack`).
     """
     try:
         os.rename(aside, folder)
     except OSError:
-        pass
+        return False
+    return True
+
+
+def _notPutBack(fp : str, folder : str, aside : str, failure) -> SeriesOpenError:
+    """The error for an open that ended without putting `folder` back.
+
+    `failure` is the exception that stopped the open, or None for a cancel.
+    """
+    name = os.path.basename(fp)
+    if failure is None:
+        first = f"The open of {name} was canceled."
+    else:
+        first = f"PyReconstruct could not open {name} ({failure})."
+    return SeriesOpenError(
+        f"{first}\n\nPyReconstruct also could not put the folder {folder} "
+        f"back. Its files are unchanged in:\n{aside}"
+    )
+
+
+_SET_ASIDE_NAME = re.compile(r"\.opening-[0-9a-f]{8}\.old")
+
+
+def _noticeKeptFolders(sdir : str, notifier):
+    """Tell the user about set-aside folders an earlier open did not put back.
+
+    A failed put-back (see `_notPutBack`) or a crash during an open leaves
+    one beside the file. Nothing records which series it came from, so it
+    is never used or deleted here, only named.
+    """
+    try:
+        with os.scandir(sdir or os.curdir) as entries:
+            kept = sorted(
+                e.path for e in entries
+                if _SET_ASIDE_NAME.fullmatch(e.name)
+                and e.is_dir(follow_symlinks=False)
+            )
+    except OSError:
+        return  # the open itself reports a folder it cannot read
+    if not kept:
+        return
+    message = (
+        "PyReconstruct found files that an earlier open set aside and did "
+        "not put back:\n" + "\n".join(kept) + "\n\nPyReconstruct does not "
+        "use or delete these folders. Delete them when you no longer need "
+        "their files."
+    )
+    try:
+        shown = (notifier if notifier is not None else _default_notifier()).notify(message)
+    except Exception:
+        shown = False  # the notice must never stop the open
+    if not shown:
+        print(message)
 
 
 def _deleteSetAside(aside : str):
@@ -983,6 +1036,7 @@ class Series():
         sname = sname[:sname.rfind(".")]
         hidden_dir = os.path.join(sdir, f".{sname}")
         ser_filepath = os.path.join(hidden_dir, f"{sname}.ser")
+        _noticeKeptFolders(sdir, notifier)
         if os.path.isdir(hidden_dir) and os.path.isfile(ser_filepath):
             # gather sections
             sections = {}
@@ -1037,6 +1091,7 @@ class Series():
         placed = False  # True once hidden_dir is the folder this open made
         aside = None  # the folder that was at hidden_dir, kept until the open is done
         opened = False  # True once the series is built
+        failure = None  # the exception that stopped the open, if one did
 
         # The .ser file is written LAST as the completion sentinel: both
         # recovery scans (the fast path above and the GUI's unsaved-work
@@ -1140,9 +1195,10 @@ class Series():
             # its own. Any other folder there is replaced, as it always was,
             # but not emptied in place: it is renamed aside whole, and only
             # deleted once the series is built. A failed move or build, or a
-            # cancel, puts it back (see the finally below), so at every point
-            # either its files or a complete new copy exist. The .ser moves
-            # last, as it was written last.
+            # cancel, renames it back (see the finally below), so at every
+            # point either its files or a complete new copy exist. If that
+            # rename fails, the set-aside folder is kept and the error names
+            # it. The .ser moves last, as it was written last.
             if os.path.isdir(hidden_dir) and any(
                 f.endswith(".ser") for f in os.listdir(hidden_dir)
             ):
@@ -1177,16 +1233,21 @@ class Series():
             series._repointBCProfile()
             opened = True
 
+        except BaseException as e:
+            failure = e
+            raise
+
         finally:
             # gone already on success; on a cancel or failure, what was unpacked
             shutil.rmtree(work_dir, ignore_errors=True)
+            kept = None  # a set-aside folder that could not be put back
             if not opened:
                 # a cancel or a failure: remove what this open made, and put
                 # back what it set aside
                 if placed:
                     shutil.rmtree(hidden_dir, ignore_errors=True)
-                if aside is not None:
-                    _putBack(aside, os.path.join(sdir, f".{sname}"))
+                if aside is not None and not _putBack(aside, os.path.join(sdir, f".{sname}")):
+                    kept = aside
             elif aside is not None:
                 _deleteSetAside(aside)
             source.close()
@@ -1197,6 +1258,10 @@ class Series():
             # fixes. Cancel returns pass through here too; finishing a
             # reporter twice is harmless.
             reporter.finish()
+            if kept is not None:
+                # replaces the cancel, or the error on its way out (kept as
+                # its context): the user has to learn where the files are
+                raise _notPutBack(fp, os.path.join(sdir, f".{sname}"), kept, failure)
 
         _sweepStaleSaveTemps(sdir, hidden_dir)
         return series
