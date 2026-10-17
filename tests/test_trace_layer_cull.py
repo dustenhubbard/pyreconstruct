@@ -149,7 +149,7 @@ def test_the_boxes_are_read_from_the_store(layer):
     trace = next(t for t in in_view if len(t.points) == 7)
     # move only the trace's row off the window, at the same point count
     section._columns.setCoordinates(
-        section._column_rows[trace], [(x + 1000, y) for x, y in trace.points]
+        section.traceRows()[trace], [(x + 1000, y) for x, y in trace.points]
     )
     _, in_view = _draw(layer, window)
     assert trace not in in_view

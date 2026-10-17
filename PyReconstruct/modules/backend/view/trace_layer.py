@@ -677,7 +677,7 @@ class TraceLayer():
                     (n + 1, 4) array of xmin, ymin, xmax, ymax at each index
                     (NaN for no points); the last index matches no trace
         """
-        rows = self.section._column_rows
+        rows = self.section.traceRows()
         # a row that is gone gets no points, so no trace's count matches it
         empty = np.empty((0, 2))
         arrays = [
