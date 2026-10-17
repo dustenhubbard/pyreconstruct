@@ -92,9 +92,9 @@ class TraceLayer():
         # None draws from the stored options
         self.selected_style_preview = None
         self._selected_pens = None
-        # {trace: (points list, point count, untransformed bounds)}, valid for
-        # one section at one columnar store generation (see _cullMask)
-        self._raw_bounds = {}
+        # the untransformed bounds of every trace on one section, valid for
+        # one columnar store generation (see _storeBounds and _cullMask)
+        self._raw_bounds = None
         self._raw_bounds_key = None
         # an offscreen render at k times the screen size sets these: every
         # width drawn in screen pixels is multiplied by pen_scale, and the
@@ -662,31 +662,40 @@ class TraceLayer():
             tform = self.section.tform
         return traceInRoiBox(trace, tform, self.roi_box)
 
-    def _rawBounds(self, trace : Trace) -> tuple:
-        """The bounds of a trace's own points, before any transform, cached.
+    def _storeBounds(self, columns) -> tuple:
+        """The bounds of every trace in the section's store, before any transform.
 
-        An entry is reused only while the trace still holds the same points
-        list at the same length; _cullMask drops every entry when the
-        section's store generation moves, which covers points edited in place.
+        Read in one pass from the store's float64 rows, so no trace's list of
+        points is converted again. The section writes a trace's row whenever
+        its points change and checks the row against the trace, and undo,
+        redo and resync build every row again from the traces.
 
             Params:
-                trace (Trace): the trace
+                columns (SectionColumns): the section's store
             Returns:
-                (tuple): xmin, ymin, xmax, ymax (all NaN for a trace with no points)
+                (tuple): {trace: index}, the point count at each index and an
+                    (n + 1, 4) array of xmin, ymin, xmax, ymax at each index
+                    (NaN for no points); the last index matches no trace
         """
-        points = trace.points
-        entry = self._raw_bounds.get(trace)
-        if entry is not None and entry[0] is points and entry[1] == len(points):
-            return entry[2]
-        if points:
-            arr = np.asarray(points, dtype=float)
-            xmin, ymin = arr.min(axis=0)
-            xmax, ymax = arr.max(axis=0)
-            bounds = (xmin, ymin, xmax, ymax)
-        else:
-            bounds = (np.nan,) * 4
-        self._raw_bounds[trace] = (points, len(points), bounds)
-        return bounds
+        rows = self.section.traceRows()
+        # a row that is gone gets no points, so no trace's count matches it
+        empty = np.empty((0, 2))
+        arrays = [
+            columns.getCoordinates(row) if columns.isLive(row) else empty
+            for row in rows.values()
+        ]
+        n = len(arrays)
+        counts = np.full(n + 1, -1, dtype=np.int64)
+        counts[:n] = np.fromiter(map(len, arrays), dtype=np.int64, count=n)
+        bounds = np.full((n + 1, 4), np.nan)
+        nonempty = np.flatnonzero(counts[:n] > 0)
+        if len(nonempty):
+            # each row's bounds, from where its points start in one array
+            starts = (np.cumsum(counts[:n]) - counts[:n])[nonempty]
+            pts = np.concatenate(arrays)
+            bounds[nonempty, :2] = np.minimum.reduceat(pts, starts)
+            bounds[nonempty, 2:] = np.maximum.reduceat(pts, starts)
+        return dict(zip(rows, range(n))), counts, bounds
 
     def _cullMask(self, trace_list : list, tform : Transform):
         """Which traces could reach the screen, without transforming their points.
@@ -713,7 +722,7 @@ class TraceLayer():
             return None
         key = (self.section, columns.generation)
         if key != self._raw_bounds_key:
-            self._raw_bounds = {}
+            self._raw_bounds = self._storeBounds(columns)
             self._raw_bounds_key = key
 
         window_x, window_y, window_w, window_h = tuple(self.series.window)
@@ -723,8 +732,15 @@ class TraceLayer():
         margin_x = 2 * window_w / pixmap_w
         margin_y = 2 * window_h / pixmap_h
 
-        b = np.array([self._rawBounds(trace) for trace in trace_list])
-        n = len(b)
+        index, counts, bounds = self._raw_bounds
+        n = len(trace_list)
+        at = np.fromiter((index.get(t, -1) for t in trace_list), dtype=np.int64, count=n)
+        lengths = np.fromiter((len(t.points) for t in trace_list), dtype=np.int64, count=n)
+        b = bounds[at]
+        # a trace with no row, or with another point count than its row,
+        # takes its bounds from its own points
+        for i in np.flatnonzero(counts[at] != lengths):
+            b[i] = pointBounds(trace_list[i].points)
         # the four corners of every box, one block of n per corner
         mapped = tform.mapPointsArray(np.concatenate((
             b[:, (0, 1)], b[:, (2, 1)], b[:, (0, 3)], b[:, (2, 3)]
@@ -1158,6 +1174,14 @@ def labelIds(names) -> dict:
             (dict): name to label
     """
     return {name: i for i, name in enumerate(sorted(set(names)), start=1)}
+
+def pointBounds(points) -> tuple:
+    """The bounds of a list of points: xmin, ymin, xmax, ymax (NaN for none)."""
+    if not points:
+        return (np.nan,) * 4
+    arr = np.asarray(points, dtype=float)
+    return (*arr.min(axis=0), *arr.max(axis=0))
+
 
 def traceInRoiBox(trace : Trace, tform : Transform, roi_box : tuple) -> bool:
     """Whether a trace is shown and can be picked under an ROI box.

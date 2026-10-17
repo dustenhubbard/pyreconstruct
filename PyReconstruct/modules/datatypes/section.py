@@ -1293,6 +1293,14 @@ class Section():
             for trace, row in self._column_rows.items()
         }
 
+    def traceRows(self) -> dict:
+        """`{Trace: row}` for every trace the store holds a row for.
+
+        The store's own map, not a copy: read it, never write it. Empty when
+        the section has no store.
+        """
+        return self._column_rows
+
     def traceID(self, trace : Trace):
         """The trace's id in this session, or None if the store has none."""
         row = self._column_rows.get(trace)
