@@ -1,18 +1,19 @@
 import math
 from collections import defaultdict
-from itertools import starmap
+from itertools import chain, starmap
 
 import numpy as np
 
 from PySide6.QtWidgets import QLabel
-from PySide6.QtCore import Qt, QPoint, QLine
+from PySide6.QtCore import Qt, QPoint, QLine, QByteArray, QDataStream, QIODevice
 from PySide6.QtGui import (
     QPixmap,
     QPen,
     QColor,
     QPainter,
     QBrush,
-    QFont
+    QFont,
+    QPolygon
 )
 from PyReconstruct.modules.datatypes import (
     Series, 
@@ -151,10 +152,20 @@ class TraceLayer():
 
         if tform is None:
             tform = self.section.tform
-        pts = tform.mapPointsArray(trace.points)
+        return self._fieldToPixArray(tform.mapPointsArray(trace.points))
 
-        # apply the field-window to pixmap conversion
-        # (same math as fieldPointToPixmap, incl. round-half-even)
+    def _fieldToPixArray(self, pts : np.ndarray) -> np.ndarray:
+        """Convert (N, 2) field points to integer pixel points.
+
+        The same math as fieldPointToPixmap, round-half-even included. Every
+        step works point by point, so one call on many traces' points gives
+        each point the same pixel as a call on its own trace.
+
+            Params:
+                pts (np.ndarray): (N, 2) field points, transform applied
+            Returns:
+                (np.ndarray): (N, 2) array of integer pixel points
+        """
         window_x, window_y, window_w, window_h = tuple(self.series.window)
         pixmap_w, pixmap_h = tuple(self.pixmap_dim)
         mag = self.section.mag
@@ -321,7 +332,7 @@ class TraceLayer():
         
         return copied_traces
     
-    def _drawTrace(self, painter : QPainter, trace : Trace, tform : Transform, fill_opacity : float, color=None) -> bool:
+    def _drawTrace(self, painter : QPainter, trace : Trace, tform : Transform, fill_opacity : float, color=None, qpoints=None) -> bool:
         """Draw a trace on the current trace layer and return bool indicating if trace is in the current view.
 
             Params:
@@ -330,26 +341,30 @@ class TraceLayer():
                 tform (Transform): the section transform (hoisted out of the loop)
                 fill_opacity (float): the fill_opacity option (hoisted out of the loop)
                 color (bool): optionally force a color
+                qpoints (QPolygon): the trace in pixmap coordinates, already
+                    known to reach the screen (see _screenPolygons); None
+                    converts and tests the trace here
             Returns:
                 (bool) if the trace is within the current field window view
         """
-        ## Convert to screen coordinates (vectorized; no QPoints yet)
-        pix_pts = self.traceToPixArray(trace, tform)
+        if qpoints is None:
+            ## Convert to screen coordinates (vectorized; no QPoints yet)
+            pix_pts = self.traceToPixArray(trace, tform)
 
-        if not len(pix_pts):
-            print("EMPTY TRACE DETECTED")
-            return
+            if not len(pix_pts):
+                print("EMPTY TRACE DETECTED")
+                return
 
-        ## Get bounds and cull before allocating any QPoint/QPolygon
-        xmin, ymin = pix_pts.min(axis=0)
-        xmax, ymax = pix_pts.max(axis=0)
-        trace_bounds = xmin, ymin, xmax, ymax
-        screen_bounds = 0, 0, *self.pixmap_dim
+            ## Get bounds and cull before allocating any QPoint/QPolygon
+            xmin, ymin = pix_pts.min(axis=0)
+            xmax, ymax = pix_pts.max(axis=0)
+            trace_bounds = xmin, ymin, xmax, ymax
+            screen_bounds = 0, 0, *self.pixmap_dim
 
-        if not boundsOverlap(trace_bounds, screen_bounds):
-            return False
+            if not boundsOverlap(trace_bounds, screen_bounds):
+                return False
 
-        qpoints = qPointList(pix_pts)
+            qpoints = qPointList(pix_pts)
 
         ## Get color
         draw_color = color if color else trace.color
@@ -726,6 +741,78 @@ class TraceLayer():
             (lo[:, 1] > window_y + window_h + margin_y)
         )
 
+    def _screenPolygons(self, trace_list : list, tform : Transform):
+        """Convert the traces to pixmap coordinates in one pass.
+
+        The points of every trace are mapped and rounded together, each
+        trace's pixel bounds meet the screen together, and the traces that
+        reach it are read into QPolygons from one buffer, with no Python QPoint
+        per point. Each polygon holds the points traceToPixArray gives its
+        trace alone, so Qt draws the same pixels. The traces are still drawn
+        one at a time, in order: one path for many traces would change which
+        of two overlapping traces is on top and how transparent fills add up.
+
+            Params:
+                trace_list (list): the traces, in draw order
+                tform (Transform): the section transform
+            Returns:
+                (list): per trace, its QPolygon, False when it misses the
+                    screen, or None when it has no points (_drawTrace then
+                    reports it); None for the whole list when a point is too
+                    far out for Qt's 32-bit coordinates, and each trace then
+                    goes through _drawTrace on its own
+        """
+        n = len(trace_list)
+        result = [None] * n
+        counts = np.fromiter((len(t.points) for t in trace_list), dtype=np.int64, count=n)
+        nonempty = np.flatnonzero(counts)
+        if not len(nonempty):
+            return result
+
+        pts = np.array(list(chain.from_iterable(t.points for t in trace_list)), dtype=float)
+        pix = self._fieldToPixArray(tform.mapPointsArray(pts))
+        int32 = np.iinfo(np.int32)
+        if pix.min() < int32.min or pix.max() > int32.max:
+            return None
+
+        # each trace's pixel bounds, from where its points start in pix
+        starts = (np.cumsum(counts) - counts)[nonempty]
+        lo = np.minimum.reduceat(pix, starts)
+        hi = np.maximum.reduceat(pix, starts)
+        pixmap_w, pixmap_h = tuple(self.pixmap_dim)
+        on_screen = ~(
+            (hi[:, 0] < 0) | (lo[:, 0] > pixmap_w) |
+            (hi[:, 1] < 0) | (lo[:, 1] > pixmap_h)
+        )
+        for i in nonempty[~on_screen]:
+            result[i] = False
+        drawn = nonempty[on_screen]
+        if not len(drawn):
+            return result
+
+        # QDataStream's QPolygon: a big-endian 32-bit point count, then x and
+        # y for each point
+        drawn_counts = counts[drawn]
+        heads = np.cumsum(1 + 2 * drawn_counts) - (1 + 2 * drawn_counts)
+        buf = np.empty(len(drawn) + 2 * int(drawn_counts.sum()), dtype=">i4")
+        is_point = np.ones(len(buf), dtype=bool)
+        is_point[heads] = False
+        buf[heads] = drawn_counts
+        keep = np.zeros(n, dtype=bool)
+        keep[drawn] = True
+        buf[is_point] = pix[np.repeat(keep, counts)].reshape(-1)
+
+        # the stream reads from data, which must live as long as it does
+        data = QByteArray(buf.tobytes())
+        stream = QDataStream(data, QIODevice.ReadOnly)
+        for i in drawn:
+            polygon = QPolygon()
+            stream >> polygon
+            result[i] = polygon
+        if stream.status() != QDataStream.Status.Ok:
+            return None
+        return result
+
     def generateTraceLayer(
             self,
             pixmap_dim :
@@ -826,6 +913,7 @@ class TraceLayer():
         # skip traces whose bounds miss the window before any per-point work
         in_window = self._cullMask(trace_list, tform)
 
+        to_draw = []
         for i, trace in enumerate(trace_list if self.draw_traces else ()):
 
             if in_window is not None and not in_window[i]:
@@ -833,26 +921,39 @@ class TraceLayer():
 
             if self.trace_visibile_p(trace) and self.insideRoiBox(trace, tform):
 
-                color = None  # default to assigned color
+                to_draw.append(trace)
 
-                if focus_on:
+        # convert every trace to draw at once, then draw them in order
+        polygons = self._screenPolygons(to_draw, tform) if to_draw else None
+        if polygons is None:
+            polygons = [None] * len(to_draw)
 
-                    if trace.name == focus_on:
-                        color = (246, 249, 72)
-                    else:
-                        color = (42, 255, 128)
+        for trace, qpoints in zip(to_draw, polygons):
 
-                trace_in_view = self._drawTrace(
-                    painter,
-                    trace,
-                    tform,
-                    fill_opacity,
-                    color
-                )
+            if qpoints is False:
+                continue
 
-                if trace_in_view:
+            color = None  # default to assigned color
 
-                    self.traces_in_view.append(trace)
+            if focus_on:
+
+                if trace.name == focus_on:
+                    color = (246, 249, 72)
+                else:
+                    color = (42, 255, 128)
+
+            trace_in_view = self._drawTrace(
+                painter,
+                trace,
+                tform,
+                fill_opacity,
+                color,
+                qpoints=qpoints
+            )
+
+            if trace_in_view:
+
+                self.traces_in_view.append(trace)
 
         painter.end()
 
