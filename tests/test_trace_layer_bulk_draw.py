@@ -11,6 +11,7 @@ import random
 
 import pytest
 
+from PyReconstruct.modules.backend.settings_store import DictSettingsStore
 from PyReconstruct.modules.backend.view import trace_layer as trace_layer_module
 from PyReconstruct.modules.backend.view.trace_layer import TraceLayer
 from PyReconstruct.modules.datatypes import Trace, Transform
@@ -29,6 +30,14 @@ def _pixels(pixmap):
 
 @pytest.fixture
 def layer(qapp, real_series):
+    # the options set here live in the settings store, not the series; a
+    # store of this series' own keeps them from reaching later tests
+    real_series.setSettingsStore(DictSettingsStore())
+    yield _layer(real_series)
+    real_series.setSettingsStore(None)
+
+
+def _layer(real_series):
     section = real_series.loadSection(min(real_series.sections))
     real_series.setOption("show_ztraces", False)
     real_series.setOption("show_flags", "none")
