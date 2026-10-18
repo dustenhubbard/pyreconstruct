@@ -1,1 +1,0 @@
-- **Saving a large series is faster, the first save after opening it included.**

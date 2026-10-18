@@ -6,6 +6,30 @@ full release notes on GitHub (linked from the dialog).
 
 ## [Unreleased]
 
+## [1.25.0] - 2026-10-18
+
+#### New
+
+- **An ROI box shows only the traces in one area of the field.** Press `B`, or use View ▸ Toggle ROI box in the field menu.
+- **Customize how selected traces look** in Series ▸ Options ▸ View.
+- **Right-click the scale bar** to set its length for a figure or open its settings.
+- **Rename a series' images to match a zarr's image names** in Series ▸ Images ▸ Find/change image directory. The zarr itself is not changed.
+- **On macOS, PyReconstruct ejects its installer disk image** when you open the installed copy.
+
+#### Improved
+
+- **PyReconstruct has a new icon.**
+- **The scale bar resizes as you zoom,** in steps of 1, 2 and 5. It is thinner, and you can set its thickness in Series ▸ Options ▸ View.
+- **Large series open with far less memory and save faster.**
+- **The field redraws faster on dense sections, and changing sections is faster.**
+- **Convert to scaled images is faster.**
+- **Backup Settings has a checkbox for a backup folder per series.**
+- **Help ▸ Show What's new after each update** replaces Help ▸ Turn off What's new pop-up.
+
+#### Fixed
+
+- **33 fixes.** Most keep your work safe: opening a zarr series no longer moves or deletes the zarr scales on disk, undo and redo keep host links and alignments, and 3D surfaces of thin objects have far fewer holes, so their area and volume change. The full list is in the [changelog](https://github.com/dustenhubbard/PyReconstruct/blob/v1.25.0/CHANGELOG.md).
+
 ## [1.24.0] - 2026-10-08
 
 #### New
