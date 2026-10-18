@@ -1,0 +1,615 @@
+"""The local SQLite working store (hybrid_store.py), on its own.
+
+Nothing in PyReconstruct calls the store yet, so these drive it directly. The
+oracle is today's open: a store must hold, byte for byte, what
+`Series.openJser` writes into the hidden folder for the same file.
+
+What these pin:
+
+* the import holds what today's open writes, for every series in the repo,
+  every past file shape the reader takes, and the fields the July evaluation
+  left untested; it reads one section at a time and is one transaction;
+* a trace row comes back exactly, coordinates and types both;
+* the working layer is read before the saved tables, Save folds it in, and a
+  rewrite of the same content does not mark the store ahead;
+* one process at a time holds a store, a killed process lets go of it, and a
+  busy database is reported as busy, never as damage;
+* where a store lives, how it is named, and that a network folder is refused.
+"""
+import copy
+import json
+import os
+import shutil
+import sqlite3
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from PyReconstruct.modules.backend.progress import NullProgressReporter
+from PyReconstruct.modules.constants import fast_dumps
+from PyReconstruct.modules.constants.jser_format import KEYED_TRACE_ROW_KEYS
+from PyReconstruct.modules.datatypes import hybrid_store
+from PyReconstruct.modules.datatypes.flag import Flag
+from PyReconstruct.modules.datatypes.hybrid_store import HybridStore, packRow, unpackRow
+from PyReconstruct.modules.datatypes.series import Series
+from PyReconstruct.modules.datatypes.transform import Transform
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+PARITY = REPO_ROOT / "tests" / "fixtures" / "parity_series.jser"
+CLASS = REPO_ROOT / "dev" / "assets" / "checker" / "files" / "class_series.jser"
+SERIES_FILES = [
+    PARITY,
+    CLASS,
+    REPO_ROOT / "dev" / "assets" / "checker" / "files" / "shapes1.jser",
+    REPO_ROOT / "dev" / "assets" / "checker" / "files" / "shapes2.jser",
+]
+
+
+@pytest.fixture
+def store_root(tmp_path, monkeypatch):
+    root = tmp_path / "stores"
+    monkeypatch.setenv(hybrid_store.ENV_DIR, str(root))
+    return root
+
+
+def _copy(src, tmp_path, sub):
+    folder = tmp_path / sub
+    folder.mkdir(exist_ok=True)
+    dest = folder / Path(src).name
+    shutil.copyfile(src, dest)
+    return dest
+
+
+def _open(fp):
+    series = Series.openJser(str(fp), progress=NullProgressReporter)
+    series.setProgressReporter(NullProgressReporter)
+    return series
+
+
+def _today(src, tmp_path):
+    """What today's open writes into the hidden folder for src.
+
+    Returns ({section number: file bytes}, .ser bytes, log text).
+    """
+    series = _open(_copy(src, tmp_path, "today"))
+    try:
+        wdir = series.getwdir()
+        sections = {
+            snum: Path(wdir, fname).read_bytes() for snum, fname in series.sections.items()
+        }
+        ser = Path(series.filepath).read_bytes()
+        log = Path(wdir, "existing_log.csv").read_text(encoding="utf-8")
+    finally:
+        series.close()
+    return sections, ser, log
+
+
+def _import(fp, store=None):
+    """Import the .jser at fp into its store, through today's reader."""
+    if store is None:
+        store = HybridStore.forJser(str(fp))
+    source, collisions = Series._readJserForOpen(str(fp), None)
+    try:
+        store.importJser(str(fp), source, collisions)
+    finally:
+        source.close()
+    return store
+
+
+def _held(store):
+    """(section bytes by number, .ser bytes, log text), as the store gives them back."""
+    sections = {snum: bytes(fast_dumps(store.readSection(snum))) for snum in store.sectionNumbers()}
+    return sections, bytes(fast_dumps(store.seriesData())), store.logText()
+
+
+def _assert_holds_what_today_writes(src, tmp_path):
+    expected = _today(src, tmp_path)
+    fp = _copy(src, tmp_path, "store")
+    before = fp.read_bytes()
+    store = _import(fp)
+    try:
+        assert _held(store) == expected
+        assert store.isImported()
+        assert store.matchesJser(str(fp))
+    finally:
+        store.close()
+    # nothing is written beside the .jser, and the .jser is untouched
+    assert sorted(os.listdir(fp.parent)) == [fp.name]
+    assert fp.read_bytes() == before
+    return store
+
+
+# ---------------------------------------------------------------------------
+# the import holds what today's open writes
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("src", SERIES_FILES, ids=lambda p: p.name)
+def test_the_import_holds_what_today_s_open_writes(src, tmp_path, store_root):
+    _assert_holds_what_today_writes(src, tmp_path)
+
+
+def legacy_series(folder) -> Path:
+    """A .jser in the oldest shapes the reader still takes, from the parity fixture."""
+    doc = json.loads(PARITY.read_bytes())
+    sec = next(s for s in doc["sections"] if s and s["contours"])
+    base = next(iter(sec["contours"].values()))[0]
+
+    def row(**changes):
+        r = copy.deepcopy(base)
+        for i, v in changes.items():
+            r[int(i[1:])] = v
+        return r
+
+    sec["brightness"], sec["contrast"] = 150, 1.7      # the legacy pair
+    sec.pop("brightness_contrast_profiles", None)
+    sec["tforms"]["no-alignment"] = [1, 0, 0, 0, 1, 0]
+    contours = {"zzz first": [row()]}                    # unsorted, and a name to normalize
+    contours.update(sec["contours"])
+    contours["nine_field"] = [row() + ["extra"]]
+    contours["old_mode"] = [row(f6="none", f7=["b", "a"])]
+    contours["one_point"] = [row(f0=[1.0], f1=[2.0])]
+    contours["two_point"] = [row(f0=[1.0, 2.0], f1=[3.0, 4.0], f3=True)]
+    contours["int_coords"] = [row(f0=[1, 2, 3], f1=[4, 5, 6])]
+    contours["keyed_row"] = [dict(zip(KEYED_TRACE_ROW_KEYS[1:], row()))]
+    sec["contours"] = contours
+    sec["flags"] = [
+        ["five", 1.0, 2.0, [255, 0, 0], []],
+        ["six", 3.0, 4.0, [0, 255, 0], [], True],
+    ]
+    # what the series knows about the renamed object follows the new name
+    doc["series"]["obj_attrs"] = {"zzz first": {"comment": "renamed on open"}}
+    doc["series"]["object_groups"] = {"group one": ["zzz first"]}
+    flat = {"legacy.ser": doc["series"]}                 # the flat top level, no log
+    for i, s in enumerate(doc["sections"]):
+        if s:
+            flat[f"legacy.{i}"] = s
+    fp = Path(folder) / "legacy.jser"
+    fp.write_text(json.dumps(flat))
+    return fp
+
+
+def full_field_series(folder) -> Path:
+    """class_series with every field the July evaluation listed as untested."""
+    fp = Path(folder) / "fields.jser"
+    shutil.copyfile(CLASS, fp)
+    series = _open(fp)
+    try:
+        names = sorted(series.data.objects)[:3]
+        series.addUserCol("Status", ["done", "to do"], log_event=False)
+        series.setUserColAttr(names[0], "Status", "done")
+        series.setObjHosts([names[0]], [names[1]])
+        series.setAttr(names[0], "3D_mode", "surface")
+        series.setAttr(names[1], "comment", "a comment, with a comma")
+        series.object_groups.add("group one", names[2])
+        for snum, section in series.enumerateSections(show_progress=False):
+            section.tforms["align2"] = Transform([1, 0, 1.5, 0, 1, -2.0])
+            if snum == min(series.sections):
+                flag = Flag("look here", 1.0, 2.0, snum, (255, 0, 0))
+                flag.addComment("tester", "a note, with a comma")
+                section.addFlag(flag, log_event=False)
+            section.save()
+        series.addLog(names[0], None, "a logged event")
+        series.save()
+        series.saveJser()
+    finally:
+        series.close()
+    doc = json.loads(fp.read_bytes())
+    s = doc["series"]
+    assert s["user_columns"] and s["host_tree"] and s["object_groups"]
+    assert any(sec and sec["flags"] for sec in doc["sections"])
+    return fp
+
+
+def test_every_past_shape_imports_as_it_opens_today(tmp_path, store_root):
+    folder = tmp_path / "src"
+    folder.mkdir()
+    src = legacy_series(folder)
+    _assert_holds_what_today_writes(src, tmp_path)
+    store = HybridStore.forJser(str(tmp_path / "store" / src.name))
+    try:
+        series_data = store.seriesData()
+        assert series_data["obj_attrs"]["zzz_first"]["comment"] == "renamed on open"
+        assert "zzz first" not in series_data["obj_attrs"]
+    finally:
+        store.close()
+
+
+def test_the_fields_july_left_untested_import_as_they_open_today(tmp_path, store_root):
+    folder = tmp_path / "src"
+    folder.mkdir()
+    src = full_field_series(folder)
+    _assert_holds_what_today_writes(src, tmp_path)
+    store = HybridStore.forJser(str(tmp_path / "store" / src.name))
+    try:
+        assert "Status" in store.seriesData()["user_columns"]
+        assert "a logged event" in store.logText()
+    finally:
+        store.close()
+
+
+def test_the_import_reads_the_jser_one_section_at_a_time(tmp_path, store_root, monkeypatch):
+    import gc
+    import weakref
+    from PyReconstruct.modules.datatypes import series as series_module
+
+    # as today's Save writes it: the streamed read takes that layout
+    resaved = _copy(CLASS, tmp_path, "resaved")
+    series = _open(resaved)
+    try:
+        series.saveJser()
+    finally:
+        series.close()
+
+    def whole(fp):
+        raise AssertionError("the import read the whole file")
+    monkeypatch.setattr(Series, "_readWholeJser", staticmethod(whole))
+
+    class Held(dict):
+        pass
+
+    real = series_module._StreamedJser.sections
+    last = []
+
+    def one_at_a_time(self):
+        for snum, section_data, found in real(self):
+            if last:
+                gc.collect()
+                assert last[-1]() is None, f"section {snum} decoded while the last is held"
+            held = Held(section_data)
+            del section_data
+            last.append(weakref.ref(held))
+            yield snum, held, found
+            del held
+    monkeypatch.setattr(series_module._StreamedJser, "sections", one_at_a_time)
+
+    store = _import(_copy(resaved, tmp_path, "store"))
+    try:
+        assert len(last) == len(store.sectionNumbers()) > 1
+        assert store.isImported()
+    finally:
+        store.close()
+
+
+class _FailsPartway:
+    """A reader source whose second section cannot be read."""
+
+    def __init__(self, source):
+        self.source = source
+
+    def __getattr__(self, name):
+        return getattr(self.source, name)
+
+    def sections(self):
+        for i, item in enumerate(self.source.sections()):
+            if i == 1:
+                raise RuntimeError("the file changed on disk")
+            yield item
+
+
+@pytest.mark.parametrize("first", [True, False], ids=["first-import", "re-import"])
+def test_an_import_that_fails_partway_leaves_the_store_as_it_was(first, tmp_path, store_root):
+    fp = _copy(CLASS, tmp_path, "store")
+    store = HybridStore.forJser(str(fp))
+    try:
+        if not first:
+            _import(fp, store)
+        before = _held(store) if not first else None
+        source, collisions = Series._readJserForOpen(str(fp), None)
+        try:
+            with pytest.raises(RuntimeError, match="changed on disk"):
+                store.importJser(str(fp), _FailsPartway(source), collisions)
+        finally:
+            source.close()
+        if first:
+            assert not store.isImported()
+            assert store.sectionNumbers() == []
+            assert store.con.execute("SELECT COUNT(*) FROM trace").fetchone() == (0,)
+        else:
+            assert store.isImported()
+            assert _held(store) == before
+    finally:
+        store.close()
+
+
+def test_a_second_import_replaces_everything_and_drops_unsaved_work(tmp_path, store_root):
+    fp = _copy(CLASS, tmp_path, "store")
+    store = _import(fp)
+    try:
+        first = _held(store)
+        snum = store.sectionNumbers()[0]
+        store.writePendingSection(snum, {"edited": True, "contours": {}})
+        store.writePendingSeries({"edited": True})
+        store.deletePendingSection(store.sectionNumbers()[-1])
+        _import(fp, store)
+        assert not store.hasPending()
+        assert _held(store) == first
+    finally:
+        store.close()
+
+
+# ---------------------------------------------------------------------------
+# trace rows
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("row", [
+    [[0.1, 2.5, -0.0], [1e-7, 3.0, 1234567.8912345], [255, 0, 0], True, False, False, ["none", "none"], ["a"]],
+    [[1, 2.0, 3.0], [4.0, 5.0, 6.0], [0, 0, 0], True, False, False, ["none", "none"], []],
+    [[], [], [0, 0, 0], False, False, False, ["none", "none"], []],
+    {"x": [1.0, 2.0], "y": [3.0, 4.0], "color": [1, 2, 3]},
+], ids=["floats", "an-int-coordinate", "empty", "keyed"])
+def test_a_trace_row_comes_back_exactly(row):
+    shape, npts, xy, rest, *_ = packRow(row)
+    back = unpackRow(shape, npts, xy, rest)
+    assert back == row
+    assert json.dumps(back) == json.dumps(row)  # -0.0 and int stay as they were
+    if isinstance(row, list) and row[0]:
+        assert [type(v) for v in back[0]] == [type(v) for v in row[0]]
+
+
+def test_the_object_index_finds_every_trace_of_an_object(tmp_path, store_root):
+    sections, _, _ = _today(CLASS, tmp_path)
+    expected : dict = {}
+    for snum, raw in sections.items():
+        for name, rows in json.loads(raw)["contours"].items():
+            for row in rows:
+                expected.setdefault(name, []).append((snum, row))
+    store = _import(_copy(CLASS, tmp_path, "store"))
+    try:
+        name = max(expected, key=lambda n: len(expected[n]))
+        assert len({snum for snum, _ in expected[name]}) > 1
+        found = store.objectTraces(name)
+        assert json.dumps(found) == json.dumps(sorted(expected[name], key=lambda t: t[0]))
+    finally:
+        store.close()
+
+
+# ---------------------------------------------------------------------------
+# the working layer and Save
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def opened(tmp_path, store_root):
+    """(store, series) for one copy of class_series: the store imported from
+    it, and the series opened from it as today, its hidden folder the working
+    folder Save reads."""
+    fp = _copy(CLASS, tmp_path, "data")
+    store = _import(fp)
+    series = _open(fp)
+    yield store, series
+    series.close()
+    store.close()
+
+
+def _edited(store, snum):
+    """The saved section snum with its first trace moved."""
+    section_data = store.readSection(snum)
+    rows = next(rows for rows in section_data["contours"].values() if rows)
+    rows[0][0] = [x + 5.0 for x in rows[0][0]]
+    return section_data
+
+
+def _first_with_traces(store):
+    return next(
+        snum for snum in store.sectionNumbers()
+        if any(store.readSection(snum)["contours"].values())
+    )
+
+
+def test_a_working_copy_is_read_first_and_save_keeps_it(opened):
+    store, series = opened
+    snum = _first_with_traces(store)
+    edited = _edited(store, snum)
+    store.writePendingSection(snum, edited)
+    assert store.hasPending()
+    assert store.readSection(snum) == edited
+    assert store.meta("dirty") == "0"
+
+    assert store.commit(series) is True
+    assert not store.hasPending()
+    assert store.readSection(snum) == edited
+    assert store.meta("dirty") == "1"
+
+    # durable: a fresh connection reads the saved rows
+    store.close()
+    again = HybridStore(store.db_fp, store.work_dir)
+    try:
+        assert again.readSection(snum) == edited
+        assert not again.hasPending()
+    finally:
+        again.close()
+
+
+def test_discard_returns_the_store_to_the_last_save(opened):
+    store, series = opened
+    snum = _first_with_traces(store)
+    before = store.readSection(snum)
+    store.writePendingSection(snum, _edited(store, snum))
+    store.writePendingSeries({"edited": True})
+    store.clearPending()
+    assert not store.hasPending()
+    assert store.readSection(snum) == before
+    assert "edited" not in store.seriesData()
+
+
+def test_a_rewrite_of_the_same_content_does_not_mark_the_store_ahead(opened):
+    store, series = opened
+    for snum in store.sectionNumbers():
+        store.writePendingSection(snum, store.readSection(snum))
+    store.writePendingSeries(store.seriesData())
+    assert store.hasPending()
+    assert store.commit(series) is False
+    assert not store.hasPending()
+    assert store.meta("dirty") == "0"
+
+
+def test_save_folds_in_the_series_and_the_log(opened):
+    store, series = opened
+    data = store.seriesData()
+    data["current_section"] = max(store.sectionNumbers())
+    store.writePendingSeries(data)
+    log_fp = Path(series.getwdir(), "existing_log.csv")
+    with open(log_fp, "a", encoding="utf-8") as f:
+        f.write("a,new,line\n")
+    assert store.commit(series) is True
+    assert store.seriesData() == data
+    assert store.logText() == log_fp.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("how", ["working-row", "gone-from-the-series"])
+def test_a_deleted_section_stays_deleted(how, opened):
+    store, series = opened
+    snum = max(store.sectionNumbers())
+    if how == "working-row":
+        store.deletePendingSection(snum)
+        assert snum not in store.sectionNumbers()
+        del series.sections[snum]
+    else:
+        series.deleteSections([snum], log_event=False)
+    assert store.commit(series) is True
+    assert not store.hasSection(snum)
+    assert store.con.execute("SELECT COUNT(*) FROM trace WHERE snum=?", (snum,)).fetchone() == (0,)
+    with pytest.raises(FileNotFoundError):
+        store.readSection(snum)
+
+
+def test_a_section_only_in_the_working_folder_is_read_and_saved(opened):
+    store, series = opened
+    new = max(series.sections) + 1
+    series.insertSection(new, "inserted.tif", 0.00254, 0.05, log_event=False)
+    fp = os.path.join(series.getwdir(), series.sections[new])
+    on_disk = json.loads(Path(fp).read_bytes())
+    assert not store.hasSection(new)
+    assert store.readSection(new, fp) == on_disk
+    assert store.commit(series) is True
+    assert store.hasSection(new)
+    assert store.readSection(new) == on_disk
+
+
+# ---------------------------------------------------------------------------
+# one process at a time, a crash, a busy database
+# ---------------------------------------------------------------------------
+
+def test_a_second_store_on_the_same_series_is_refused_until_the_first_closes(tmp_path, store_root):
+    fp = _copy(PARITY, tmp_path, "data")
+    first = HybridStore.forJser(str(fp))
+    try:
+        with pytest.raises(hybrid_store.StoreBusyError, match="open in another PyReconstruct window"):
+            HybridStore.forJser(str(fp))
+    finally:
+        first.close()
+    HybridStore.forJser(str(fp)).close()  # free again once the first closes
+
+
+_HOLD = """
+import sys, time
+from PyReconstruct.modules.datatypes.hybrid_store import HybridStore
+store = HybridStore(sys.argv[1], sys.argv[2])
+store.writePendingSeries({"held": True})
+print("ready", flush=True)
+time.sleep(600)
+"""
+
+
+def test_a_store_held_by_a_killed_process_opens_again(tmp_path, store_root):
+    db_fp, work = hybrid_store.storePaths(str(tmp_path / "s.jser"))
+    env = dict(os.environ, PYTHONPATH=str(REPO_ROOT))
+    proc = subprocess.Popen(
+        [sys.executable, "-c", _HOLD, db_fp, work],
+        stdout=subprocess.PIPE, env=env, text=True,
+    )
+    try:
+        assert proc.stdout.readline().strip() == "ready"
+        with pytest.raises(hybrid_store.StoreBusyError):
+            HybridStore(db_fp, work)
+    finally:
+        proc.kill()  # no close, no cleanup: what a crash leaves
+        proc.wait(timeout=30)
+        proc.stdout.close()
+    store = HybridStore(db_fp, work)
+    try:
+        # the killed process's committed working row is still there
+        assert store.con.execute("SELECT data FROM pending_series").fetchone() is not None
+    finally:
+        store.close()
+
+
+def test_a_busy_store_is_reported_as_busy_never_as_damage(tmp_path, store_root):
+    store = HybridStore.forJser(str(tmp_path / "s.jser"))
+    try:
+        store.con.execute("PRAGMA busy_timeout=50")
+        other = sqlite3.connect(store.db_fp, isolation_level=None)
+        other.execute("BEGIN EXCLUSIVE")
+        try:
+            with pytest.raises(hybrid_store.StoreBusyError, match="another"):
+                store.writePendingSeries({"x": 1})
+        finally:
+            other.execute("ROLLBACK")
+            other.close()
+        store.writePendingSeries({"x": 1})  # and it works once the other is done
+    finally:
+        store.close()
+
+
+# ---------------------------------------------------------------------------
+# where a store lives
+# ---------------------------------------------------------------------------
+
+def test_a_new_store_is_in_wal_mode_with_its_schema_version(tmp_path, store_root):
+    store = HybridStore.forJser(str(tmp_path / "s.jser"))
+    try:
+        assert store.con.execute("PRAGMA journal_mode").fetchone() == ("wal",)
+        assert store.con.execute("PRAGMA user_version").fetchone() == (hybrid_store.SCHEMA_VERSION,)
+        assert store.meta("schema_version") == str(hybrid_store.SCHEMA_VERSION)
+    finally:
+        store.close()
+
+
+def test_the_store_refuses_a_network_folder(tmp_path, monkeypatch):
+    monkeypatch.setattr(hybrid_store, "fsType", lambda path: "nfs4")
+    db_fp = tmp_path / "s.pyrstore"
+    with pytest.raises(OSError, match="network file system"):
+        HybridStore(str(db_fp), str(tmp_path / "s.work"))
+    assert not db_fp.exists()
+    assert not (tmp_path / "s.work").exists()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the file system is read on Linux only")
+def test_a_local_folder_s_file_system_is_read_and_allowed(tmp_path):
+    fstype = hybrid_store.fsType(str(tmp_path))
+    assert isinstance(fstype, str) and fstype
+    assert fstype not in hybrid_store.NETWORK_FS
+
+
+def test_the_store_is_keyed_by_the_real_path_and_lives_in_the_store_folder(tmp_path, store_root):
+    fp = _copy(PARITY, tmp_path, "data")
+    other = _copy(PARITY, tmp_path, "elsewhere")
+    link = tmp_path / "link.jser"
+    os.symlink(fp, link)
+    assert hybrid_store.storePaths(str(fp)) == hybrid_store.storePaths(str(link))
+    assert hybrid_store.storePaths(str(fp)) != hybrid_store.storePaths(str(other))
+    db_fp, work = hybrid_store.storePaths(str(fp))
+    assert Path(db_fp).parent == store_root == Path(work).parent
+    stem, _, key = Path(db_fp).stem.rpartition("-")
+    assert stem == fp.stem and len(key) == 16 and int(key, 16) >= 0
+    assert Path(db_fp).suffix == ".pyrstore" and Path(work).name == f"{stem}-{key}.work"
+
+
+@pytest.mark.parametrize("platform, env, expected", [
+    ("darwin", {}, "HOME/Library/Application Support/PyReconstruct/stores"),
+    ("linux", {}, "HOME/.local/share/PyReconstruct/stores"),
+    ("linux", {"XDG_DATA_HOME": "XDG"}, "XDG/PyReconstruct/stores"),
+    ("win32", {"LOCALAPPDATA": "LOCAL"}, "LOCAL/PyReconstruct/stores"),
+], ids=["macos", "linux", "linux-xdg", "windows"])
+def test_the_store_folder_is_a_per_user_data_folder(platform, env, expected, tmp_path, monkeypatch):
+    if sys.platform == "win32":
+        pytest.skip("the other platforms' paths are POSIX paths")
+    monkeypatch.delenv(hybrid_store.ENV_DIR, raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "HOME"))
+    for key, value in env.items():
+        monkeypatch.setenv(key, str(tmp_path / value))
+    monkeypatch.setattr(hybrid_store.sys, "platform", platform)
+    assert hybrid_store.storeRoot() == tmp_path / expected
