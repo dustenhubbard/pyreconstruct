@@ -367,6 +367,23 @@ def test_pills_do_not_grow_the_status_bar(main_window):
     assert main_window.statusbar.sizeHint().height() <= plain.sizeHint().height()
 
 
+def test_pill_padding_gives_way_where_the_bar_has_no_room(qapp, monkeypatch):
+    """One pixel above and below the text where the bar has room for it, as
+    with DejaVu Sans; none where the font's line already fills the bar, as
+    with Noto Sans."""
+    from PyReconstruct.modules.gui.main import status_readout
+    from PySide6.QtWidgets import QLabel
+    line = QLabel().fontMetrics().height()
+    pads = {}
+    for spare in (0, 1, 2, 10):
+        monkeypatch.setattr(status_readout, "status_bar_room",
+                            lambda: line + spare)
+        margins = status_readout.StatusSegment("Jump").contentsMargins()
+        assert margins.top() == margins.bottom()
+        pads[spare] = margins.top()
+    assert pads == {0: 0, 1: 0, 2: 1, 10: 1}
+
+
 def test_popup_owns_the_pressed_state(main_window, qtbot):
     """popupOpened/popupClosed pair through a real anchored popup."""
     seg = main_window.status_readout.alignment_segment

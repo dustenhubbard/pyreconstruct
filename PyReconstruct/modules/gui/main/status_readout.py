@@ -38,6 +38,26 @@ from PySide6.QtWidgets import (
 SEPARATOR = "  |  "
 
 
+def status_bar_room():
+    """How tall a widget can be before it makes a status bar taller.
+
+    A plain bar is its font's line plus Qt's own spacing, or its size grip,
+    whichever is taller, so the answer depends on the font and the style:
+    with DejaVu Sans a 9 pt line leaves three pixels to spare, with Noto
+    Sans none. Measured on two throwaway bars rather than assumed.
+    """
+    from PySide6.QtWidgets import QStatusBar
+    plain = QStatusBar()
+    plain.addWidget(QLabel("Section: 5"))
+    height = plain.sizeHint().height()
+    tall = QStatusBar()
+    filler = QLabel()
+    filler.setFixedHeight(2 * height)
+    tall.addWidget(filler)
+    spacing = tall.sizeHint().height() - 2 * height
+    return height - spacing
+
+
 class StatusSegment(QLabel):
     """A readout segment that reports a left-click and looks pressable.
 
@@ -59,7 +79,8 @@ class StatusSegment(QLabel):
     right_clicked = Signal()
 
     #: inner padding so the outline does not hug the glyphs; the vertical
-    #: pixel is measured by test_pills_do_not_grow_the_status_bar
+    #: pixel is the most it gets, less where the bar has no room for it
+    #: (see status_bar_room; test_pills_do_not_grow_the_status_bar)
     H_PAD = 8
     V_PAD = 1
 
@@ -74,7 +95,9 @@ class StatusSegment(QLabel):
         self.setToolTip(tooltip)
         self.setCursor(Qt.PointingHandCursor)
         self.setAttribute(Qt.WA_Hover)
-        self.setContentsMargins(self.H_PAD, self.V_PAD, self.H_PAD, self.V_PAD)
+        room = status_bar_room() - self.fontMetrics().height()
+        v_pad = max(0, min(self.V_PAD, room // 2))
+        self.setContentsMargins(self.H_PAD, v_pad, self.H_PAD, v_pad)
         self._outlined = outlined
         self._hovered = False
         self._popup_open = False
