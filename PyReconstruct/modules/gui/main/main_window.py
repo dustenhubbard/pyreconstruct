@@ -4479,9 +4479,11 @@ class MainWindow(QMainWindow):
 
         # Default 10 px^2: a stray speck of a few pixels (up to roughly a 3x3
         # blob) is the target, small enough to leave genuine fine structures
-        # alone. Adjustable below.
+        # alone. Adjustable below. The label import skips specks at the same
+        # default (Series.PIXEL_DUST_DEFAULT_PX).
         structure = [
-            ["Maximum trace area (pixels, px^2):", ("float", 10.0)],
+            ["Maximum trace area (pixels, px^2):",
+             ("float", self.series.PIXEL_DUST_DEFAULT_PX)],
         ]
         response, confirmed = QuickDialog.get(
             self, structure, "Remove pixel-dust traces"
