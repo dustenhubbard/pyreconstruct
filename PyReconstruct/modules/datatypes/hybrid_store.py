@@ -22,11 +22,13 @@ its gaps are in the hub, specs/hybrid-store-design-2026-10-16.md.
 Not for merging as is.
 """
 
+import gc
 import os
 import sys
 import shutil
 import hashlib
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -239,6 +241,24 @@ def tformKey(series, name : str, tform_keys) -> str:
     if alignment is None or alignment not in tform_keys:
         return series.alignment
     return alignment
+
+
+@contextmanager
+def _gcPaused():
+    """Keep the cyclic garbage collector out of a bulk build.
+
+    The lazy open makes about four objects per trace (550,637 traces on DW09)
+    and no cyclic garbage. Left on, the collector walked the growing heap a
+    dozen times during the open (2.9 s of a 10 s open on DW09, round 3).
+    Reference counting still frees everything as usual.
+    """
+    was_on = gc.isenabled()
+    gc.disable()
+    try:
+        yield
+    finally:
+        if was_on:
+            gc.enable()
 
 
 class HybridStore():
@@ -719,66 +739,80 @@ class HybridStore():
                 tforms[a] = Transform(t)
             headers[snum] = (h, tforms)
 
-        for snum, (h, tforms) in headers.items():
-            names = h["contours"]
-            rows = self.con.execute(
-                "SELECT cpos, idx, tform_key, closed, hidden, negative, color, tags,"
-                " length, area, cx, cy, radius FROM trace_stats WHERE snum=?"
-                " ORDER BY cpos, idx",
-                (snum,),
-            ).fetchall()
-            keys = {}
-            stale = False
-            for r in rows:
-                name = names[r[0]]
-                if name not in keys:
-                    keys[name] = tformKey(series, name, tforms)
-                if keys[name] != r[2]:
-                    stale = True
-                    break
-            if stale:
-                recompute.append(snum)
-                continue
-            data.data["sections"][snum] = {
-                "thickness": h["thickness"],
-                "calgrid": h["calgrid"],
-                "locked": h["align_locked"],
-                "bc_profiles": h["brightness_contrast_profiles"].copy(),
-                "src": Section.imageName(h["src"]),
-                "mag": h["mag"],
-                "flags": [Flag.fromList(f, snum) for f in h["flags"]],
-                "tforms": tforms.copy(),
-            }
-            for (cpos, idx, key, closed, hidden, negative, color, tags,
-                 length, area, cx, cy, radius) in rows:
-                name = names[cpos]
-                td = TraceData.__new__(TraceData)
-                td.index = idx
-                td.closed = bool(closed)
-                td.hidden = bool(hidden)
-                td.negative = bool(negative)
-                td.tags = set(fast_loads(tags))
-                td.color = None if color is None else tuple(fast_loads(color))
-                td.length = length
-                td.area = area
-                td.centroid = (cx, cy)
-                td.radius = radius
-                td._tform = tforms[key]
-                td._feret = None if td.closed else (0, 0)
-                obj = objects.get(name)
-                if obj is None:
-                    obj = objects[name] = ObjectData()
-                obj.traces.setdefault(snum, []).append(td)
+        # one value per distinct stored string: DW09 has 40 colors and 1,036
+        # tagged traces among 550,637. Tags are read-only in the series data
+        # (getTags, usedTags, the tables), so a frozenset is shared safely
+        tag_values = {}
+        color_values = {}
+        with _gcPaused():
+            for snum, (h, tforms) in headers.items():
+                names = h["contours"]
+                rows = self.con.execute(
+                    "SELECT cpos, idx, tform_key, closed, hidden, negative, color, tags,"
+                    " length, area, cx, cy, radius FROM trace_stats WHERE snum=?"
+                    " ORDER BY cpos, idx",
+                    (snum,),
+                ).fetchall()
+                keys = {}
+                stale = False
+                for r in rows:
+                    name = names[r[0]]
+                    if name not in keys:
+                        keys[name] = tformKey(series, name, tforms)
+                    if keys[name] != r[2]:
+                        stale = True
+                        break
+                if stale:
+                    recompute.append(snum)
+                    continue
+                data.data["sections"][snum] = {
+                    "thickness": h["thickness"],
+                    "calgrid": h["calgrid"],
+                    "locked": h["align_locked"],
+                    "bc_profiles": h["brightness_contrast_profiles"].copy(),
+                    "src": Section.imageName(h["src"]),
+                    "mag": h["mag"],
+                    "flags": [Flag.fromList(f, snum) for f in h["flags"]],
+                    "tforms": tforms.copy(),
+                }
+                for (cpos, idx, key, closed, hidden, negative, color, tags,
+                     length, area, cx, cy, radius) in rows:
+                    name = names[cpos]
+                    td = TraceData.__new__(TraceData)
+                    td.index = idx
+                    td.closed = bool(closed)
+                    td.hidden = bool(hidden)
+                    td.negative = bool(negative)
+                    td.tags = tag_values.get(tags)
+                    if td.tags is None:
+                        td.tags = tag_values[tags] = frozenset(fast_loads(tags))
+                    if color is None:
+                        td.color = None
+                    else:
+                        td.color = color_values.get(color)
+                        if td.color is None:
+                            td.color = color_values[color] = tuple(fast_loads(color))
+                    td.length = length
+                    td.area = area
+                    td.centroid = (cx, cy)
+                    td.radius = radius
+                    td._tform = tforms[key]
+                    td._feret = None if td.closed else (0, 0)
+                    obj = objects.get(name)
+                    if obj is None:
+                        obj = objects[name] = ObjectData()
+                    obj.traces.setdefault(snum, []).append(td)
 
         for snum in sorted(recompute):
             section = series.loadSection(snum)
             data.updateSection(section, update_traces=True, log_events=False, read_store=True)
 
-        data.object_ids.reconcile(
-            (snum, name)
-            for name, obj_data in data.data["objects"].items()
-            for snum in obj_data.traces
-        )
+        with _gcPaused():
+            data.object_ids.reconcile(
+                (snum, name)
+                for name, obj_data in data.data["objects"].items()
+                for snum in obj_data.traces
+            )
         self.recomputed = sorted(recompute)
 
     def _measure(self, series, section_numbers):

@@ -713,3 +713,65 @@ def test_the_import_reads_the_jser_one_section_at_a_time(src, tmp_path, store_on
         assert series.store.isImported()
     finally:
         series.close()
+
+
+# ---------------------------------------------------------------------------
+# round 3: the lazy open builds fewer objects and keeps the collector out
+# ---------------------------------------------------------------------------
+
+def _lazy_trace_data(fp):
+    _open(fp).close()
+    series = _open(fp)
+    assert series.store.recomputed == []
+    tds = [
+        td for obj in series.data.objects.values()
+        for tds in obj.traces.values() for td in tds
+    ]
+    return series, tds
+
+
+def test_the_lazy_open_keeps_one_value_per_stored_tags_and_color(tmp_path, store_on):
+    fp = _copy(SERIES_FILES[1], tmp_path)
+    series, tds = _lazy_trace_data(fp)
+    try:
+        assert len(tds) > 100
+        assert all(type(td.tags) is frozenset for td in tds)
+        assert len({id(td.tags) for td in tds}) == len({td.tags for td in tds})
+        colors = [td.color for td in tds if td.color is not None]
+        assert len({id(c) for c in colors}) == len(set(colors)) < len(colors)
+    finally:
+        series.close()
+
+
+@pytest.mark.parametrize("was_on", [True, False])
+def test_the_lazy_open_builds_with_the_collector_off_and_restores_it(was_on, tmp_path, store_on, monkeypatch):
+    import gc
+    from PyReconstruct.modules.datatypes import series_data
+    fp = _copy(SERIES_FILES[1], tmp_path)
+    _open(fp).close()
+    seen = []
+    real = series_data.ObjectData.__init__
+
+    def init(self):
+        seen.append(gc.isenabled())
+        real(self)
+    monkeypatch.setattr(series_data.ObjectData, "__init__", init)
+    if not was_on:
+        gc.disable()
+    try:
+        series = _open(fp)
+        series.close()
+        assert seen and not any(seen)
+        assert gc.isenabled() is was_on
+    finally:
+        gc.enable()
+
+
+def test_the_collector_comes_back_when_the_build_fails():
+    import gc
+    assert gc.isenabled()
+    with pytest.raises(RuntimeError):
+        with hybrid_store._gcPaused():
+            assert not gc.isenabled()
+            raise RuntimeError("build failed")
+    assert gc.isenabled()
