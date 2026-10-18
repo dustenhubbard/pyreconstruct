@@ -812,16 +812,21 @@ class HybridStore():
         valid = dict(self.con.execute("SELECT snum, stats_valid FROM section"))
         recompute = []
 
-        # the alignment attribute of each name, read once (tformKey)
-        alignments : dict = {}
+        # tformKey, inline: a name with no alignment attribute, or one the
+        # section has no transform for, is measured in the series' alignment
+        default = series.alignment
+        fixed = {}
+        for name in series.obj_attrs:
+            alignment = series.getAttr(name, "alignment")
+            if alignment is not None and alignment != default:
+                fixed[name] = alignment
 
-        def keyFor(name, tforms):
-            alignment = alignments.get(name, alignments)
-            if alignment is alignments:
-                alignment = alignments[name] = series.getAttr(name, "alignment")
-            if alignment is None or alignment not in tforms:
-                return series.alignment
-            return alignment
+        def stale(names, keys, present, tforms):
+            for p in present:
+                alignment = fixed.get(names[p])
+                if keys[p] != (alignment if alignment is not None and alignment in tforms else default):
+                    return True
+            return False
 
         name_ids : dict = {}       # name -> object number, in order of first trace
         tform_list : list = []
@@ -857,7 +862,7 @@ class HybridStore():
                 }
                 cpos = arrays["cpos"]
                 present = np.unique(cpos).tolist()
-                if any(keys[p] != keyFor(names[p], tforms) for p in present):
+                if stale(names, keys, present, tforms):
                     recompute.append(snum)
                     continue
                 data.data["sections"][snum] = {
