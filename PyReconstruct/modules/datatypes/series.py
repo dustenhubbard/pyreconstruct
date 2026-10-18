@@ -732,6 +732,11 @@ class Series():
     qsettings_defaults = default_settings.copy()
     qsettings_series_defaults = default_series_settings.copy()
 
+    ## The pixel-dust threshold Clean up offers first (px^2, see
+    ## findPixelDustTraces). The label import skips an outline at or below it,
+    ## so an import writes no trace that this scan would then remove.
+    PIXEL_DUST_DEFAULT_PX = 10.0
+
     def __init__(self, filepath : str, sections : dict, get_series_data=True):
         """Load the series file.
 
@@ -3702,6 +3707,13 @@ class Series():
         _, area, _, _ = traceGeometry(pts, True)
         return abs(area)
 
+    @staticmethod
+    def isPixelDust(area : float, mag : float, threshold_px : float) -> bool:
+        """True when an area (um^2) is at or below ``threshold_px`` pixels of
+        ``mag`` um per pixel. The pixel-dust scan and the label import both
+        decide by this, so an import skips exactly what the scan would find."""
+        return area <= threshold_px * mag ** 2
+
     def findPixelDustTraces(self, threshold_px : float, include_locked=False) -> list:
         """Find tiny "pixel-dust" traces at or below an area threshold in PIXELS.
 
@@ -3735,7 +3747,6 @@ class Series():
             section_start = len(candidates)
             tform = section.tform
             mag2 = section.mag ** 2  # (um/px)^2, this section's pixel scale
-            threshold_um2 = threshold_px * mag2  # px^2 cutoff -> this section's um^2
             for cname in section.contours:
                 if not include_locked and self.getAttr(cname, "locked"):
                     continue
@@ -3743,7 +3754,7 @@ class Series():
                     if not trace.closed or len(trace.points) < 3:
                         continue
                     area = self._traceArea(trace, tform)
-                    if 0 < area <= threshold_um2:
+                    if area > 0 and Series.isPixelDust(area, section.mag, threshold_px):
                         area_px = area / mag2 if mag2 else 0.0
                         candidates.append(self._cleanupRecord(
                             cname, snum, index, trace,

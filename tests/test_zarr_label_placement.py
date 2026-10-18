@@ -163,7 +163,9 @@ def test_overlay_draws_labels_where_they_import(qapp, tmp_path, real_series, cas
 
     imported = 0
     for snum in sections:
-        conversions.importSection(zg, "labels_x", snum, real_series)
+        ## the block is a few pixels, below the pixel-dust floor at most of
+        ## these sizes; placement is the point here, so keep it
+        conversions.importSection(zg, "labels_x", snum, real_series, min_area_px=0)
         contours = real_series.loadSection(snum).contours
         if "autoseg_7" not in contours:
             assert _drawn_id(layer, snum, 1.001, 2.001) is None
