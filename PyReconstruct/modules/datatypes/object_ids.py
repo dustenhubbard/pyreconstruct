@@ -217,3 +217,35 @@ class ObjectIds():
             self.ensure(snum, name)
         for key in [k for k in self.placed if k not in present]:
             self.drop(*key, keep=True)
+
+    def placeAll(self, sections_by_name):
+        """`reconcile` for a registry with nothing placed yet, one name at a time.
+
+        PROTOTYPE (hybrid store, hub #247): the open from the store places
+        about half a million (section, name) pairs on DW09, and `ensure` per
+        pair cost about a second. Each name takes the id `ensure` would give
+        its first pair (the host tree's kept id, else a fresh one) and every
+        section shares it, with the same host tree calls. Names are taken in
+        the order given, so ids may be numbered differently from `reconcile`;
+        ids are never saved.
+
+            Params:
+                sections_by_name: (name, section numbers) pairs, each name once
+                    and with at least one section
+            Raises:
+                ValueError: if anything is placed already
+        """
+        if self.placed:
+            raise ValueError("placeAll needs a registry with nothing placed")
+        tree = self._tree()
+        placed = self.placed
+        for name, snums in sections_by_name:
+            oid = tree.keptId(name) if tree is not None else None
+            if oid is None:
+                oid = self.issue(name)
+            for snum in snums:
+                placed[(snum, name)] = oid
+            self._live[name] = {oid: len(snums)}
+            self.version += 1
+            if tree is not None:
+                tree.traced(oid)
