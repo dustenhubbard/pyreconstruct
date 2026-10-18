@@ -1,0 +1,515 @@
+"""PROTOTYPE (hub #247, R8): the object list read from the store's columns.
+
+An open from the store puts the stored object-list numbers into one
+TraceColumns and builds no TraceData. These tests hold it to the numbers a
+full refresh gives, number for number (repr, not a tolerance), and check that
+the object ids come out as reconcile places them.
+"""
+import json
+import sqlite3
+
+import numpy as np
+import pytest
+
+from PyReconstruct.modules.datatypes import hybrid_store, series_data
+from PyReconstruct.modules.datatypes.object_ids import ObjectIds
+from PyReconstruct.modules.datatypes.series_data import ObjectData, SeriesData, TraceColumns
+from PyReconstruct.modules.datatypes.transform import Transform
+from tests.test_hybrid_store import SERIES_FILES, _copy, _open
+
+
+@pytest.fixture
+def store_on(tmp_path, monkeypatch):
+    root = tmp_path / "stores"
+    monkeypatch.setenv(hybrid_store.ENV_SWITCH, "1")
+    monkeypatch.setenv(hybrid_store.ENV_DIR, str(root))
+    return root
+
+
+def _object_list(data) -> dict:
+    """What the object list reads for every object, floats by repr."""
+    out = {}
+    for name in data.objects:
+        out[name] = (
+            data.getStart(name), data.getEnd(name), data.getCount(name),
+            repr(data.getFlatArea(name)), repr(data.getVolume(name)),
+            repr(data.getAvgRadius(name)), data.getConfiguration(name),
+            data.getTags(name), list(data.getColorCounts(name).items()),
+        )
+    out[None] = data.usedTags()
+    return out
+
+
+def _built(data) -> list:
+    """The objects whose TraceData have been built."""
+    return [name for name, obj in data.objects.items() if obj.columnRows() is None]
+
+
+@pytest.mark.parametrize("src", SERIES_FILES, ids=lambda p: p.name)
+def test_the_lazy_open_builds_no_trace_data_and_its_object_list_equals_a_full_refresh(src, tmp_path, store_on):
+    fp = _copy(src, tmp_path)
+    _open(fp).close()
+    series = _open(fp)
+    try:
+        assert series.store.recomputed == []
+        assert series.data.objects
+        assert _built(series.data) == []
+        from_columns = _object_list(series.data)
+        assert _built(series.data) == []  # the getters built nothing either
+        series.data.refresh(show_progress=False)
+        assert _object_list(series.data) == from_columns
+    finally:
+        series.close()
+
+
+@pytest.mark.parametrize("src", SERIES_FILES, ids=lambda p: p.name)
+def test_trace_data_built_from_the_columns_give_the_same_object_list(src, tmp_path, store_on):
+    fp = _copy(src, tmp_path)
+    _open(fp).close()
+    series = _open(fp)
+    try:
+        from_columns = _object_list(series.data)
+        for obj in series.data.objects.values():
+            obj.traces
+        assert len(_built(series.data)) == len(series.data.objects)
+        assert _object_list(series.data) == from_columns
+    finally:
+        series.close()
+
+
+def _per_trace(data) -> dict:
+    """Every TraceData field, floats by repr (an int 0 and 0.0 differ)."""
+    return {
+        (name, snum): [
+            (td.index, td.closed, td.hidden, td.negative, sorted(td.tags), td.color,
+             repr(td.length), repr(td.area), repr(td.centroid), repr(td.radius),
+             repr(td._tform.getList()))
+            for td in tds
+        ]
+        for name, obj in data.objects.items() for snum, tds in obj.traces.items()
+    }
+
+
+@pytest.mark.parametrize("src", SERIES_FILES, ids=lambda p: p.name)
+def test_trace_data_built_from_the_columns_equal_a_full_refresh_field_for_field(src, tmp_path, store_on):
+    fp = _copy(src, tmp_path)
+    _open(fp).close()
+    series = _open(fp)
+    try:
+        from_columns = _per_trace(series.data)
+        series.data.refresh(show_progress=False)
+        assert _per_trace(series.data) == from_columns
+    finally:
+        series.close()
+
+
+def test_a_section_measured_again_leaves_the_other_objects_in_columns(tmp_path, store_on):
+    fp = _copy(SERIES_FILES[1], tmp_path)
+    _open(fp).close()
+    db_fp, _ = hybrid_store.storePaths(str(fp))
+    con = sqlite3.connect(db_fp)
+    snum, keys = con.execute(
+        "SELECT snum, keys FROM section_stats WHERE cpos != x'' ORDER BY snum LIMIT 1"
+    ).fetchone()
+    keys = ["elsewhere" if k is not None else None for k in json.loads(keys)]
+    con.execute("UPDATE section_stats SET keys=? WHERE snum=?", (json.dumps(keys), snum))
+    con.commit()
+    con.close()
+
+    series = _open(fp)
+    try:
+        assert series.store.recomputed == [snum]
+        built = set(_built(series.data))
+        from_columns = _object_list(series.data)
+        assert built and built <= set(series.loadSection(snum).contours)
+        assert len(built) < len(series.data.objects)
+        # each (section, name) with traces has an id, as after a refresh
+        placed = set(series.data.object_ids.placed)
+        series.data.refresh(show_progress=False)
+        assert set(series.data.object_ids.placed) == placed
+        fresh = _object_list(series.data)
+        assert fresh.keys() == from_columns.keys()
+        assert fresh == from_columns
+    finally:
+        series.close()
+
+
+def test_a_store_with_no_column_rows_measures_every_section_once(tmp_path, store_on):
+    fp = _copy(SERIES_FILES[1], tmp_path)
+    _open(fp).close()
+    db_fp, _ = hybrid_store.storePaths(str(fp))
+    con = sqlite3.connect(db_fp)
+    con.execute("DELETE FROM section_stats")
+    con.commit()
+    con.close()
+
+    series = _open(fp)
+    try:
+        assert series.store.recomputed == sorted(series.sections)
+    finally:
+        series.close()
+    series = _open(fp)
+    try:
+        assert series.store.recomputed == []
+        from_columns = _object_list(series.data)
+        series.data.refresh(show_progress=False)
+        assert _object_list(series.data) == from_columns
+    finally:
+        series.close()
+
+
+def _columns(rows, tforms):
+    """A TraceColumns of hand-made rows: (snum, index, closed, area, length, radius, tag, color)."""
+    arrays = {
+        "snum": np.array([r[0] for r in rows], dtype=np.int32),
+        "index": np.array([r[1] for r in rows], dtype=np.int32),
+        "closed": np.array([r[2] for r in rows], dtype=bool),
+        "hidden": np.zeros(len(rows), dtype=bool),
+        "negative": np.zeros(len(rows), dtype=bool),
+        "tag": np.array([r[6] for r in rows], dtype=np.int32),
+        "color": np.array([r[7] for r in rows], dtype=np.int32),
+        "length": np.array([r[4] for r in rows], dtype=np.float64),
+        "area": np.array([r[3] for r in rows], dtype=np.float64),
+        "cx": np.zeros(len(rows)),
+        "cy": np.zeros(len(rows)),
+        "radius": np.array([r[5] for r in rows], dtype=np.float64),
+        "tform": np.zeros(len(rows), dtype=np.int32),
+    }
+    tags = [frozenset(), frozenset({"a"}), frozenset({"a", "b"})]
+    colors = [None, (255, 0, 0), (0, 0, 255)]
+    return TraceColumns(arrays, tags, colors, tforms)
+
+
+def test_the_column_getters_add_in_the_order_the_trace_data_add():
+    # 1e16 + 1.0 rounds back to 1e16, so the order of the additions shows
+    rows = [
+        (1, 0, True, 1e16, 3.0, 1e16, 1, 1),
+        (1, 1, True, 1.0, 2.0, 1.0, 0, 0),
+        (2, 0, True, -1e16, 1.5, -1e16, 2, 1),
+        (2, 1, False, 0.0, 1e17, 1.0, 0, 2),
+        (3, 0, True, 1.0, 0.25, 0.5, 1, 1),
+    ]
+    columns = _columns(rows, [Transform.identity()])
+    data = SeriesData(None)
+    data.data["sections"] = {1: {"thickness": 0.1}, 2: {"thickness": 0.05}, 3: {"thickness": 0.07}}
+    data.data["objects"] = {"lazy": ObjectData(columns, 0, len(rows)), "built": ObjectData(columns, 0, len(rows))}
+    data.objects["built"].traces
+    lazy, built = _object_list(data)["lazy"], _object_list(data)["built"]
+    assert data.objects["lazy"].columnRows() is not None
+    assert lazy == built
+    assert lazy[3] == repr(1.0 + 1e17 * 0.05)  # flat area, added in row order
+
+
+def test_place_all_places_what_reconcile_places():
+    pairs = [(1, "a"), (2, "a"), (1, "b"), (3, "c"), (2, "c"), (5, "c")]
+    one, two = ObjectIds(), ObjectIds()
+    one.reconcile(pairs)
+    by_name = {}
+    for snum, name in pairs:
+        by_name.setdefault(name, []).append(snum)
+    two.placeAll(by_name.items())
+    assert set(one.placed) == set(two.placed)
+    for reg in (one, two):
+        for name in by_name:
+            ids = {oid for (s, n), oid in reg.placed.items() if n == name}
+            assert len(ids) == 1
+            assert reg.live(name) == ids
+            assert reg.name_of[ids.pop()] == name
+    assert {n: sorted(c.values()) for n, c in one._live.items()} == \
+        {n: sorted(c.values()) for n, c in two._live.items()}
+    assert one.version == two.version == len(by_name)
+
+
+class _Tree:
+    """A host tree that keeps id 7 for "kept"."""
+
+    def __init__(self):
+        self.traced_ids = []
+
+    def holdsIds(self, ids):
+        return True
+
+    def keptId(self, name):
+        return 7 if name == "kept" else None
+
+    def traced(self, oid):
+        self.traced_ids.append(oid)
+
+
+class _Series:
+    def __init__(self):
+        self.host_tree = _Tree()
+
+
+def test_place_all_takes_the_id_the_host_tree_keeps():
+    by_reconcile, by_place_all = ObjectIds(_Series()), ObjectIds(_Series())
+    for reg in (by_reconcile, by_place_all):
+        reg.name_of[7] = "kept"
+    by_reconcile.reconcile([(1, "kept"), (2, "kept"), (1, "new")])
+    by_place_all.placeAll([("kept", [1, 2]), ("new", [1])])
+    for reg in (by_reconcile, by_place_all):
+        assert reg.peek(1, "kept") == reg.peek(2, "kept") == 7
+        assert reg.peek(1, "new") not in (None, 7)
+        # the kept id has traces again; a fresh id is in no tree record, so
+        # placeAll does not tell the tree about it
+        assert 7 in reg.series.host_tree.traced_ids
+
+
+def test_place_all_refuses_a_registry_with_something_placed():
+    reg = ObjectIds()
+    reg.ensure(1, "a")
+    with pytest.raises(ValueError):
+        reg.placeAll([("b", [1])])
+
+
+def test_a_trace_data_built_from_the_columns_is_what_the_columns_hold():
+    tform = Transform.identity()
+    columns = _columns([(4, 2, False, 0.0, 2.5, 0.75, 2, 2)], [tform])
+    obj = ObjectData(columns, 0, 1)
+    (td,) = obj.traces[4]
+    assert (td.index, td.closed, td.hidden, td.negative) == (2, False, False, False)
+    assert (td.tags, td.color, td.length, td.area, td.centroid, td.radius) == \
+        (frozenset({"a", "b"}), (0, 0, 255), 2.5, 0.0, (0.0, 0.0), 0.75)
+    assert td._tform is tform and td._feret == (0, 0)
+    assert obj.columnRows() is None
+    assert series_data.TraceData.getFeret(td, None, "x") == (0, 0)
+
+
+# ---------------------------------------------------------------------------
+# Save measures a changed section from its stored rows (HybridStore._measureRows)
+# ---------------------------------------------------------------------------
+
+def _stats(store) -> dict:
+    return {
+        r[0]: r[1:] for r in store.con.execute(
+            f"SELECT snum, {hybrid_store.STATS_COLS} FROM section_stats ORDER BY snum"
+        )
+    }
+
+
+def _measured_both_ways(series, monkeypatch, snums=None):
+    """(stats measured from the rows, stats measured by loading each section, rows used)."""
+    store = series.store
+    snums = sorted(series.sections) if snums is None else snums
+    used = []
+    real = hybrid_store.HybridStore._measureRows
+
+    def spy(self, *args):
+        used.append(real(self, *args))
+        return used[-1]
+    monkeypatch.setattr(hybrid_store.HybridStore, "_measureRows", spy)
+    store._measure(series, snums)
+    from_rows = _stats(store)
+    monkeypatch.setattr(hybrid_store.HybridStore, "_measureRows", lambda *args: False)
+    store._measure(series, snums)
+    return from_rows, _stats(store), used
+
+
+@pytest.mark.parametrize("src", SERIES_FILES, ids=lambda p: p.name)
+def test_save_measures_from_the_rows_what_a_section_load_measures(src, tmp_path, store_on, monkeypatch):
+    fp = _copy(src, tmp_path)
+    _open(fp).close()
+    series = _open(fp)
+    try:
+        from_rows, loaded, used = _measured_both_ways(series, monkeypatch)
+        assert any(used)
+        assert from_rows == loaded
+    finally:
+        series.close()
+
+
+def _first_row(store, min_points=3):
+    return store.con.execute(
+        "SELECT id, snum, cpos, npts, xy, rest FROM trace WHERE shape=0 AND npts>=?"
+        " ORDER BY snum, cpos, ord LIMIT 1", (min_points,)
+    ).fetchone()
+
+
+def _two_closed_points(store):
+    rid, snum, _, npts, xy, rest = _first_row(store)
+    a = np.frombuffer(xy, dtype="<f8")
+    fields = json.loads(rest)
+    fields[1] = True
+    store.con.execute(
+        "UPDATE trace SET npts=2, xy=?, rest=? WHERE id=?",
+        (np.concatenate((a[:2], a[npts:npts + 2])).tobytes(), json.dumps(fields).encode(), rid),
+    )
+    return snum
+
+
+def _one_point(store):
+    rid, snum, _, npts, xy, _ = _first_row(store)
+    a = np.frombuffer(xy, dtype="<f8")
+    store.con.execute(
+        "UPDATE trace SET npts=1, xy=? WHERE id=?",
+        (np.concatenate((a[:1], a[npts:npts + 1])).tobytes(), rid),
+    )
+    return snum
+
+
+def _name_the_rule_changes(store):
+    _, snum, cpos, _, _, _ = _first_row(store)
+    header = json.loads(store.con.execute(
+        "SELECT header FROM section WHERE snum=?", (snum,)).fetchone()[0])
+    header["contours"][cpos] = "a, b"
+    store.con.execute(
+        "UPDATE section SET header=? WHERE snum=?", (json.dumps(header).encode(), snum)
+    )
+    store.con.execute("UPDATE trace SET name='a, b' WHERE snum=? AND cpos=?", (snum, cpos))
+    return snum
+
+
+def _row_kept_whole(store):
+    rid, snum, _, npts, xy, rest = _first_row(store)
+    a = np.frombuffer(xy, dtype="<f8")
+    row = [a[:npts].tolist(), a[npts:].tolist(), *json.loads(rest)]
+    store.con.execute(
+        "UPDATE trace SET shape=1, npts=0, xy=NULL, rest=? WHERE id=?",
+        (json.dumps(row).encode(), rid),
+    )
+    return snum
+
+
+@pytest.mark.parametrize("defect", [_two_closed_points, _one_point, _name_the_rule_changes, _row_kept_whole])
+def test_a_row_a_load_would_change_is_measured_by_loading_its_section(defect, tmp_path, store_on, monkeypatch):
+    fp = _copy(SERIES_FILES[1], tmp_path)
+    _open(fp).close()
+    series = _open(fp)
+    try:
+        snum = defect(series.store)
+        from_rows, loaded, used = _measured_both_ways(series, monkeypatch, [snum])
+        assert used == [False]
+        assert from_rows == loaded
+    finally:
+        series.close()
+
+
+def test_an_object_of_open_traces_has_the_volume_a_full_open_gives():
+    # an int thickness keeps the int 0 of an open trace's area an int
+    rows = [(4, 0, False, 0.0, 2.5, 0.75, 0, 0), (4, 1, False, 0.0, 1.5, 0.5, 0, 0)]
+    columns = _columns(rows, [Transform.identity()])
+    data = SeriesData(None)
+    data.data["sections"] = {4: {"thickness": 1}}
+    data.data["objects"] = {"lazy": ObjectData(columns, 0, 2), "built": ObjectData(columns, 0, 2)}
+    data.objects["built"].traces
+    assert repr(data.getVolume("built")) == "0"
+    assert repr(data.getVolume("lazy")) == "0"
+    assert _object_list(data)["lazy"] == _object_list(data)["built"]
+
+
+# ---------------------------------------------------------------------------
+# The export hands orjson the stored arrays (jser_splice.ArraySection)
+# ---------------------------------------------------------------------------
+
+def _store_export(src, tmp_path, sub="store"):
+    fp = _copy(src, tmp_path, sub)
+    _open(fp).close()
+    series = _open(fp)
+    try:
+        out = tmp_path / f"{sub}-export.jser"
+        series.saveJser(str(out))
+    finally:
+        series.close()
+    return out.read_bytes()
+
+
+def _today_bytes(src, tmp_path, monkeypatch, sub="today"):
+    monkeypatch.delenv(hybrid_store.ENV_SWITCH, raising=False)
+    fp = _copy(src, tmp_path, sub)
+    series = _open(fp)
+    try:
+        series.saveJser()
+    finally:
+        series.close()
+    monkeypatch.setenv(hybrid_store.ENV_SWITCH, "1")
+    return fp.read_bytes()
+
+
+@pytest.mark.parametrize("src", SERIES_FILES, ids=lambda p: p.name)
+def test_an_export_from_the_store_builds_no_coordinate_list(src, tmp_path, store_on, monkeypatch):
+    from PyReconstruct.modules.constants import jser_format
+    expected = _today_bytes(src, tmp_path, monkeypatch)
+    fp = _copy(src, tmp_path)
+    _open(fp).close()
+    series = _open(fp)
+    lists, numpy = [], []
+    real_unpack, real_dumps = hybrid_store.unpackRow, jser_format.orjson_dumps
+
+    def unpack(*args):
+        lists.append(args)
+        return real_unpack(*args)
+
+    def dumps(obj, numpy_on=False, **kw):
+        numpy.append(kw.get("numpy", numpy_on))
+        return real_dumps(obj, **kw)
+    monkeypatch.setattr(hybrid_store, "unpackRow", unpack)
+    monkeypatch.setattr(jser_format, "orjson_dumps", dumps)
+    try:
+        out = tmp_path / "export.jser"
+        series.saveJser(str(out))
+    finally:
+        series.close()
+    assert lists == []
+    assert any(numpy)
+    assert out.read_bytes() == expected
+
+
+@pytest.mark.parametrize("leg", ["stdlib", "pretty"])
+@pytest.mark.parametrize("src", SERIES_FILES[:2], ids=lambda p: p.name)
+def test_an_export_from_the_store_writes_today_s_bytes_on_every_writer_leg(src, leg, tmp_path, store_on, monkeypatch):
+    from PyReconstruct.modules.constants import jser_format
+    if leg == "stdlib":
+        monkeypatch.setattr(jser_format, "have_orjson", lambda: False)
+    else:
+        monkeypatch.setenv(jser_format.PRETTY_ENV_VAR, "1")
+    expected = _today_bytes(src, tmp_path, monkeypatch)
+    assert _store_export(src, tmp_path) == expected
+
+
+def test_a_plain_section_is_never_encoded_with_numpy_on():
+    # a numpy scalar in a plain section makes orjson refuse it, so the whole
+    # document comes from the stdlib leg, as before the store existed
+    import io
+    from PyReconstruct.modules.constants import jser_format
+    row = [[np.float64(1.5), 2.5], [2.0, 3.0], [0, 0, 0], True, False, False, ["none", "none"], []]
+    f = io.BytesIO()
+    jser_format.write_jser(f, lambda: [{"contours": {"a": [row]}}], lambda: {"log": ""}, pretty=False)
+    assert f.getvalue().startswith(b'{"sections": [')
+
+
+def test_numbers_stored_in_an_object_s_own_alignment_are_kept(tmp_path, store_on):
+    # an object pinned to an alignment other than the series' is measured in
+    # it (ObjectData.addTrace); stored numbers in that alignment are current
+    fp = _copy(SERIES_FILES[1], tmp_path)
+    _open(fp).close()
+    db_fp, _ = hybrid_store.storePaths(str(fp))
+    con = sqlite3.connect(db_fp)
+    series_data = json.loads(con.execute("SELECT data FROM series").fetchone()[0])
+    default = series_data.get("alignment", "default")
+    stored = [
+        (snum, json.loads(header), json.loads(keys)) for snum, header, keys in con.execute(
+            "SELECT section.snum, header, keys FROM section JOIN section_stats USING (snum)"
+        )
+    ]
+    name = next(
+        n for _, header, keys in stored for n, k in zip(header["contours"], keys) if k is not None
+    )
+    for snum, header, keys in stored:
+        header["tforms"]["pinned"] = header["tforms"][default]
+        keys = ["pinned" if n == name and k is not None else k for n, k in zip(header["contours"], keys)]
+        con.execute("UPDATE section SET header=? WHERE snum=?", (json.dumps(header).encode(), snum))
+        con.execute("UPDATE section_stats SET keys=? WHERE snum=?", (json.dumps(keys).encode(), snum))
+    series_data["obj_attrs"].setdefault(name, {})["alignment"] = "pinned"
+    con.execute("UPDATE series SET data=?", (json.dumps(series_data).encode(),))
+    con.commit()
+    con.close()
+
+    series = _open(fp)
+    try:
+        assert series.getAttr(name, "alignment") == "pinned"
+        assert series.store.recomputed == []
+        from_columns = _object_list(series.data)
+        series.data.refresh(show_progress=False)
+        assert _object_list(series.data) == from_columns
+    finally:
+        series.close()

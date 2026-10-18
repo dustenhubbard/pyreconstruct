@@ -12,6 +12,7 @@ from PySide6.QtCore import QEvent
 from .main_imports import *
 
 from PyReconstruct.modules.datatypes.section import Section, zarrHasScaleLevels
+from PyReconstruct.modules.datatypes import hybrid_store
 from PyReconstruct.modules.backend.image_name_match import (
     matchByNumber, zarrImageNames,
 )
@@ -3162,6 +3163,9 @@ class MainWindow(QMainWindow):
             save = saveNotify()
             if save == "no":
                 if close:
+                    if self.series.store is not None:
+                        # the store goes back to the last Save
+                        self.series.store.clearPending()
                     self.series.close()
                 return
             elif save == "cancel":
@@ -3169,6 +3173,14 @@ class MainWindow(QMainWindow):
         
         # User closing and series not modified
         if close and not self.series.modified:
+            if self.series.store is not None:
+                # PROTOTYPE: closing writes the .jser only when the store's
+                # content is ahead of it (commit drops same-content rewrites),
+                # and that export is when an automatic backup is made
+                self.series.store.commit(self.series)
+                if self.series.store.hasUnexportedWork():
+                    self.series.saveJser()
+                    self.backup(check_auto=True, from_saved=True)
             self.series.close()
             return
 
@@ -3180,6 +3192,13 @@ class MainWindow(QMainWindow):
             # the hidden dir holding the only copy of the work.
             if self.saveAsToJser(close=close) == "cancel":
                 return "cancel"
+        elif (
+            self.series.store is not None and not close
+            and not hybrid_store.saveWritesJser()
+        ):
+            # PROTOTYPE, PYRECON_HYBRID_STORE_SAVE=store: Save writes the local
+            # store only; the .jser is written on close (Series.saveJser)
+            self.series.store.commit(self.series)
         else:
             # save the real jser once, then copy those bytes to the backup
             # (avoids a second full serialization of the whole series)
@@ -3191,6 +3210,38 @@ class MainWindow(QMainWindow):
         # mark series as unmodified
         self.seriesModified(False)
     
+    def exportStoreToJser(self):
+        """PROTOTYPE: write the .jser from the local store now, then back it up.
+
+        With Save writing the store only, this and closing the series are the
+        two moments a .jser is written, so they are the two that make an
+        automatic backup (Save never does).
+        """
+        if self.series.store is None:
+            return
+        if self.series.jserSaveRunning():
+            self.series.refuseNestedSave(self.series.jser_fp)
+            return
+        self.saveAllData()
+        self.series.saveJser()
+        self.backup(check_auto=True, from_saved=True)
+        self.seriesModified(False)
+
+    def exportSetAsideStore(self):
+        """PROTOTYPE: write a .jser next to a set-aside store file."""
+        fp = FileDialog.get(
+            "file", self, "Export a set-aside store",
+            filter="*.pyrstore",
+        )
+        if not fp:
+            return
+        try:
+            out = hybrid_store.exportStoreFile(fp)
+        except (OSError, hybrid_store.sqlite3.Error) as e:
+            notify(f"Could not export {fp}:\n{e}")
+            return
+        notify(f"Written:\n{out}")
+
     def saveAsToJser(self, close=False):
         """Prompt user for save location.
 

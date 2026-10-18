@@ -25,6 +25,7 @@ from .objects import Objects
 from .default_settings import default_settings, default_series_settings
 from .host_tree import HostTree
 from .filters import passesFilters
+from . import hybrid_store
 
 from PyReconstruct.modules.calc import traceGeometry
 
@@ -732,6 +733,10 @@ class Series():
     qsettings_defaults = default_settings.copy()
     qsettings_series_defaults = default_series_settings.copy()
 
+    ## The hybrid store prototype (hybrid_store.py), or None. None unless the
+    ## series was opened with PYRECON_HYBRID_STORE=1.
+    store = None
+
     def __init__(self, filepath : str, sections : dict, get_series_data=True):
         """Load the series file.
 
@@ -999,6 +1004,10 @@ class Series():
                 (Series): the series object created from the jser, or None if
                     the user declined the object merge
         """
+        # PROTOTYPE, opt-in: open through the local store (hybrid_store.py)
+        if hybrid_store.enabled():
+            return hybrid_store.openSeries(fp, progress, notifier)
+
         # check for existing hidden folder
         sdir = os.path.dirname(fp)
         sname = os.path.basename(fp)
@@ -1388,6 +1397,9 @@ class Series():
                     not replaced, so it is still the last good copy.
         """
         self.save()
+        if self.store is not None:
+            # the export writes what was saved: fold the working layer in first
+            self.store.commit(self)
 
         jser_fp = self.jser_fp if not save_fp else save_fp
 
@@ -1405,7 +1417,10 @@ class Series():
 
         missing = [
             snum for snum in snums
-            if not os.path.isfile(os.path.join(self.hidden_dir, self.sections[snum]))
+            if not (
+                self.store.hasSection(snum) if self.store is not None
+                else os.path.isfile(os.path.join(self.hidden_dir, self.sections[snum]))
+            )
         ]
         if missing:
             self._refuseSave(
@@ -1445,19 +1460,28 @@ class Series():
                         continue
                     fp = os.path.join(self.hidden_dir, self.sections[snum])
                     try:
-                        with open(fp, "rb") as f:
-                            raw = f.read()
-                    except OSError as e:
+                        if self.store is not None:
+                            # PROTOTYPE: the store gives the parsed section and
+                            # a key over what it holds (readSectionKeyed)
+                            section_data, key = self.store.readSectionKeyed(snum, fp)
+                            raw = None
+                        else:
+                            section_data = None
+                            with open(fp, "rb") as f:
+                                raw = f.read()
+                            key = section_digest(raw)
+                    except (OSError, ValueError) as e:
                         refuseUnreadable(snum, e)
 
                     progress += 1
                     reporter.set_progress(progress/final_value * 100)
                     # parsed only if this section is encoded, not copied
                     yield KeyedSection(
-                        section_digest(raw),
-                        lambda raw=raw, snum=snum: parseSection(raw, snum)
+                        key,
+                        (lambda d=section_data: d) if section_data is not None
+                        else lambda raw=raw, snum=snum: parseSection(raw, snum)
                     )
-                    del raw
+                    del raw, section_data
 
             def parseSection(raw, snum):
                 try:
@@ -1566,6 +1590,8 @@ class Series():
             # series' own file, which that save did not touch.
             if jser_fp == self.jser_fp:
                 self._jser_splice_index = splice.indexFor(jser_fp)
+                if self.store is not None:
+                    self.store.markExported(jser_fp)
 
             if close:
                 self.close()
@@ -1597,6 +1623,8 @@ class Series():
                 section (Section): the section file being used (in GUI)
                 b_section (Section): the secondary section file being used (in GUI)
             """
+        if self.store is not None:
+            raise SeriesSaveError("Save As is not in the hybrid store prototype.")
         
         ## Move/Rename hidden directory
         old_name = self.name
@@ -1668,6 +1696,13 @@ class Series():
         if self.isWelcomeSeries() or self.leave_open:
             # closed even so: a series left open for the one replacing it in
             # the same hidden dir must not go on editing that one's files
+            self.closed = True
+            return
+
+        if self.store is not None:
+            # the store keeps the series; only its working folder goes
+            self.store.close()
+            shutil.rmtree(self.hidden_dir, ignore_errors=True)
             self.closed = True
             return
 
@@ -2186,6 +2221,8 @@ class Series():
         except OSError as e:
             self._surfaceSaveError(self.filepath, e)
             raise
+        if self.store is not None:
+            self.store.writePendingSeries(d)
 
     def getwdir(self) -> str:
         """Get the working directory of the series.
@@ -5273,9 +5310,21 @@ class Series():
         """
         if not d:
             d = dict(tuple((snum, i) for i, snum in enumerate(sorted(self.sections))))
-        
+
+        if self.store is not None:
+            # PROTOTYPE: the sections are renumbered in the store's working rows
+            self.store.reorderSections(d, {
+                n: os.path.join(self.hidden_dir, f) for n, f in self.sections.items()
+            })
+            for old_snum in d:
+                fp = os.path.join(self.hidden_dir, f"{self.name}.{old_snum}")
+                if os.path.isfile(fp):
+                    os.remove(fp)
+
         # rename the section files
         for old_snum, new_snum in d.items():
+            if self.store is not None:
+                break
             os.rename(
                 os.path.join(self.hidden_dir, f"{self.name}.{old_snum}"),
                 os.path.join(self.hidden_dir, f"{self.name}.{new_snum}.temp")
@@ -5338,6 +5387,12 @@ class Series():
             self.hidden_dir
         )
         self.sections[max_snum] = f"{self.name}.{max_snum}"
+        if self.store is not None:
+            # PROTOTYPE: the new section is unsaved work in the store, so a
+            # crash before the next Save offers it back like any other edit
+            new_fp = os.path.join(self.hidden_dir, self.sections[max_snum])
+            with open(new_fp, "rb") as f:
+                self.store.writePendingSection(max_snum, fast_loads(f.read()))
 
         # reorder the sections
         if index in self.sections:
@@ -6417,7 +6472,12 @@ class Series():
         for snum in snums:
             # delete the file
             filename = self.sections[snum]
-            os.remove(os.path.join(self.getwdir(), filename))
+            if self.store is not None:
+                self.store.deletePendingSection(snum)
+                if os.path.isfile(os.path.join(self.getwdir(), filename)):
+                    os.remove(os.path.join(self.getwdir(), filename))
+            else:
+                os.remove(os.path.join(self.getwdir(), filename))
             # delete link to file
             del(self.sections[snum])
             # and the object ids of its traces

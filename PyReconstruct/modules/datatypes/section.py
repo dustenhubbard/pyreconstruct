@@ -643,9 +643,15 @@ class Section():
         self.temp_hide = []          # traces to temp hide
         self.traces_group_hide = []  # traces to hide by group viz
 
-        with open(self.filepath, "rb") as f:
-            raw = f.read()
-        section_data = fast_loads(raw)
+        store = getattr(series, "store", None)
+        if store is not None:
+            # PROTOTYPE, opt-in: the section comes from the local store, as the
+            # bytes its hidden file would hold (the trace-id record reads them)
+            section_data, raw = store.readSectionWithBytes(n, self.filepath)
+        else:
+            with open(self.filepath, "rb") as f:
+                raw = f.read()
+            section_data = fast_loads(raw)
         
         ## `stored_ids` collects the ids the section file's own keyed rows
         ## assert. Empty for every positional file, which is every file written
@@ -1488,6 +1494,7 @@ class Section():
             self.series.data.updateSection(self, update_traces=True)
     
         d = self.getDict()
+        store = getattr(self.series, "store", None)
         # write atomically: a crash or ENOSPC mid-write must never leave the
         # section file truncated, so write a sibling temp file and rename it
         # over the original (os.replace is atomic on POSIX/Windows). We do NOT
@@ -1496,23 +1503,27 @@ class Section():
         # gesture into a synchronous disk flush. The .jser master copy is the
         # durable one; os.replace already prevents a truncated file on crash.
         tmp_fp = self.filepath + ".tmp"
-        try:
-            with open(tmp_fp, "wb") as f:
-                # internal hidden working file -- write compact bytes to cut
-                # serialization cost and the bytes re-read on every saveJser
-                data = fast_dumps(d)
-                f.write(data)
-            # a save fires on scroll / section switch; retry a transiently-locked
-            # replace (Windows AV/indexer/sync) so it doesn't fail spuriously
-            from PyReconstruct.modules.backend.func.atomic_io import replace_with_retry
-            replace_with_retry(tmp_fp, self.filepath)
-        except OSError:
-            # leave the original file untouched; clean up the partial temp
+        data = fast_dumps(d)
+        if store is not None:
+            # PROTOTYPE, opt-in: the working copy goes to the local store
+            store.writePendingSection(self.n, data)
+        else:
             try:
-                os.remove(tmp_fp)
+                with open(tmp_fp, "wb") as f:
+                    # internal hidden working file -- write compact bytes to cut
+                    # serialization cost and the bytes re-read on every saveJser
+                    f.write(data)
+                # a save fires on scroll / section switch; retry a transiently-locked
+                # replace (Windows AV/indexer/sync) so it doesn't fail spuriously
+                from PyReconstruct.modules.backend.func.atomic_io import replace_with_retry
+                replace_with_retry(tmp_fp, self.filepath)
             except OSError:
-                pass
-            raise
+                # leave the original file untouched; clean up the partial temp
+                try:
+                    os.remove(tmp_fp)
+                except OSError:
+                    pass
+                raise
 
         # The whole-section reconciliation, at the one non-per-frame point that
         # is already O(section). Per-mutation checking is targeted at the row

@@ -85,7 +85,7 @@ import os
 from typing import Optional
 
 from .fast_json import fast_dumps, have_orjson, orjson_dumps, stdlib_dumps
-from .jser_splice import JserSplice, SpliceMismatch, loaded
+from .jser_splice import ArraySection, JserSplice, SpliceMismatch, loaded
 
 
 #: Environment variable that opts a whole process into pretty output.
@@ -723,7 +723,13 @@ class _NeedsStdlib(Exception):
 
 def _orjson_part(obj) -> bytes:
     try:
-        return orjson_dumps(obj)
+        # PROTOTYPE: a section the hybrid store hands over as arrays
+        # (jser_splice.ArraySection); nothing else is encoded with numpy on
+        numpy = (
+            type(obj) is list and len(obj) == 1 and type(obj[0]) is list
+            and len(obj[0]) == 1 and type(obj[0][0]) is ArraySection
+        )
+        return orjson_dumps(obj, numpy=numpy)
     except Exception as e:
         raise _NeedsStdlib() from e
 
