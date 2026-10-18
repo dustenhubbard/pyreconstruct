@@ -329,12 +329,17 @@ class HybridStore():
             self.con.execute("DELETE FROM pending_section")
             self.con.execute("DELETE FROM pending_series")
 
-    def writePendingSection(self, snum : int, section_data : dict):
-        """A section's working copy (Section.save), as its hidden file was."""
+    def writePendingSection(self, snum : int, section_data):
+        """A section's working copy (Section.save), as its hidden file was.
+
+        `section_data` is the section dict, or the bytes its file would hold.
+        """
+        if not isinstance(section_data, bytes):
+            section_data = fast_dumps(section_data)
         with self._tx(sync="NORMAL"):
             self.con.execute(
                 "INSERT OR REPLACE INTO pending_section(snum, data) VALUES (?, ?)",
-                (snum, fast_dumps(section_data)),
+                (snum, section_data),
             )
 
     def deletePendingSection(self, snum : int):
@@ -427,6 +432,27 @@ class HybridStore():
                     return fast_loads(f.read())
             raise FileNotFoundError(f"section {snum} is not in the store {self.db_fp}")
         return self._assemble(snum, fast_loads(row[0]))
+
+    def readSectionWithBytes(self, snum : int, fallback_fp : str = None) -> tuple:
+        """(section dict, the bytes its hidden file would hold), as readSection.
+
+        The bytes are what Section.save writes for that dict, so the trace-id
+        record (TraceIDIssuer) and the splice save's key see the same bytes a
+        hidden file would give them.
+        """
+        row = self.con.execute(
+            "SELECT data FROM pending_section WHERE snum=?", (snum,)
+        ).fetchone()
+        if row is not None and row[0] is not None:
+            return fast_loads(row[0]), row[0]
+        if not self.con.execute(
+            "SELECT 1 FROM section WHERE snum=?", (snum,)
+        ).fetchone() and fallback_fp and os.path.isfile(fallback_fp):
+            with open(fallback_fp, "rb") as f:
+                raw = f.read()
+            return fast_loads(raw), raw
+        section_data = self.readSection(snum, fallback_fp)
+        return section_data, fast_dumps(section_data)
 
     def _assemble(self, snum : int, header : dict) -> dict:
         names = header["contours"]
@@ -575,13 +601,17 @@ class HybridStore():
 
     ## import -----------------------------------------------------------------
 
-    def importJser(self, jser_fp : str, jser_data : dict, collisions : dict, reporter=None):
-        """Write a parsed .jser into the store, migrated exactly as openJser migrates it."""
+    def importJser(self, jser_fp : str, source, collisions : dict, reporter=None):
+        """Write a .jser into the store, migrated exactly as openJser migrates it.
+
+        `source` is what Series._readJserForOpen returns: it hands over the
+        sections one at a time (a streamed read where the file allows it), so
+        the import holds one section, the series and the log, as openJser does.
+        """
         from .section import Section
         from .series import Series, applyContourRenames
 
-        sections = jser_data["sections"]
-        total = sum(1 for s in sections if s is not None) + 1
+        total = source.sectionCount() + 1
         done = 0
         self.con.execute("PRAGMA journal_mode=TRUNCATE")
         try:
@@ -590,9 +620,7 @@ class HybridStore():
                               "pending_section", "pending_series"):
                     self.con.execute(f"DELETE FROM {table}")
                 renames = {}
-                for snum, section_data in enumerate(sections):
-                    if section_data is None:
-                        continue
+                for snum, section_data in source.sections():
                     stored_ids = {}
                     renames.update(Section.updateJSON(section_data, snum, stored_ids=stored_ids))
                     if stored_ids:
@@ -600,14 +628,14 @@ class HybridStore():
                     # every section locks on open (see Series.openJser)
                     section_data["align_locked"] = True
                     self._replaceSection(snum, section_data)
-                    sections[snum] = None  # free it as it goes
+                    section_data = None  # free it before the next is decoded
                     done += 1
                     if reporter is not None:
                         reporter.set_progress(done / total * 50)
                 self.con.execute(
-                    "INSERT INTO log(id, text) VALUES (1, ?)", (jser_data["log"],)
+                    "INSERT INTO log(id, text) VALUES (1, ?)", (source.log,)
                 )
-                series_data = jser_data["series"]
+                series_data = source.series
                 series_data["log_set"] = []
                 Series.updateJSON(series_data)
                 applyContourRenames(series_data, renames, collisions)
@@ -964,12 +992,15 @@ def openSeries(jser_fp : str, progress, notifier):
         if store.isImported():
             store.foldStraySections()
         if not store.isImported():
-            jser_data, collisions = Series._readJserForOpen(jser_fp, notifier)
-            if jser_data is None:
+            source, collisions = Series._readJserForOpen(jser_fp, notifier)
+            if source is None:
                 store.close()
                 return None
-            store.importJser(jser_fp, jser_data, collisions, reporter)
-            del jser_data
+            try:
+                store.importJser(jser_fp, source, collisions, reporter)
+            finally:
+                source.close()
+            del source
         elif store.hasPending():
             if asker.confirm(
                 f"{sname} has unsaved work from a session that did not close.\n"

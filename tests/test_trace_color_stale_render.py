@@ -43,10 +43,10 @@ def _record_draws(layer):
     calls = []
     orig = type(layer)._drawTrace
 
-    def rec(self, painter, trace, tform, fill_opacity, color=None):
+    def rec(self, painter, trace, tform, fill_opacity, color=None, qpoints=None):
         drawn_color = tuple(color) if color else tuple(trace.color)
         calls.append((trace, drawn_color, trace in self._selected_set))
-        return orig(self, painter, trace, tform, fill_opacity, color)
+        return orig(self, painter, trace, tform, fill_opacity, color, qpoints)
 
     type(layer)._drawTrace = rec
     return calls, (lambda: setattr(type(layer), "_drawTrace", orig))

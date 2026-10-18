@@ -138,12 +138,17 @@ class FieldWidgetObject(FieldWidgetTrace):
     #  - updating the host tree of an object
     #  - updating any other related objects that are not selected
     #  - refreshing the entire table
-    def object_function(update_objects: bool, reload_field: bool):
+    def object_function(update_objects: bool, reload_field: bool, roi_box_ok: bool = False):
         """Wrapper for functions on objects that are accessible through both the field and the object list.
         
         Handles determining the object names to pass to its functions and saving the mainwindow data.
         
         Handles reloading and updating the objects in the tables.
+
+        From the field, an object function acts on every trace of the
+        selected objects, the ones outside the ROI box too, so it is refused
+        while the box is on unless roi_box_ok (the 3D scene, which the box
+        leaves alone). The object list's selection is not limited by the box.
         """
         def decorator(fn):
             def wrapper(self, *args, **kwargs):
@@ -152,7 +157,8 @@ class FieldWidgetObject(FieldWidgetTrace):
                 vscroll = None  # scroll bar if object list
                 data_table = self.table_manager.hasFocus()
 
-                if isinstance(data_table, ObjectTableWidget):
+                from_list = isinstance(data_table, ObjectTableWidget)
+                if from_list:
                     selected_names = data_table.getSelected()
                     vscroll = data_table.table.verticalScrollBar()  # track scroll bar position
                     scroll_pos = vscroll.value()
@@ -164,6 +170,9 @@ class FieldWidgetObject(FieldWidgetTrace):
                     
                 ## If no selected objects
                 if not selected_names:
+                    return
+
+                if not from_list and not roi_box_ok and self.refuseWhileRoiBox():
                     return
                 
                 ## Check for locked objects
@@ -188,6 +197,7 @@ class FieldWidgetObject(FieldWidgetTrace):
                 # call to update objects
                 if update_objects:
                     self.table_manager.updateObjects(selected_names)
+                    self.section.clearTracking()
                     self.mainwindow.seriesModified(True)
                 
                 # reset the scroll bar position if applicable
@@ -903,22 +913,22 @@ class FieldWidgetObject(FieldWidgetTrace):
         self.mainwindow.seriesModified(True)
         self.reload()
 
-    @object_function(update_objects=False, reload_field=False)
+    @object_function(update_objects=False, reload_field=False, roi_box_ok=True)
     def addTo3D(self, obj_names : list):
         """Generate a 3D view of an object"""
         self.mainwindow.addTo3D(obj_names)
     
-    @object_function(update_objects=False, reload_field=False)
+    @object_function(update_objects=False, reload_field=False, roi_box_ok=True)
     def remove3D(self, obj_names : list):
         """Remove object(s) from the scene."""
         self.mainwindow.removeFrom3D(obj_names)
 
-    @object_function(update_objects=False, reload_field=False)
+    @object_function(update_objects=False, reload_field=False, roi_box_ok=True)
     def exportAs3D(self, obj_names : list, export_type):
         """Export 3D objects."""
         self.mainwindow.exportAs3D(obj_names, export_type)
 
-    @object_function(update_objects=False, reload_field=False)
+    @object_function(update_objects=False, reload_field=False, roi_box_ok=True)
     def export3DData(self, obj_names: list):
         """Export quantitative data from 3D meshes."""
         self.mainwindow.export3DData(obj_names)
@@ -1038,7 +1048,9 @@ class FieldWidgetObject(FieldWidgetTrace):
     @object_function(update_objects=False, reload_field=False)
     def viewHistory(self, obj_names : list):
         """View the history for a set of objects."""
-        HistoryTableWidget(self.series.getFullHistory(), self.mainwindow, obj_names)
+        HistoryTableWidget(
+            self.series.getFullHistory(skip_corrupt=True), self.mainwindow, obj_names
+        )
     
     @object_function(update_objects=False, reload_field=True)
     def createZtrace(self, obj_names : list, cross_sectioned=True):
@@ -1050,6 +1062,7 @@ class FieldWidgetObject(FieldWidgetTrace):
         
         # manual call to update ztraces
         self.mainwindow.field.table_manager.updateZtraces()
+        self.series.clearTracking()
 
         return True
 
@@ -1091,7 +1104,7 @@ class FieldWidgetObject(FieldWidgetTrace):
 
         return True
 
-    @object_function(update_objects=False, reload_field=False)
+    @object_function(update_objects=False, reload_field=False, roi_box_ok=True)
     def edit3D(self, obj_names : list):
         """Edit the 3D options for an object or set of objects."""
         # check for object names and opacities
@@ -1237,6 +1250,7 @@ class FieldWidgetObject(FieldWidgetTrace):
             self.series.setAttr(name, "locked", lock)
 
         self.table_manager.updateObjects(names)
+        self.section.clearTracking()
         self.mainwindow.field.deselectAllTraces()
         self.mainwindow.seriesModified(True)
 

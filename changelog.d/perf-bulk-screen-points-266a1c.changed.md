@@ -1,0 +1,1 @@
+- **Zoomed out on a dense section, the field redraws faster.**

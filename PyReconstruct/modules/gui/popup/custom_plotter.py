@@ -10,8 +10,11 @@ from typing import List, Union
 from pathlib import Path
 
 from PySide6.QtWidgets import QMainWindow, QColorDialog
-from PySide6.QtGui import QKeyEvent, QColor
+from PySide6.QtGui import (
+    QKeyEvent, QColor, QGuiApplication, QOpenGLContext, QSurfaceFormat
+)
 from PySide6.QtCore import Qt, QEvent
+from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 from PyReconstruct.modules.gui.dialog import QuickDialog, FileDialog
 from PyReconstruct.modules.backend.threading import ThreadPoolProgBar
@@ -34,7 +37,23 @@ from PyReconstruct.modules.gui.utils import (
 
 from .help3D import Help3DWidget
 
-from vtk.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
+import vtkmodules.qt
+from vtkmodules.vtkRenderingOpenGL2 import vtkGenericOpenGLRenderWindow
+
+# VTK's Qt widget hands its native window id to an X11 render window on
+# Linux. Under a native Wayland session that id is a Wayland handle, so the
+# first render resizes a window the X server does not know (BadWindow on
+# X_ConfigureWindow) and Xlib's default error handler ends the process. There
+# the scene draws into Qt's own OpenGL context instead. VTK fixes the widget's
+# base class when its module loads, so the choice is made here, before that
+# import; the app first imports this module once its QApplication exists.
+GL_SCENE = QGuiApplication.platformName().startswith("wayland")
+GL_LEQUAL, GL_NEAREST, GL_COLOR_BUFFER_BIT = 0x0203, 0x2600, 0x4000
+GL_SCISSOR_TEST, GL_DRAW_FRAMEBUFFER = 0x0C11, 0x8CA9
+if GL_SCENE:
+    vtkmodules.qt.QVTKRWIBase = "QOpenGLWidget"
+
+from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 
 
 class VPlotter(vedo.Plotter):
@@ -952,7 +971,104 @@ class Container(QMainWindow):
         super().closeEvent(event)
 
 
-class CustomPlotter(QVTKRenderWindowInteractor):
+class GLSceneWidget(QVTKRenderWindowInteractor):
+    """VTK's Qt widget drawn through a QOpenGLWidget (native Wayland only).
+
+    VTK renders with a vtkGenericOpenGLRenderWindow into the context Qt made
+    for this widget, so it never opens a window of its own or calls X11, and
+    each paint copies VTK's finished frame into the widget's framebuffer. The
+    widget stays non-native (VTK's constructor asks for winId(), which would
+    make it native), and Qt's own paint path replaces the one VTK sets up for
+    a native window. The same steps as VTK's C++ QVTKOpenGLNativeWidget.
+    """
+
+    def __init__(self, parent=None):
+        rw = vtkGenericOpenGLRenderWindow()
+        rw.SetReadyForRendering(False)  # no context until initializeGL
+        rw.SetFrameBlitModeToNoBlit()  # paintGL copies the frame itself
+        rw.SetOwnContext(0)  # Qt changes GL state between renders
+        super().__init__(parent, rw=rw)
+        fmt = QSurfaceFormat()  # VTK needs OpenGL 3.2 or later
+        fmt.setVersion(3, 2)
+        fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CoreProfile)
+        self.setFormat(fmt)
+        self.setAttribute(Qt.WidgetAttribute.WA_PaintOnScreen, False)
+        self._painting = False
+        self._fresh = False  # VTK rendered a frame since the last paint
+        rw.AddObserver("WindowMakeCurrentEvent", self._makeCurrent)
+        rw.AddObserver("WindowFrameEvent", self._frameDone)
+
+    def winId(self):
+        return 0  # read once, by VTK's constructor; the generic window ignores it
+
+    def _makeCurrent(self, obj, event):
+        # VTK asks for this before nearly every GL call. makeCurrent() also
+        # binds the widget's framebuffer, behind the back of VTK's cached
+        # bindings, so call it only when another context is current.
+        ready = self.isValid()  # False until Qt has made the context
+        if ready and QOpenGLContext.currentContext() is not self.context():
+            self.makeCurrent()
+        self._RenderWindow.SetIsCurrent(ready)
+
+    def _frameDone(self, obj, event):
+        # vedo and the interactor render on their own; show that frame. A
+        # render with buffer swaps off (a pick) leaves the shown frame alone.
+        rw = self._RenderWindow
+        if rw.GetDoubleBuffer() and not rw.GetSwapBuffers():
+            return
+        if not self._painting:
+            self._fresh = True
+            self.update()
+
+    def paintEngine(self):
+        return QOpenGLWidget.paintEngine(self)
+
+    def paintEvent(self, ev):
+        QOpenGLWidget.paintEvent(self, ev)
+
+    def initializeGL(self):
+        self._RenderWindow.OpenGLInitContext()  # load GL functions first
+        self._RenderWindow.OpenGLInitState()
+        self._RenderWindow.SetReadyForRendering(True)
+        self.context().aboutToBeDestroyed.connect(
+            lambda: self._RenderWindow.SetReadyForRendering(False)
+        )
+
+    def paintGL(self):
+        rw = self._RenderWindow
+        state = rw.GetState()
+        state.Reset()
+        state.Push()
+        state.vtkglDepthFunc(GL_LEQUAL)  # Qt leaves GL_LESS
+        if not self._fresh:
+            self._painting = True
+            try:
+                self._Iren.Render()
+            finally:
+                self._painting = False
+        self._fresh = False
+        self.makeCurrent()  # a render may have made another context current
+        gl = self.context().functions()
+        gl.glBindFramebuffer(GL_DRAW_FRAMEBUFFER, self.defaultFramebufferObject())
+        state.vtkglDisable(GL_SCISSOR_TEST)  # it clips the copy and the clear
+        w, h = rw.GetSize()
+        rw.BlitDisplayFramebuffer(0, 0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST)
+        # VTK leaves alpha 0 in its background, which a Wayland compositor
+        # shows as a hole in the window: make the copied frame opaque
+        gl.glColorMask(False, False, False, True)
+        gl.glClearColor(0, 0, 0, 1)
+        gl.glClear(GL_COLOR_BUFFER_BIT)
+        gl.glColorMask(True, True, True, True)
+        state.Pop()
+
+    def resizeEvent(self, ev):
+        if ev is not None:
+            QOpenGLWidget.resizeEvent(self, ev)  # resizes the framebuffer
+        self._fresh = False  # VTK's frame has the old size
+        super().resizeEvent(ev)
+
+
+class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
 
     def __init__(self, mainwindow, names=[], ztraces=False, load_fp=None):
 

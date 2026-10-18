@@ -47,6 +47,9 @@ def test_dmg_stages_flavor_specific_first_launch_help(tmp_path, flavor, app_name
     assert call["out"] == f"PyReconstruct-1.24.0.dev20260927-macOS-arm64{suffix}.dmg"
     assert call["defines"]["app"] == f"dist/{app_name}.app"
     assert Path(call["defines"]["guide"]).name == "Read Before First Launch.html"
+    # The mounted volume shows this app's icon.
+    volume_icon = Path(call["defines"]["icon"])
+    assert volume_icon.name == icon.replace(".png", ".icns") and volume_icon.is_file()
     shutil.copyfile(call["defines"]["guide"], tmp_path / "staged-guide.html")
     page = (tmp_path / "staged-guide.html").read_text()
     # The guide carries the icon of the app in this image, as one offline file.

@@ -46,7 +46,7 @@ def _patch_zarr_dialogs(monkeypatch, selected_dir):
 @pytest.mark.parametrize("method", ["newFromNgZarr", "importFromZarrLabels"])
 def test_invalid_zarr_selection_aborts(monkeypatch, tmp_path, method):
     notified, quick_called = _patch_zarr_dialogs(monkeypatch, tmp_path)
-    stub = types.SimpleNamespace()
+    stub = types.SimpleNamespace(field=types.SimpleNamespace(refuseWhileRoiBox=lambda: False))
 
     getattr(mw.MainWindow, method)(stub)
 
@@ -69,6 +69,9 @@ def test_calibrate_mag_with_no_traces_aborts(monkeypatch):
     class _Field:
         section = types.SimpleNamespace(selected_traces=[])
 
+        def refuseWhileRoiBox(self):
+            return False
+
         def calibrateMag(self, trace_lengths):
             field_calls.append(trace_lengths)
 
@@ -86,6 +89,9 @@ def test_calibrate_mag_with_explicit_lengths_still_calibrates(monkeypatch):
 
     class _Field:
         section = types.SimpleNamespace(selected_traces=[])
+
+        def refuseWhileRoiBox(self):
+            return False
 
         def calibrateMag(self, trace_lengths):
             field_calls.append(trace_lengths)

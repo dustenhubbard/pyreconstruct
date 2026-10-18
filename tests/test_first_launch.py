@@ -552,7 +552,7 @@ def test_help_menu_offers_whats_new_reopen():
 
     # ...and directly under it, the checkable popup on/off switch
     toggle = [o for o in entries if o[0] == "togglewhatsnew_act"]
-    assert toggle == [("togglewhatsnew_act", "Turn off What's new pop-up",
+    assert toggle == [("togglewhatsnew_act", "Show What's new after each update",
                        "checkbox", toggle_sentinel)]
     assert entries.index(toggle[0]) == entries.index(whatsnew[0]) + 1
 

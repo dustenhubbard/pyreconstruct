@@ -1,18 +1,19 @@
 import math
 from collections import defaultdict
-from itertools import starmap
+from itertools import chain, starmap
 
 import numpy as np
 
 from PySide6.QtWidgets import QLabel
-from PySide6.QtCore import Qt, QPoint, QLine
+from PySide6.QtCore import Qt, QPoint, QLine, QByteArray, QDataStream, QIODevice
 from PySide6.QtGui import (
     QPixmap,
     QPen,
     QColor,
     QPainter,
     QBrush,
-    QFont
+    QFont,
+    QPolygon
 )
 from PyReconstruct.modules.datatypes import (
     Series, 
@@ -30,7 +31,37 @@ from PyReconstruct.modules.calc import (
     getExterior
 )
 from PyReconstruct.modules.calc.nesting import islandCuts
+from PyReconstruct.modules.datatypes.default_settings import MAX_SELECTION_GLOW_OPACITY
 from PyReconstruct.modules.gui.utils import drawOutlinedText
+
+# The looks a selected trace can have, set by the selected_trace_style option.
+# "standard" is drawn inline in _drawTrace: the trace's 1 px line, then the same
+# path again, 8 px wide at 40% opacity, under any fill. The others replace the
+# line with pens drawn after the fill, widest first, so a fill never covers them.
+# Each pen is (color, width in pixels, opacity): color None is the trace's own
+# color, and opacity None is the selection_glow_opacity option.
+SELECTED_TRACE_PENS = {
+    "outline": (
+        ((0, 0, 0), 6, 1),
+        ((255, 255, 255), 4, 1),
+        (None, 2, 1),
+    ),
+    "glow": (
+        (None, 5, None),
+        (None, 2, 1),
+    ),
+}
+SELECTED_TRACE_STYLES = ("standard", *SELECTED_TRACE_PENS)
+
+
+def selectionGlowOpacity(percent) -> float:
+    """Return the painter opacity for a selection_glow_opacity value.
+
+    The value is a percent; above MAX_SELECTION_GLOW_OPACITY it draws as that
+    maximum.
+    """
+    return min(max(percent, 0), MAX_SELECTION_GLOW_OPACITY) / 100
+
 
 class TraceLayer():
 
@@ -51,6 +82,32 @@ class TraceLayer():
         self._temp_hide_set = set()
         self._group_hide_set = set()
         self._group_hidden_names = set()
+        # the field's ROI box (center x, center y, width, height in field
+        # units), or None. View-only: set by every draw, never saved
+        self.roi_box = None
+        # True while every trace is hidden (H): nothing is drawn, so
+        # nothing can be picked
+        self.traces_hidden = False
+        # the (style, glow percent) the options dialog shows while it is open;
+        # None draws from the stored options
+        self.selected_style_preview = None
+        self._selected_pens = None
+        # {trace: (points list, point count, untransformed bounds)}, valid for
+        # one section at one columnar store generation (see _cullMask)
+        self._raw_bounds = {}
+        self._raw_bounds_key = None
+        # an offscreen render at k times the screen size sets these: every
+        # width drawn in screen pixels is multiplied by pen_scale, and the
+        # traces, selection, z-traces and flags can each be left out
+        self.pen_scale = 1
+        self.draw_traces = True
+        self.draw_selection = True
+        self.draw_ztraces = True
+        self.draw_flags = True
+
+    def penWidth(self, width):
+        """A pen width in screen pixels, times pen_scale."""
+        return width * self.pen_scale
     
     def pointToPix(self, pt : tuple, apply_tform=True, tform : Transform = None, qpoint=False) -> tuple:
         """Return the pixel point corresponding to a field point.
@@ -95,10 +152,20 @@ class TraceLayer():
 
         if tform is None:
             tform = self.section.tform
-        pts = tform.mapPointsArray(trace.points)
+        return self._fieldToPixArray(tform.mapPointsArray(trace.points))
 
-        # apply the field-window to pixmap conversion
-        # (same math as fieldPointToPixmap, incl. round-half-even)
+    def _fieldToPixArray(self, pts : np.ndarray) -> np.ndarray:
+        """Convert (N, 2) field points to integer pixel points.
+
+        The same math as fieldPointToPixmap, round-half-even included. Every
+        step works point by point, so one call on many traces' points gives
+        each point the same pixel as a call on its own trace.
+
+            Params:
+                pts (np.ndarray): (N, 2) field points, transform applied
+            Returns:
+                (np.ndarray): (N, 2) array of integer pixel points
+        """
         window_x, window_y, window_w, window_h = tuple(self.series.window)
         pixmap_w, pixmap_h = tuple(self.pixmap_dim)
         mag = self.section.mag
@@ -146,13 +213,28 @@ class TraceLayer():
         window_size = max(self.series.window[2:])
         radius = window_size * (0.05)
 
-        return self.section.findClosest(
+        # findClosest searches the whole section when it gets no traces. With
+        # the ROI box on, no traces in view means none inside the box, and
+        # the traces outside it must not be picked. With every trace hidden,
+        # none is on the screen to pick.
+        if self.traces_in_view or self.roi_box is not None or self.traces_hidden:
+            traces_in_view = self.traces_in_view
+        else:
+            traces_in_view = None
+
+        closest, closest_type = self.section.findClosest(
             field_x,
             field_y,
             radius=radius,
-            traces_in_view=self.traces_in_view,
+            traces_in_view=traces_in_view,
             include_hidden=self.show_all_traces
         )
+
+        # the list is from the last draw; the box may have moved since
+        if closest_type == "trace" and not self.insideRoiBox(closest):
+            return None, None
+
+        return closest, closest_type
     
     def getTraces(self, pix_poly : list) -> list[Trace]:
         """"Select all traces that are completely in a polygon
@@ -250,7 +332,7 @@ class TraceLayer():
         
         return copied_traces
     
-    def _drawTrace(self, painter : QPainter, trace : Trace, tform : Transform, fill_opacity : float, color=None) -> bool:
+    def _drawTrace(self, painter : QPainter, trace : Trace, tform : Transform, fill_opacity : float, color=None, qpoints=None) -> bool:
         """Draw a trace on the current trace layer and return bool indicating if trace is in the current view.
 
             Params:
@@ -259,47 +341,55 @@ class TraceLayer():
                 tform (Transform): the section transform (hoisted out of the loop)
                 fill_opacity (float): the fill_opacity option (hoisted out of the loop)
                 color (bool): optionally force a color
+                qpoints (QPolygon): the trace in pixmap coordinates, already
+                    known to reach the screen (see _screenPolygons); None
+                    converts and tests the trace here
             Returns:
                 (bool) if the trace is within the current field window view
         """
-        ## Convert to screen coordinates (vectorized; no QPoints yet)
-        pix_pts = self.traceToPixArray(trace, tform)
+        if qpoints is None:
+            ## Convert to screen coordinates (vectorized; no QPoints yet)
+            pix_pts = self.traceToPixArray(trace, tform)
 
-        if not len(pix_pts):
-            print("EMPTY TRACE DETECTED")
-            return
+            if not len(pix_pts):
+                print("EMPTY TRACE DETECTED")
+                return
 
-        ## Get bounds and cull before allocating any QPoint/QPolygon
-        xmin, ymin = pix_pts.min(axis=0)
-        xmax, ymax = pix_pts.max(axis=0)
-        trace_bounds = xmin, ymin, xmax, ymax
-        screen_bounds = 0, 0, *self.pixmap_dim
+            ## Get bounds and cull before allocating any QPoint/QPolygon
+            xmin, ymin = pix_pts.min(axis=0)
+            xmax, ymax = pix_pts.max(axis=0)
+            trace_bounds = xmin, ymin, xmax, ymax
+            screen_bounds = 0, 0, *self.pixmap_dim
 
-        if not boundsOverlap(trace_bounds, screen_bounds):
-            return False
+            if not boundsOverlap(trace_bounds, screen_bounds):
+                return False
 
-        qpoints = qPointList(pix_pts)
+            qpoints = qPointList(pix_pts)
 
         ## Get color
         draw_color = color if color else trace.color
 
         selected = trace in self._selected_set
+        # the fill follows the selection whether or not it is highlighted
+        highlighted = selected and self.draw_selection
 
         ## Set up painter (shared: reset state left over from the previous trace)
         painter.setOpacity(1)
         painter.setBrush(Qt.NoBrush)
-        painter.setPen(QPen(QColor(*draw_color), 1))
+        painter.setPen(QPen(QColor(*draw_color), self.penWidth(1)))
 
-        ## Draw trace
-        if trace.closed:
-            painter.drawPolygon(qpoints)
-        else:
-            painter.drawPolyline(qpoints)
+        ## Draw trace (another selected style draws its own line after the fill)
+        pens = self._selected_pens if highlighted else None
+        if not pens:
+            if trace.closed:
+                painter.drawPolygon(qpoints)
+            else:
+                painter.drawPolyline(qpoints)
 
         ## Draw highlight
-        if selected:
+        if highlighted and not pens:
 
-            painter.setPen(QPen(QColor(*draw_color), 8))
+            painter.setPen(QPen(QColor(*draw_color), self.penWidth(8)))
             painter.setOpacity(0.4)
 
             if trace.closed:
@@ -329,7 +419,7 @@ class TraceLayer():
         ## Fill in shape if requested
         if fill:
 
-            painter.setPen(QPen(QColor(*draw_color), 1))
+            painter.setPen(QPen(QColor(*draw_color), self.penWidth(1)))
             painter.setBrush(QBrush(QColor(*draw_color)))
 
             ## determine fill type
@@ -344,7 +434,55 @@ class TraceLayer():
 
             painter.drawPolygon(qpoints)
 
+        ## Draw the selected style's pens last, so a fill never covers them
+        if pens:
+            self._drawSelectedPens(painter, qpoints, trace.closed, draw_color, pens)
+
         return True
+
+    def _drawSelectedPens(self, painter : QPainter, qpoints, closed : bool, draw_color, pens):
+        """Draw a selected trace with the pens of its selected_trace_style.
+
+            Params:
+                painter (QPainter): the painter
+                qpoints: the trace in pixmap coordinates
+                closed (bool): True to draw a polygon, False for a polyline
+                draw_color: the color the trace line is drawn in
+                pens: (color, width, opacity) tuples, widest first
+        """
+        painter.setBrush(Qt.NoBrush)
+        draw = painter.drawPolygon if closed else painter.drawPolyline
+        for color, width, opacity in pens:
+            if not opacity:
+                continue
+            pen = QPen(QColor(*(color or draw_color)), self.penWidth(width))
+            # round joins cost about twice the stroke time on long traces, so
+            # corners keep the default bevel; round caps only on open ends
+            if not closed:
+                pen.setCapStyle(Qt.RoundCap)
+            painter.setOpacity(opacity)
+            painter.setPen(pen)
+            draw(qpoints)
+
+    def _selectedPens(self):
+        """Return the pens for a selected trace, or None for the standard look.
+
+        Reads the dialog's preview when there is one, else the stored options.
+        An unknown style draws as standard.
+        """
+        if self.selected_style_preview is not None:
+            style, percent = self.selected_style_preview
+        else:
+            style = self.series.getOption("selected_trace_style")
+            percent = self.series.getOption("selection_glow_opacity")
+        pens = SELECTED_TRACE_PENS.get(style)
+        if pens is None:
+            return None
+        glow = selectionGlowOpacity(percent)
+        return tuple(
+            (color, width, glow if opacity is None else opacity)
+            for color, width, opacity in pens
+        )
     
     def _drawZtrace(self, trace_layer : QPixmap, ztrace : Ztrace):
         """Draw points on the current trace layer.
@@ -378,11 +516,11 @@ class TraceLayer():
         
         # set up painter
         painter = QPainter(trace_layer)
-        painter.setPen(QPen(QColor(*ztrace.color), 6))
+        painter.setPen(QPen(QColor(*ztrace.color), self.penWidth(6)))
 
         # draw points and lines
         painter.drawPoints(qpoints)
-        painter.setPen(QPen(QColor(*ztrace.color), 1))
+        painter.setPen(QPen(QColor(*ztrace.color), self.penWidth(1)))
         for line in qlines:
             p1 = line.p1()
             p2 = line.p2()
@@ -396,7 +534,8 @@ class TraceLayer():
                 painter,
                 line,
                 p1_arrow,
-                p2_arrow
+                p2_arrow,
+                self.penWidth(5)
             )
             self.zsegments_in_view += [(
                 ((p1.x(), p1.y()),
@@ -435,7 +574,7 @@ class TraceLayer():
 
         # draw points
         for qpoint, color in zip(qpoints, colors):
-            painter.setPen(QPen(QColor(*color), 15))
+            painter.setPen(QPen(QColor(*color), self.penWidth(15)))
             painter.drawPoint(qpoint)
         painter.end()
     
@@ -453,6 +592,10 @@ class TraceLayer():
         c = flag.color
 
         painter = QPainter(trace_layer)
+        if self.pen_scale != 1:
+            # the glyph, its outline and the highlight box all grow together
+            painter.scale(self.pen_scale, self.pen_scale)
+            x, y = x / self.pen_scale, y / self.pen_scale
         drawOutlinedText(
             painter,
             x,
@@ -463,7 +606,7 @@ class TraceLayer():
             flag_size
         )
         # draw highlight if necessary
-        if flag in self.section.selected_flags:
+        if self.draw_selection and flag in self.section.selected_flags:
             painter.setPen(QPen(QColor(*flag.color), 2))
             painter.setOpacity(1)
             painter.setBrush(Qt.transparent)
@@ -505,7 +648,171 @@ class TraceLayer():
             show_trace = False
 
         return show_trace
-        
+
+    def insideRoiBox(self, trace : Trace, tform : Transform = None) -> bool:
+        """Whether a trace is inside this layer's ROI box (see traceInRoiBox).
+
+            Params:
+                trace (Trace): the trace to test
+                tform (Transform): the section transform (read here if not given)
+            Returns:
+                (bool): True if the trace is inside the box or the box is off
+        """
+        if tform is None:
+            tform = self.section.tform
+        return traceInRoiBox(trace, tform, self.roi_box)
+
+    def _rawBounds(self, trace : Trace) -> tuple:
+        """The bounds of a trace's own points, before any transform, cached.
+
+        An entry is reused only while the trace still holds the same points
+        list at the same length; _cullMask drops every entry when the
+        section's store generation moves, which covers points edited in place.
+
+            Params:
+                trace (Trace): the trace
+            Returns:
+                (tuple): xmin, ymin, xmax, ymax (all NaN for a trace with no points)
+        """
+        points = trace.points
+        entry = self._raw_bounds.get(trace)
+        if entry is not None and entry[0] is points and entry[1] == len(points):
+            return entry[2]
+        if points:
+            arr = np.asarray(points, dtype=float)
+            xmin, ymin = arr.min(axis=0)
+            xmax, ymax = arr.max(axis=0)
+            bounds = (xmin, ymin, xmax, ymax)
+        else:
+            bounds = (np.nan,) * 4
+        self._raw_bounds[trace] = (points, len(points), bounds)
+        return bounds
+
+    def _cullMask(self, trace_list : list, tform : Transform):
+        """Which traces could reach the screen, without transforming their points.
+
+        Each trace's untransformed bounds box is mapped through the transform;
+        the box of its four corners holds every mapped point under any affine
+        transform (rotation and shear included), so a trace is dropped only
+        when that box misses the window grown by two pixels on each side,
+        wider than the half pixel the draw rounds by. A kept trace still meets
+        the exact pixel test in _drawTrace, so what is drawn and
+        traces_in_view do not change.
+
+            Params:
+                trace_list (list): the traces to test
+                tform (Transform): the section transform
+            Returns:
+                (np.ndarray): one bool per trace, or None to keep every trace
+        """
+        # the store generation moves on every trace add, remove and edit,
+        # undo and redo included; a Section built without a store has none,
+        # and then nothing is culled
+        columns = self.section._columns
+        if columns is None or not trace_list:
+            return None
+        key = (self.section, columns.generation)
+        if key != self._raw_bounds_key:
+            self._raw_bounds = {}
+            self._raw_bounds_key = key
+
+        window_x, window_y, window_w, window_h = tuple(self.series.window)
+        pixmap_w, pixmap_h = tuple(self.pixmap_dim)
+        if window_w <= 0 or window_h <= 0 or pixmap_w <= 0 or pixmap_h <= 0:
+            return None
+        margin_x = 2 * window_w / pixmap_w
+        margin_y = 2 * window_h / pixmap_h
+
+        b = np.array([self._rawBounds(trace) for trace in trace_list])
+        n = len(b)
+        # the four corners of every box, one block of n per corner
+        mapped = tform.mapPointsArray(np.concatenate((
+            b[:, (0, 1)], b[:, (2, 1)], b[:, (0, 3)], b[:, (2, 3)]
+        )))
+        blocks = [mapped[k * n:(k + 1) * n] for k in range(4)]
+        lo = np.minimum.reduce(blocks)
+        hi = np.maximum.reduce(blocks)
+
+        # a NaN box (no points) compares False everywhere and is kept
+        return ~(
+            (hi[:, 0] < window_x - margin_x) |
+            (lo[:, 0] > window_x + window_w + margin_x) |
+            (hi[:, 1] < window_y - margin_y) |
+            (lo[:, 1] > window_y + window_h + margin_y)
+        )
+
+    def _screenPolygons(self, trace_list : list, tform : Transform):
+        """Convert the traces to pixmap coordinates in one pass.
+
+        The points of every trace are mapped and rounded together, each
+        trace's pixel bounds meet the screen together, and the traces that
+        reach it are read into QPolygons from one buffer, with no Python QPoint
+        per point. Each polygon holds the points traceToPixArray gives its
+        trace alone, so Qt draws the same pixels. The traces are still drawn
+        one at a time, in order: one path for many traces would change which
+        of two overlapping traces is on top and how transparent fills add up.
+
+            Params:
+                trace_list (list): the traces, in draw order
+                tform (Transform): the section transform
+            Returns:
+                (list): per trace, its QPolygon, False when it misses the
+                    screen, or None when it has no points (_drawTrace then
+                    reports it); None for the whole list when a point is too
+                    far out for Qt's 32-bit coordinates, and each trace then
+                    goes through _drawTrace on its own
+        """
+        n = len(trace_list)
+        result = [None] * n
+        counts = np.fromiter((len(t.points) for t in trace_list), dtype=np.int64, count=n)
+        nonempty = np.flatnonzero(counts)
+        if not len(nonempty):
+            return result
+
+        pts = np.array(list(chain.from_iterable(t.points for t in trace_list)), dtype=float)
+        pix = self._fieldToPixArray(tform.mapPointsArray(pts))
+        int32 = np.iinfo(np.int32)
+        if pix.min() < int32.min or pix.max() > int32.max:
+            return None
+
+        # each trace's pixel bounds, from where its points start in pix
+        starts = (np.cumsum(counts) - counts)[nonempty]
+        lo = np.minimum.reduceat(pix, starts)
+        hi = np.maximum.reduceat(pix, starts)
+        pixmap_w, pixmap_h = tuple(self.pixmap_dim)
+        on_screen = ~(
+            (hi[:, 0] < 0) | (lo[:, 0] > pixmap_w) |
+            (hi[:, 1] < 0) | (lo[:, 1] > pixmap_h)
+        )
+        for i in nonempty[~on_screen]:
+            result[i] = False
+        drawn = nonempty[on_screen]
+        if not len(drawn):
+            return result
+
+        # QDataStream's QPolygon: a big-endian 32-bit point count, then x and
+        # y for each point
+        drawn_counts = counts[drawn]
+        heads = np.cumsum(1 + 2 * drawn_counts) - (1 + 2 * drawn_counts)
+        buf = np.empty(len(drawn) + 2 * int(drawn_counts.sum()), dtype=">i4")
+        is_point = np.ones(len(buf), dtype=bool)
+        is_point[heads] = False
+        buf[heads] = drawn_counts
+        keep = np.zeros(n, dtype=bool)
+        keep[drawn] = True
+        buf[is_point] = pix[np.repeat(keep, counts)].reshape(-1)
+
+        # the stream reads from data, which must live as long as it does
+        data = QByteArray(buf.tobytes())
+        stream = QDataStream(data, QIODevice.ReadOnly)
+        for i in drawn:
+            polygon = QPolygon()
+            stream >> polygon
+            result[i] = polygon
+        if stream.status() != QDataStream.Status.Ok:
+            return None
+        return result
+
     def generateTraceLayer(
             self,
             pixmap_dim :
@@ -513,6 +820,7 @@ class TraceLayer():
             show_all_traces=False,
             window_moved=True,
             focus_on=False,
+            roi_box=None,
     ) -> QPixmap:
         """Draw traces on a transparent background.
         
@@ -522,12 +830,15 @@ class TraceLayer():
                 show_all_traces (bool): True if all traces are displayed regardless of hidden status
                 focus_mode (bool): True if in focus mode
                 window_moved (bool): True if the window has moved (upstream: same as generate_image)
+                roi_box (tuple): the ROI box (center x, center y, width,
+                    height in field units); only traces inside it are drawn
             Returns:
                 (QPixmap): the pixmap with traces drawn in
         """
         self.series.window = window
         self.pixmap_dim = pixmap_dim
         self.show_all_traces = show_all_traces
+        self.roi_box = roi_box
         pixmap_w, pixmap_h = tuple(pixmap_dim)
         trace_layer = QPixmap(pixmap_w, pixmap_h)
         trace_layer.fill(Qt.transparent)
@@ -548,6 +859,7 @@ class TraceLayer():
         show_ztraces = self.series.getOption("show_ztraces")
         show_flags = self.series.getOption("show_flags")
         flag_size = self.series.getOption("flag_size")
+        self._selected_pens = self._selectedPens()
 
         if window_moved:
             trace_list = self.section.tracesAsList()
@@ -598,37 +910,57 @@ class TraceLayer():
         tform = self.section.tform
         painter = QPainter(trace_layer)
 
-        for trace in trace_list:
+        # skip traces whose bounds miss the window before any per-point work
+        in_window = self._cullMask(trace_list, tform)
 
-            if self.trace_visibile_p(trace):
+        to_draw = []
+        for i, trace in enumerate(trace_list if self.draw_traces else ()):
 
-                color = None  # default to assigned color
+            if in_window is not None and not in_window[i]:
+                continue
 
-                if focus_on:
+            if self.trace_visibile_p(trace) and self.insideRoiBox(trace, tform):
 
-                    if trace.name == focus_on:
-                        color = (246, 249, 72)
-                    else:
-                        color = (42, 255, 128)
+                to_draw.append(trace)
 
-                trace_in_view = self._drawTrace(
-                    painter,
-                    trace,
-                    tform,
-                    fill_opacity,
-                    color
-                )
+        # convert every trace to draw at once, then draw them in order
+        polygons = self._screenPolygons(to_draw, tform) if to_draw else None
+        if polygons is None:
+            polygons = [None] * len(to_draw)
 
-                if trace_in_view:
+        for trace, qpoints in zip(to_draw, polygons):
 
-                    self.traces_in_view.append(trace)
+            if qpoints is False:
+                continue
+
+            color = None  # default to assigned color
+
+            if focus_on:
+
+                if trace.name == focus_on:
+                    color = (246, 249, 72)
+                else:
+                    color = (42, 255, 128)
+
+            trace_in_view = self._drawTrace(
+                painter,
+                trace,
+                tform,
+                fill_opacity,
+                color,
+                qpoints=qpoints
+            )
+
+            if trace_in_view:
+
+                self.traces_in_view.append(trace)
 
         painter.end()
 
         ## Draw ztraces
         self.zsegments_in_view = []
 
-        if show_ztraces and not focus_on:
+        if show_ztraces and self.draw_ztraces and not focus_on:
 
             for ztrace in self.series.ztraces.values():
 
@@ -636,11 +968,12 @@ class TraceLayer():
 
                     self._drawZtrace(trace_layer, ztrace)
 
-            self._drawZtraceHighlights(trace_layer, fill_opacity)
+            if self.draw_selection:
+                self._drawZtraceHighlights(trace_layer, fill_opacity)
 
         ## Draw flags
         self.flags_in_view = []
-        if show_flags != "none" and not focus_on:
+        if show_flags != "none" and self.draw_flags and not focus_on:
             for flag in self.section.flags:
                 if show_flags == "unresolved" and flag.resolved:
                     continue
@@ -826,6 +1159,44 @@ def labelIds(names) -> dict:
     """
     return {name: i for i, name in enumerate(sorted(set(names)), start=1)}
 
+def traceInRoiBox(trace : Trace, tform : Transform, roi_box : tuple) -> bool:
+    """Whether a trace is shown and can be picked under an ROI box.
+
+    A trace is inside when its bounds in field coordinates (the section
+    transform applied, as Trace.getBounds does) touch or overlap the box. It
+    is then drawn whole, not clipped.
+
+        Params:
+            trace (Trace): the trace to test
+            tform (Transform): the section transform
+            roi_box (tuple): center x, center y, width, height, or None (off)
+        Returns:
+            (bool): True if the trace is inside the box or the box is off
+    """
+    if roi_box is None:
+        return True
+    if not trace.points:
+        return False
+    # vectorized: the same bounds as trace.getBounds(tform), without its
+    # per-point Python loop, which every draw would pay for every trace
+    pts = tform.mapPointsArray(trace.points)
+    xmin, ymin = pts.min(axis=0)
+    xmax, ymax = pts.max(axis=0)
+    return boundsOverlap((xmin, ymin, xmax, ymax), roiBoxBounds(roi_box))
+
+
+def roiBoxBounds(roi_box : tuple) -> tuple:
+    """The bounds of an ROI box.
+
+        Params:
+            roi_box (tuple): center x, center y, width, height
+        Returns:
+            (tuple): xmin, ymin, xmax, ymax
+    """
+    cx, cy, w, h = roi_box
+    return cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2
+
+
 def boundsOverlap(b1 : tuple, b2 : tuple):
     """Check if two bounding boxes intersect.
     
@@ -892,7 +1263,7 @@ def drawArrowHead(painter : QPainter, pt : QPoint, theta : float, l = 5):
     painter.drawLine(l1)
     painter.drawLine(l2)
 
-def drawArrow(painter : QPainter, line : QLine, p1_arrow=True, p2_arrow=True):
+def drawArrow(painter : QPainter, line : QLine, p1_arrow=True, p2_arrow=True, l=5):
     """Draw an line with one or two arrowheads.
     
         Params:
@@ -900,13 +1271,14 @@ def drawArrow(painter : QPainter, line : QLine, p1_arrow=True, p2_arrow=True):
             line (QLine): the ztrace qline
             p1_arrow (bool): True if arrowhead on the first point
             p2_arrow (bool): True if arrowhead on the second point
+            l (int): the length of each arrowhead
     """
     painter.drawLine(line)
     theta = getTheta(line)
     if theta is not None:
         if p1_arrow:
-            drawArrowHead(painter, line.p1(), theta)
+            drawArrowHead(painter, line.p1(), theta, l)
         if p2_arrow:
-            drawArrowHead(painter, line.p2(), theta)
+            drawArrowHead(painter, line.p2(), theta, l)
 
         

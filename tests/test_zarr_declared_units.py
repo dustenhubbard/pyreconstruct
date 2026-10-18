@@ -305,8 +305,8 @@ def _overlay(tmp_path, raw_attrs, label_attrs, true_mag=0.004):
 
     fp = str(tmp_path / "overlay.zarr")
     group = zarr.open_group(fp, mode="w")
-    raw = group.create_dataset("raw", shape=(1, 10, 10), dtype="u1")
-    raw.attrs.update({"window": [1, 2, 0.4, 0.4], "sections": [3]})
+    raw = group.create_dataset("raw", shape=(2, 10, 10), dtype="u1")
+    raw.attrs.update({"window": [1, 2, 0.4, 0.4], "sections": [3, 4]})
     if true_mag is not None:
         raw.attrs["true_mag"] = true_mag
     raw.attrs.update(raw_attrs)
@@ -315,12 +315,16 @@ def _overlay(tmp_path, raw_attrs, label_attrs, true_mag=0.004):
     series = types.SimpleNamespace(
         zarr_overlay_fp=fp, zarr_overlay_group="labels", sections={}, data={"sections": {}}
     )
-    layer = ZarrLayer(series)
-    return layer.zarr_mag, layer.zarr_x, layer.zarr_y, layer.zarr_s
+    placement = ZarrLayer(series).placement
+    ## the top left corner of label pixel (0, 0), and the section it is on
+    (x, y), = placement.to_field([[0, 0]])
+    first = next(n for n in (3, 4) if placement.slice_index(n) == 0)
+    return placement.mag, x, y, first
 
 
-## 8 nm labels over 4 nm raw, 2 label pixels right, 1 down and 1 slice in
-NM_OVERLAY = (0.008, 1.016, 2.008, 4)
+## 8 nm labels over 4 nm raw (0.04 µm high, so its top is at y 2.04), 2 label
+## pixels right, 1 down and 1 slice in
+NM_OVERLAY = (0.008, 1.016, 2.032, 4)
 
 
 @pytest.mark.parametrize(
@@ -353,7 +357,7 @@ def test_overlay_places_labels_the_same_in_any_units(tmp_path, raw_attrs, label_
 
 
 ## 4 nm raw and labels on raw's grid, 2 label pixels right, 1 down and 1 slice in
-RAW_GRID_OVERLAY = (0.004, 1.008, 2.004, 4)
+RAW_GRID_OVERLAY = (0.004, 1.008, 2.036, 4)
 
 
 @pytest.mark.parametrize(
@@ -397,7 +401,7 @@ def test_overlay_reads_four_entry_raw_and_offset_metadata(tmp_path, raw_attrs, l
 
 
 def test_overlay_with_no_size_on_either_array_starts_at_raws_corner(tmp_path):
-    assert _overlay(tmp_path, {}, {}) == pytest.approx((0.004, 1, 2, 3))
+    assert _overlay(tmp_path, {}, {}) == pytest.approx((0.004, 1, 2.04, 3))
 
 
 @pytest.mark.parametrize("raw_attrs", [{"voxel_size": [25.4, 0, 0]}, {}])
@@ -420,18 +424,19 @@ def test_overlay_recovers_legacy_grid_with_series_thickness(tmp_path, raw_attrs)
 
     layer = ZarrLayer(series)
     assert layer.raw_resolution == layer.resolution == [25.4, 0.5, 0.5]
-    assert layer.zarr_mag == pytest.approx(0.0005)
-    assert (layer.zarr_x, layer.zarr_y, layer.zarr_s) == (1, 2, 3)
+    assert layer.placement.mag == pytest.approx(0.0005)
+    assert layer.placement.to_field([[0, 10]]).tolist() == [[1, 2]]
+    assert layer.placement.slice_index(3) == 0
 
 
 @pytest.mark.parametrize(
     "raw_attrs, label_attrs, expected",
     [
         # true mag from raw's x voxel size, as label import reads it
-        ({"resolution": [50, 8, 8]}, {"offset": [50, 8, 16]}, (0.008, 1.016, 2.008, 4)),
-        ({"voxel_size": [0.05, 0.008, 0.008], "units": "um"}, {}, (0.008, 1, 2, 3)),
+        ({"resolution": [50, 8, 8]}, {"offset": [50, 8, 16]}, (0.008, 1.016, 2.072, 4)),
+        ({"voxel_size": [0.05, 0.008, 0.008], "units": "um"}, {}, (0.008, 1, 2.08, 3)),
         # no size at all: the 4 nm default
-        ({}, {}, (0.004, 1, 2, 3)),
+        ({}, {}, (0.004, 1, 2.04, 3)),
     ],
 )
 def test_overlay_reads_a_raw_with_no_true_mag(tmp_path, raw_attrs, label_attrs, expected):

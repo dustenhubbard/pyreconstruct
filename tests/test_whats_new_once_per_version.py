@@ -498,23 +498,23 @@ def test_help_toggle_reflects_the_stored_state_when_the_menu_opens(main_window):
     settings.remove(F.WHATSNEW_SUPPRESS_KEY)
     main_window.syncWhatsNewPopupToggle()
 
-    # The row reads "Turn off What's new pop-up", so a TICK is the disabled
-    # state (since 2026-08-26): the checkmark and the stored suppression
-    # flag are the same thing.
+    # The row reads "Show What's new after each update", so a TICK is the
+    # enabled state (since 2026-10-16), the same sense as the dialog's box:
+    # the checkmark is the inverse of the stored suppression flag.
     #
-    # freshly built with nothing stored: the popup is on, so the row is clear
+    # freshly built with nothing stored: the popup is on, so the row is ticked
     assert main_window.togglewhatsnew_act.isCheckable() is True
-    assert main_window.togglewhatsnew_act.isChecked() is False
+    assert main_window.togglewhatsnew_act.isChecked() is True
 
     # the dialog's button flips the preference behind the menu's back...
     settings.setValue(F.WHATSNEW_SUPPRESS_KEY, True)
-    # ...and opening Help brings the toggle back to the truth: off means ticked
+    # ...and opening Help brings the toggle back to the truth: off means clear
     main_window.helpmenu.aboutToShow.emit()
-    assert main_window.togglewhatsnew_act.isChecked() is True
+    assert main_window.togglewhatsnew_act.isChecked() is False
 
     settings.setValue(F.WHATSNEW_SUPPRESS_KEY, False)
     main_window.helpmenu.aboutToShow.emit()
-    assert main_window.togglewhatsnew_act.isChecked() is False
+    assert main_window.togglewhatsnew_act.isChecked() is True
 
 
 def test_help_toggle_reenables_the_popup(main_window):
@@ -524,8 +524,8 @@ def test_help_toggle_reenables_the_popup(main_window):
     flips the checked state and then runs the handler, so this covers the
     polarity in ``toggleWhatsNewPopup`` -- the handler reads the state the
     click just produced, and getting that backwards would persist the
-    opposite of every click. Checked means OFF here (since 2026-08-26),
-    matching the row's wording. The re-enabled preference is then read back
+    opposite of every click. Checked means ON here (since 2026-10-16),
+    matching the row's wording and the dialog's checkbox. The re-enabled preference is then read back
     through the pure gate to show the popup is eligible again.
     """
     from PySide6.QtCore import QSettings
@@ -536,24 +536,24 @@ def test_help_toggle_reenables_the_popup(main_window):
     settings.remove(F.WHATSNEW_SUPPRESS_KEY)
     main_window.syncWhatsNewPopupToggle()
 
-    # the default: nothing stored, the popup is on, the row starts clear
-    assert main_window.togglewhatsnew_act.isChecked() is False
+    # the default: nothing stored, the popup is on, the row starts ticked
+    assert main_window.togglewhatsnew_act.isChecked() is True
     assert not F.whats_new_suppressed(
         settings.value(F.WHATSNEW_SUPPRESS_KEY, F.WHATSNEW_SUPPRESS_DEFAULT)
     )
 
-    # off: the click TICKS the row ("turn off") and persists the suppression
+    # off: the click CLEARS the row and persists the suppression
     main_window.togglewhatsnew_act.trigger()
-    assert main_window.togglewhatsnew_act.isChecked() is True
+    assert main_window.togglewhatsnew_act.isChecked() is False
     assert F.whats_new_suppressed(settings.value(F.WHATSNEW_SUPPRESS_KEY))
     assert W.maybe_show_whats_new(
         None, settings=settings, current="1.21.0",
         show=lambda *a, **k: pytest.fail("suppressed popup was shown"),
     ) is False
 
-    # back on: unticking the row makes the popup eligible again
+    # back on: ticking the row makes the popup eligible again
     main_window.togglewhatsnew_act.trigger()
-    assert main_window.togglewhatsnew_act.isChecked() is False
+    assert main_window.togglewhatsnew_act.isChecked() is True
     assert not F.whats_new_suppressed(settings.value(F.WHATSNEW_SUPPRESS_KEY))
     settings.setValue(F.WHATSNEW_KEY, "1.20.3")     # a pending bump
     calls = []
@@ -581,7 +581,7 @@ def test_an_open_dialog_follows_the_help_toggle(main_window):
         assert dlg._show_box.isChecked() is True
         assert not F.whats_new_suppressed(settings.value(F.WHATSNEW_SUPPRESS_KEY))
         main_window.helpmenu.aboutToShow.emit()
-        assert main_window.togglewhatsnew_act.isChecked() is False
+        assert main_window.togglewhatsnew_act.isChecked() is True
     finally:
         dlg.close()
 

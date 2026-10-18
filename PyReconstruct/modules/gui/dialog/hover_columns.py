@@ -63,7 +63,7 @@ class HoverColumnsDialog(QDialog):
         bttns.setSpacing(0)
         bsize = (20, 20)
         style_sheet = """
-        QPushButton {background-color: transparent;}
+        QPushButton {background-color: transparent; padding: 0px;}
         QPushButton:hover {border: 1px solid yellow;}
         """
         up_bttn = QPushButton(self.columns_widget)
