@@ -32,8 +32,7 @@ from tests.test_jser_streaming_save import (
 
 @pytest.fixture
 def copies(monkeypatch):
-    """Counts the sections each save copied (test_jser_splice_save's, owned
-    here: importing a fixture by name trips the F811 gate)."""
+    """Counts the sections each save copied."""
     counted = []
     real = jser_splice._SectionWriter._copy
 
