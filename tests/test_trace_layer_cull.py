@@ -11,7 +11,8 @@ import random
 
 import pytest
 
-from PyReconstruct.modules.backend.view.trace_layer import TraceLayer
+from PyReconstruct.modules.backend.view import trace_layer
+from PyReconstruct.modules.backend.view.trace_layer import TraceLayer, pointBounds
 from PyReconstruct.modules.datatypes import Trace, Transform
 
 
@@ -137,6 +138,132 @@ def test_points_moved_in_place_are_drawn_where_they_went(layer):
     actual = _draw(layer, window, window_moved=True)
     assert outside in actual[1]
     assert actual == _draw(layer, window, cull=False)
+
+
+def test_the_boxes_are_read_from_the_store(layer, monkeypatch):
+    """The boxes come from the section's columnar store rows, so a new
+    section does not convert every trace's points again. Rows and traces
+    agree here, so the frame must not change either."""
+    section = layer.section
+    section.tforms[layer.series.alignment] = Transform.identity()
+    window = WINDOWS["quarter"]
+    expected = _draw(layer, window, cull=False)
+
+    columns = section._columns
+    real_read = columns.getCoordinates
+    rows_read = []
+
+    def counting_read(row):
+        rows_read.append(row)
+        return real_read(row)
+
+    traces_measured = []
+
+    def counting_bounds(points):
+        traces_measured.append(points)
+        return pointBounds(points)
+
+    monkeypatch.setattr(columns, "getCoordinates", counting_read)
+    monkeypatch.setattr(trace_layer, "pointBounds", counting_bounds)
+    layer._raw_bounds_key = None
+    actual = _draw(layer, window)
+
+    assert sorted(rows_read) == sorted(section.traceRows().values())
+    assert traces_measured == []
+    assert actual == expected
+
+
+@pytest.mark.parametrize("edit", ["replace", "in_place"])
+def test_an_edit_outside_the_section_is_culled_right_after_a_resync(layer, edit):
+    """Rows are trusted when their point count matches the trace's, so an
+    edit made outside the section's edit methods, here seven points for
+    seven, must be followed by resyncColumnarStore()."""
+    section = layer.section
+    section.tforms[layer.series.alignment] = Transform.identity()
+    window = WINDOWS["close"]
+    _draw(layer, window)
+    outside = next(
+        t for t in section.tracesAsList()
+        if t not in layer.traces_in_view and len(t.points) == 7
+    )
+    points = [(0.1 * math.cos(k), 0.1 * math.sin(k)) for k in range(7)]
+    if edit == "replace":
+        outside.points = points
+    else:
+        outside.points[:] = points
+    section.resyncColumnarStore()
+    actual = _draw(layer, window)
+    assert outside in actual[1]
+    assert actual == _draw(layer, window, cull=False)
+
+
+def test_a_row_with_another_point_count_is_not_used(layer):
+    """A trace whose points no longer match its row in length is tested on
+    its own points."""
+    section = layer.section
+    section.tforms[layer.series.alignment] = Transform.identity()
+    window = WINDOWS["close"]
+    _draw(layer, window)
+    outside = next(
+        t for t in section.tracesAsList()
+        if t not in layer.traces_in_view and len(t.points) == 7
+    )
+    outside.points = [(0.1 * math.cos(k), 0.1 * math.sin(k)) for k in range(8)]
+    actual = _draw(layer, window)
+    assert outside in actual[1]
+    assert actual == _draw(layer, window, cull=False)
+
+
+def test_a_trace_with_no_row_is_tested_on_its_own_points(layer):
+    _draw(layer, WINDOWS["close"])
+    inside = Trace(NAME, (0, 0, 0), True)
+    inside.points = [(0, 0), (0.1, 0), (0.1, 0.1)]
+    outside = Trace(NAME, (0, 0, 0), True)
+    outside.points = [(30, 30), (31, 30), (31, 31)]
+    empty = Trace(NAME, (0, 0, 0), True)
+    mask = layer._cullMask([inside, outside, empty], Transform.identity())
+    assert list(mask) == [True, False, True]
+
+
+def test_a_magnification_change_moves_the_boxes(layer):
+    """setMag rewrites every trace's points in place; the boxes follow."""
+    section = layer.section
+    section.tforms[layer.series.alignment] = Transform.identity()
+    window = WINDOWS["quarter"]
+    before = _draw(layer, window)
+    section.setMag(section.mag / 4)
+    actual = _draw(layer, window)
+    assert set(actual[1]) - set(before[1])
+    assert actual == _draw(layer, window, cull=False)
+
+
+def test_redo_of_a_move_takes_the_trace_off_again(main_window):
+    field = main_window.field
+    series = main_window.series
+    wx, wy, ww, wh = series.window
+    side = min(ww, wh) * 0.1
+    x0, y0 = wx + ww * 0.4, wy + wh * 0.4
+    item = Trace("cull-redo", (0, 255, 0), True)
+    field.setTracingTrace(item)
+    field.newTrace(
+        [(x0, y0), (x0 + side, y0), (x0 + side, y0 + side), (x0, y0 + side)],
+        field.tracing_trace, points_as_pix=False, reduce_points=False,
+    )
+    field.generateView()
+    drawn = next(t for t in field.section_layer.traces_in_view if t.name == "cull-redo")
+    field.section.selected_traces = [drawn]
+    field.translate(ww * 10, 0)
+
+    def names():
+        field.generateView()
+        return [t.name for t in field.section_layer.traces_in_view]
+
+    main_window.undo()
+    assert "cull-redo" in names()
+    main_window.undo(redo=True)
+    assert "cull-redo" not in names()
+    main_window.undo()
+    assert "cull-redo" in names()
 
 
 def test_undo_of_a_move_draws_the_trace_back(main_window):

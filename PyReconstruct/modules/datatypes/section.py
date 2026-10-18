@@ -3,7 +3,8 @@ import sys
 import json
 import math
 from collections import namedtuple
-from typing import Any, Dict, List, Union
+from types import MappingProxyType
+from typing import Any, Dict, List, Mapping, Union
 
 import numpy as np
 from zarr.util import normalize_storage_path
@@ -1292,6 +1293,15 @@ class Section():
             trace: self._columns.getID(row)
             for trace, row in self._column_rows.items()
         }
+
+    def traceRows(self) -> Mapping:
+        """`{Trace: row}` for every trace the store holds a row for.
+
+        A read-only view of the store's own map, not a copy, so it costs
+        nothing per trace and refuses any write. Empty when the section has
+        no store.
+        """
+        return MappingProxyType(self._column_rows)
 
     def traceID(self, trace : Trace):
         """The trace's id in this session, or None if the store has none."""
