@@ -608,6 +608,11 @@ class Section():
     ## on a bare `__new__` instance for the same reason the two defaults above
     ## exist.
     _loaded_trace_ids = None
+    ## `{Trace: (n, 2) array}` read from the section file's own x and y lists
+    ## (`coordinatesFromRow`), with the same lifetime as `_loaded_trace_ids`:
+    ## the first store build copies them in instead of reading every trace's
+    ## point list again. `None` at every other moment.
+    _loaded_coordinates : Union[dict, None] = None
     ## True only when every trace's id was given back from the ids this
     ## session saved the file with (`TraceIDIssuer.restoreForSection`). A
     ## derived id tells identical traces apart only by row order, so it is
@@ -726,6 +731,8 @@ class Section():
                 if issuer is not None else None
             )
         self._loaded_trace_ids = {} if derived_ids is not None else None
+        from .columnar_store import coordinatesFromRow
+        self._loaded_coordinates = {}
 
         for name in section_data["contours"]:
 
@@ -744,6 +751,12 @@ class Section():
                     trace.closed = False
                 if l > 1:
                     trace_list.append(trace)
+                    ## the row as `Trace.fromList` reads it: a 9-field row
+                    ## carries its name first
+                    fields = trace_data[1:] if len(trace_data) == 9 else trace_data
+                    coordinates = coordinatesFromRow(fields[0], fields[1])
+                    if coordinates is not None:
+                        self._loaded_coordinates[trace] = coordinates
                     if derived_ids is not None:
                         ## Adopted beats derived. A row is in exactly one of the
                         ## two maps: `deriveForSection` was told to skip every
@@ -789,8 +802,10 @@ class Section():
         self.resyncColumnarStore()
         ## Consumed by the build above; anything later that rebuilds carries
         ## ids through the store itself, so keeping this map would only pin
-        ## a stale answer (and every Trace in it) alive.
+        ## a stale answer (and every Trace in it) alive. The same for the
+        ## coordinates: later builds read the traces' points.
         self._loaded_trace_ids = None
+        self._loaded_coordinates = None
 
         self.flags = [Flag.fromList(l, self.n) for l in section_data["flags"]]
 
@@ -1871,9 +1886,14 @@ class Section():
                 ## and then every row falls through to `issue()`.
                 carried_ids = self._loaded_trace_ids
 
+        ## The first build also takes the coordinates `__init__` read from
+        ## the file's rows; they hold the traces' points, not yet edited.
         self._columns = SectionColumns.fromSection(
             self, id_issuer=issuer, generation=previous + 1,
             carried_ids=carried_ids,
+            carried_coordinates=(
+                self._loaded_coordinates if outgoing is None else None
+            ),
         )
         self._column_rows = {}
 
