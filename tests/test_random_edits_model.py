@@ -27,9 +27,16 @@ in plain terms:
   takes that series step away, and a section edit ends the series redos and
   the redos of their sections.
 
-The model cannot know where a merge puts its points, so after a merge it
-checks that the result has the name and the outline of the merged traces,
-and takes the new points from the app. Every later step is checked exactly.
+The model cannot know where a merge puts its points. So after a merge it
+checks the result against the two traces it merged, not against the app:
+the new traces have their name, there is one for each separate piece (one if
+the two touch, overlap or nest, else two), their bounds are the traces'
+bounds to within MERGE_TOL, and on a grid of points MERGE_TOL / 2 apart they
+cover the same points as the two traces, except within MERGE_TOL of an edge
+of the two traces. A point counts as covered when a trace winds around it.
+Then the model takes the new points from the app, and every later step is
+checked exactly. When the app refuses a merge, the model takes the refusal
+and does not check that it was right.
 
 A failing run prints its seed and every step. To replay one, run the slow
 test for that seed, for example `-k "test_many_random_edit_runs and 17-"`,
@@ -38,16 +45,21 @@ or set MODEL_SEEDS and MODEL_STEPS.
 import os
 import random
 
+import numpy as np
 import pytest
 
 from PyReconstruct.modules.datatypes import Trace
 
 # two short runs that between them reach every kind of undo and redo but a
-# whole redo, which the long runs reach; each names what it must reach, so a
-# change to the steps that loses one fails here
+# whole redo, which the long runs reach, and that each merge traces that
+# touch; each names what it must reach, so a change to the steps that loses
+# one fails here
 FAST_SEEDS = [
-    (4, {"undo whole", "undo all", "undo section", "delete object", "merge"}),
-    (90, {"redo all", "redo section", "undo cancel", "rename object", "merge"}),
+    (211, {
+        "undo whole", "undo all", "undo section", "undo cancel", "redo section",
+        "delete object", "merge touching", "merge apart",
+    }),
+    (223, {"redo all", "rename object", "merge touching"}),
 ]
 FAST_STEPS = 40
 # one placeholder seed, skipped, unless MODEL_SEEDS asks for a real run
@@ -56,7 +68,7 @@ SLOW_STEPS = int(os.environ.get("MODEL_STEPS", "150"))
 
 DRAWN = ["m_a", "m_b", "m_c"]
 TOL = 1e-6
-# a merge redraws its outline on a grid; its corners may move this far
+# a merge redraws its outline on a grid; its edges may move this far
 MERGE_TOL = 0.05
 
 
@@ -99,6 +111,71 @@ def _bounds(shapes):
     xs = [x for s in shapes for x, _ in s.points]
     ys = [y for s in shapes for _, y in s.points]
     return min(xs), min(ys), max(xs), max(ys)
+
+
+def _edges(shape):
+    points = shape.points
+    return zip(points, points[1:] + points[:1])
+
+
+def _inside(shape, x, y):
+    """Whether the closed shape winds around each point (x, y arrays)."""
+    wind = np.zeros(np.shape(x), int)
+    for (x1, y1), (x2, y2) in _edges(shape):
+        cross = (x2 - x1) * (y - y1) - (x - x1) * (y2 - y1)
+        wind += (y1 <= y) & (y2 > y) & (cross > 0)
+        wind -= (y2 <= y) & (y1 > y) & (cross < 0)
+    return wind != 0
+
+
+def _touch(a, b):
+    """Whether two closed shapes touch, overlap or nest."""
+    if _inside(a, *np.array(b.points).T).any() or _inside(b, *np.array(a.points).T).any():
+        return True
+
+    def side(p, q, r):
+        cross = (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+        return (cross > 0) - (cross < 0)
+
+    def overlap(p, q, r, s, i):
+        return min(p[i], q[i]) <= max(r[i], s[i]) and min(r[i], s[i]) <= max(p[i], q[i])
+
+    for p, q in _edges(a):
+        for r, s in _edges(b):
+            if (
+                overlap(p, q, r, s, 0) and overlap(p, q, r, s, 1)
+                and side(p, q, r) * side(p, q, s) <= 0
+                and side(r, s, p) * side(r, s, q) <= 0
+            ):
+                return True
+    return False
+
+
+def _area_off(picked, made):
+    """The points of a grid over the merged traces where the merge result and
+    the traces before it disagree on what is covered, leaving out the points
+    within MERGE_TOL of an edge of the traces before it."""
+    x0, y0, x1, y1 = _bounds(picked)
+    step = MERGE_TOL / 2
+    x, y = np.meshgrid(
+        np.arange(x0 - MERGE_TOL, x1 + MERGE_TOL, step),
+        np.arange(y0 - MERGE_TOL, y1 + MERGE_TOL, step),
+    )
+    want = np.zeros(x.shape, bool)
+    for shape in picked:
+        want |= _inside(shape, x, y)
+    got = np.zeros(x.shape, bool)
+    for shape in made:
+        got |= _inside(shape, x, y)
+    near = np.zeros(x.shape, bool)
+    for shape in picked:
+        for (ax, ay), (bx, by) in _edges(shape):
+            dx, dy = bx - ax, by - ay
+            t = ((x - ax) * dx + (y - ay) * dy) / max(dx * dx + dy * dy, TOL)
+            t = np.clip(t, 0, 1)
+            near |= (x - ax - t * dx) ** 2 + (y - ay - t * dy) ** 2 <= MERGE_TOL ** 2
+    off = (want != got) & ~near
+    return [(round(float(a), 2), round(float(b), 2)) for a, b in zip(x[off], y[off])]
 
 
 class Entry:
@@ -377,12 +454,16 @@ class Run:
         self._replace(picked, [s.copy(name=name) for s in picked])
 
     def merge(self):
-        names = sorted({s.name for s in self.visible() if s.closed})
-        names = [n for n in names if len([s for s in self.visible(n) if s.closed]) >= 2]
-        if not names:
+        pairs = []
+        for name in sorted({s.name for s in self.visible()}):
+            shapes = [s for s in self.visible(name) if s.closed]
+            pairs += [(a, b) for i, a in enumerate(shapes) for b in shapes[i + 1:]]
+        if not pairs:
             return
-        name = self.rng.choice(names)
-        picked = self.rng.sample([s for s in self.visible(name) if s.closed], 2)
+        # traces that touch merge into one, which is the case worth checking
+        touching = [pair for pair in pairs if _touch(*pair)]
+        picked = list(self.rng.choice(touching or pairs))
+        name = picked[0].name
         self.note(f"merge {picked}")
         self.select(picked)
         notices = len(self.recorder.notices)
@@ -401,14 +482,22 @@ class Run:
                 made.append(shape)
             else:
                 unmatched.remove(match)
-        assert made, "the merge left no trace"
-        assert all(s.name == name and not s.hidden for s in made), made
+        assert all(s.name == name and not s.hidden and s.closed for s in made), made
+        groups = 2 - bool(touching)
+        assert len(made) == groups, (
+            f"the merge made {len(made)} traces from {groups} separate pieces"
+        )
         want, got = _bounds(picked), _bounds(made)
         assert all(abs(a - b) <= MERGE_TOL for a, b in zip(want, got)), (
             f"the merge outline {got} is not the outline of the traces {want}"
         )
+        wrong = _area_off(picked, made)
+        assert not wrong, (
+            f"the merge covers the wrong area at {len(wrong)} points away "
+            f"from the edges of the traces, first at {wrong[0]}"
+        )
         self.model.section_edit(n, kept + made)
-        self.reached.add("merge")
+        self.reached.add("merge touching" if touching else "merge apart")
 
     def new_name(self):
         if self.rng.random() < 0.5:
