@@ -475,3 +475,41 @@ def test_a_plain_section_is_never_encoded_with_numpy_on():
     f = io.BytesIO()
     jser_format.write_jser(f, lambda: [{"contours": {"a": [row]}}], lambda: {"log": ""}, pretty=False)
     assert f.getvalue().startswith(b'{"sections": [')
+
+
+def test_numbers_stored_in_an_object_s_own_alignment_are_kept(tmp_path, store_on):
+    # an object pinned to an alignment other than the series' is measured in
+    # it (ObjectData.addTrace); stored numbers in that alignment are current
+    fp = _copy(SERIES_FILES[1], tmp_path)
+    _open(fp).close()
+    db_fp, _ = hybrid_store.storePaths(str(fp))
+    con = sqlite3.connect(db_fp)
+    series_data = json.loads(con.execute("SELECT data FROM series").fetchone()[0])
+    default = series_data.get("alignment", "default")
+    stored = [
+        (snum, json.loads(header), json.loads(keys)) for snum, header, keys in con.execute(
+            "SELECT section.snum, header, keys FROM section JOIN section_stats USING (snum)"
+        )
+    ]
+    name = next(
+        n for _, header, keys in stored for n, k in zip(header["contours"], keys) if k is not None
+    )
+    for snum, header, keys in stored:
+        header["tforms"]["pinned"] = header["tforms"][default]
+        keys = ["pinned" if n == name and k is not None else k for n, k in zip(header["contours"], keys)]
+        con.execute("UPDATE section SET header=? WHERE snum=?", (json.dumps(header).encode(), snum))
+        con.execute("UPDATE section_stats SET keys=? WHERE snum=?", (json.dumps(keys).encode(), snum))
+    series_data["obj_attrs"].setdefault(name, {})["alignment"] = "pinned"
+    con.execute("UPDATE series SET data=?", (json.dumps(series_data).encode(),))
+    con.commit()
+    con.close()
+
+    series = _open(fp)
+    try:
+        assert series.getAttr(name, "alignment") == "pinned"
+        assert series.store.recomputed == []
+        from_columns = _object_list(series.data)
+        series.data.refresh(show_progress=False)
+        assert _object_list(series.data) == from_columns
+    finally:
+        series.close()
