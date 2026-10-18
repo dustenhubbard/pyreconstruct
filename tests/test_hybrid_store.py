@@ -652,7 +652,7 @@ def test_a_section_saved_in_the_store_gets_its_trace_ids_back(committed, tmp_pat
 
 
 def test_an_export_from_the_store_copies_the_sections_it_did_not_change(
-        tmp_path, store_on, copies):
+        tmp_path, store_on, copies):  # noqa: F811  (fixture param)
     fp = _copy(SERIES_FILES[1], tmp_path)
     _open(fp).close()
     series = _open(fp)
