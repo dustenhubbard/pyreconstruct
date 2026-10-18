@@ -449,6 +449,41 @@ def _asCoordinateArray(points) -> np.ndarray:
     return array
 
 
+def coordinatesFromRow(x, y):
+    """A stored row's x and y lists as an `(n, 2)` float64 array, or None.
+
+    The same values `_asCoordinateArray(list(zip(x, y)))` gives, without
+    building a tuple per point: numpy reads a flat list of numbers about four
+    times faster than a list of pairs. `Section.__init__` uses it so that a
+    loaded section's store is filled from the file's own lists rather than from
+    the traces' point lists.
+
+    None when an axis is not a list, when the two lists differ in length
+    (`zip` would cut the longer one), or when numpy cannot convert a value. The
+    caller then uses the trace's points, so a defective row is read, or fails,
+    exactly as before. The list check matters: numpy reads a string axis such
+    as `"123"` as one number for the whole column, where `zip` reads it one
+    character at a time.
+
+        Params:
+            x (list): the row's x coordinates
+            y (list): the row's y coordinates
+        Returns:
+            (np.ndarray): a new `(n, 2)` float64 array, or None
+    """
+    if type(x) is not list or type(y) is not list:
+        return None
+    try:
+        if len(x) != len(y):
+            return None
+        array = np.empty((len(x), 2), dtype=np.float64)
+        array[:, 0] = x
+        array[:, 1] = y
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return array
+
+
 class _NumericColumn():
     """One attribute column, grown by amortized doubling.
 
@@ -601,7 +636,8 @@ class SectionColumns():
 
     @classmethod
     def fromSection(cls, section, coordinates=None, id_issuer=None,
-                    generation: int = 0, carried_ids=None):
+                    generation: int = 0, carried_ids=None,
+                    carried_coordinates=None):
         """Build a store from a `Section`, in the section's own contour order.
 
         Duck-typed on `.n` and `.contours` rather than importing `Section`, which
@@ -670,6 +706,12 @@ class SectionColumns():
                     are deliberately NOT run through `adopt()`; see the module
                     docstring on why re-adopting an id the issuer itself handed
                     out reports a clash against itself.
+                carried_coordinates (dict): `{Trace: (n, 2) array}` for traces
+                    whose coordinates were already read into an array, as
+                    `Section.__init__` does from the file's rows
+                    (`coordinatesFromRow`). The array must hold the trace's
+                    points; it is copied in, as any row's coordinates are. A
+                    trace absent from it is read from its points.
             Returns:
                 (SectionColumns): a store holding every trace of the section
         """
@@ -701,9 +743,14 @@ class SectionColumns():
                         trace_id = None
                     elif trace_id is not None:
                         spent.add(trace_id)
+                points = None
+                if carried_coordinates is not None:
+                    points = carried_coordinates.get(trace)
+                if points is None:
+                    points = trace.points
                 store.appendRow(
                     name=trace.name,
-                    points=trace.points,
+                    points=points,
                     color=trace.color,
                     closed=trace.closed,
                     negative=trace.negative,
