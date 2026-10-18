@@ -657,6 +657,9 @@ def test_an_export_from_the_store_copies_the_sections_it_did_not_change(
     _open(fp).close()
     series = _open(fp)
     try:
+        # a first edit, so the section's saved header is in the app's own form
+        # and the second edit below changes its rows only
+        _edit_one_trace(series)
         series.saveJser()  # the first export after open writes in full
         _edit_one_trace(series)
         series.store.commit(series)
@@ -775,3 +778,25 @@ def test_the_collector_comes_back_when_the_build_fails():
             assert not gc.isenabled()
             raise RuntimeError("build failed")
     assert gc.isenabled()
+
+
+def test_an_export_from_the_store_encodes_no_section_to_key_it(tmp_path, store_on, monkeypatch):
+    fp = _copy(SERIES_FILES[1], tmp_path)
+    _open(fp).close()
+    series = _open(fp)
+    try:
+        series.store.commit(series)  # nothing pending: the export reads saved rows
+        calls = []
+        real = hybrid_store.fast_dumps
+
+        def counting(obj, *a, **k):
+            if isinstance(obj, dict) and "contours" in obj:  # a section, not the series
+                calls.append(obj)
+            return real(obj, *a, **k)
+        monkeypatch.setattr(hybrid_store, "fast_dumps", counting)
+        out = tmp_path / "export.jser"
+        series.saveJser(str(out))
+        assert calls == []
+    finally:
+        series.close()
+    assert out.read_bytes() == _today_bytes(SERIES_FILES[1], tmp_path, monkeypatch)

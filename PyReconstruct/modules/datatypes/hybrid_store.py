@@ -28,6 +28,7 @@ import sys
 import shutil
 import hashlib
 import sqlite3
+import struct
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -474,13 +475,50 @@ class HybridStore():
         section_data = self.readSection(snum, fallback_fp)
         return section_data, fast_dumps(section_data)
 
-    def _assemble(self, snum : int, header : dict) -> dict:
+    def readSectionKeyed(self, snum : int, fallback_fp : str = None) -> tuple:
+        """(section dict, splice key) for an export from the store.
+
+        The key stands for the section's content, so an export copies a
+        section whose key the last export recorded (jser_splice.py). For a
+        saved section it is the sha256 of the stored header and rows, read as
+        they are fetched: re-encoding the section to hash its file bytes cost
+        about 6 s per DW09 export (round 3). Working rows and a section only
+        in the working folder are keyed by their bytes, as a hidden file is.
+        """
+        row = self.con.execute(
+            "SELECT data FROM pending_section WHERE snum=?", (snum,)
+        ).fetchone()
+        if row is not None and row[0] is not None:
+            return fast_loads(row[0]), hashlib.sha256(row[0]).digest()
+        row = self.con.execute(
+            "SELECT header FROM section WHERE snum=?", (snum,)
+        ).fetchone()
+        if row is None:
+            if fallback_fp and os.path.isfile(fallback_fp):
+                with open(fallback_fp, "rb") as f:
+                    raw = f.read()
+                return fast_loads(raw), hashlib.sha256(raw).digest()
+            raise FileNotFoundError(f"section {snum} is not in the store {self.db_fp}")
+        h = hashlib.sha256(b"hybrid-store-section-v1\0")
+        h.update(struct.pack("<q", len(row[0])))
+        h.update(row[0])
+        section_data = self._assemble(snum, fast_loads(row[0]), h)
+        return section_data, h.digest()
+
+    def _assemble(self, snum : int, header : dict, hasher=None) -> dict:
         names = header["contours"]
         contours = {name: [] for name in names}
         for cpos, shape, npts, xy, rest in self.con.execute(
             "SELECT cpos, shape, npts, xy, rest FROM trace WHERE snum=? ORDER BY cpos, ord",
             (snum,),
         ):
+            if hasher is not None:
+                hasher.update(struct.pack(
+                    "<qqqqq", cpos, shape, npts, -1 if xy is None else len(xy), len(rest)
+                ))
+                if xy is not None:
+                    hasher.update(xy)
+                hasher.update(rest)
             contours[names[cpos]].append(unpackRow(shape, npts, xy, rest))
         header["contours"] = contours
         return header

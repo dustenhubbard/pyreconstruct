@@ -1462,12 +1462,14 @@ class Series():
                     try:
                         if self.store is not None:
                             # PROTOTYPE: the store gives the parsed section and
-                            # the bytes its working file would hold, the key
-                            section_data, raw = self.store.readSectionWithBytes(snum, fp)
+                            # a key over what it holds (readSectionKeyed)
+                            section_data, key = self.store.readSectionKeyed(snum, fp)
+                            raw = None
                         else:
                             section_data = None
                             with open(fp, "rb") as f:
                                 raw = f.read()
+                            key = section_digest(raw)
                     except (OSError, ValueError) as e:
                         refuseUnreadable(snum, e)
 
@@ -1475,7 +1477,7 @@ class Series():
                     reporter.set_progress(progress/final_value * 100)
                     # parsed only if this section is encoded, not copied
                     yield KeyedSection(
-                        section_digest(raw),
+                        key,
                         (lambda d=section_data: d) if section_data is not None
                         else lambda raw=raw, snum=snum: parseSection(raw, snum)
                     )
