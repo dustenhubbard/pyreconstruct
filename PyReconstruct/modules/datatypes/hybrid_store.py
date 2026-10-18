@@ -125,7 +125,7 @@ def _lockFile(path : str):
     """
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
     try:
-        if os.name == "nt":
+        if sys.platform == "win32":
             import msvcrt
             msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
         else:
@@ -271,7 +271,7 @@ class HybridStore():
         folder = os.path.dirname(db_fp)
         os.makedirs(folder, exist_ok=True)
         refuseNetworkFolder(folder)
-        self.con = None
+        self.con : sqlite3.Connection = None  # type: ignore[assignment]
         self._lock_fd = _lockFile(db_fp + ".lock")
         if self._lock_fd is None:
             raise StoreBusyError(IN_USE)
@@ -432,7 +432,7 @@ class HybridStore():
     def hasSection(self, snum : int) -> bool:
         return snum in set(self.sectionNumbers())
 
-    def readSection(self, snum : int, fallback_fp : str = None) -> dict:
+    def readSection(self, snum : int, fallback_fp : str | None = None) -> dict:
         """A section dict, as the hidden section file held it.
 
         The working copy wins over the saved one. A section the store has never
@@ -454,7 +454,7 @@ class HybridStore():
             raise FileNotFoundError(f"section {snum} is not in the store {self.db_fp}")
         return self._assemble(snum, fast_loads(row[0]))
 
-    def readSectionWithBytes(self, snum : int, fallback_fp : str = None) -> tuple:
+    def readSectionWithBytes(self, snum : int, fallback_fp : str | None = None) -> tuple:
         """(section dict, the bytes its hidden file would hold), as readSection.
 
         The bytes are what Section.save writes for that dict, so the trace-id
@@ -475,7 +475,7 @@ class HybridStore():
         section_data = self.readSection(snum, fallback_fp)
         return section_data, fast_dumps(section_data)
 
-    def readSectionKeyed(self, snum : int, fallback_fp : str = None) -> tuple:
+    def readSectionKeyed(self, snum : int, fallback_fp : str | None = None) -> tuple:
         """(section dict, splice key) for an export from the store.
 
         The key stands for the section's content, so an export copies a
@@ -507,7 +507,7 @@ class HybridStore():
 
     def _assemble(self, snum : int, header : dict, hasher=None) -> dict:
         names = header["contours"]
-        contours = {name: [] for name in names}
+        contours : dict = {name: [] for name in names}
         for cpos, shape, npts, xy, rest in self.con.execute(
             "SELECT cpos, shape, npts, xy, rest FROM trace WHERE snum=? ORDER BY cpos, ord",
             (snum,),
@@ -679,7 +679,7 @@ class HybridStore():
                     self.con.execute(f"DELETE FROM {table}")
                 renames = {}
                 for snum, section_data in source.sections():
-                    stored_ids = {}
+                    stored_ids : dict = {}
                     renames.update(Section.updateJSON(section_data, snum, stored_ids=stored_ids))
                     if stored_ids:
                         Section.reattachTraceIDs(section_data, stored_ids)
@@ -739,7 +739,7 @@ class HybridStore():
         sections = {snum: f"{sname}.{snum}" for snum in self.sectionNumbers()}
         series = Series(ser_fp, sections, get_series_data=False)
         series.jser_fp = jser_fp
-        series.store = self
+        series.store = self  # type: ignore[assignment]
         self.loadSeriesData(series)
         series._repointBCProfile()
         return series
@@ -987,7 +987,7 @@ def strandedText(stranded) -> str:
     return "\n".join(lines)
 
 
-def exportStoreFile(db_fp : str, out_fp : str = None, progress=None) -> str:
+def exportStoreFile(db_fp : str, out_fp : str | None = None, progress=None) -> str:
     """Write a .jser from a store file (a set-aside one, say), next to it.
 
     The series is built from the store as an open would build it and written
@@ -996,7 +996,7 @@ def exportStoreFile(db_fp : str, out_fp : str = None, progress=None) -> str:
     """
     from PyReconstruct.modules.backend.progress import NullProgressReporter
 
-    meta = (_readMeta(db_fp) or ({}, False))[0]
+    meta : dict = (_readMeta(db_fp) or ({}, False))[0]
     if out_fp is None:
         stem = os.path.splitext(os.path.basename(meta.get("jser_path") or "series.jser"))[0]
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
