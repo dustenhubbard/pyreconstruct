@@ -953,16 +953,60 @@ class HybridStore():
 
         scratch = SeriesData(series)
         for snum in section_numbers:
-            section = Section(snum, series)
-            scratch.updateSection(section, update_traces=True, log_events=False, read_store=True)
             h = fast_loads(self.con.execute(
                 "SELECT header FROM section WHERE snum=?", (snum,)
             ).fetchone()[0])
+            if not self._measureRows(series, snum, h, scratch):
+                section = Section(snum, series)
+                scratch.updateSection(section, update_traces=True, log_events=False, read_store=True)
             self._writeStats(
                 snum, h["contours"], set(h["tforms"]) | {"no-alignment"},
                 series, scratch.objects,
             )
             scratch.clearSection(snum)
+            scratch.data["sections"].pop(snum, None)
+
+    def _measureRows(self, series, snum : int, header : dict, scratch) -> bool:
+        """Measure one saved section from its stored rows, with no Section.
+
+        The numbers are the ones a load and SeriesData.updateSection give: the
+        same TraceData code on the same float64 points, (n, 2) and C-ordered
+        as the section's columnar store holds them. A load changes some rows
+        before it measures them (Section.updateJSON and Section.__init__: a
+        keyed or 9-field row, a row under two points, a closed two-point row,
+        a name the name rule would change). For those this measures nothing
+        and returns False, and the caller loads the section.
+        """
+        from .section import TransformsDict
+        from .transform import Transform
+        from .trace import normalizeObjectName
+
+        names = header["contours"]
+        if any(normalizeObjectName(name) != name for name in names):
+            return False
+        rows = []
+        for cpos, shape, npts, xy, rest in self.con.execute(
+            "SELECT cpos, shape, npts, xy, rest FROM trace WHERE snum=? ORDER BY cpos, ord",
+            (snum,),
+        ):
+            if shape != 0 or npts < 2:
+                return False
+            fields = fast_loads(rest)
+            if fields[1] and npts == 2:
+                return False
+            rows.append((names[cpos], npts, xy, fields))
+        tforms = TransformsDict()
+        for a, t in header["tforms"].items():
+            if a != "no-alignment":
+                tforms[a] = Transform(t)
+        section = _MeasuredSection(snum, tforms)
+        scratch.data["sections"][snum] = {}
+        for name, npts, xy, (color, closed, negative, hidden, _fill, tags) in rows:
+            a = np.frombuffer(xy, dtype="<f8")
+            points = np.column_stack((a[:npts], a[npts:]))
+            trace = _MeasuredTrace(name, color, closed, negative, hidden, set(tags))
+            scratch.addTrace(trace, section, points)
+        return True
 
     def writeStatsFor(self, series, section_numbers):
         """Store the object-list numbers of saved sections just measured."""
@@ -985,6 +1029,26 @@ class HybridStore():
 
     def _tx(self, sync : str = "FULL"):
         return _Transaction(self.con, sync)
+
+
+class _MeasuredSection():
+    """What SeriesData.addTrace reads of a section: its number and transforms."""
+
+    def __init__(self, n, tforms):
+        self.n = n
+        self.tforms = tforms
+
+
+class _MeasuredTrace():
+    """What TraceData reads of a trace, from one stored row."""
+
+    def __init__(self, name, color, closed, negative, hidden, tags):
+        self.name = name
+        self.color = color
+        self.closed = closed
+        self.negative = negative
+        self.hidden = hidden
+        self.tags = tags
 
 
 class _Transaction():
