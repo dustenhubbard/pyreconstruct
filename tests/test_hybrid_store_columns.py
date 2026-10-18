@@ -77,6 +77,32 @@ def test_trace_data_built_from_the_columns_give_the_same_object_list(src, tmp_pa
         series.close()
 
 
+def _per_trace(data) -> dict:
+    """Every TraceData field, floats by repr (an int 0 and 0.0 differ)."""
+    return {
+        (name, snum): [
+            (td.index, td.closed, td.hidden, td.negative, sorted(td.tags), td.color,
+             repr(td.length), repr(td.area), repr(td.centroid), repr(td.radius),
+             repr(td._tform.getList()))
+            for td in tds
+        ]
+        for name, obj in data.objects.items() for snum, tds in obj.traces.items()
+    }
+
+
+@pytest.mark.parametrize("src", SERIES_FILES, ids=lambda p: p.name)
+def test_trace_data_built_from_the_columns_equal_a_full_refresh_field_for_field(src, tmp_path, store_on):
+    fp = _copy(src, tmp_path)
+    _open(fp).close()
+    series = _open(fp)
+    try:
+        from_columns = _per_trace(series.data)
+        series.data.refresh(show_progress=False)
+        assert _per_trace(series.data) == from_columns
+    finally:
+        series.close()
+
+
 def test_a_section_measured_again_leaves_the_other_objects_in_columns(tmp_path, store_on):
     fp = _copy(SERIES_FILES[1], tmp_path)
     _open(fp).close()
@@ -245,3 +271,125 @@ def test_a_trace_data_built_from_the_columns_is_what_the_columns_hold():
     assert td._tform is tform and td._feret == (0, 0)
     assert obj.columnRows() is None
     assert series_data.TraceData.getFeret(td, None, "x") == (0, 0)
+
+
+# ---------------------------------------------------------------------------
+# Save measures a changed section from its stored rows (HybridStore._measureRows)
+# ---------------------------------------------------------------------------
+
+def _stats(store) -> dict:
+    return {
+        r[0]: r[1:] for r in store.con.execute(
+            f"SELECT snum, {hybrid_store.STATS_COLS} FROM section_stats ORDER BY snum"
+        )
+    }
+
+
+def _measured_both_ways(series, monkeypatch, snums=None):
+    """(stats measured from the rows, stats measured by loading each section, rows used)."""
+    store = series.store
+    snums = sorted(series.sections) if snums is None else snums
+    used = []
+    real = hybrid_store.HybridStore._measureRows
+
+    def spy(self, *args):
+        used.append(real(self, *args))
+        return used[-1]
+    monkeypatch.setattr(hybrid_store.HybridStore, "_measureRows", spy)
+    store._measure(series, snums)
+    from_rows = _stats(store)
+    monkeypatch.setattr(hybrid_store.HybridStore, "_measureRows", lambda *args: False)
+    store._measure(series, snums)
+    return from_rows, _stats(store), used
+
+
+@pytest.mark.parametrize("src", SERIES_FILES, ids=lambda p: p.name)
+def test_save_measures_from_the_rows_what_a_section_load_measures(src, tmp_path, store_on, monkeypatch):
+    fp = _copy(src, tmp_path)
+    _open(fp).close()
+    series = _open(fp)
+    try:
+        from_rows, loaded, used = _measured_both_ways(series, monkeypatch)
+        assert any(used)
+        assert from_rows == loaded
+    finally:
+        series.close()
+
+
+def _first_row(store, min_points=3):
+    return store.con.execute(
+        "SELECT id, snum, cpos, npts, xy, rest FROM trace WHERE shape=0 AND npts>=?"
+        " ORDER BY snum, cpos, ord LIMIT 1", (min_points,)
+    ).fetchone()
+
+
+def _two_closed_points(store):
+    rid, snum, _, npts, xy, rest = _first_row(store)
+    a = np.frombuffer(xy, dtype="<f8")
+    fields = json.loads(rest)
+    fields[1] = True
+    store.con.execute(
+        "UPDATE trace SET npts=2, xy=?, rest=? WHERE id=?",
+        (np.concatenate((a[:2], a[npts:npts + 2])).tobytes(), json.dumps(fields).encode(), rid),
+    )
+    return snum
+
+
+def _one_point(store):
+    rid, snum, _, npts, xy, _ = _first_row(store)
+    a = np.frombuffer(xy, dtype="<f8")
+    store.con.execute(
+        "UPDATE trace SET npts=1, xy=? WHERE id=?",
+        (np.concatenate((a[:1], a[npts:npts + 1])).tobytes(), rid),
+    )
+    return snum
+
+
+def _name_the_rule_changes(store):
+    _, snum, cpos, _, _, _ = _first_row(store)
+    header = json.loads(store.con.execute(
+        "SELECT header FROM section WHERE snum=?", (snum,)).fetchone()[0])
+    header["contours"][cpos] = "a, b"
+    store.con.execute(
+        "UPDATE section SET header=? WHERE snum=?", (json.dumps(header).encode(), snum)
+    )
+    store.con.execute("UPDATE trace SET name='a, b' WHERE snum=? AND cpos=?", (snum, cpos))
+    return snum
+
+
+def _row_kept_whole(store):
+    rid, snum, _, npts, xy, rest = _first_row(store)
+    a = np.frombuffer(xy, dtype="<f8")
+    row = [a[:npts].tolist(), a[npts:].tolist(), *json.loads(rest)]
+    store.con.execute(
+        "UPDATE trace SET shape=1, npts=0, xy=NULL, rest=? WHERE id=?",
+        (json.dumps(row).encode(), rid),
+    )
+    return snum
+
+
+@pytest.mark.parametrize("defect", [_two_closed_points, _one_point, _name_the_rule_changes, _row_kept_whole])
+def test_a_row_a_load_would_change_is_measured_by_loading_its_section(defect, tmp_path, store_on, monkeypatch):
+    fp = _copy(SERIES_FILES[1], tmp_path)
+    _open(fp).close()
+    series = _open(fp)
+    try:
+        snum = defect(series.store)
+        from_rows, loaded, used = _measured_both_ways(series, monkeypatch, [snum])
+        assert used == [False]
+        assert from_rows == loaded
+    finally:
+        series.close()
+
+
+def test_an_object_of_open_traces_has_the_volume_a_full_open_gives():
+    # an int thickness keeps the int 0 of an open trace's area an int
+    rows = [(4, 0, False, 0.0, 2.5, 0.75, 0, 0), (4, 1, False, 0.0, 1.5, 0.5, 0, 0)]
+    columns = _columns(rows, [Transform.identity()])
+    data = SeriesData(None)
+    data.data["sections"] = {4: {"thickness": 1}}
+    data.data["objects"] = {"lazy": ObjectData(columns, 0, 2), "built": ObjectData(columns, 0, 2)}
+    data.objects["built"].traces
+    assert repr(data.getVolume("built")) == "0"
+    assert repr(data.getVolume("lazy")) == "0"
+    assert _object_list(data)["lazy"] == _object_list(data)["built"]

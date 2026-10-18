@@ -186,7 +186,9 @@ class TraceColumns():
             td.tags = tags[tag]
             td.color = colors[color]
             td.length = length
-            td.area = area
+            # an open trace's area is the int 0, as TraceData.__init__ sets it
+            # (the trace CSV writes it as "0", not "0.0")
+            td.area = area if closed else 0
             td.centroid = (cx, cy)
             td.radius = radius
             td._tform = tforms[tform]
@@ -590,8 +592,8 @@ class SeriesData():
         if rows is not None:
             columns, start, stop = rows
             sections = self.data["sections"]
-            for snum, area in columns.rows(start, stop, "snum", "area"):
-                v += area * sections[snum]["thickness"]
+            for snum, closed, area in columns.rows(start, stop, "snum", "closed", "area"):
+                v += (area if closed else 0) * sections[snum]["thickness"]
             return v
         
         for snum, trace_list in obj_data.traces.items():
