@@ -64,6 +64,7 @@ from .fast_json import (
 from .jser_splice import (
     JserSplice,
     KeyedSection,
+    OpenedJserIndex,
     SpliceIndex,
     section_digest,
 )
