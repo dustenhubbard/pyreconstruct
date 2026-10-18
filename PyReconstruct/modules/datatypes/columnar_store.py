@@ -458,9 +458,12 @@ def coordinatesFromRow(x, y):
     loaded section's store is filled from the file's own lists rather than from
     the traces' point lists.
 
-    None when the two lists differ in length (`zip` would cut the longer one)
-    or numpy cannot convert a value. The caller then uses the trace's points,
-    so a defective row is read, or fails, exactly as before.
+    None when an axis is not a list, when the two lists differ in length
+    (`zip` would cut the longer one), or when numpy cannot convert a value. The
+    caller then uses the trace's points, so a defective row is read, or fails,
+    exactly as before. The list check matters: numpy reads a string axis such
+    as `"123"` as one number for the whole column, where `zip` reads it one
+    character at a time.
 
         Params:
             x (list): the row's x coordinates
@@ -468,6 +471,8 @@ def coordinatesFromRow(x, y):
         Returns:
             (np.ndarray): a new `(n, 2)` float64 array, or None
     """
+    if type(x) is not list or type(y) is not list:
+        return None
     try:
         if len(x) != len(y):
             return None

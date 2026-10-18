@@ -157,6 +157,76 @@ def test_coordinates_from_a_row_match_the_point_tuples(x, y):
     (["x"], [0]),
     ([[1, 2]], [0]),
     (5, [0]),
+    ("123", "456"),
+    ("123", [4, 5, 6]),
+    ([4, 5, 6], "1.2"),
+    ((1, 2), [3, 4]),
 ])
 def test_coordinates_from_a_row_give_up_on_what_they_cannot_read(x, y):
     assert coordinatesFromRow(x, y) is None
+
+
+def _load_outcome(series, n):
+    """What loading section n gives: its store's rows, or the error it raised."""
+    try:
+        section = Section(n, series)
+    except Exception as error:
+        return ("raised", type(error), str(error))
+    store = section._columns
+    rows = []
+    for row in range(store.rowCount):
+        rows.append((
+            store.getName(row),
+            repr(store.getCoordinates(row).tolist()),  # nan compares equal
+            store.getCoordinates(row).dtype,
+        ))
+    ## the store must also agree with the traces it mirrors
+    _assert_same_store(store, SectionColumns.fromSection(section))
+    return ("loaded", rows)
+
+
+ODD_AXES = [
+    ([0.5, 1.5, 2.5], [3.0, 4.0, 5.0]),
+    ([0, 1, 2], [3, 4, 5]),
+    ([True, False, 2], [1, 0, True]),
+    (["1.5", "2", 3.0], [1, 2, "4e2"]),
+    (["nan", "inf", 1.0], [0.0, "-inf", 2.0]),
+    ([None, 1.0, 2.0], [0.0, None, 2.0]),
+    ([0.0, 1.0, 2.0, 3.0], [0.0, 1.0, 2.0]),
+    ([0.0, 1.0], [0.0, 1.0, 2.0]),
+    ([10 ** 400, 1, 2], [0, 1, 2]),
+    (["x", 1, 2], [0, 1, 2]),
+    ([[1], 2, 3], [0, 1, 2]),
+    ([{"a": 1}, 2, 3], [0, 1, 2]),
+    ("123", "456"),
+    ("123", [4, 5, 6]),
+    ([1, 2, 3], "456"),
+    ("1.2", [4, 5, 6]),
+    ([4, 5, 6], "1.2"),
+    ("12", "3"),
+    ("12", "34"),
+    ("ab", "cd"),
+    ({"a": 1, "b": 2}, [0, 1]),
+    ([0, 1], {"a": 1, "b": 2}),
+    ({"1": 1, "2": 2}, [0, 1]),
+    (["1", "2"], ("3", "4")),
+]
+
+
+@pytest.mark.parametrize("x, y", ODD_AXES)
+def test_a_row_loads_or_fails_exactly_as_the_build_from_the_traces(
+        real_series, monkeypatch, x, y):
+    """Against the store built from the traces' points alone, which is how a
+    section loaded before the file rows were read: the same rows, or the same
+    error, for any shape a hand-edited file can give an axis."""
+    n = sorted(real_series.sections)[0]
+    _write_rows(real_series, n, {"a": [_row(x, y, closed=False)]})
+    actual = _load_outcome(real_series, n)
+    monkeypatch.setattr(columnar_store, "coordinatesFromRow", lambda x, y: None)
+    expected = _load_outcome(real_series, n)
+    assert actual[0] == expected[0]
+    if expected[0] == "raised":
+        assert actual[1] is expected[1]
+        assert actual[2] == expected[2]
+    else:
+        assert actual[1] == expected[1]
