@@ -52,7 +52,7 @@ Measure the bundle size before quoting it to anyone:
 ### macOS (after Windows works)
 
 ```bash
-bash packaging/macos/make_icns.sh        # generates packaging/PyReconstruct.icns
+bash packaging/macos/make_icns.sh        # copies the flavor's icon to packaging/PyReconstruct.icns
 pyinstaller --noconfirm packaging/PyReconstruct.spec
 # -> dist/PyReconstruct.app
 python -m pip install --require-hashes --only-binary :all: -r packaging/macos/dmg-requirements.txt

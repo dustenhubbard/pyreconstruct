@@ -2,6 +2,7 @@ from PySide6.QtWidgets import (
     QTextEdit,
 )
 from PySide6.QtCore import (
+    Qt,
     QPoint, 
     QLine,
     QRect,
@@ -19,6 +20,7 @@ from PyReconstruct.modules.backend.autoseg.palette import palette_color
 from PyReconstruct.modules.backend.view import drawArrow
 from PyReconstruct.modules.gui.utils import drawOutlinedText
 from PyReconstruct.modules.datatypes import Flag, Trace
+from PyReconstruct.modules.calc import fieldPointToPixmap
 
 from .field_widget_5_mouse import (
     FieldWidgetMouse,
@@ -172,6 +174,33 @@ class FieldWidgetPaint(FieldWidgetMouse):
         if self.blend_sections:
             self.drawBorder(field_painter, (0, 255, 255))
     
+    def paintRoiBox(self, field_painter : QPainter):
+        """Paint the ROI box outline while the box is placed, and the
+        rectangle being dragged, in the same outline, during a drag."""
+        rects = []
+        box = self.roiBox()
+        if box is not None:
+            cx, cy, w, h = box
+            rects.append(((cx - w / 2, cy + h / 2), (cx + w / 2, cy - h / 2)))
+        if self.roi_box_drag_start is not None and self.roi_box_drag_end is not None:
+            (x1, y1), (x2, y2) = self.roi_box_drag_start, self.roi_box_drag_end
+            rects.append(((min(x1, x2), max(y1, y2)), (max(x1, x2), min(y1, y2))))
+        if not rects:
+            return
+        pen = QPen(QColor(255, 255, 0), 2)
+        pen.setStyle(Qt.DashLine)
+        field_painter.setPen(pen)
+        field_painter.setBrush(Qt.NoBrush)
+        field_painter.setOpacity(1)
+        for top_left, bottom_right in rects:
+            x1, y1 = fieldPointToPixmap(
+                *top_left, self.series.window, self.pixmap_dim, self.section.mag
+            )
+            x2, y2 = fieldPointToPixmap(
+                *bottom_right, self.series.window, self.pixmap_dim, self.section.mag
+            )
+            field_painter.drawRect(QRect(x1, y1, x2 - x1, y2 - y1))
+
     def paintWorkingTrace(self, field_painter : QPainter):
         """Paint the work trace on the field."""
         # draw the working trace on the screen

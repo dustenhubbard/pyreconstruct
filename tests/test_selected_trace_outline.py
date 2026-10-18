@@ -1,4 +1,5 @@
-"""A selected trace is drawn as upstream PyReconstruct draws it.
+"""A selected trace is drawn as upstream PyReconstruct draws it, unless the
+user picks another look in Series > Options.
 
 The trace keeps its normal one pixel line, and the same path is stroked again
 in the trace's own color, eight pixels wide at 40% opacity. That glow goes on
@@ -9,6 +10,12 @@ pixel for pixel with ``_upstream_render``, a copy of the drawing calls in
 upstream's ``TraceLayer._drawTrace``: one fresh QPainter per trace, line, then
 glow, then fill. The other cases read pixels across the top edge of an
 axis-aligned square trace.
+
+The selected_trace_style option picks the look. "standard", the default, is
+the upstream look above, and a settings store without the key draws it. The
+other two replace the one pixel line with pens drawn after the fill: "outline"
+is black 6 px, white 4 px, then the trace's color 2 px; "glow" is the trace's
+color 5 px at the selection_glow_opacity option, then 2 px solid.
 """
 import os
 
@@ -38,11 +45,15 @@ def series(shapes1_jser):
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication(["test"])
     from PyReconstruct.modules.datatypes.series import Series
+    from PyReconstruct.modules.backend.settings_store import DictSettingsStore
     s = Series.openJser(str(shapes1_jser))
+    # options in memory, starting from none stored, as on a fresh install
+    s.setSettingsStore(DictSettingsStore())
     # only traces on the layer, so it compares with the upstream trace drawing
     s.setOption("show_ztraces", False)
     s.setOption("show_flags", "none")
     yield s
+    s.setSettingsStore(None)
     s.close()
 
 
@@ -312,3 +323,156 @@ def test_a_transparent_fill_is_drawn_at_the_fill_opacity(series):
     c = image.pixelColor(*INSIDE)
     assert (c.red(), c.green(), c.blue()) == pytest.approx(MAGENTA, abs=2)
     assert c.alpha() == pytest.approx(fill_opacity * 255, abs=2)
+
+
+# --------------------------------------------------------------------------
+# the selected trace style option
+# --------------------------------------------------------------------------
+
+BLACK = (0, 0, 0)
+WHITE = (255, 255, 255)
+STYLES = ["standard", "outline", "glow"]
+
+
+def _runs(column):
+    """The colors met going down a column, each with how many pixels it spans."""
+    runs = []
+    for y in sorted(column):
+        if runs and runs[-1][0] == column[y]:
+            runs[-1][1] += 1
+        else:
+            runs.append([column[y], 1])
+    return [tuple(run) for run in runs]
+
+
+def test_the_default_style_is_standard(series):
+    from PyReconstruct.modules.datatypes.default_settings import default_settings
+    assert default_settings["selected_trace_style"] == "standard"
+    assert not series._settingsStore().contains(None, "selected_trace_style")
+    assert series.getOption("selected_trace_style") == "standard"
+
+
+@pytest.mark.parametrize("stored", ["standard", "a style from a later version"])
+def test_standard_and_unknown_styles_match_upstream(series, stored):
+    series.setOption("selected_trace_style", stored)
+    specs = [
+        (True, ("transparent", "always"), True, STAR),
+        (True, ("none", "none"), False, SQUARE),
+        (True, ("solid", "always"), True, OTHER),
+    ]
+    image, layer = _render(series, specs)
+    _assert_same_pixels(image, _upstream_render(layer))
+
+
+def test_a_settings_store_without_the_keys_draws_as_upstream(series):
+    store = series._settingsStore()
+    for key in ("selected_trace_style", "selection_glow_opacity"):
+        assert not store.contains(None, key)
+    image, layer = _render(series, [(True, ("transparent", "always"), True, STAR)])
+    _assert_same_pixels(image, _upstream_render(layer))
+
+
+def test_the_outline_style_is_black_white_and_the_trace_color(series):
+    series.setOption("selected_trace_style", "outline")
+    image, _ = _render(series, [(True, ("none", "none"), True, SQUARE)])
+    runs = _runs(_column(image))
+    assert runs == [
+        ((*BLACK, 255), 1),
+        ((*WHITE, 255), 1),
+        ((*MAGENTA, 255), 2),
+        ((*WHITE, 255), 1),
+        ((*BLACK, 255), 1),
+    ], runs
+
+
+def test_the_outline_style_keeps_a_forced_color_down_the_middle(series):
+    series.setOption("selected_trace_style", "outline")
+    image, _ = _render(
+        series, [(True, ("none", "none"), False, SQUARE)], focus_on="outline_probe"
+    )
+    colors = [color[:3] for color, _ in _runs(_column(image))]
+    assert colors == [BLACK, WHITE, FOCUS, WHITE, BLACK], colors
+
+
+def test_the_glow_style_is_a_see_through_stroke_and_a_solid_line(series):
+    series.setOption("selected_trace_style", "glow")
+    image, _ = _render(series, [(True, ("none", "none"), True, SQUARE)])
+    column = _column(image)
+    assert len(column) == 5, column
+    assert {rgba[:3] for rgba in column.values()} == {MAGENTA}, column
+    alphas = sorted(rgba[3] for rgba in column.values())
+    # the default glow opacity is 20%
+    assert alphas == [round(0.2 * 255)] * 3 + [255] * 2, column
+
+
+def _glow_alphas(series, percent):
+    series.setOption("selected_trace_style", "glow")
+    series.setOption("selection_glow_opacity", percent)
+    image, _ = _render(series, [(True, ("none", "none"), True, SQUARE)])
+    return sorted(rgba[3] for rgba in _column(image).values())
+
+
+def test_the_glow_opacity_option_sets_the_glow(series):
+    assert _glow_alphas(series, 40) == [round(0.4 * 255)] * 3 + [255] * 2
+
+
+def test_at_0_percent_only_the_solid_line_shows(series):
+    assert _glow_alphas(series, 0) == [255, 255]
+
+
+def test_a_glow_opacity_past_50_percent_draws_as_50(series):
+    assert _glow_alphas(series, 80) == _glow_alphas(series, 50)
+    assert _glow_alphas(series, 50) != _glow_alphas(series, 40)
+
+
+def test_a_fill_does_not_cover_the_outline(series):
+    # (the glow is see-through, so over a fill of its own color it shows as
+    # the fill; only the outline's black and white can be seen to stay)
+    series.setOption("selected_trace_style", "outline")
+    unfilled, _ = _render(series, [(True, ("none", "none"), True, SQUARE)])
+    filled, _ = _render(series, [(True, ("solid", "always"), True, SQUARE)])
+    # pixels on the line are the same with and without the fill under them
+    plain = _column(unfilled)
+    covered = _column(filled)
+    assert {y: covered[y] for y in plain} == plain
+
+
+@pytest.mark.parametrize("style", STYLES)
+@pytest.mark.parametrize("closed", [True, False], ids=["closed", "open"])
+def test_each_style_leaves_an_open_trace_open(series, style, closed):
+    series.setOption("selected_trace_style", style)
+    image, _ = _render(series, [(True, ("none", "none"), closed, SQUARE)])
+    edge = [_drawn(image, x, MID_Y) for x in range(LEFT_EDGE_X - 6, LEFT_EDGE_X + 7)]
+    assert any(edge) == closed, edge
+
+
+@pytest.mark.parametrize("style", STYLES)
+def test_painter_state_does_not_reach_the_next_trace_in_any_style(series, style):
+    series.setOption("selected_trace_style", style)
+    first = (True, ("transparent", "always"), True, OTHER)
+    plain = (False, ("none", "none"), True, SQUARE)
+    image, _ = _render(series, [first, plain])
+    assert _column(image) == {EDGE_Y: (*MAGENTA, 255)}
+    assert not _drawn(image, *INSIDE)
+
+
+def test_each_redraw_reads_the_style(series):
+    _, layer = _render(series, [(True, ("none", "none"), True, SQUARE)])
+    window = [0, 0, W / PPU, H / PPU]
+    looks = {}
+    for style in STYLES:
+        series.setOption("selected_trace_style", style)
+        image = layer.generateTraceLayer(
+            (W, H), window, window_moved=True
+        ).toImage()
+        looks[style] = tuple(sorted(_column(image).items()))
+    assert len(set(looks.values())) == len(STYLES), looks
+
+
+def test_a_preview_overrides_the_stored_style(series):
+    _, layer = _render(series, [(True, ("none", "none"), True, SQUARE)])
+    window = [0, 0, W / PPU, H / PPU]
+    layer.selected_style_preview = ("glow", 0)
+    image = layer.generateTraceLayer((W, H), window, window_moved=True).toImage()
+    assert sorted(rgba[3] for rgba in _column(image).values()) == [255, 255]
+    assert series.getOption("selected_trace_style") == "standard"

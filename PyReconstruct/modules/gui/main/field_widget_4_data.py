@@ -72,6 +72,7 @@ class FieldWidgetData(FieldWidgetObject):
         
         if unlocked:
             self.table_manager.updateObjects(names)
+            self.section.clearTracking()
 
         return unlocked
     

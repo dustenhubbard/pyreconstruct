@@ -1,14 +1,16 @@
 import os
+import errno
 import uuid
 import re
 import json
 import shutil
 import secrets
+import tempfile
 from datetime import datetime, timezone
 from contextlib import contextmanager
 from copy import copy, deepcopy
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 from .log import LogSet, LogSetPair
 from .ztrace import Ztrace
@@ -35,10 +37,21 @@ from PyReconstruct.modules.constants import (
     fast_loads,
     fast_dumps,
     write_jser,
+    JserSplice,
+    KeyedSection,
+    SpliceIndex,
+    section_digest,
     canon_keys_inplace,
     JSER_SCHEMA_VERSION,
     SERIES_KEYS,
     default_traces,
+)
+from PyReconstruct.modules.constants.jser_scan import (
+    FileChanged,
+    NotStreamable,
+    check_unchanged,
+    read_range,
+    scan_jser,
 )
 
 
@@ -344,6 +357,195 @@ def applyContourRenames(series_data : dict, renames : dict, collisions : dict):
 #: which is the one process-wide cache. Setting it can only make isolation
 #: tighter, never looser, so it cannot reopen the seam closed below.
 _SETTINGS_STORE = None
+
+
+_EMPTY_LOG = "Date, Time, User, Obj, Sections, Event"
+
+
+class _WholeJser:
+    """A .jser parsed whole, as openJser unpacks it (see _StreamedJser).
+
+    Hands each section over once and forgets it, so the document is not kept
+    alive through the series build that follows the unpack.
+    """
+
+    def __init__(self, jser_data : dict):
+        self._jser_data = jser_data
+        self._sections = jser_data["sections"]
+        self.series = jser_data["series"]
+        self.log = jser_data["log"]
+
+    def collisionInput(self) -> dict:
+        return self._jser_data
+
+    def sectionCount(self) -> int:
+        return sum(1 for sdata in self._sections if sdata)
+
+    def sections(self):
+        """Yield (section number, section data) for every slot that is not null."""
+        self._jser_data = None
+        for snum in range(len(self._sections)):
+            section_data = self._sections[snum]
+            if section_data is None:
+                continue
+            self._sections[snum] = None
+            yield snum, section_data
+
+    def close(self):
+        pass
+
+
+class _StreamedJser:
+    """A .jser read one section at a time, through the index `scan_jser` builds.
+
+    Parsing a whole .jser holds every section's decoded data at once: 10.3 GB
+    for a 1.4 GB series. This decodes one section's byte range when openJser
+    asks for it, so the open holds one section, the series and the log. Each
+    section decodes through `fast_loads` exactly as the whole file would, so
+    the hidden copy it writes is byte for byte the one a whole-file read writes.
+
+    The open asks about merged names between the scan and the reads, so the
+    file can change on disk in between. Every range is checked against the
+    scan's checksum as it is read, and the size and modification time once
+    more after the last one: a changed file fails the open (see `_changed`)
+    rather than open as a mix of two versions.
+
+    One difference, on a file no build writes: `fast_loads` retries with the
+    stdlib parser when orjson refuses a value, and a whole-file read retries
+    the whole file. Here only the refused section is retried. The two parsers
+    agree on every value but an integer past 64 bits, which orjson reads as a
+    float (see fast_json), so a file holding both such an integer and a value
+    orjson refuses, in different sections, can unpack that integer differently.
+    """
+
+    def __init__(self, f, index):
+        self._f = f
+        self._index = index
+        self.series = index.series
+        self.log = index.log if index.has_log else _EMPTY_LOG
+
+    @classmethod
+    def open(cls, fp : str):
+        """Index the file at `fp`; raises NotStreamable if scan_jser cannot."""
+        f = open(fp, "rb")
+        try:
+            return cls(f, scan_jser(f))
+        except FileChanged as e:
+            f.close()
+            raise _changed(fp) from e
+        except BaseException:
+            f.close()
+            raise
+
+    def collisionInput(self) -> dict:
+        """The contour names as contourNameCollisions reads them, no traces."""
+        names, self._index.names = self._index.names, None
+        return {"sections": [
+            None if n is None else {"contours": n} for n in names
+        ]}
+
+    def sectionCount(self) -> int:
+        return sum(1 for r in self._index.sections if r is not None)
+
+    def sections(self):
+        """Yield (section number, section data) for every slot that is not null."""
+        for snum, byte_range in enumerate(self._index.sections):
+            if byte_range is None:
+                continue
+            try:
+                section_data = fast_loads(read_range(self._f, byte_range))
+            except FileChanged as e:
+                raise _changed(self._f.name) from e
+            except ValueError as e:
+                raise SeriesOpenError(
+                    f"{os.path.basename(self._f.name)} is not a valid series "
+                    f"file (the file is corrupt or is not JSON)."
+                ) from e
+            yield snum, section_data
+            section_data = None
+        try:
+            check_unchanged(self._f, self._index)
+        except FileChanged as e:
+            raise _changed(self._f.name) from e
+
+    def close(self):
+        self._f.close()
+
+
+def _setAside(folder : str) -> str:
+    """Rename `folder` to a free name beside it and return that name.
+
+    For openJser, which replaces a working folder that has no .ser and must
+    be able to put it back. `createHiddenDir` would empty it in place, and it
+    stops at a subfolder after deleting the files around it; this refuses a
+    folder holding a subfolder before touching anything instead.
+    """
+    with os.scandir(folder) as entries:
+        for entry in entries:
+            if entry.is_dir(follow_symlinks=False):
+                raise OSError(
+                    errno.ENOTEMPTY,
+                    f"{folder} holds a folder ({entry.name}), so it was not replaced",
+                )
+    parent = os.path.dirname(folder)
+    while True:
+        aside = os.path.join(parent, f".opening-{secrets.token_hex(4)}.old")
+        if not os.path.lexists(aside):
+            break
+    os.rename(folder, aside)
+    return aside
+
+
+def _putBack(aside : str, folder : str) -> bool:
+    """Rename a folder set aside by `_setAside` back to where it was.
+
+    Returns False if the rename fails. The files are then still whole under
+    the set-aside name, and openJser keeps that folder and says where it is
+    (see `_notPutBack`).
+    """
+    try:
+        os.rename(aside, folder)
+    except OSError:
+        return False
+    return True
+
+
+def _notPutBack(fp : str, folder : str, aside : str, failure) -> SeriesOpenError:
+    """The error for an open that ended without putting `folder` back.
+
+    `failure` is the exception that stopped the open, or None for a cancel.
+    """
+    name = os.path.basename(fp)
+    if failure is None:
+        first = f"The open of {name} was canceled."
+    else:
+        first = f"PyReconstruct could not open {name} ({failure})."
+    return SeriesOpenError(
+        f"{first}\n\nPyReconstruct also could not put the folder {folder} "
+        f"back. Its files are unchanged in:\n{aside}"
+    )
+
+
+def _deleteSetAside(aside : str):
+    """Delete a set-aside folder once the open that replaced it is done.
+
+    It holds only files (`_setAside` checked). One that cannot be removed is
+    left where it is rather than failing an open that has succeeded.
+    """
+    try:
+        for name in os.listdir(aside):
+            os.remove(os.path.join(aside, name))
+        os.rmdir(aside)
+    except OSError:
+        pass
+
+
+def _changed(fp : str) -> SeriesOpenError:
+    """The error for a .jser that changed on disk while it was being opened."""
+    return SeriesOpenError(
+        f"{os.path.basename(fp)} changed while it was being opened, so it "
+        f"was not opened. Open it again."
+    )
 
 
 def _default_settings_store():
@@ -684,12 +886,42 @@ class Series():
     ## OPENING, LOADING, AND MOVING THE JSER FILE
     @staticmethod
     def _readJserForOpen(fp : str, notifier):
-        """Read, parse, migrate and validate a .jser for openJser.
+        """Read, migrate and validate a .jser for openJser.
 
         Everything openJser does before the hidden directory exists, so the
-        caller can hold one progress dialog over it. Returns (jser data,
+        caller can hold one progress dialog over it. Returns (source,
         contour-name collisions), or (None, None) when the user declined the
-        contour-name merge.
+        contour-name merge. The source hands openJser the series, the log and
+        the sections one at a time (see `_StreamedJser`); the caller closes it.
+        """
+        try:
+            source = _StreamedJser.open(fp)
+        except NotStreamable:
+            # Not the shape the scan reads: a legacy layout, an unknown key, or
+            # a file that is not JSON. Read it whole, as every open used to.
+            source = _WholeJser(Series._readWholeJser(fp))
+
+        # Distinct objects about to become one object. Asked BEFORE the hidden
+        # directory exists, so declining leaves the file exactly as it was.
+        try:
+            collisions = contourNameCollisions(source.collisionInput())
+            if collisions:
+                asker = notifier if notifier is not None else _default_notifier()
+                if asker.confirm(contourMergeWarning(collisions)) is False:
+                    source.close()
+                    return None, None
+        except BaseException:
+            source.close()
+            raise
+
+        return source, collisions
+
+    @staticmethod
+    def _readWholeJser(fp : str) -> dict:
+        """Parse a whole .jser into one document, updating old layouts.
+
+        The open's fallback for any file `scan_jser` does not read; every shape
+        the reader has ever accepted opens through here.
         """
         # load json
         try:
@@ -750,17 +982,9 @@ class Series():
 
         # UPDATE TO INCLUDE A LOG
         if "log" not in jser_data:
-            jser_data["log"] = "Date, Time, User, Obj, Sections, Event"
+            jser_data["log"] = _EMPTY_LOG
 
-        # Distinct objects about to become one object. Asked BEFORE the hidden
-        # directory exists, so declining leaves the file exactly as it was.
-        collisions = contourNameCollisions(jser_data)
-        if collisions:
-            asker = notifier if notifier is not None else _default_notifier()
-            if asker.confirm(contourMergeWarning(collisions)) is False:
-                return None, None
-
-        return jser_data, collisions
+        return jser_data
 
     @staticmethod
     def openJser(fp : str, progress=None, notifier=None):
@@ -813,48 +1037,52 @@ class Series():
         factory = progress if progress is not None else _default_progress_reporter_factory()
         reporter = factory(text=_openingText(sname))
         try:
-            jser_data, collisions = Series._readJserForOpen(fp, notifier)
+            source, collisions = Series._readJserForOpen(fp, notifier)
         except BaseException:
             reporter.finish()
             raise
-        if jser_data is None:
+        if source is None:
             reporter.finish()
             return None
 
         progress = 0
-        final_value = 0
-        for sdata in jser_data["sections"]:
-            if sdata: final_value += 1
+        final_value = source.sectionCount()
         final_value *= 2  # for loading section data
         final_value += 2  # unpacking series and log
 
-        # create the hidden directory. A .ser in it that is not this file's
-        # (the fast path above takes this file's) means the folder is the
-        # working folder of a different series, so it is left alone and the
-        # file is unpacked into a folder of its own.
-        if os.path.isdir(hidden_dir) and any(
-            f.endswith(".ser") for f in os.listdir(hidden_dir)
-        ):
-            hidden_dir = createNewSeriesDir(sdir, sname)
-        else:
-            hidden_dir = createHiddenDir(sdir, sname)
+        # Unpack into a new folder of our own beside the file, and touch the
+        # hidden directory only once every section has been read and written.
+        # A section is decoded only here, so a corrupt one, or a file changed
+        # on disk since the scan, is found partway through; by then the hidden
+        # directory would already be emptied (createHiddenDir), and whatever
+        # it held was lost to an open that then failed. Reading the file whole
+        # never had that gap, because it failed before creating anything.
+        # The name leaves out the series name: a name as long as the system
+        # allows leaves no room to add to it.
+        try:
+            work_dir = tempfile.mkdtemp(prefix=".opening-", suffix=".tmp", dir=sdir)
+        except BaseException:
+            source.close()
+            reporter.finish()
+            raise
+        placed = False  # True once hidden_dir is the folder this open made
+        aside = None  # the folder that was at hidden_dir, kept until the open is done
+        opened = False  # True once the series is built
+        failure = None  # the exception that stopped the open, if one did
 
         # The .ser file is written LAST as the completion sentinel: both
         # recovery scans (the fast path above and the GUI's unsaved-work
         # prompt) require it, so a cancelled or crashed open can never leave
         # a partial hidden dir that is later mistaken for unsaved work.
-        # On any cancel or exception, remove the partial hidden dir entirely.
+        # On any cancel or exception, remove what this open made entirely.
         try:
-            # extract JSON section data
+            # extract JSON section data, one section at a time: the source
+            # never holds more than the section in hand (see _StreamedJser)
             sections = {}
             renames = {}
-            for snum, section_data in enumerate(jser_data["sections"]):
-                # check for empty section, skip if so
-                if section_data is None:
-                    continue
-
+            for snum, section_data in source.sections():
                 filename = sname + "." + str(snum)
-                section_fp = os.path.join(hidden_dir, filename)
+                section_fp = os.path.join(work_dir, filename)
 
                 # update any missing attributes; collect the contour renames so
                 # the series data can follow them below
@@ -898,28 +1126,31 @@ class Series():
 
                 with open(section_fp, "wb") as f:
                     f.write(fast_dumps(section_data))
+                # drop it now, not when the loop rebinds the name: that is
+                # after the next section is decoded, so two would be alive
+                section_data = None
 
                 if reporter.was_canceled():
-                    shutil.rmtree(hidden_dir, ignore_errors=True)
                     return None
                 progress += 1
                 reporter.set_progress(progress/final_value * 100)
+            # every section is out: let go of the file before the long build
+            source.close()
 
             # Extract the existing log. Copied through byte for byte: the
             # contour renames collected above are NOT applied to its object-name
             # field, deliberately -- see `applyContourRenames` for why.
-            log_str = jser_data["log"]
-            existing_log_fp = os.path.join(hidden_dir, "existing_log.csv")
+            log_str = source.log
+            existing_log_fp = os.path.join(work_dir, "existing_log.csv")
             with open(existing_log_fp, "w", encoding="utf-8") as f:
                 f.write(log_str)
             if reporter.was_canceled():
-                shutil.rmtree(hidden_dir, ignore_errors=True)
                 return None
             progress += 1
             reporter.set_progress(progress/final_value * 100)
 
             # extract JSON series data (LAST: the .ser is the completion sentinel)
-            series_data = jser_data["series"]
+            series_data = source.series
             # add empty log_set for opening/saving purposes
             series_data["log_set"] = []
             Series.updateJSON(series_data)
@@ -928,12 +1159,38 @@ class Series():
             # what folds the legacy curation / last_user / 3D_modes maps into
             # obj_attrs.
             applyContourRenames(series_data, renames, collisions)
-            series_fp = os.path.join(hidden_dir, sname + ".ser")
-            with open(series_fp, "wb") as f:
+            series_name = sname + ".ser"
+            with open(os.path.join(work_dir, series_name), "wb") as f:
                 f.write(fast_dumps(series_data))
             if reporter.was_canceled():
-                shutil.rmtree(hidden_dir, ignore_errors=True)
                 return None
+
+            # Everything is read and written: now the hidden directory. A .ser
+            # in it that is not this file's (the fast path above takes this
+            # file's) means the folder is the working folder of a different
+            # series, so it is left alone and the file goes into a folder of
+            # its own. Any other folder there is replaced, as it always was,
+            # but not emptied in place: it is renamed aside whole, and only
+            # deleted once the series is built. A failed move or build, or a
+            # cancel, renames it back (see the finally below), so at every
+            # point either its files or a complete new copy exist. If that
+            # rename fails, the set-aside folder is kept and the error names
+            # it. The .ser moves last, as it was written last.
+            if os.path.isdir(hidden_dir) and any(
+                f.endswith(".ser") for f in os.listdir(hidden_dir)
+            ):
+                hidden_dir = createNewSeriesDir(sdir, sname)
+            else:
+                if os.path.isdir(hidden_dir):
+                    aside = _setAside(hidden_dir)
+                hidden_dir = createHiddenDir(sdir, sname)
+            placed = True
+            for name in sorted(os.listdir(work_dir), key=lambda n: n == series_name):
+                os.replace(
+                    os.path.join(work_dir, name), os.path.join(hidden_dir, name)
+                )
+            os.rmdir(work_dir)
+            series_fp = os.path.join(hidden_dir, series_name)
             progress += 1
             reporter.set_progress(progress/final_value * 100)
 
@@ -945,18 +1202,32 @@ class Series():
             for snum, section in series.enumerateSections(show_progress=False):
                 series.data.updateSection(section, update_traces=True, log_events=False, read_store=True)
                 if reporter.was_canceled():
-                    shutil.rmtree(hidden_dir, ignore_errors=True)
                     return None
                 progress += 1
                 reporter.set_progress(progress/final_value * 100)
             # the series data is complete here, as after the refresh in
             # __init__: a displayed profile no section has is repointed now
             series._repointBCProfile()
+            opened = True
 
-        except BaseException:
-            shutil.rmtree(hidden_dir, ignore_errors=True)
+        except BaseException as e:
+            failure = e
             raise
+
         finally:
+            # gone already on success; on a cancel or failure, what was unpacked
+            shutil.rmtree(work_dir, ignore_errors=True)
+            kept = None  # a set-aside folder that could not be put back
+            if not opened:
+                # a cancel or a failure: remove what this open made, and put
+                # back what it set aside
+                if placed:
+                    shutil.rmtree(hidden_dir, ignore_errors=True)
+                if aside is not None and not _putBack(aside, os.path.join(sdir, f".{sname}")):
+                    kept = aside
+            elif aside is not None:
+                _deleteSetAside(aside)
+            source.close()
             # The dialog closes only at 100%, which a failure never reaches:
             # the raise above used to leave the window-modal "Opening
             # <name>..." dialog standing behind the error that follows it
@@ -964,6 +1235,10 @@ class Series():
             # fixes. Cancel returns pass through here too; finishing a
             # reporter twice is harmless.
             reporter.finish()
+            if kept is not None:
+                # replaces the cancel, or the error on its way out (kept as
+                # its context): the user has to learn where the files are
+                raise _notPutBack(fp, os.path.join(sdir, f".{sname}"), kept, failure)
 
         _sweepStaleSaveTemps(sdir, hidden_dir)
         return series
@@ -1176,7 +1451,7 @@ class Series():
             # The document is written as it is read, one section at a time
             # (fork #437). Only the section being written is in memory, never
             # every section plus the joined bytes. write_jser may call both of
-            # these twice; see its comment in jser_format.py.
+            # these more than once; see its comment in jser_format.py.
             def sections():
                 progress = 0
                 for snum in slots:
@@ -1186,24 +1461,41 @@ class Series():
                     fp = os.path.join(self.hidden_dir, self.sections[snum])
                     try:
                         if self.store is not None:
-                            section_data = self.store.readSection(snum, fp)
+                            # PROTOTYPE: the store gives the parsed section and
+                            # the bytes its working file would hold, the key
+                            section_data, raw = self.store.readSectionWithBytes(snum, fp)
                         else:
+                            section_data = None
                             with open(fp, "rb") as f:
-                                section_data = fast_loads(f.read())
+                                raw = f.read()
                     except (OSError, ValueError) as e:
-                        # Same reasoning as a missing file: refuse rather than
-                        # write the section out as null. The temp file is
-                        # removed and the existing .jser is not touched.
-                        self._refuseSave(
-                            jser_fp,
-                            f"the working file for section {snum} could not be read "
-                            f"({e}). Saving now would write a series without it."
-                        )
+                        refuseUnreadable(snum, e)
 
                     progress += 1
                     reporter.set_progress(progress/final_value * 100)
-                    yield section_data
-                    del section_data
+                    # parsed only if this section is encoded, not copied
+                    yield KeyedSection(
+                        section_digest(raw),
+                        (lambda d=section_data: d) if section_data is not None
+                        else lambda raw=raw, snum=snum: parseSection(raw, snum)
+                    )
+                    del raw, section_data
+
+            def parseSection(raw, snum):
+                try:
+                    return fast_loads(raw)
+                except ValueError as e:
+                    refuseUnreadable(snum, e)
+
+            def refuseUnreadable(snum, e):
+                # Same reasoning as a missing file: refuse rather than write
+                # the section out as null. The temp file is removed and the
+                # existing .jser is not touched.
+                self._refuseSave(
+                    jser_fp,
+                    f"the working file for section {snum} could not be read "
+                    f"({e}). Saving now would write a series without it."
+                )
 
             def tail():
                 # the series file itself (self.filepath is the .ser in the hidden dir)
@@ -1277,14 +1569,27 @@ class Series():
             # The structural pretty printer is opt-in via PYRECON_JSER_PRETTY=1
             # for when a human is going to read the diff. Either way the bytes
             # are exactly what dumps_jser returns for the same document.
+            #
+            # A section whose working file is unchanged since the last save is
+            # copied from the file that save wrote (see jser_splice.py). The
+            # index is checked against the file on disk first, and every
+            # copied range against its digest; any doubt makes a full write.
+            index : Optional[SpliceIndex] = getattr(self, "_jser_splice_index", None)
+            if index is not None and not index.matchesDisk():
+                index = None
+            splice = JserSplice(index)
             try:
                 # atomic: the previous .jser stays intact until the new one is complete
-                _atomicWrite(jser_fp, lambda f: write_jser(f, sections, tail))
+                _atomicWrite(jser_fp, lambda f: write_jser(f, sections, tail, splice=splice))
             except OSError as e:
                 self._surfaceSaveError(jser_fp, e)
                 raise
-            if self.store is not None and jser_fp == self.jser_fp:
-                self.store.markExported(jser_fp)
+            # A save to another path (a backup) leaves the index on the
+            # series' own file, which that save did not touch.
+            if jser_fp == self.jser_fp:
+                self._jser_splice_index = splice.indexFor(jser_fp)
+                if self.store is not None:
+                    self.store.markExported(jser_fp)
 
             if close:
                 self.close()
@@ -2639,8 +2944,11 @@ class Series():
                 section.save()
 
         ## Assign object attrs to copies
-        for obj_name, copy_name in zip(obj_names, copy_names):
-            self.objects.copyObjAttrs(obj_name, copy_name)
+        cleared = self.objects.copyObjAttrs(zip(obj_names, copy_names))
+
+        ## The sections were recorded before the copies had hosts
+        if series_states is not None:
+            series_states.recordLinksMade(cleared)
 
         self.modified = True
 
@@ -3118,6 +3426,14 @@ class Series():
         data is the same in every field. A record with no "lookalikes" keeps
         the index.
 
+        Before any of that, a record whose scan noted the trace's id
+        ("trace_id") is resolved by that id, when the section's ids are the
+        ones this session saved it with (Section.trace_ids_trusted), a trace
+        under its name still holds it, and it still has the content the scan
+        saw. This tells identical traces apart whatever was saved in between.
+        Otherwise, as when the trace was undone back or the file was changed
+        outside this session, the record falls through to the rules above.
+
         Records that name the same target resolve together, so one trace is
         deleted once however many rows name it: the same name, index and
         signature share a trace, and a record with no index shares the trace
@@ -3135,11 +3451,20 @@ class Series():
         unsure_targets = set()
         unresolved = []
         identities = {}  # name -> each trace's identity, read once
+        by_id : dict = {}  # name -> {trace id: trace}, read once
+        id_claimed = {}  # id(trace) -> the target that found it by id
         for record in records:
             contour = section.contours.get(record["name"])
             if not contour:
                 continue
             target = cls._recordTarget(record)
+            trace = cls._resolveByID(section, contour, record, by_id)
+            if trace is not None:
+                found[id(record)] = trace
+                claimed.add(id(trace))
+                id_claimed[id(trace)] = target
+                by_target.setdefault(target, trace)
+                continue
             if record.get("identity") is not None and \
                     record["name"] not in identities:
                 identities[record["name"]] = [
@@ -3151,6 +3476,10 @@ class Series():
             if counted is not None:
                 outcome, trace = counted
                 if outcome == "ambiguous":
+                    ambiguous.append(record)
+                    unsure_targets.add(target)
+                elif id_claimed.get(id(trace), target) != target:
+                    # another row found this trace by its id
                     ambiguous.append(record)
                     unsure_targets.add(target)
                 elif outcome == "found":
@@ -3196,6 +3525,35 @@ class Series():
                 ambiguous.append(record)
                 unsure_targets.add(target)
         return found, ambiguous
+
+    @classmethod
+    def _resolveByID(cls, section, contour, record, by_id):
+        """The trace holding the record's "trace_id", if its content is the same.
+
+        The content is the record's "identity" (every saved field) when the
+        scan placed it, else its "match" signature. ``by_id`` caches each
+        contour's {id: trace} by name.
+
+            Returns:
+                (Trace): the trace, or None to resolve the record without its id
+        """
+        trace_id = record.get("trace_id")
+        if not isinstance(trace_id, str) or \
+                not getattr(section, "trace_ids_trusted", False):
+            return None
+        name = record["name"]
+        if name not in by_id:
+            by_id[name] = {section.traceID(t): t for t in contour}
+        trace = by_id[name].get(trace_id)
+        if trace is None:
+            return None
+        identity = record.get("identity")
+        if identity is not None:
+            if cls._traceIdentity(trace) != cls._freeze(identity):
+                return None
+        elif not cls._traceMatchesSignature(trace, record["match"]):
+            return None
+        return trace
 
     @classmethod
     def _recordTarget(cls, record) -> tuple:
@@ -3259,8 +3617,9 @@ class Series():
         Sets "identity" (every saved field of the trace but its name, from
         Trace.getList: points, color, closed, negative, hidden, fill mode and
         tags), "lookalikes" (how many traces under that name on the section
-        have that identity, the record's own included) and "lookalike_ordinal"
-        (its place among them, from 0). Traces that differ in anything saved
+        have that identity, the record's own included), "lookalike_ordinal"
+        (its place among them, from 0) and "trace_id" (the trace's id this
+        session, which _resolveByID tries first). Traces that differ in anything saved
         are not lookalikes, so each is found as the only match wherever it
         moved; the place only chooses between traces whose data is the same.
         At delete time a changed count sets the record aside (see
@@ -3276,14 +3635,15 @@ class Series():
                 by_identity = {}
                 for i, identity in enumerate(identities):
                     by_identity.setdefault(identity, []).append(i)
-                entry = (identities, by_identity)
+                entry = (contour, identities, by_identity)
                 positions[name] = entry
-            identities, by_identity = entry
+            contour, identities, by_identity = entry
             if not isinstance(index, int) or not 0 <= index < len(identities):
                 return None
             identity = identities[index]
             indexes = by_identity[identity]
-            return identity, len(indexes), indexes.index(index)
+            return (identity, len(indexes), indexes.index(index),
+                    section.traceID(contour[index]))
 
         for record in records:
             placed = place(record["name"], record.get("index"))
@@ -3291,7 +3651,10 @@ class Series():
                 continue
             (record["identity"],
              record["lookalikes"],
-             record["lookalike_ordinal"]) = placed
+             record["lookalike_ordinal"],
+             trace_id) = placed
+            if trace_id is not None:
+                record["trace_id"] = trace_id
 
     @classmethod
     def _traceIdentity(cls, trace) -> tuple:
@@ -6192,8 +6555,13 @@ class Series():
                 section.save()
 
         ## Assign original attrs to new objects
-        for obj in new_names:
-            self.objects.assignCopyAttrs(obj, alignment, obj_groups, host)
+        cleared = self.objects.assignCopyAttrs({
+            obj: (alignment, obj_groups, host) for obj in new_names
+        })
+
+        ## The sections were recorded before the new objects had hosts
+        if series_states is not None:
+            series_states.recordLinksMade(cleared)
         
         if log_event:
             self.addLog(name, None, "Split into individual objects per trace")
@@ -6432,11 +6800,7 @@ class SeriesIterator():
         """Add the last section's change to the undo history, once."""
         section, self.section = self.section, None
         self.written = False
-        if self.series_states and section and (
-            section.getAllModifiedNames() or
-            section.tformsModified() or
-            section.flags_modified
-        ):
+        if self.series_states and section and section.isModified():
             self.series_states[section.n].addState(section, self.series)
             self.series_states.addSectionUndo(section.n)
 

@@ -1,5 +1,6 @@
 from PyReconstruct.modules.gui.utils import getOpenRecentMenu, getGroupsMenu
 
+from PyReconstruct.modules.constants.build_flavor import is_dev_build
 from PyReconstruct.modules.constants import (
     kh_web,
     kh_atlas,
@@ -159,7 +160,12 @@ def return_series_menu(self):
                     ("change_src_act", "Find/change image directory", "", self.changeSrcDir),
                     ("zarrimage_act", "Convert to scaled images", "", self.srcToZarr),
                     ("scalezarr_act", "Update image scales", "", lambda : self.srcToZarr(create_new=False)),
-                ]
+                ] + (
+                    # Dev build only (a nightly or a source checkout): the
+                    # stable app has no row here until the crop is released
+                    [("cropzarr_act", "Crop scaled images around an object...", "", self.cropScaledImages)]
+                    if is_dev_build() else []
+                )
             },
             {
                 "attr_name": "serieshidemenu",
@@ -519,13 +525,13 @@ def return_help_menu(self):
             # 4. the What's-new pop-up
             ("whatsnew_act", "What's new?", "", self.showWhatsNew),
             # Checkable, mirroring the stored suppress_whatsnew preference the
-            # dialog's "Don't show again" button also writes. Unlike the
-            # menubar's other checkables this one resyncs on every Help open
-            # (see MainWindow.createMenuBar), because the dialog can flip the
-            # preference behind the menu's back.
-            # Checked means OFF, matching the wording:
-            # the tick IS the stored suppression flag.
-            ("togglewhatsnew_act", "Turn off What's new pop-up", "checkbox",
+            # dialog's "Show this changelog window after each update?" box
+            # also writes. Unlike the menubar's other checkables this one
+            # resyncs on every Help open (see MainWindow.createMenuBar),
+            # because the dialog can flip the preference behind the menu's
+            # back. Checked means ON, the same sense as that box, so the two
+            # always show the same tick.
+            ("togglewhatsnew_act", "Show What's new after each update", "checkbox",
              self.toggleWhatsNewPopup),
             None,
             # 5. the shortcuts list

@@ -331,6 +331,7 @@ help_shortcuts = [
     ("hideall_act", "Hide trace layer"),
     ("showall_act", "Show all traces (ignore hidden)"),
     ("hideimage_act", "Hide image"),
+    ("roibox_act", "ROI box (show only the traces inside a box you click to place)"),
     ("decbr_act", "Decrease brightness"),
     ("incbr_act", "Increase brightness"),
     ("deccon_act", "Decrease contrast"),

@@ -21,6 +21,7 @@ from .backup_comment import BackupCommentDialog
 from .table_columns import TableColumnsDialog
 from .import_series import ImportSeriesDialog, ImportAlignmentsDialog
 from .match_image_names import MatchImageNamesDialog
+from .crop_zarr import CropZarrDialog, cropWithProgress
 from .malformed_contours import (
     MalformedContoursDialog,
     PixelDustDialog,

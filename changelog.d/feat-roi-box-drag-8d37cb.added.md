@@ -1,0 +1,1 @@
+- **A drag in the field draws the ROI box; a click still only moves it.**

@@ -22,10 +22,7 @@ and ``getEditorsFromHistory`` asks for it. What is pinned here:
 
 * the regression itself -- a good row for one user survives a bad row for
   another (``test_one_bad_row_no_longer_costs_another_user_their_entry``);
-* both halves of the handler, not just one. The rows above fail in
-  ``Log.fromStr`` (``ValueError``); a row that stops partway through with
-  nothing after it fails in ``fromList``'s continuation join instead
-  (``IndexError``), and is recovered the same way
+* a row that stops partway through is recovered the same way as any other
   (``test_a_truncated_final_row_costs_only_itself``);
 * the loss is reported rather than swallowed: the dropped rows are on the
   returned set as ``skipped_rows`` and a count is printed;
@@ -103,13 +100,9 @@ HEADER = "Date, Time, User, Obj, Sections, Event\n"
 GOOD = "26-06-29, 12:00, alice, obj_a, 5, Modify trace(s)"
 BAD = "26-06-30, 13:00, bob, weird, name, 7, Modify trace(s)"
 
-# The other failing shape, and the only one that reaches the IndexError half of
-# the handler: a final row that stops partway through. fromList's continuation
-# join (which exists so a row holding a literal newline can be reassembled from
-# the physical lines it was split across) keeps pulling log_list[i+1] while the
-# row is short of six comma fields, so a short row with nothing after it runs
-# the index off the end. Position is what picks the arm: the same text with a
-# row after it gets joined to that row and fails in fromStr instead.
+# The other failing shape: a row that stops partway through. The old join ran
+# off the end of the list on it when it came last (IndexError); under the block
+# rule it is a one-line block that fails in fromStr wherever it sits.
 TRUNCATED = "26-07-03, 16:00, bob"
 
 
@@ -161,31 +154,20 @@ def test_the_bad_row_really_is_a_parse_failure():
     assert Log.fromStr(GOOD).user == "alice"
 
 
-def test_a_truncated_final_row_is_the_index_error_case():
-    """The handler names two exception types; this is the second one.
+def test_a_truncated_final_row_is_a_parse_failure():
+    """A row that stops partway through is a block that does not parse.
 
-    ``BAD`` above exercises ``ValueError``. Nothing exercised ``IndexError``,
-    which is not a hypothetical branch: it is the continuation join in
-    ``fromList`` running ``log_list[i+1]`` off the end of the list, which is
-    what a row that stops partway through and has no row after it does.
-
-    Asserted rather than assumed, because the two arms are reached by
-    *different* code and could not be swapped for one another:
+    The join used to run ``log_list[i+1]`` off the end of the list on this
+    shape and raise ``IndexError``. Under the block rule nothing is read past
+    the end: the block is the one short line, and it fails in ``fromStr`` like
+    any other row, wherever it sits.
     """
-    # through fromStr alone the short row is an unpack failure -- ValueError.
-    # The IndexError is not fromStr's at all; it belongs to fromList's join.
     with pytest.raises(ValueError):
         Log.fromStr(TRUNCATED)
 
-    with pytest.raises(IndexError):
+    with pytest.raises(ValueError):
         LogSet.fromList([GOOD, TRUNCATED])
 
-    # and it really is *lastness* that selects the arm: give the same text a
-    # row to join to and the join stops on that row's date stamp rather than
-    # running off the end, so the short head fails in fromStr instead. (It
-    # used to reach fromStr by a different route -- the join swallowed the
-    # following row and the concatenation failed to parse. Same exception,
-    # and now the following row is never touched at all.)
     with pytest.raises(ValueError):
         LogSet.fromList([GOOD, TRUNCATED, GOOD])
 
@@ -251,17 +233,14 @@ def test_several_bad_rows_cost_only_themselves(series):
 
 
 def test_a_truncated_final_row_costs_only_itself(series):
-    """The IndexError arm, through the real recovery path.
+    """A history whose last row stops partway through, through the real
+    recovery path.
 
-    A history whose last row stops partway through is the shape that reaches
-    ``IndexError`` rather than ``ValueError`` (see
-    ``test_a_truncated_final_row_is_the_index_error_case``). It must behave the
-    same as any other unreadable row: alice keeps her entry, the truncated row
-    is recorded rather than swallowed, and -- the part that matters most --
-    ``getEditorsFromHistory`` returns instead of raising. Narrow the handler to
-    ``ValueError`` alone and this call raises ``IndexError`` out of
-    ``Series.__init__``, which is worse than the pre-fix behavior it replaced:
-    that at least opened the series with an empty set.
+    It must behave the same as any other unreadable row: alice keeps her
+    entry, the truncated row is recorded rather than swallowed, and -- the part
+    that matters most -- ``getEditorsFromHistory`` returns instead of raising.
+    The old join raised ``IndexError`` here (see
+    ``test_a_truncated_final_row_is_a_parse_failure``).
     """
     write_log(series, GOOD, TRUNCATED)
 
@@ -278,7 +257,7 @@ def test_a_truncated_final_row_does_not_break_opening_the_series(series):
 
     ``Series.__init__`` calls ``getEditorsFromHistory`` whenever the stored
     editors list is empty, and it does not guard the call. So an escaping
-    ``IndexError`` is not a wrong answer, it is a series that will not open at
+    error is not a wrong answer, it is a series that will not open at
     all. The fixture's empty ``editors`` is asserted so this cannot pass by
     never reaching the code it is about.
     """
@@ -438,6 +417,12 @@ def test_reopening_the_series_keeps_the_surviving_editor(series):
 #   two real rows, on the default path as well. Fixed by anchoring the join on
 #   the date stamp every row carries. This section pins that it stays fixed.
 #
+# The join this describes is now the block rule (``LogSet.fromList``): a row
+# runs from one date stamp to the next, and a block that fails is set aside
+# whole, one ``skipped_rows`` entry per line, with no line read again alone. The
+# tests below still hold where they say so; where the block rule reads a line
+# differently they say what it reads now.
+#
 # The three sections below are, in order: the recovery half (unchanged), the
 # fabrication half (now closed, where the pins used to be), and the write-side
 # sanitizer that stops the fragments being produced in the first place.
@@ -479,9 +464,8 @@ def test_a_row_swallowed_by_a_FAILED_join_is_given_back():
     parse. It used to cost carol her row: both lines went into ``skipped_rows``
     as ONE entry, so the count callers print undercounted the file lines too.
 
-    Now the failure records only the line that was actually short and the scan
-    resumes at the next line, so carol's row is read on its own and survives,
-    and the recorded entry is one file line rather than two rows' worth.
+    Now carol's stamped line starts a block of its own, so the failure records
+    only the line that was actually short, and carol's row survives.
     """
     ls = LogSet.fromList([GOOD, TRUNCATED, LATE], skip_corrupt=True)
 
@@ -495,47 +479,22 @@ def test_a_row_swallowed_by_a_FAILED_join_is_given_back():
     )
 
 
-# The shape the two lines of the handler exist for, and the only shape that
-# tells them apart. In every case above the join stops on the FIRST line it
-# looks at -- that line carries the stamp, so the guard breaks -- which leaves
-# ``log_str`` still equal to the head and ``i`` still equal to ``start``. Under
-# those conditions "record ``log_list[start]``" and "record ``log_str``" name
-# the same string, and "resume at ``start + 1``" and "resume at ``i + 1``" name
-# the same line. Both handler lines are therefore unobservable until a join has
-# actually ACCUMULATED, which needs a continuation that carries no stamp and
-# still leaves the row short of six comma fields.
+# A block of several lines that does not parse: a stamped head followed by
+# lines without a stamp, still short of six comma fields.
 MULTILINE_HEAD = "26-07-03, 16:00, bob"
 MULTILINE_TAIL = "and more of a pasted name"
 MULTILINE_TAIL_2 = "and yet more of it"
 
 
 def test_a_failed_multi_line_join_records_one_entry_per_file_line():
-    """The docstring's "one entry per lost file line, no exceptions", pinned.
+    """One ``skipped_rows`` entry per lost file line, pinned.
 
-    A pasted name holding a newline splits its row across physical lines, so
-    the join eats the tail and the attempt still fails -- and now more than one
-    file line has gone into one attempt. What the handler must do at that point
-    is two separate things, and each is a line of its own:
-
-    * record ``log_list[start]``, the first physical line, and NOT ``log_str``.
-      The concatenation is not a line of the file; recording it names a string
-      no caller can find in the log and folds several losses into one entry.
-    * resume at ``start + 1``, and NOT after everything the join consumed. The
-      join is greedy, so every line it swept up is owed a fresh attempt on its
-      own -- which is what makes the count come out at one per file line rather
-      than one per failed attempt.
-
-    Both are invisible on a join that never accumulated -- but "nothing in this
-    module accumulates" is not why they went unpinned, because one case does.
-    ``test_a_fragment_that_is_itself_six_fields_is_not_read_as_a_row`` below
-    reaches an accumulated join: a stamped head followed by a stamp-less
-    six-field fragment, eaten by the join before the concatenation still fails
-    to parse. Its ``skipped_rows`` really does move under both readings -- it
-    simply never asserts on ``skipped_rows`` at all, only on ``all_logs``,
-    which is identical either way. So the gap was the missing assertion, not
-    the missing accumulation. Asserted here on a two-line split and a
-    three-line one so the entry count tracks the lines lost rather than merely
-    being greater than one.
+    Each entry is a line of the file as it was read, never the joined block:
+    the joined text names a string no caller can find in the log and would
+    fold several losses into one entry. ``--check-history`` prints one line
+    number per entry. Asserted on a two-line split and a three-line one so the
+    entry count tracks the lines lost rather than merely being greater than
+    one.
     """
     assert ROW_START.match(MULTILINE_HEAD), "the head is a row start; the anchor passes it"
     assert len(MULTILINE_HEAD.split(",")) < 6, "and is short, so the join runs"
@@ -553,16 +512,15 @@ def test_a_failed_multi_line_join_records_one_entry_per_file_line():
         "the rows either side of the split are untouched"
     )
     assert len(two.skipped_rows) == 2, (
-        "two file lines were lost, so two entries: the scan must resume at the "
-        "line after the head, or the tail is never re-examined and the count a "
-        "caller prints undercounts the damage"
+        "two file lines were lost, so two entries, or the count a caller "
+        "prints undercounts the damage"
     )
     assert two.skipped_rows[0] == MULTILINE_HEAD, (
         "the first entry is the first physical line alone -- not the "
         "concatenation the join had built by the time it failed"
     )
     assert two.skipped_rows[1] == MULTILINE_TAIL, (
-        "and the line the join swept up is handed back and recorded as itself"
+        "and the next line of the block is recorded as itself"
     )
 
     three = LogSet.fromList(
@@ -639,17 +597,13 @@ def test_a_two_field_orphan_before_a_series_level_row_no_longer_invents_one():
     """The fabrication this module used to pin, asserted gone.
 
     Let ``k`` be the number of ``", "`` fields on the orphan line. The old
-    join put the next row's field ``k-1`` into the section-range slot -- the
-    only slot that must read as an integer -- so ``k`` alone decided whether
-    the concatenation parsed. ``k=2`` put the next row's *obj_name* there, and
-    every series-level row writes ``"-"`` in that field, so ``k=2`` parsed
-    whenever the next row was series-level, which is an ordinary thing for a
-    row to be. carol's row vanished and her row's own timestamp was reported
-    as an editor, with ``skipped_rows`` empty so no caller could report it.
+    join put the next row's field ``k-1`` into the section-range slot, so
+    ``k=2`` parsed whenever the next row was series-level: carol's row vanished
+    and her row's own timestamp was reported as an editor.
 
-    The join now stops on the date stamp the follower carries. The orphan
-    fails alone, carol's row is read as the row it is, and the loss is
-    recorded where a caller can see it.
+    Under the block rule the orphan belongs to the row above it, the only row
+    it can be part of, and carol's stamped row is a row of its own. The orphan
+    is read as the rest of alice's event, a break an older build wrote there.
     """
     orphan = "d, e"
     assert len(orphan.split(", ")) == 2, "k=2 is the alignment that used to fabricate"
@@ -659,35 +613,28 @@ def test_a_two_field_orphan_before_a_series_level_row_no_longer_invents_one():
     users = [l.user for l in ls.all_logs]
     assert users == ["alice", "carol"], "the follower must survive intact"
     assert "14:00" not in users, "no timestamp may stand in for a person"
-    assert [s.strip() for s in ls.skipped_rows] == [orphan], (
-        "and the orphan is recorded rather than silently absorbed"
-    )
+    assert ls.all_logs[0].event == "Modify trace(s)\nd, e"
+    assert ls.skipped_rows == []
 
 
-def test_the_default_path_now_raises_where_it_used_to_fabricate():
-    """The price of the fix, pinned as deliberately as the fabrication was.
+def test_the_default_path_reads_the_orphan_where_it_used_to_fabricate():
+    """The default caller, where ``skip_corrupt`` never comes into it.
 
-    ``skip_corrupt`` was never what admitted the fabrication: the join
-    succeeded, so the flag never came into it and every default caller -- the
-    history table, the import comparison, the curation restore -- read the
-    invented row too. The cure changes that path, which is exactly why it was
-    a decision rather than a cleanup.
-
-    What the default caller sees now is a ``ValueError``. That is the trade,
-    and it is the right way round: a raise is visible and a fabricated editor
-    is not.
+    The old join fabricated here on the default path; the anchored join then
+    raised. The block rule reads the orphan as part of the row above, so the
+    default caller gets both rows and no invented editor.
     """
-    with pytest.raises(ValueError):
-        LogSet.fromList([GOOD, "d, e", SERIES_LEVEL])
+    ls = LogSet.fromList([GOOD, "d, e", SERIES_LEVEL])
+
+    assert [l.user for l in ls.all_logs] == ["alice", "carol"]
 
 
 def test_a_one_field_orphan_no_longer_pollutes_the_next_row():
     """The other silent shape, and the cheapest one to reach.
 
     ``k=1`` put the next row's own section range in the section slot, so the
-    join ALWAYS parsed: the next row survived and kept its user, but the
-    orphan was glued onto its date, so the entry the app displayed was not the
-    one that was written. Nothing was recorded then either.
+    join ALWAYS parsed and the orphan was glued onto the next row's date. The
+    orphan now ends the row above it, which is where an older build wrote it.
     """
     clean_head = "26-06-30, 13:00, bob, zt_old, -, Rename ztrace to new"
     orphan = "name"
@@ -696,7 +643,8 @@ def test_a_one_field_orphan_no_longer_pollutes_the_next_row():
 
     assert [l.user for l in ls.all_logs] == ["bob", "carol"]
     assert ls.all_logs[1].date == "26-07-01", "the follower's date is its own"
-    assert [s.strip() for s in ls.skipped_rows] == [orphan]
+    assert ls.all_logs[0].event == "Rename ztrace to new\nname"
+    assert ls.skipped_rows == []
 
 
 def test_a_fragment_that_is_itself_six_fields_is_not_read_as_a_row():
@@ -730,21 +678,13 @@ def test_a_fragment_that_is_itself_six_fields_is_not_read_as_a_row():
 def test_the_writer_produced_hazard_no_longer_reaches_the_series(series, capsys):
     """End to end, through a real series, on the shape that used to fabricate.
 
-    Every physical line here is one an older build's ``Log.__str__`` emitted,
-    written the way the app writes ``existing_log.csv`` and read back the way
-    ``getFullHistory`` reads it. ``Series.modifyAlignments`` writes
-    ``f"Rename alignment {old_a} to {new_a}"`` from a ``QLineEdit`` that keeps
-    a pasted newline, so this file is what a paste into the alignment rename
-    box used to leave on disk.
-
-    It is still on disk for anyone it already happened to -- the historical log
-    is copied through byte for byte on open and save -- which is why the
-    read-side anchor is not made redundant by the writer no longer producing
-    it. What changed is what the series then claims. bob's head carries six
-    comma fields of its own and always parsed (with the pasted name cut at the
-    newline); it is the orphaned TAIL that used to swallow the row after it.
-    carol now keeps that row, no timestamp is reported as an editor, and the
-    loss is printed instead of passing in silence.
+    Every physical line here is one an older build's ``Log.__str__`` emitted:
+    ``Series.modifyAlignments`` writes ``f"Rename alignment {old_a} to
+    {new_a}"`` from a ``QLineEdit`` that keeps a pasted newline. bob's head
+    carries six comma fields of its own; it is the orphaned TAIL that used to
+    swallow the row after it. Under the block rule the tail is the rest of
+    bob's event, so the pasted name reads whole, carol keeps her row and no
+    timestamp is reported as an editor.
     """
     head = "26-08-04, 19:14, bob, -, -, Rename alignment old to x"
     tail = "y, z"
@@ -760,10 +700,10 @@ def test_the_writer_produced_hazard_no_longer_reaches_the_series(series, capsys)
         "the row the orphan used to swallow is read as the row it is"
     )
     assert "19:14" not in editors and "14:00" not in editors
-    assert "unreadable" in out, "and the loss is reported rather than hidden"
-    assert [
-        s.strip() for s in series.getFullHistory(skip_corrupt=True).skipped_rows
-    ] == [tail], "the orphaned tail alone, not the row after it"
+    assert "unreadable" not in out
+    ls = series.getFullHistory(skip_corrupt=True)
+    assert ls.skipped_rows == []
+    assert ls.all_logs[1].event == "Rename alignment old to x\ny, z"
 
 
 def test_an_anchored_short_head_does_not_swallow_the_row_after_it():
@@ -801,7 +741,7 @@ def test_a_line_that_merely_contains_a_stamp_is_not_a_row():
     Matching anywhere in the line rather than at its start would admit a
     fragment that happens to carry a stamp part-way through -- and such a
     fragment parses, reading its own leading text as a date and the embedded
-    stamp's date as a USER.
+    stamp's date as a USER. It is the rest of the row above it instead.
     """
     frag = "zz, 26-07-01, 14:00, carol, 9, Modify trace(s)"
     assert ROW_START.search(frag), "the stamp is in there"
@@ -813,7 +753,8 @@ def test_a_line_that_merely_contains_a_stamp_is_not_a_row():
     ls = LogSet.fromList([GOOD, frag, LATE], skip_corrupt=True)
 
     assert [l.user for l in ls.all_logs] == ["alice", "carol"]
-    assert [x.strip() for x in ls.skipped_rows] == [frag]
+    assert ls.all_logs[0].event == "Modify trace(s)\n" + frag
+    assert ls.skipped_rows == []
 
 
 def test_the_stamp_must_be_a_whole_date_and_time_and_not_just_a_date():
@@ -904,7 +845,9 @@ def test_a_genuine_continuation_is_still_joined():
     ])
 
     assert [l.user for l in ls.all_logs] == ["lab", "carol"]
-    assert ls.all_logs[0].obj_name == "d001sp003"
+    # the break is put back where the older build wrote it, the same in every
+    # line form (read from the file, the head line used to keep its "\n")
+    assert ls.all_logs[0].obj_name == "d001sp003\n"
     assert ls.all_logs[0].section_ranges == [(12, 12)]
     assert ls.skipped_rows == []
 

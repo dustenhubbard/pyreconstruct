@@ -1,0 +1,60 @@
+# Bring each open PR's `merge-evidence` result in line with the merge hold.
+#
+# merge-evidence.yml fails while the repository variable MERGE_HOLD is `1`. A
+# variable change is not an event, so on its own it re-runs nothing: a PR whose
+# check passed before the hold could still merge, and a PR failed by the hold
+# would stay red after it is cleared. scripts/merge_hold_sync.py closes both:
+#
+#   hold set:     each open PR gets a failed `merge-evidence` check run of its
+#                 own, which blocks the merge whatever the other checks say;
+#   hold cleared: those check runs are marked passed, and a merge-evidence run
+#                 that failed at the `merge hold` step is re-run.
+#
+# It does not re-run a passed check to apply a hold: a re-run keeps the
+# workflow file of the original event, which may predate the hold step. Each
+# pass changes only what disagrees with the hold, so a second pass does
+# nothing. Nothing here approves, labels or merges anything.
+#
+# On a schedule, so a hold takes effect within about 15 minutes with nothing
+# else to do. To apply a change to the hold at once, run this workflow after
+# changing the variable:
+#   gh workflow run merge-hold-sync.yml -R dustenhubbard/pyreconstruct
+#
+# Fork only: on any other repository the job is skipped.
+
+name: merge-hold-sync
+
+on:
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+
+# checks: write lets it add and update its own check runs; actions: write lets
+# it re-run a run; pull-requests: read lists open PRs; contents: read checks out
+# the script.
+permissions:
+  actions: write
+  checks: write
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: merge-hold-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'dustenhubbard/pyreconstruct'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Bring checks in line with the hold
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          MERGE_HOLD: ${{ vars.MERGE_HOLD }}
+        run: python3 scripts/merge_hold_sync.py

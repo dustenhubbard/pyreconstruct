@@ -31,6 +31,7 @@ def test_import_from_series_aborts_when_open_cancelled(monkeypatch):
     stub = types.SimpleNamespace(
         series=types.SimpleNamespace(avg_mag=0.01),
         saveAllData=lambda: None,
+        field=types.SimpleNamespace(refuseWhileRoiBox=lambda: False),
     )
 
     mw.MainWindow.importFromSeries(stub)  # must not raise AttributeError
@@ -63,6 +64,7 @@ def test_import_from_series_proceeds_for_a_valid_series(monkeypatch):
     stub = types.SimpleNamespace(
         series=types.SimpleNamespace(avg_mag=0.01),
         saveAllData=lambda: None,
+        field=types.SimpleNamespace(refuseWhileRoiBox=lambda: False),
     )
 
     mw.MainWindow.importFromSeries(stub)

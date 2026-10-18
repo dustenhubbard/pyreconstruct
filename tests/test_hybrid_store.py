@@ -22,6 +22,7 @@ from PyReconstruct.modules.datatypes import hybrid_store
 from PyReconstruct.modules.datatypes.hybrid_store import HybridStore, packRow, unpackRow
 from PyReconstruct.modules.datatypes.section import Section
 from PyReconstruct.modules.datatypes.series import Series
+from tests.test_jser_splice_save import copies  # noqa: F401  (fixture)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SERIES_FILES = [
@@ -618,3 +619,97 @@ def test_export_of_a_store_from_the_command_line(tmp_path, store_on, capsys):
     out = tmp_path / "cli.jser"
     assert hybrid_store._main(["export", db_fp, str(out)]) == 0
     assert out.is_file() and str(out) in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# round 3: the merge with the streamed open (#943), the splice save (#950)
+# and the saved trace ids (#929)
+# ---------------------------------------------------------------------------
+
+def _ids_by_row(section) -> list:
+    ids = section._persistedTraceIDs()
+    return [
+        (name, [ids.get(t) for t in section.contours[name]])
+        for name in sorted(section.contours, key=str)
+    ]
+
+
+@pytest.mark.parametrize("committed", [False, True], ids=["working", "saved"])
+def test_a_section_saved_in_the_store_gets_its_trace_ids_back(committed, tmp_path, store_on):
+    fp = _copy(SERIES_FILES[1], tmp_path)
+    series = _open(fp)
+    try:
+        snum, _, _ = _edit_one_trace(series)
+        saved = series.loadSection(snum)
+        if committed:
+            series.store.commit(series)
+        before = _ids_by_row(saved)
+        again = Section(snum, series)
+        assert again.trace_ids_trusted
+        assert _ids_by_row(again) == before
+    finally:
+        series.close()
+
+
+def test_an_export_from_the_store_copies_the_sections_it_did_not_change(
+        tmp_path, store_on, copies):
+    fp = _copy(SERIES_FILES[1], tmp_path)
+    _open(fp).close()
+    series = _open(fp)
+    try:
+        series.saveJser()  # the first export after open writes in full
+        _edit_one_trace(series)
+        series.store.commit(series)
+        index = series._jser_splice_index
+        assert index is not None
+        series._jser_splice_index = None
+        full = tmp_path / "full.jser"
+        series.saveJser(str(full))
+        series._jser_splice_index = index
+        copies.clear()
+        series.saveJser()
+        assert fp.read_bytes() == full.read_bytes()
+        assert len(copies) == len(series.sections) - 1
+    finally:
+        series.close()
+
+
+@pytest.mark.parametrize("src", SERIES_FILES[:2], ids=lambda p: p.name)
+def test_the_import_reads_the_jser_one_section_at_a_time(src, tmp_path, store_on, monkeypatch):
+    # as today's Save writes it: the streamed read takes that layout
+    resaved = tmp_path / "resaved" / src.name
+    resaved.parent.mkdir()
+    resaved.write_bytes(_today_bytes(src, tmp_path, monkeypatch))
+    import gc
+    import weakref
+    from PyReconstruct.modules.datatypes import series as series_module
+
+    def whole(fp):
+        raise AssertionError("the import read the whole file")
+    monkeypatch.setattr(Series, "_readWholeJser", staticmethod(whole))
+
+    class Held(dict):
+        pass
+
+    real = series_module._StreamedJser.sections
+    last = []
+
+    def one_at_a_time(self):
+        for snum, section_data in real(self):
+            if last:
+                gc.collect()
+                assert last[-1]() is None, f"section {snum} decoded while the last is held"
+            held = Held(section_data)
+            del section_data
+            last.append(weakref.ref(held))
+            yield snum, held
+            del held
+    monkeypatch.setattr(series_module._StreamedJser, "sections", one_at_a_time)
+
+    fp = _copy(resaved, tmp_path)
+    series = _open(fp)
+    try:
+        assert len(last) == len(series.sections) > 1
+        assert series.store.isImported()
+    finally:
+        series.close()
