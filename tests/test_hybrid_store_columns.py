@@ -393,3 +393,83 @@ def test_an_object_of_open_traces_has_the_volume_a_full_open_gives():
     assert repr(data.getVolume("built")) == "0"
     assert repr(data.getVolume("lazy")) == "0"
     assert _object_list(data)["lazy"] == _object_list(data)["built"]
+
+
+# ---------------------------------------------------------------------------
+# The export hands orjson the stored arrays (jser_splice.ArraySection)
+# ---------------------------------------------------------------------------
+
+def _store_export(src, tmp_path, sub="store"):
+    fp = _copy(src, tmp_path, sub)
+    _open(fp).close()
+    series = _open(fp)
+    try:
+        out = tmp_path / f"{sub}-export.jser"
+        series.saveJser(str(out))
+    finally:
+        series.close()
+    return out.read_bytes()
+
+
+def _today_bytes(src, tmp_path, monkeypatch, sub="today"):
+    monkeypatch.delenv(hybrid_store.ENV_SWITCH, raising=False)
+    fp = _copy(src, tmp_path, sub)
+    series = _open(fp)
+    try:
+        series.saveJser()
+    finally:
+        series.close()
+    monkeypatch.setenv(hybrid_store.ENV_SWITCH, "1")
+    return fp.read_bytes()
+
+
+@pytest.mark.parametrize("src", SERIES_FILES, ids=lambda p: p.name)
+def test_an_export_from_the_store_builds_no_coordinate_list(src, tmp_path, store_on, monkeypatch):
+    from PyReconstruct.modules.constants import jser_format
+    expected = _today_bytes(src, tmp_path, monkeypatch)
+    fp = _copy(src, tmp_path)
+    _open(fp).close()
+    series = _open(fp)
+    lists, numpy = [], []
+    real_unpack, real_dumps = hybrid_store.unpackRow, jser_format.orjson_dumps
+
+    def unpack(*args):
+        lists.append(args)
+        return real_unpack(*args)
+
+    def dumps(obj, numpy_on=False, **kw):
+        numpy.append(kw.get("numpy", numpy_on))
+        return real_dumps(obj, **kw)
+    monkeypatch.setattr(hybrid_store, "unpackRow", unpack)
+    monkeypatch.setattr(jser_format, "orjson_dumps", dumps)
+    try:
+        out = tmp_path / "export.jser"
+        series.saveJser(str(out))
+    finally:
+        series.close()
+    assert lists == []
+    assert any(numpy)
+    assert out.read_bytes() == expected
+
+
+@pytest.mark.parametrize("leg", ["stdlib", "pretty"])
+@pytest.mark.parametrize("src", SERIES_FILES[:2], ids=lambda p: p.name)
+def test_an_export_from_the_store_writes_today_s_bytes_on_every_writer_leg(src, leg, tmp_path, store_on, monkeypatch):
+    from PyReconstruct.modules.constants import jser_format
+    if leg == "stdlib":
+        monkeypatch.setattr(jser_format, "have_orjson", lambda: False)
+    else:
+        monkeypatch.setenv(jser_format.PRETTY_ENV_VAR, "1")
+    expected = _today_bytes(src, tmp_path, monkeypatch)
+    assert _store_export(src, tmp_path) == expected
+
+
+def test_a_plain_section_is_never_encoded_with_numpy_on():
+    # a numpy scalar in a plain section makes orjson refuse it, so the whole
+    # document comes from the stdlib leg, as before the store existed
+    import io
+    from PyReconstruct.modules.constants import jser_format
+    row = [[np.float64(1.5), 2.5], [2.0, 3.0], [0, 0, 0], True, False, False, ["none", "none"], []]
+    f = io.BytesIO()
+    jser_format.write_jser(f, lambda: [{"contours": {"a": [row]}}], lambda: {"log": ""}, pretty=False)
+    assert f.getvalue().startswith(b'{"sections": [')

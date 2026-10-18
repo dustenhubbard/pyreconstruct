@@ -92,12 +92,17 @@ def fast_loads(data):
     return json.loads(data)
 
 
-def orjson_dumps(obj) -> bytes:
+def orjson_dumps(obj, numpy : bool = False) -> bytes:
     """``fast_dumps``'s orjson leg on its own: raises where it would fall back.
 
-    Only callable when orjson is installed (``HAVE_ORJSON``).
+    Only callable when orjson is installed (``HAVE_ORJSON``). ``numpy`` lets
+    orjson encode numpy arrays (PROTOTYPE, the hybrid store's export,
+    jser_splice.ArraySection).
     """
-    return _to_ascii(orjson.dumps(obj, option=orjson.OPT_NON_STR_KEYS))
+    option = orjson.OPT_NON_STR_KEYS
+    if numpy:
+        option |= orjson.OPT_SERIALIZE_NUMPY
+    return _to_ascii(orjson.dumps(obj, option=option))
 
 
 def stdlib_dumps(obj) -> bytes:

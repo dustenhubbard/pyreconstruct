@@ -68,10 +68,31 @@ class KeyedSection:
         self.load = load
 
 
+class ArraySection(dict):
+    """PROTOTYPE (hybrid store, hub #247): a section dict whose positional rows
+    may hold x and y as read-only float64 numpy arrays over the stored blobs.
+
+    orjson writes a float64 array with the bytes it writes for the same Python
+    floats, so the orjson leg encodes one as it is (`_orjson_part`), and no
+    list of Python floats is built. Every other leg gets lists (`loaded`).
+    """
+
+
+def plainSection(sd):
+    """`sd` with any ArraySection's arrays turned into lists, in place."""
+    if type(sd) is ArraySection:
+        for rows in sd["contours"].values():
+            for row in rows:
+                if type(row) is list and row and type(row[0]) is not list:
+                    row[0] = row[0].tolist()
+                    row[1] = row[1].tolist()
+    return sd
+
+
 def loaded(sections):
     """`sections` with every KeyedSection parsed, for the writers that encode all."""
     for sd in sections:
-        yield sd.load() if isinstance(sd, KeyedSection) else sd
+        yield plainSection(sd.load() if isinstance(sd, KeyedSection) else sd)
 
 
 def _stat_key(st) -> tuple:
