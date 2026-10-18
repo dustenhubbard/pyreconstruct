@@ -94,8 +94,9 @@ Nightlies build new commits daily ahead of the next stable release. To run
   copied traces' groups, hosts and alignment, or the history entry or z-trace,
   and a calibration or image source change could write to the series that
   opened.
-- **A save waits, with a notice, while an undo, redo, brightness/contrast
-  profile change or alignment change is still rewriting sections.** A save at
+- **A save is skipped, with a notice, while an undo, redo,
+  brightness/contrast profile change or alignment change is still rewriting
+  sections.** Save again when it ends. A save at
   that moment could write a series that named a missing profile and failed to
   open. A series saved that way now opens on the default profile.
 - **Host links stay with the objects they join.** A new object that takes a
