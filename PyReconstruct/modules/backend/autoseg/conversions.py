@@ -8,6 +8,8 @@ from typing import Union, List, Tuple
 
 import cv2
 import zarr
+from shapely.geometry import Polygon as ShapelyPolygon
+from shapely.validation import make_valid
 
 from PyReconstruct.modules.datatypes import Series, Transform, Trace
 from PyReconstruct.modules.backend.view import SectionLayer
@@ -754,9 +756,45 @@ def getExteriors(mask : np.ndarray) -> list[np.ndarray]:
         # e[:,1] += mask.shape[0]
         # reduce the points
         e = reducePoints(e, array=True)
-        exteriors.append(e)
+        exteriors.extend(splitSelfTouching(e))
 
     return exteriors
+
+
+def splitSelfTouching(ext : np.ndarray) -> list[np.ndarray]:
+    """Split an outline that touches or crosses itself into its loops.
+
+    Where a label touches itself at one corner pixel, findContours walks
+    through that pixel twice, and the outline comes back as a figure 8 that
+    Clean up reports as self-crossing. Each loop of it is real label area,
+    so every loop becomes its own outline; a loop with no area (a one-pixel
+    spike doubling back) is dropped.
+
+        Params:
+            ext (np.ndarray): n by 2 outline in label pixels
+        Returns:
+            (list[np.ndarray]): ``[ext]`` when it is already a simple polygon
+                (or too short to be one), else one outline per loop
+    """
+    if len(ext) < 3:
+        return [ext]
+    poly = ShapelyPolygon(ext)
+    if poly.is_valid:
+        return [ext]
+
+    ## make_valid can nest a MultiPolygon inside a GeometryCollection, so walk
+    ## the whole result: keeping only its top-level Polygons dropped whole
+    ## objects on a real series
+    loops, stack = [], [make_valid(poly)]
+    while stack:
+        geom = stack.pop()
+        if isinstance(geom, ShapelyPolygon):
+            if geom.area > 0:
+                # exterior.coords repeats the first point at the end
+                loops.append(np.asarray(geom.exterior.coords)[:-1])
+        elif hasattr(geom, "geoms"):
+            stack.extend(geom.geoms)
+    return loops
 
 
 def exterior_to_points(ext: list[np.ndarray], placement, tform):
@@ -992,7 +1030,8 @@ def is_label_array(array):
     )
 
 
-def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None):
+def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None,
+                  min_area_px=Series.PIXEL_DUST_DEFAULT_PX):
     """Import label data for a single section.
     
         Params:
@@ -1003,6 +1042,8 @@ def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None):
             ids (list): the ids to include in importing
             raw_attrs (dict): window, sections, true_mag and alignment to use
                 instead of the ones stored on the zarr's raw array
+            min_area_px (float): skip an outline at or below this area, in
+                pixels of its section (px^2); 0 keeps every outline with area
     """
     
     labels_array = get_zarr_array(data_zg, group)
@@ -1075,18 +1116,37 @@ def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None):
         exteriors = getExteriors(arr == id)
 
         ## Add exteriors as traces
+        added = False
         for ext in exteriors:
+
+            ## an outline that simplifies to a line has no area, and Section.
+            ## addTrace would keep it as an open trace
+            if len(ext) < 3:
+                continue
 
             trace_name = f"{AUTOSEG_TRACE_PREFIX}{id}"
             trace_color = palette_color(id, palette, color_seed)
 
             trace = Trace(name=trace_name, color=trace_color)
-            trace.points = exterior_to_points(
-                ext, placement, tform
-            )
+            ## rounded as the save writes them, so the area measured below is
+            ## the one Clean up measures once the section is read back
+            trace.points = [
+                (round(x, 7), round(y, 7))
+                for x, y in exterior_to_points(ext, placement, tform)
+            ]
             trace.fill_mode = ("transparent", "unselected")
-            
+
+            ## a speck Clean up would remove as pixel dust is not imported:
+            ## measured and decided as that scan does, on this section's pixels
+            area = Series._traceArea(trace, section.tform)
+            if Series.isPixelDust(area, section.mag, min_area_px):
+                continue
+
             section.addTrace(trace)
+            added = True
+
+        if not added:  # nothing of this id on this section
+            continue
 
         ## Add trace to group (under the shared lock: add is check-then-act)
         with _SHARED_SERIES_LOCK:

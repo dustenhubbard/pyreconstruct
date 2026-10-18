@@ -49,7 +49,8 @@ def _make_source(tmp_path, raw_attrs):
     raw = zg.create_dataset("raw", data=np.full((3, 8, 8), 7, dtype=np.uint8))
     raw.attrs.update(raw_attrs)
     labels = np.zeros((3, 8, 8), dtype=np.uint64)
-    labels[:, 2:6, 2:6] = 5
+    ## 6 x 6 pixels: a smaller square is pixel dust, which the import skips
+    labels[:, 1:7, 1:7] = 5
     lab = zg.create_dataset("labels_cells", data=labels)
     lab.attrs.update({"voxel_size": [50, 4, 4], "offset": [0, 0, 0]})
     return fp
