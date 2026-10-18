@@ -51,19 +51,19 @@ def test_a_simple_outline_is_returned_as_it_was():
     assert ext.tolist() == [[3, 2], [3, 7], [6, 7], [6, 2]]
 
 
-def _import(tmp_path, real_series, labels_2d):
-    """Import one section of labels drawn at the section's own pixel size."""
-    snum = sorted(real_series.sections)[1]
+def _import(tmp_path, real_series, labels_2d, pick=1, scale=1.0, **kwargs):
+    """Import labels into one section; a label pixel is ``scale`` section pixels across."""
+    snum = sorted(real_series.sections)[pick]
     section = real_series.loadSection(snum)
-    mag = section.mag
+    mag = section.mag * scale
     rows, cols = labels_2d.shape
-    zg = zarr.open(str(tmp_path / "labels.zarr"), "w")
+    zg = zarr.open(str(tmp_path / f"labels{pick}.zarr"), "w")
     raw = zg.create_dataset("raw", shape=(1, rows, cols), dtype=np.uint8)
     raw.attrs.update({
         "voxel_size": [50, 4, 4], "offset": [0, 0, 0],
         "true_mag": mag, "window": [0, 0, cols * mag, rows * mag],
         "sections": [snum],
-        ## the section's own transform, so a label pixel is a field pixel
+        ## the section's own transform, so the labels sit in the field as drawn
         "alignment": {str(snum): section.tform.getList()},
     })
     labels = zg.create_dataset("labels_x", shape=(1, rows, cols), dtype=np.uint64)
@@ -71,8 +71,14 @@ def _import(tmp_path, real_series, labels_2d):
     labels.attrs.update({"voxel_size": [50, 4, 4], "offset": [0, 0, 0]})
 
     conversions.setDT()
-    conversions.importSection(zg, "labels_x", snum, real_series)
+    conversions.importSection(zg, "labels_x", snum, real_series, **kwargs)
     return snum
+
+
+def _autoseg(series, snum):
+    contours = series.loadSection(snum).contours
+    return {name: len(contours[name]) for name in contours
+            if name.startswith("autoseg_") and len(contours[name])}
 
 
 def test_import_leaves_nothing_for_clean_up(tmp_path, real_series):
@@ -88,8 +94,7 @@ def test_import_leaves_nothing_for_clean_up(tmp_path, real_series):
     snum = _import(tmp_path, real_series, labels)
 
     contours = real_series.loadSection(snum).contours
-    autoseg = {name: len(contours[name]) for name in contours
-               if name.startswith("autoseg_") and len(contours[name])}
+    autoseg = _autoseg(real_series, snum)
     assert autoseg == {"autoseg_7": 1, "autoseg_8": 2, "autoseg_13": 1}
     assert all(t.closed for name in autoseg for t in contours[name])
 
@@ -103,3 +108,57 @@ def test_import_leaves_nothing_for_clean_up(tmp_path, real_series):
     ## an id with nothing left on the section joins no group from it
     grouped = set(real_series.object_groups.getGroupObjects("seg_labels_x"))
     assert grouped == {"autoseg_7", "autoseg_8", "autoseg_13"}
+
+
+def test_the_floor_is_the_pixel_dust_scan_at_its_edge(tmp_path, real_series):
+    """An outline of exactly 10 px^2 is skipped exactly when the scan would
+    call it dust, since both measure it the same way."""
+    labels = np.zeros((40, 40), dtype=np.uint64)
+    labels[5:8, 5:11] = 20               # 3 x 6 pixels: area 2 x 5 = 10 px^2
+    labels[20:23, 5:12] = 21             # 3 x 7 pixels: area 2 x 6 = 12 px^2
+
+    ## everything in, on one section, to ask the scan
+    kept_all = _import(tmp_path, real_series, labels, pick=1, min_area_px=0)
+    dust = {r["name"] for r in real_series.findPixelDustTraces(
+        Series.PIXEL_DUST_DEFAULT_PX, include_locked=True
+    ) if r["section"] == kept_all}
+    assert "autoseg_21" not in dust
+
+    ## the default import, on another section
+    snum = _import(tmp_path, real_series, labels, pick=2)
+    imported = _autoseg(real_series, snum)
+    assert "autoseg_21" in imported
+    assert ("autoseg_20" in imported) == ("autoseg_20" not in dust)
+
+
+def test_the_floor_counts_the_sections_own_pixels(tmp_path, real_series):
+    """Labels coarser or finer than the section's image are measured in the
+    section's pixels, as the pixel-dust scan measures them."""
+    coarse = np.zeros((20, 20), dtype=np.uint64)
+    coarse[2:5, 2:5] = 30   # 2 x 2 label px = 4, but 16 section px^2
+    snum = _import(tmp_path, real_series, coarse, pick=1, scale=2.0)
+    assert _autoseg(real_series, snum) == {"autoseg_30": 1}
+
+    fine = np.zeros((40, 40), dtype=np.uint64)
+    fine[2:7, 2:7] = 31     # 4 x 4 label px = 16, but 4 section px^2
+    snum = _import(tmp_path, real_series, fine, pick=2, scale=0.5)
+    assert _autoseg(real_series, snum) == {}
+
+
+def test_every_loop_of_a_nested_result_is_kept(monkeypatch):
+    """make_valid can return a MultiPolygon inside a GeometryCollection."""
+    from shapely.geometry import (
+        GeometryCollection, LineString, MultiPolygon, Polygon,
+    )
+
+    loops = [Polygon([(0, 0), (0, 4), (4, 4), (4, 0)]),
+             Polygon([(10, 10), (10, 13), (13, 13), (13, 10)])]
+    nested = GeometryCollection(
+        [MultiPolygon(loops), LineString([(4, 4), (10, 10)])]
+    )
+    monkeypatch.setattr(conversions, "make_valid", lambda poly: nested)
+    bow_tie = np.array([[0, 0], [4, 4], [4, 0], [0, 4]])
+
+    split = conversions.splitSelfTouching(bow_tie)
+
+    assert sorted(_area(ext) for ext in split) == [9.0, 16.0]
