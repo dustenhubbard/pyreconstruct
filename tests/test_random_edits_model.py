@@ -32,11 +32,15 @@ checks the result against the two traces it merged, not against the app:
 the new traces have their name, there is one for each separate piece (one if
 the two touch, overlap or nest, else two), their bounds are the traces'
 bounds to within MERGE_TOL, and on a grid of points MERGE_TOL / 2 apart they
-cover the same points as the two traces, except within MERGE_TOL of an edge
-of the two traces. A point counts as covered when a trace winds around it.
-Then the model takes the new points from the app, and every later step is
-checked exactly. When the app refuses a merge, the model takes the refusal
-and does not check that it was right.
+cover the same points as the two traces. A point counts as covered when a
+trace winds around it. The only points let off are those with a grid point
+within MERGE_TOL that the two traces cover differently, so they lie within
+MERGE_TOL of the outside edge of the two together; an edge of one trace that
+runs inside the other lets off nothing. A gain or loss narrower than the grid
+step can fall between the points and pass. Then the model takes the new
+points from the app, and every later step is checked exactly. When the app
+refuses a merge, the model takes the refusal and does not check that it was
+right.
 
 A failing run prints its seed and every step. To replay one, run the slow
 test for that seed, for example `-k "test_many_random_edit_runs and 17-"`,
@@ -154,12 +158,16 @@ def _touch(a, b):
 def _area_off(picked, made):
     """The points of a grid over the merged traces where the merge result and
     the traces before it disagree on what is covered, leaving out the points
-    within MERGE_TOL of an edge of the traces before it."""
+    with a grid point within MERGE_TOL that the traces before it cover
+    differently. Those are near the outside edge of the traces together, and
+    an edge of one trace that runs inside the other is not."""
     x0, y0, x1, y1 = _bounds(picked)
     step = MERGE_TOL / 2
+    # off the round numbers traces are drawn at, so no grid point lands on
+    # an edge, and wide enough that the edge of the grid is never covered
     x, y = np.meshgrid(
-        np.arange(x0 - MERGE_TOL, x1 + MERGE_TOL, step),
-        np.arange(y0 - MERGE_TOL, y1 + MERGE_TOL, step),
+        np.arange(x0 - 2 * MERGE_TOL + 0.37 * step, x1 + 2 * MERGE_TOL, step),
+        np.arange(y0 - 2 * MERGE_TOL + 0.37 * step, y1 + 2 * MERGE_TOL, step),
     )
     want = np.zeros(x.shape, bool)
     for shape in picked:
@@ -167,13 +175,14 @@ def _area_off(picked, made):
     got = np.zeros(x.shape, bool)
     for shape in made:
         got |= _inside(shape, x, y)
+    reach = round(MERGE_TOL / step)
+    rows, cols = want.shape
+    padded = np.pad(want, reach)
     near = np.zeros(x.shape, bool)
-    for shape in picked:
-        for (ax, ay), (bx, by) in _edges(shape):
-            dx, dy = bx - ax, by - ay
-            t = ((x - ax) * dx + (y - ay) * dy) / max(dx * dx + dy * dy, TOL)
-            t = np.clip(t, 0, 1)
-            near |= (x - ax - t * dx) ** 2 + (y - ay - t * dy) ** 2 <= MERGE_TOL ** 2
+    for i in range(-reach, reach + 1):
+        for j in range(-reach, reach + 1):
+            if i * i + j * j <= reach * reach:
+                near |= want != padded[reach + i:reach + i + rows, reach + j:reach + j + cols]
     off = (want != got) & ~near
     return [(round(float(a), 2), round(float(b), 2)) for a, b in zip(x[off], y[off])]
 
@@ -494,7 +503,7 @@ class Run:
         wrong = _area_off(picked, made)
         assert not wrong, (
             f"the merge covers the wrong area at {len(wrong)} points away "
-            f"from the edges of the traces, first at {wrong[0]}"
+            f"from the outside edge of the traces, first at {wrong[0]}"
         )
         self.model.section_edit(n, kept + made)
         self.reached.add("merge touching" if touching else "merge apart")
@@ -661,6 +670,33 @@ def _run(shapes_window, seed, steps):
 def test_random_edits_match_the_model(shapes_window, seed, reaches):
     run = _run(shapes_window, seed, FAST_STEPS)
     assert reaches <= run.reached, sorted(reaches - run.reached)
+
+
+# two squares a merge in seed 223 joins: they overlap, so the right edge of
+# the second runs inside the first; and the outline of the two together
+SQUARES = [
+    Shape("m", [(0.33, 0.60), (1.36, 0.60), (1.36, 1.63), (0.33, 1.63)]),
+    Shape("m", [(-0.60, 1.46), (0.43, 1.46), (0.43, 2.49), (-0.60, 2.49)]),
+]
+UNION = [
+    (0.33, 0.60), (1.36, 0.60), (1.36, 1.63), (0.43, 1.63),
+    (0.43, 2.49), (-0.60, 2.49), (-0.60, 1.46), (0.33, 1.46),
+]
+
+
+@pytest.mark.parametrize("points, right", [
+    (UNION, True),
+    ([(x + 0.03, y - 0.03) for x, y in UNION], True),
+    ([(x + 0.07, y) for x, y in UNION], False),
+    # a notch 0.08 wide and 0.15 deep along the edge inside the union
+    (UNION[:3] + [(0.47, 1.63), (0.47, 1.48), (0.39, 1.48), (0.39, 1.71), (0.43, 1.71)]
+     + UNION[4:], False),
+    # the same notch in an outside edge
+    (UNION[:1] + [(0.81, 0.60), (0.81, 0.75), (0.89, 0.75), (0.89, 0.60)] + UNION[1:], False),
+    ([(-0.60, 0.60), (1.36, 0.60), (1.36, 2.49)], False),
+])
+def test_merge_check_finds_a_wrong_outline(points, right):
+    assert (not _area_off(SQUARES, [Shape("m", points)])) == right
 
 
 @pytest.mark.gui
