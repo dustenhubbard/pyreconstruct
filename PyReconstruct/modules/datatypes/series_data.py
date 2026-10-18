@@ -1,6 +1,6 @@
 """Collect data to pass to table manager."""
 
-from typing import Union
+from typing import Optional, Union
 
 
 from PyReconstruct.modules.calc import traceGeometry
@@ -132,15 +132,105 @@ class TraceData():
         return self.index < other.index
 
 
+class TraceColumns():
+
+    ## The fields, in the order `rows` hands them out
+    FIELDS = (
+        "snum", "index", "closed", "hidden", "negative", "tag", "color",
+        "length", "area", "cx", "cy", "radius", "tform",
+    )
+
+    def __init__(self, arrays : dict, tags : list, colors : list, tforms : list):
+        """The object-list numbers of many traces, one array per field.
+
+        PROTOTYPE (hybrid store, hub #247): an open from the store fills one of
+        these instead of building a TraceData per trace. Each object's rows are
+        one run, in section order and then index order, the order an open
+        appends TraceData in.
+
+            Params:
+                arrays (dict): field name -> numpy array, one entry per trace.
+                    "tag", "color" and "tform" index the three lists below
+                tags (list): the distinct tag values (frozensets)
+                colors (list): the distinct colors (tuples, or None)
+                tforms (list): the distinct transforms
+        """
+        self.arrays = arrays
+        self.tags = tags
+        self.colors = colors
+        self.tforms = tforms
+        self._lists : dict = {}
+
+    def column(self, field : str) -> list:
+        """One field for every trace, as Python values (built once, on first use)."""
+        values = self._lists.get(field)
+        if values is None:
+            values = self._lists[field] = self.arrays[field].tolist()
+        return values
+
+    def rows(self, start : int, stop : int, *fields):
+        """The given fields of the rows from start to stop, one tuple per row."""
+        return zip(*(self.column(f)[start:stop] for f in fields))
+
+    def traceData(self, start : int, stop : int):
+        """(section number, TraceData) for each row, as an open from the store
+        built them before the columns."""
+        tags, colors, tforms = self.tags, self.colors, self.tforms
+        for (snum, index, closed, hidden, negative, tag, color,
+             length, area, cx, cy, radius, tform) in self.rows(start, stop, *self.FIELDS):
+            td = TraceData.__new__(TraceData)
+            td.index = index
+            td.closed = closed
+            td.hidden = hidden
+            td.negative = negative
+            td.tags = tags[tag]
+            td.color = colors[color]
+            td.length = length
+            td.area = area
+            td.centroid = (cx, cy)
+            td.radius = radius
+            td._tform = tforms[tform]
+            td._feret = None if closed else (0, 0)
+            yield snum, td
+
+
 class ObjectData():
 
-    def __init__(self):
-        """Create an object data object."""
-        self.traces = {}
-    
+    def __init__(self, columns : Optional[TraceColumns] = None, start : int = 0, stop : int = 0):
+        """Create an object data object.
+
+            Params:
+                columns (TraceColumns): PROTOTYPE (hybrid store): the columns
+                    holding this object's traces, rows start to stop. Its
+                    TraceData are built when something first reads `traces`.
+        """
+        self._traces : dict = {}
+        self._rows : Optional[tuple] = (columns, start, stop) if columns is not None else None
+
+    @property
+    def traces(self) -> dict:
+        """Section number -> list of TraceData."""
+        if self._rows is not None:
+            columns, start, stop = self._rows
+            self._rows = None
+            for snum, td in columns.traceData(start, stop):
+                self._traces.setdefault(snum, []).append(td)
+        return self._traces
+
+    @traces.setter
+    def traces(self, value : dict):
+        self._rows = None
+        self._traces = value
+
+    def columnRows(self):
+        """(TraceColumns, start, stop) while the TraceData are not built, else None."""
+        return self._rows
+
     def isEmpty(self) -> bool:
         """Return True of object data is empty."""
-        return not bool(self.traces)
+        if self._rows is not None:
+            return self._rows[1] == self._rows[2]
+        return not bool(self._traces)
     
     def addTrace(self, trace : Trace, section : Section, series, points=None):
         """Add a trace to the object data.
@@ -413,6 +503,10 @@ class SeriesData():
         obj_data = self.data["objects"].get(obj_name)
         if obj_data is None or obj_data.isEmpty():
             return None
+        rows = obj_data.columnRows()
+        if rows is not None:
+            columns, start, _ = rows
+            return columns.column("snum")[start]
         
         return min(obj_data.traces.keys())
         
@@ -425,6 +519,10 @@ class SeriesData():
         obj_data = self.data["objects"].get(obj_name)
         if obj_data is None or obj_data.isEmpty():
             return None
+        rows = obj_data.columnRows()
+        if rows is not None:
+            columns, _, stop = rows
+            return columns.column("snum")[stop - 1]
         
         return max(obj_data.traces.keys())
     
@@ -437,6 +535,9 @@ class SeriesData():
         obj_data = self.data["objects"].get(obj_name)
         if obj_data is None:
             return None
+        rows = obj_data.columnRows()
+        if rows is not None:
+            return rows[2] - rows[1]
         
         c = 0
         for trace_list in obj_data.traces.values():
@@ -454,6 +555,17 @@ class SeriesData():
             return None
         
         fa = 0
+        rows = obj_data.columnRows()
+        if rows is not None:
+            ## the same additions in the same order as the loop below
+            columns, start, stop = rows
+            sections = self.data["sections"]
+            for snum, closed, area, length in columns.rows(start, stop, "snum", "closed", "area", "length"):
+                if closed:
+                    fa += area
+                else:
+                    fa += length * sections[snum]["thickness"]
+            return fa
         for snum, trace_list in obj_data.traces.items():
             for trace_data in trace_list:
                 if trace_data.closed:
@@ -474,6 +586,13 @@ class SeriesData():
             return None
         
         v = 0
+        rows = obj_data.columnRows()
+        if rows is not None:
+            columns, start, stop = rows
+            sections = self.data["sections"]
+            for snum, area in columns.rows(start, stop, "snum", "area"):
+                v += area * sections[snum]["thickness"]
+            return v
         
         for snum, trace_list in obj_data.traces.items():
             
@@ -493,12 +612,16 @@ class SeriesData():
         if obj_data is None:
             return None
 
-        closed = []
-        
-        for _, trace_list in obj_data.traces.items():
+        rows = obj_data.columnRows()
+        if rows is not None:
+            columns, start, stop = rows
+            closed = columns.column("closed")[start:stop]
+        else:
+            closed = []
+            for _, trace_list in obj_data.traces.items():
 
-            for trace_data in trace_list:
-                closed.append(trace_data.closed)
+                for trace_data in trace_list:
+                    closed.append(trace_data.closed)
 
         if sum(closed) == 0:
             config = "open"
@@ -528,6 +651,12 @@ class SeriesData():
             return set()
 
         tags = set()
+        rows = obj_data.columnRows()
+        if rows is not None:
+            columns, start, stop = rows
+            for tag in set(columns.column("tag")[start:stop]):
+                tags = tags.union(columns.tags[tag])
+            return tags
         for trace_list in obj_data.traces.values():
             for trace_data in trace_list:
                 tags = tags.union(trace_data.getTags())
@@ -540,11 +669,20 @@ class SeriesData():
         section file is opened.
         """
         tags = set()
+        tag_ids : dict = {}
         for obj_data in self.data["objects"].values():
+            rows = obj_data.columnRows()
+            if rows is not None:
+                columns, start, stop = rows
+                tag_ids.setdefault(columns, set()).update(columns.column("tag")[start:stop])
+                continue
             for trace_list in obj_data.traces.values():
                 for trace_data in trace_list:
                     if trace_data.tags:
                         tags.update(trace_data.tags)
+        for columns, ids in tag_ids.items():
+            for tag in ids:
+                tags.update(columns.tags[tag])
         return tags
 
     def getColorCounts(self, obj_name : str) -> dict:
@@ -565,6 +703,14 @@ class SeriesData():
             return {}
 
         counts = {}
+        rows = obj_data.columnRows()
+        if rows is not None:
+            columns, start, stop = rows
+            colors = columns.colors
+            for color in columns.column("color")[start:stop]:
+                color = colors[color]
+                counts[color] = counts.get(color, 0) + 1
+            return counts
         for trace_list in obj_data.traces.values():
             for trace_data in trace_list:
                 color = trace_data.color
@@ -581,10 +727,15 @@ class SeriesData():
         if obj_data is None:
             return None
         
-        radii = []
-        for trace_list in obj_data.traces.values():
-            for trace_data in trace_list:
-                radii.append(trace_data.getRadius())
+        rows = obj_data.columnRows()
+        if rows is not None:
+            columns, start, stop = rows
+            radii = columns.column("radius")[start:stop]
+        else:
+            radii = []
+            for trace_list in obj_data.traces.values():
+                for trace_data in trace_list:
+                    radii.append(trace_data.getRadius())
         avg_radius = sum(radii) / len(radii)
 
         return avg_radius

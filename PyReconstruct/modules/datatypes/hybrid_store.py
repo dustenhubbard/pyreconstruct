@@ -8,7 +8,7 @@ With it on, the first open of a .jser imports it into a store on local disk,
 and later opens read the store instead of the .jser:
 
   * the object list is rebuilt from per-trace numbers kept in the store
-    (``trace_stats``), so an open loads no section but the one on screen;
+    (``section_stats``), so an open loads no section but the one on screen;
   * a section change writes the section to the working layer
     (``pending_section``), the role the hidden folder's section file has today;
   * Save folds the working layer into the saved tables, O(changed sections);
@@ -74,22 +74,31 @@ CREATE TABLE IF NOT EXISTS trace(
 );
 CREATE INDEX IF NOT EXISTS trace_by_section ON trace(snum, cpos, ord);
 CREATE INDEX IF NOT EXISTS trace_by_object ON trace(name, snum);
-CREATE TABLE IF NOT EXISTS trace_stats(
-    snum INTEGER NOT NULL,
-    cpos INTEGER NOT NULL,
-    idx INTEGER NOT NULL,
-    name TEXT NOT NULL,
-    tform_key TEXT NOT NULL,
-    closed INTEGER, hidden INTEGER, negative INTEGER,
-    color TEXT, tags TEXT,
-    length REAL, area REAL, cx REAL, cy REAL, radius REAL,
-    PRIMARY KEY (snum, cpos, idx)
-) WITHOUT ROWID;
+DROP TABLE IF EXISTS trace_stats;
+CREATE TABLE IF NOT EXISTS section_stats(
+    snum INTEGER PRIMARY KEY,
+    keys BLOB NOT NULL, tags BLOB NOT NULL, colors BLOB NOT NULL,
+    cpos BLOB NOT NULL, idx BLOB NOT NULL, flags BLOB NOT NULL,
+    tag BLOB NOT NULL, color BLOB NOT NULL,
+    length BLOB NOT NULL, area BLOB NOT NULL,
+    cx BLOB NOT NULL, cy BLOB NOT NULL, radius BLOB NOT NULL
+);
 CREATE TABLE IF NOT EXISTS pending_section(snum INTEGER PRIMARY KEY, data BLOB);
 CREATE TABLE IF NOT EXISTS pending_series(id INTEGER PRIMARY KEY CHECK (id = 1), data BLOB NOT NULL);
 """
 
 TRACE_COLS = "snum, cpos, ord, name, shape, npts, xy, rest, xmin, ymin, xmax, ymax"
+
+## The object-list numbers of one section, one blob per field (section_stats).
+## keys: the alignment each contour's numbers are in (JSON, by contour
+## position, null for a contour with no traces); tags, colors: the distinct
+## values (JSON); then one entry per trace, in contour then index order.
+STATS_COLS = "keys, tags, colors, cpos, idx, flags, tag, color, length, area, cx, cy, radius"
+STATS_TYPES = {
+    "cpos": "<i4", "idx": "<i4", "flags": "u1", "tag": "<i4", "color": "<i4",
+    "length": "<f8", "area": "<f8", "cx": "<f8", "cy": "<f8", "radius": "<f8",
+}
+CLOSED, HIDDEN, NEGATIVE = 1, 2, 4
 
 
 def enabled() -> bool:
@@ -548,7 +557,7 @@ class HybridStore():
     def _replaceSection(self, snum : int, section_data : dict):
         header, rows = packSection(snum, section_data)
         self.con.execute("DELETE FROM trace WHERE snum=?", (snum,))
-        self.con.execute("DELETE FROM trace_stats WHERE snum=?", (snum,))
+        self.con.execute("DELETE FROM section_stats WHERE snum=?", (snum,))
         self.con.execute(
             "INSERT OR REPLACE INTO section(snum, header, stats_valid) VALUES (?, ?, 0)",
             (snum, header),
@@ -562,28 +571,50 @@ class HybridStore():
         return self._assemble(snum, fast_loads(row[0]))
 
     def _dropSection(self, snum : int):
-        for table in ("trace", "trace_stats", "section"):
+        for table in ("trace", "section_stats", "section"):
             self.con.execute(f"DELETE FROM {table} WHERE snum=?", (snum,))
 
     def _writeStats(self, snum : int, contour_names : list, tform_keys, series, objects):
         """The object-list numbers of one section, from a SeriesData's objects."""
-        rows = []
+        keys : list = [None] * len(contour_names)
+        tag_ids : dict = {}
+        color_ids : dict = {}
+        cols : dict = {field: [] for field in STATS_TYPES}
         for cpos, name in enumerate(contour_names):
             obj = objects.get(name)
             if obj is None:
                 continue
-            key = tformKey(series, name, tform_keys)
-            for td in obj.traces.get(snum, ()):
-                rows.append((
-                    snum, cpos, td.index, name, key,
-                    int(bool(td.closed)), int(bool(td.hidden)), int(bool(td.negative)),
-                    None if td.color is None else fast_dumps(list(td.color)).decode(),
-                    fast_dumps(sorted(td.tags, key=str)).decode(),
-                    td.length, td.area, td.centroid[0], td.centroid[1], td.radius,
-                ))
-        self.con.execute("DELETE FROM trace_stats WHERE snum=?", (snum,))
-        self.con.executemany(
-            "INSERT INTO trace_stats VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows
+            tds = obj.traces.get(snum)
+            if not tds:
+                continue
+            keys[cpos] = tformKey(series, name, tform_keys)
+            for td in tds:
+                tags = fast_dumps(sorted(td.tags, key=str))
+                color = None if td.color is None else fast_dumps(list(td.color))
+                cols["cpos"].append(cpos)
+                cols["idx"].append(td.index)
+                cols["flags"].append(
+                    (CLOSED if td.closed else 0) | (HIDDEN if td.hidden else 0)
+                    | (NEGATIVE if td.negative else 0)
+                )
+                cols["tag"].append(tag_ids.setdefault(tags, len(tag_ids)))
+                cols["color"].append(
+                    -1 if color is None else color_ids.setdefault(color, len(color_ids))
+                )
+                cols["length"].append(td.length)
+                cols["area"].append(td.area)
+                cols["cx"].append(td.centroid[0])
+                cols["cy"].append(td.centroid[1])
+                cols["radius"].append(td.radius)
+        self.con.execute(
+            f"INSERT OR REPLACE INTO section_stats(snum, {STATS_COLS})"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                snum, fast_dumps(keys),
+                b"[" + b",".join(tag_ids) + b"]",
+                b"[" + b",".join(color_ids) + b"]",
+                *(np.array(cols[f], dtype=dtype).tobytes() for f, dtype in STATS_TYPES.items()),
+            ),
         )
         self.con.execute("UPDATE section SET stats_valid=1 WHERE snum=?", (snum,))
 
@@ -674,7 +705,7 @@ class HybridStore():
         self.con.execute("PRAGMA journal_mode=TRUNCATE")
         try:
             with self._tx():
-                for table in ("series", "log", "section", "trace", "trace_stats",
+                for table in ("series", "log", "section", "trace", "section_stats",
                               "pending_section", "pending_series"):
                     self.con.execute(f"DELETE FROM {table}")
                 renames = {}
@@ -751,11 +782,15 @@ class HybridStore():
         SeriesData.updateSection, as a full open does) when it has pending work,
         has no stored numbers, or has a number computed in an alignment its
         object would not use now.
+
+        The stored numbers go into one TraceColumns, and each object holds its
+        rows of it: no TraceData is built until something reads an object's
+        traces (series_data.ObjectData).
         """
         from .section import Section, TransformsDict
         from .transform import Transform
         from .flag import Flag
-        from .series_data import TraceData, ObjectData
+        from .series_data import ObjectData, TraceColumns
 
         data = series.data
         data.data = {"sections": {}, "objects": {}}
@@ -763,44 +798,53 @@ class HybridStore():
         pending = {r[0] for r in self.con.execute("SELECT snum FROM pending_section")}
         valid = dict(self.con.execute("SELECT snum, stats_valid FROM section"))
         recompute = []
-        headers = {}
 
-        for snum in sorted(series.sections):
-            if snum in pending or not valid.get(snum):
-                recompute.append(snum)
-                continue
-            h = fast_loads(self.con.execute(
-                "SELECT header FROM section WHERE snum=?", (snum,)
-            ).fetchone()[0])
-            tforms = TransformsDict()
-            for a, t in h["tforms"].items():
-                tforms[a] = Transform(t)
-            headers[snum] = (h, tforms)
+        # the alignment attribute of each name, read once (tformKey)
+        alignments : dict = {}
 
-        # one value per distinct stored string: DW09 has 40 colors and 1,036
-        # tagged traces among 550,637. Tags are read-only in the series data
-        # (getTags, usedTags, the tables), so a frozenset is shared safely
-        tag_values = {}
-        color_values = {}
+        def keyFor(name, tforms):
+            alignment = alignments.get(name, alignments)
+            if alignment is alignments:
+                alignment = alignments[name] = series.getAttr(name, "alignment")
+            if alignment is None or alignment not in tforms:
+                return series.alignment
+            return alignment
+
+        name_ids : dict = {}       # name -> object number, in order of first trace
+        tform_list : list = []
+        tag_ids : dict = {}        # stored tags -> index in tag_values
+        tag_values : list = []
+        color_ids : dict = {None: 0}
+        color_values : list = [None]
+        parts : dict = {f: [] for f in TraceColumns.FIELDS}
+        parts["object"] = []
+
         with _gcPaused():
-            for snum, (h, tforms) in headers.items():
+            for snum in sorted(series.sections):
+                if snum in pending or not valid.get(snum):
+                    recompute.append(snum)
+                    continue
+                stats = self.con.execute(
+                    f"SELECT {STATS_COLS} FROM section_stats WHERE snum=?", (snum,)
+                ).fetchone()
+                if stats is None:
+                    recompute.append(snum)
+                    continue
+                h = fast_loads(self.con.execute(
+                    "SELECT header FROM section WHERE snum=?", (snum,)
+                ).fetchone()[0])
+                tforms = TransformsDict()
+                for a, t in h["tforms"].items():
+                    tforms[a] = Transform(t)
                 names = h["contours"]
-                rows = self.con.execute(
-                    "SELECT cpos, idx, tform_key, closed, hidden, negative, color, tags,"
-                    " length, area, cx, cy, radius FROM trace_stats WHERE snum=?"
-                    " ORDER BY cpos, idx",
-                    (snum,),
-                ).fetchall()
-                keys = {}
-                stale = False
-                for r in rows:
-                    name = names[r[0]]
-                    if name not in keys:
-                        keys[name] = tformKey(series, name, tforms)
-                    if keys[name] != r[2]:
-                        stale = True
-                        break
-                if stale:
+                keys = fast_loads(stats[0])
+                arrays = {
+                    f: np.frombuffer(blob, dtype=dtype)
+                    for (f, dtype), blob in zip(STATS_TYPES.items(), stats[3:])
+                }
+                cpos = arrays["cpos"]
+                present = np.unique(cpos).tolist()
+                if any(keys[p] != keyFor(names[p], tforms) for p in present):
                     recompute.append(snum)
                     continue
                 data.data["sections"][snum] = {
@@ -813,44 +857,93 @@ class HybridStore():
                     "flags": [Flag.fromList(f, snum) for f in h["flags"]],
                     "tforms": tforms.copy(),
                 }
-                for (cpos, idx, key, closed, hidden, negative, color, tags,
-                     length, area, cx, cy, radius) in rows:
-                    name = names[cpos]
-                    td = TraceData.__new__(TraceData)
-                    td.index = idx
-                    td.closed = bool(closed)
-                    td.hidden = bool(hidden)
-                    td.negative = bool(negative)
-                    td.tags = tag_values.get(tags)
-                    if td.tags is None:
-                        td.tags = tag_values[tags] = frozenset(fast_loads(tags))
-                    if color is None:
-                        td.color = None
-                    else:
-                        td.color = color_values.get(color)
-                        if td.color is None:
-                            td.color = color_values[color] = tuple(fast_loads(color))
-                    td.length = length
-                    td.area = area
-                    td.centroid = (cx, cy)
-                    td.radius = radius
-                    td._tform = tforms[key]
-                    td._feret = None if td.closed else (0, 0)
-                    obj = objects.get(name)
-                    if obj is None:
-                        obj = objects[name] = ObjectData()
-                    obj.traces.setdefault(snum, []).append(td)
+                # contour position -> object number and transform number
+                object_of = np.zeros(len(names), dtype=np.int32)
+                tform_of = np.zeros(len(names), dtype=np.int32)
+                section_tforms : dict = {}
+                for p in present:
+                    object_of[p] = name_ids.setdefault(names[p], len(name_ids))
+                    key = keys[p]
+                    if key not in section_tforms:
+                        section_tforms[key] = len(tform_list)
+                        tform_list.append(tforms[key])
+                    tform_of[p] = section_tforms[key]
+                # the section's distinct tags and colors -> the series-wide ones
+                tag_of = []
+                for value in fast_loads(stats[1]):
+                    stored = tuple(value)
+                    if stored not in tag_ids:
+                        tag_ids[stored] = len(tag_values)
+                        tag_values.append(frozenset(value))
+                    tag_of.append(tag_ids[stored])
+                color_of = []
+                for value in fast_loads(stats[2]):
+                    stored = tuple(value)
+                    if stored not in color_ids:
+                        color_ids[stored] = len(color_values)
+                        color_values.append(stored)
+                    color_of.append(color_ids[stored])
+                color_of.append(0)  # stored -1: no color
+                flags = arrays["flags"]
+                parts["object"].append(object_of[cpos])
+                parts["snum"].append(np.full(len(cpos), snum, dtype=np.int32))
+                parts["index"].append(arrays["idx"])
+                parts["closed"].append((flags & CLOSED) != 0)
+                parts["hidden"].append((flags & HIDDEN) != 0)
+                parts["negative"].append((flags & NEGATIVE) != 0)
+                parts["tag"].append(np.array(tag_of, dtype=np.int32)[arrays["tag"]])
+                parts["color"].append(np.array(color_of, dtype=np.int32)[arrays["color"]])
+                for f in ("length", "area", "cx", "cy", "radius"):
+                    parts[f].append(arrays[f])
+                parts["tform"].append(tform_of[cpos])
 
+            if parts["object"]:
+                obj_num = np.concatenate(parts["object"])
+                # each object's rows together, keeping section then index order
+                order = np.argsort(obj_num, kind="stable")
+                obj_num = obj_num[order]
+                columns = TraceColumns(
+                    {f: np.concatenate(parts[f])[order] for f in TraceColumns.FIELDS},
+                    tag_values, color_values, tform_list,
+                )
+                n = len(obj_num)
+                cuts = np.flatnonzero(np.diff(obj_num)) + 1
+                starts = np.concatenate(([0], cuts))
+                stops = np.concatenate((cuts, [n]))
+                # where each (object, section) pair starts, for the object ids
+                snums = columns.arrays["snum"]
+                pair_starts = np.concatenate((
+                    [0], np.flatnonzero((np.diff(obj_num) != 0) | (np.diff(snums) != 0)) + 1
+                ))
+                pair_snums = snums[pair_starts].tolist()
+                first_pair = np.searchsorted(pair_starts, starts).tolist()
+                last_pair = np.searchsorted(pair_starts, stops).tolist()
+                names_in_order = list(name_ids)
+                by_name = []
+                for num, start, stop, a, b in zip(
+                    obj_num[starts].tolist(), starts.tolist(), stops.tolist(),
+                    first_pair, last_pair,
+                ):
+                    name = names_in_order[num]
+                    objects[name] = ObjectData(columns, start, stop)
+                    by_name.append((name, pair_snums[a:b]))
+                data.object_ids.placeAll(by_name)
+
+        # updateSection places the ids of what it measures (ensure), so every
+        # (section, name) with traces has its id without a reconcile, which
+        # would build every object's TraceData to list its sections
+        touched = set()
         for snum in sorted(recompute):
             section = series.loadSection(snum)
             data.updateSection(section, update_traces=True, log_events=False, read_store=True)
-
-        with _gcPaused():
-            data.object_ids.reconcile(
-                (snum, name)
-                for name, obj_data in data.data["objects"].items()
-                for snum in obj_data.traces
-            )
+            touched.update(section.contours)
+        # a section measured here went in after the stored ones; put each
+        # object's sections back in order, as a full open adds them, so the
+        # list's sums add in the same order
+        for name in touched:
+            obj = objects.get(name)
+            if obj is not None:
+                obj.traces = dict(sorted(obj.traces.items()))
         self.recomputed = sorted(recompute)
 
     def _measure(self, series, section_numbers):

@@ -10,6 +10,7 @@ What these pin:
 * Save, discard, crash recovery, a changed .jser, section deletion and a
   stale alignment each do what the design note says.
 """
+import json
 import os
 import shutil
 import sqlite3
@@ -391,8 +392,11 @@ def test_numbers_from_another_alignment_are_measured_again(tmp_path, store_on):
     _open(fp).close()
     db_fp, _ = hybrid_store.storePaths(str(fp))
     con = sqlite3.connect(db_fp)
-    snum = con.execute("SELECT MIN(snum) FROM trace_stats").fetchone()[0]
-    con.execute("UPDATE trace_stats SET tform_key='elsewhere' WHERE snum=?", (snum,))
+    snum, keys = con.execute(
+        "SELECT snum, keys FROM section_stats WHERE cpos != x'' ORDER BY snum LIMIT 1"
+    ).fetchone()
+    keys = ["elsewhere" if k is not None else None for k in json.loads(keys)]
+    con.execute("UPDATE section_stats SET keys=? WHERE snum=?", (json.dumps(keys), snum))
     con.commit()
     con.close()
 
@@ -755,9 +759,9 @@ def test_the_lazy_open_builds_with_the_collector_off_and_restores_it(was_on, tmp
     seen = []
     real = series_data.ObjectData.__init__
 
-    def init(self):
+    def init(self, *args):
         seen.append(gc.isenabled())
-        real(self)
+        real(self, *args)
     monkeypatch.setattr(series_data.ObjectData, "__init__", init)
     if not was_on:
         gc.disable()
