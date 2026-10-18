@@ -36,6 +36,7 @@ from pathlib import Path
 import numpy as np
 
 from PyReconstruct.modules.constants import fast_loads, fast_dumps
+from PyReconstruct.modules.constants.jser_splice import ArraySection
 
 ENV_SWITCH = "PYRECON_HYBRID_STORE"
 ENV_DIR = "PYRECON_HYBRID_STORE_DIR"
@@ -230,6 +231,18 @@ def unpackRow(shape, npts, xy, rest) -> list:
     if shape == 0:
         a = np.frombuffer(xy, dtype="<f8")
         return [a[:npts].tolist(), a[npts:].tolist(), *fast_loads(rest)]
+    return fast_loads(rest)
+
+
+def unpackRowArrays(shape, npts, xy, rest) -> list:
+    """unpackRow, with x and y as read-only float64 arrays over the blob.
+
+    For the export only (jser_splice.ArraySection): no list of Python floats
+    is built, and nothing can edit the arrays.
+    """
+    if shape == 0:
+        a = np.frombuffer(xy, dtype="<f8")
+        return [a[:npts], a[npts:], *fast_loads(rest)]
     return fast_loads(rest)
 
 
@@ -511,10 +524,10 @@ class HybridStore():
         h = hashlib.sha256(b"hybrid-store-section-v1\0")
         h.update(struct.pack("<q", len(row[0])))
         h.update(row[0])
-        section_data = self._assemble(snum, fast_loads(row[0]), h)
+        section_data = self._assemble(snum, ArraySection(fast_loads(row[0])), h, unpackRowArrays)
         return section_data, h.digest()
 
-    def _assemble(self, snum : int, header : dict, hasher=None) -> dict:
+    def _assemble(self, snum : int, header : dict, hasher=None, unpack=unpackRow) -> dict:
         names = header["contours"]
         contours : dict = {name: [] for name in names}
         for cpos, shape, npts, xy, rest in self.con.execute(
@@ -528,7 +541,7 @@ class HybridStore():
                 if xy is not None:
                     hasher.update(xy)
                 hasher.update(rest)
-            contours[names[cpos]].append(unpackRow(shape, npts, xy, rest))
+            contours[names[cpos]].append(unpack(shape, npts, xy, rest))
         header["contours"] = contours
         return header
 
