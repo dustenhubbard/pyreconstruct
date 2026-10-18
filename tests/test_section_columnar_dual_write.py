@@ -1567,6 +1567,39 @@ def test_the_row_map_is_an_identity_map(real_section):
     assert len(real_section._columns) == len(real_section.tracesAsList())
 
 
+def _setRow(rows, trace):
+    rows[trace] = rows[trace] + 1
+
+
+def _deleteRow(rows, trace):
+    del rows[trace]
+
+
+def _clearRows(rows, trace):
+    rows.clear()
+
+
+@pytest.mark.parametrize("write", [_setRow, _deleteRow, _clearRows])
+def test_traceRows_refuses_every_write(real_section, write):
+    """`traceRows` hands out the row map to read. A write through it would
+    leave the store's map wrong without moving the generation; cleared, the
+    next `removeTrace` would find no row and raise."""
+    trace = _anyTrace(real_section)
+    rows = real_section.traceRows()
+    before = dict(rows)
+
+    with pytest.raises((TypeError, AttributeError)):
+        write(rows, trace)
+
+    assert dict(real_section.traceRows()) == before
+    real_section.removeTrace(trace)
+    assert trace not in real_section.traceRows()
+    added = _aTrace(real_section)
+    real_section.addTrace(added)
+    assert added in real_section.traceRows()
+    real_section._assertColumnsMatchObjectModel("after a refused write")
+
+
 def test_addTrace_then_removeTrace_stays_consistent(real_section):
     before = len(real_section._columns)
     trace = _aTrace(real_section)

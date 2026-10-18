@@ -667,8 +667,9 @@ class TraceLayer():
 
         Read in one pass from the store's float64 rows, so no trace's list of
         points is converted again. The section writes a trace's row whenever
-        its points change and checks the row against the trace, and undo,
-        redo and resync build every row again from the traces.
+        its points change through its edit methods and checks the row against
+        the trace, and undo, redo and resync build every row again from the
+        traces.
 
             Params:
                 columns (SectionColumns): the section's store
@@ -737,8 +738,10 @@ class TraceLayer():
         at = np.fromiter((index.get(t, -1) for t in trace_list), dtype=np.int64, count=n)
         lengths = np.fromiter((len(t.points) for t in trace_list), dtype=np.int64, count=n)
         b = bounds[at]
-        # a trace with no row, or with another point count than its row,
-        # takes its bounds from its own points
+        # a row with the trace's point count is trusted: code that edits a
+        # trace's points outside the section's edit methods must call
+        # section.resyncColumnarStore(). A trace with no row, or with another
+        # point count than its row, takes its bounds from its own points
         for i in np.flatnonzero(counts[at] != lengths):
             b[i] = pointBounds(trace_list[i].points)
         # the four corners of every box, one block of n per corner
