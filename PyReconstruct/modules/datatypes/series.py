@@ -38,6 +38,7 @@ from PyReconstruct.modules.constants import (
     write_jser,
     JserSplice,
     KeyedSection,
+    OpenedJserIndex,
     SpliceIndex,
     section_digest,
     canon_keys_inplace,
@@ -381,14 +382,22 @@ class _WholeJser:
         return sum(1 for sdata in self._sections if sdata)
 
     def sections(self):
-        """Yield (section number, section data) for every slot that is not null."""
+        """Yield (section number, section data, None) for every slot that is not null.
+
+        The third item is where the section sits in the file (see
+        _StreamedJser); a whole read does not know it.
+        """
         self._jser_data = None
         for snum in range(len(self._sections)):
             section_data = self._sections[snum]
             if section_data is None:
                 continue
             self._sections[snum] = None
-            yield snum, section_data
+            yield snum, section_data, None
+
+    def unchangedStat(self):
+        """None: a whole read records no ranges for the splice index."""
+        return None
 
     def close(self):
         pass
@@ -447,12 +456,17 @@ class _StreamedJser:
         return sum(1 for r in self._index.sections if r is not None)
 
     def sections(self):
-        """Yield (section number, section data) for every slot that is not null."""
+        """Yield (section number, section data, (offset, bytes)) for every slot that is not null.
+
+        The third item is the section's offset in the file and its bytes
+        there, for the splice index (see OpenedJserIndex).
+        """
         for snum, byte_range in enumerate(self._index.sections):
             if byte_range is None:
                 continue
             try:
-                section_data = fast_loads(read_range(self._f, byte_range))
+                raw = read_range(self._f, byte_range)
+                section_data = fast_loads(raw)
             except FileChanged as e:
                 raise _changed(self._f.name) from e
             except ValueError as e:
@@ -460,12 +474,23 @@ class _StreamedJser:
                     f"{os.path.basename(self._f.name)} is not a valid series "
                     f"file (the file is corrupt or is not JSON)."
                 ) from e
-            yield snum, section_data
-            section_data = None
+            yield snum, section_data, (byte_range[0], raw)
+            section_data = raw = None
         try:
             check_unchanged(self._f, self._index)
         except FileChanged as e:
             raise _changed(self._f.name) from e
+
+    def unchangedStat(self):
+        """The file's stat if it is still the size and mtime the scan read, else None.
+
+        Called after the last section is read. The inode and device come
+        from the open handle, so they are the file the ranges were read from.
+        """
+        st = os.fstat(self._f.fileno())
+        if (st.st_size, st.st_mtime_ns) != self._index.stamp:
+            return None
+        return st
 
     def close(self):
         self._f.close()
@@ -1074,9 +1099,15 @@ class Series():
         try:
             # extract JSON section data, one section at a time: the source
             # never holds more than the section in hand (see _StreamedJser)
+            #
+            # The open also records where each section sits in the file, when
+            # the file holds exactly the working file's bytes, so the first
+            # save can copy those sections instead of encoding them (see
+            # OpenedJserIndex in jser_splice.py).
             sections = {}
             renames = {}
-            for snum, section_data in source.sections():
+            opened_index = OpenedJserIndex(fp)
+            for snum, section_data, found in source.sections():
                 filename = sname + "." + str(snum)
                 section_fp = os.path.join(work_dir, filename)
 
@@ -1121,16 +1152,17 @@ class Series():
                 sections[snum] = filename
 
                 with open(section_fp, "wb") as f:
-                    f.write(fast_dumps(section_data))
+                    f.write(opened_index.working(section_data, found))
                 # drop it now, not when the loop rebinds the name: that is
                 # after the next section is decoded, so two would be alive
-                section_data = None
+                section_data = found = None
 
                 if reporter.was_canceled():
                     return None
                 progress += 1
                 reporter.set_progress(progress/final_value * 100)
             # every section is out: let go of the file before the long build
+            splice_index = opened_index.finish(source.unchangedStat())
             source.close()
 
             # Extract the existing log. Copied through byte for byte: the
@@ -1193,6 +1225,7 @@ class Series():
             # create the series
             series = Series(series_fp, sections, get_series_data=False)
             series.jser_fp = fp
+            series._jser_splice_index = splice_index
 
             # gather the series data
             for snum, section in series.enumerateSections(show_progress=False):

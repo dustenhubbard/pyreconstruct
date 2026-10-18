@@ -1,3 +1,2 @@
-- **Saving a large series is faster after the first save.** A section that did
-  not change since the last save is copied from the saved file instead of being
-  written again. The saved file is byte for byte what a full save writes.
+- **Saving a large series is faster, the first save after opening it included.**
+  A section that has not changed is copied from the file on disk instead of being written again.

@@ -29,12 +29,24 @@ save is a full save. Each copied range is hashed as it is copied and must
 match the digest recorded when it was written. A short read or any mismatch
 stops the splice, and the save starts over as a full save in the same temp
 file, so the old .jser is replaced only by a complete file either way.
+
+The first save after an open splices too. The open builds an index of the
+file it unpacks (`OpenedJserIndex`): a section whose bytes in the file are
+exactly the working file the open writes is recorded at its place in the file.
+Those bytes are what a save writes for that working file, as long as they came
+from orjson: a save parses the working file and encodes it again, and orjson
+gives back the bytes it was given (every key is a string, and every number
+orjson writes it reads back to the same value). A section the open changed (an
+older format, an unlocked alignment) or that orjson refuses is not recorded,
+and the first save encodes it.
 """
 
 import hashlib
 import os
 from io import BufferedReader
 from typing import Optional
+
+from .fast_json import fast_dumps, have_orjson, orjson_dumps
 
 #: Bytes read per copy step. The copy holds one of these at a time.
 COPY_CHUNK = 8 << 20
@@ -99,6 +111,61 @@ class SpliceIndex:
             return _stat_key(os.stat(self.path)) == self.stat_key
         except OSError:
             return False
+
+
+class OpenedJserIndex:
+    """The splice index of the .jser an open unpacks, built as it unpacks.
+
+    `working` encodes each section's working file, as the open always did, and
+    records the section's range when the file holds those same bytes. `finish`
+    turns the ranges into a `SpliceIndex` for the first save.
+
+        Params:
+            path (str): the .jser being opened
+    """
+
+    def __init__(self, path : str):
+        self.path = path
+        self.ranges : dict = {}
+
+    def working(self, sd, found=None):
+        """The working-file bytes of section `sd`: exactly ``fast_dumps(sd)``.
+
+        Encoded at the depth the writer encodes a section at (``[[sd]]``), so
+        that a section deep enough for orjson to refuse there is not recorded.
+
+            Params:
+                sd (dict): the section, after the open updated it
+                found (tuple): (offset, bytes) of the section in the file, or
+                    None when the open did not read it by range
+            Returns:
+                a bytes-like object
+        """
+        if have_orjson():
+            try:
+                wrapped = orjson_dumps([[sd]])
+            except Exception:
+                pass
+            else:
+                if found is not None:
+                    offset, raw = found
+                    # startswith compares in place; slicing would copy
+                    if len(raw) == len(wrapped) - 4 and wrapped.startswith(raw, 2):
+                        key = section_digest(raw)
+                        self.ranges.setdefault(key, (offset, len(raw), key))
+                return memoryview(wrapped)[2:-2]
+        return fast_dumps(sd)
+
+    def finish(self, st) -> Optional[SpliceIndex]:
+        """The index, or None if nothing was recorded or `st` is None.
+
+            Params:
+                st (os.stat_result): the opened file's stat, taken after the
+                    last read and only if the file had not changed by then
+        """
+        if st is None or not self.ranges:
+            return None
+        return SpliceIndex(self.path, _stat_key(st), self.ranges)
 
 
 class JserSplice:
