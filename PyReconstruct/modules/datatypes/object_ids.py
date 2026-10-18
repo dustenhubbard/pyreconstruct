@@ -238,14 +238,17 @@ class ObjectIds():
         if self.placed:
             raise ValueError("placeAll needs a registry with nothing placed")
         tree = self._tree()
-        placed = self.placed
+        placed, live, name_of, counter = self.placed, self._live, self.name_of, self._counter
         for name, snums in sections_by_name:
             oid = tree.keptId(name) if tree is not None else None
             if oid is None:
-                oid = self.issue(name)
+                # issue(): a fresh id is in no host tree record, so the tree's
+                # traced() would do nothing for it
+                oid = next(counter)
+                name_of[oid] = name
+            elif tree is not None:
+                tree.traced(oid)
             for snum in snums:
                 placed[(snum, name)] = oid
-            self._live[name] = {oid: len(snums)}
-            self.version += 1
-            if tree is not None:
-                tree.traced(oid)
+            live[name] = {oid: len(snums)}
+        self.version += len(live)

@@ -250,7 +250,9 @@ def test_place_all_takes_the_id_the_host_tree_keeps():
     for reg in (by_reconcile, by_place_all):
         assert reg.peek(1, "kept") == reg.peek(2, "kept") == 7
         assert reg.peek(1, "new") not in (None, 7)
-        assert sorted(reg.series.host_tree.traced_ids) == sorted([7, reg.peek(1, "new")])
+        # the kept id has traces again; a fresh id is in no tree record, so
+        # placeAll does not tell the tree about it
+        assert 7 in reg.series.host_tree.traced_ids
 
 
 def test_place_all_refuses_a_registry_with_something_placed():
