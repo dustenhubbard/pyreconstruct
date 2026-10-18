@@ -14,7 +14,7 @@ import pytest
 zarr = pytest.importorskip("zarr")
 
 from PyReconstruct.modules.backend.autoseg import conversions  # noqa: E402
-from PyReconstruct.modules.datatypes import Trace  # noqa: E402
+from PyReconstruct.modules.datatypes import Trace, Transform  # noqa: E402
 
 IDENTITY = [1, 0, 0, 0, 1, 0]
 WINDOW = [0, 0, 100, 100]
@@ -65,6 +65,10 @@ class _ExportSeries:
 
 
 class _ImportSection:
+    ## the import measures each outline on the section's own pixels
+    mag = 1.0
+    tform = Transform.identity()
+
     def __init__(self, store, snum):
         self.store, self.snum = store, snum
 

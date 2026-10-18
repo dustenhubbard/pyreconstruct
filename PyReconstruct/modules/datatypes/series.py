@@ -732,6 +732,11 @@ class Series():
     qsettings_defaults = default_settings.copy()
     qsettings_series_defaults = default_series_settings.copy()
 
+    ## The pixel-dust threshold Clean up offers first (px^2, see
+    ## findPixelDustTraces). The label import skips an outline at or below it,
+    ## so an import writes no trace that this scan would then remove.
+    PIXEL_DUST_DEFAULT_PX = 10.0
+
     def __init__(self, filepath : str, sections : dict, get_series_data=True):
         """Load the series file.
 
