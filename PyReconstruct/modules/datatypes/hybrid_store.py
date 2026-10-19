@@ -26,7 +26,6 @@ SQLite is not safe on a network share, where lab series often live.
 """
 
 import os
-import re
 import sys
 import json
 import hashlib
@@ -37,6 +36,7 @@ from pathlib import Path
 import numpy as np
 
 from PyReconstruct.modules.constants import fast_loads, fast_dumps
+from PyReconstruct.modules.constants.fast_json import have_orjson, orjson_dumps, stdlib_dumps
 
 ## Moves the folder that holds every store (tests and benchmarks)
 ENV_DIR = "PYRECON_HYBRID_STORE_DIR"
@@ -59,14 +59,15 @@ CREATE TABLE IF NOT EXISTS series(id INTEGER PRIMARY KEY CHECK (id = 1), data BL
 CREATE TABLE IF NOT EXISTS log(id INTEGER PRIMARY KEY CHECK (id = 1), text TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS section(
     snum INTEGER PRIMARY KEY,
-    header BLOB NOT NULL
+    header BLOB NOT NULL,
+    exact INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS trace(
     id INTEGER PRIMARY KEY,
     snum INTEGER NOT NULL,
     cpos INTEGER NOT NULL,
     ord INTEGER NOT NULL,
-    name TEXT NOT NULL,
+    name BLOB NOT NULL,
     shape INTEGER NOT NULL,
     npts INTEGER NOT NULL,
     xy BLOB,
@@ -215,14 +216,43 @@ def refuseNetworkFolder(folder : str):
 ## Packing a section into rows and back
 ## ---------------------------------------------------------------------------
 
-def packRow(row) -> tuple:
+def _utf8(text : str) -> bytes:
+    """text as UTF-8, a lone surrogate included (SQLite cannot take one as TEXT)."""
+    return text.encode("utf-8", "surrogatepass")
+
+
+def _text(data : bytes) -> str:
+    return data.decode("utf-8", "surrogatepass")
+
+
+def wholeIsExact(section_data : dict) -> bool:
+    """True when today's writer writes the section with the stdlib JSON writer.
+
+    fast_dumps takes the stdlib writer for the whole file when orjson cannot
+    write some part of it (an integer past 64 bits, a lone surrogate). That
+    writer keeps what orjson would change (NaN and Infinity, which orjson writes
+    as null), and the file is read back as written. The store writes and reads
+    every part of such a section that way, so it holds what the file holds.
+    """
+    if not have_orjson():
+        return True
+    try:
+        orjson_dumps(section_data)
+    except Exception:
+        return True
+    return False
+
+
+def packRow(row, exact : bool = False) -> tuple:
     """(shape, npts, xy, rest, xmin, ymin, xmax, ymax) for one stored trace row.
 
-    A positional row whose x and y are all Python floats keeps its coordinates
-    as float64 bytes, which is exact for any value a JSON reader produced. Any
-    other row (keyed rows, an int coordinate, an empty trace) is kept whole as
-    JSON, so nothing is coerced.
+    A positional row whose x and y are all finite Python floats keeps its
+    coordinates as float64 bytes, which is exact for any value a JSON reader
+    produced. Any other row (keyed rows, an int or non-finite coordinate, an
+    empty trace) is kept whole as JSON, written as its section is written, so
+    nothing is coerced that today's file keeps.
     """
+    dumps = stdlib_dumps if exact else orjson_dumps
     if (
         type(row) is list and len(row) == 8
         and type(row[0]) is list and type(row[1]) is list
@@ -233,48 +263,34 @@ def packRow(row) -> tuple:
         n = len(row[0])
         x = np.array(row[0], dtype="<f8")
         y = np.array(row[1], dtype="<f8")
-        return (
-            0, n, x.tobytes() + y.tobytes(), fast_dumps(row[2:]),
-            float(x.min()), float(y.min()), float(x.max()), float(y.max()),
-        )
-    return (1, 0, None, fast_dumps(row), None, None, None, None)
+        if np.isfinite(x).all() and np.isfinite(y).all():
+            return (
+                0, n, x.tobytes() + y.tobytes(), dumps(row[2:]),
+                float(x.min()), float(y.min()), float(x.max()), float(y.max()),
+            )
+    return (1, 0, None, dumps(row), None, None, None, None)
 
 
-## an integer orjson would read as a float: past 64 bits, so 19 digits or more
-_LONG_NUMBER = re.compile(rb"[0-9]{19}")
-
-
-def _loadPart(data : bytes):
-    """Read back a part of a section the store wrote, as it was written.
-
-    orjson reads an integer past 64 bits as a float, and the stdlib reader
-    keeps it. A section holding one may have been read whole by the stdlib
-    reader (a lone surrogate sends it there), so a part with a long number is
-    read by the stdlib reader too, and the integer comes back as it went in.
-    """
-    if _LONG_NUMBER.search(data):
-        return json.loads(data)
-    return fast_loads(data)
-
-
-def unpackRow(shape, npts, xy, rest) -> list:
+def unpackRow(shape, npts, xy, rest, exact : bool = False) -> list:
     """The stored trace row, as the section file held it."""
+    loads = json.loads if exact else fast_loads
     if shape == 0:
         a = np.frombuffer(xy, dtype="<f8")
-        return [a[:npts].tolist(), a[npts:].tolist(), *_loadPart(rest)]
-    return _loadPart(rest)
+        return [a[:npts].tolist(), a[npts:].tolist(), *loads(rest)]
+    return loads(rest)
 
 
 def packSection(snum : int, section_data : dict) -> tuple:
-    """(header bytes, trace rows) for one section dict."""
+    """(header bytes, exact, trace rows) for one section dict."""
+    exact = wholeIsExact(section_data)
     header = {}
     for key, value in section_data.items():
         header[key] = list(value) if key == "contours" else value
     rows = []
     for cpos, (name, traces) in enumerate(section_data["contours"].items()):
         for ord_, row in enumerate(traces):
-            rows.append((snum, cpos, ord_, name, *packRow(row)))
-    return fast_dumps(header), rows
+            rows.append((snum, cpos, ord_, _utf8(name), *packRow(row, exact)))
+    return (stdlib_dumps if exact else orjson_dumps)(header), exact, rows
 
 
 class HybridStore():
@@ -405,12 +421,14 @@ class HybridStore():
 
     def meta(self, key : str):
         row = self.con.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
-        return None if row is None else row[0]
+        if row is None or not isinstance(row[0], bytes):
+            return None if row is None else row[0]
+        return _text(row[0])
 
     def setMeta(self, key : str, value):
         self.con.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
-            (key, None if value is None else str(value)),
+            (key, None if value is None else _utf8(str(value))),
         )
 
     def isImported(self) -> bool:
@@ -503,23 +521,24 @@ class HybridStore():
                 raise FileNotFoundError(f"section {snum} is deleted in the store {self.db_fp}")
             return fast_loads(row[0])
         row = self.con.execute(
-            "SELECT header FROM section WHERE snum=?", (snum,)
+            "SELECT header, exact FROM section WHERE snum=?", (snum,)
         ).fetchone()
         if row is None:
             if fallback_fp and os.path.isfile(fallback_fp):
                 with open(fallback_fp, "rb") as f:
                     return fast_loads(f.read())
             raise FileNotFoundError(f"section {snum} is not in the store {self.db_fp}")
-        return self._assemble(snum, _loadPart(row[0]))
+        return self._assemble(snum, *row)
 
-    def _assemble(self, snum : int, header : dict) -> dict:
+    def _assemble(self, snum : int, header_bytes : bytes, exact : int) -> dict:
+        header = (json.loads if exact else fast_loads)(header_bytes)
         names = header["contours"]
         contours : dict = {name: [] for name in names}
         for cpos, shape, npts, xy, rest in self.con.execute(
             "SELECT cpos, shape, npts, xy, rest FROM trace WHERE snum=? ORDER BY cpos, ord",
             (snum,),
         ):
-            contours[names[cpos]].append(unpackRow(shape, npts, xy, rest))
+            contours[names[cpos]].append(unpackRow(shape, npts, xy, rest, bool(exact)))
         header["contours"] = contours
         return header
 
@@ -536,29 +555,30 @@ class HybridStore():
     def objectTraces(self, name : str) -> list:
         """(section, row) for every saved trace of one object, by the per-object index."""
         return [
-            (snum, unpackRow(shape, npts, xy, rest))
-            for snum, shape, npts, xy, rest in self.con.execute(
-                "SELECT snum, shape, npts, xy, rest FROM trace WHERE name=? ORDER BY snum, cpos, ord",
-                (name,),
+            (snum, unpackRow(shape, npts, xy, rest, exact))
+            for snum, shape, npts, xy, rest, exact in self.con.execute(
+                "SELECT snum, shape, npts, xy, rest, exact FROM trace JOIN section USING (snum)"
+                " WHERE name=? ORDER BY snum, cpos, ord",
+                (_utf8(name),),
             )
         ]
 
     ## writing the saved tables ----------------------------------------------
 
     def _replaceSection(self, snum : int, section_data : dict):
-        header, rows = packSection(snum, section_data)
+        header, exact, rows = packSection(snum, section_data)
         self.con.execute("DELETE FROM trace WHERE snum=?", (snum,))
         self.con.execute(
-            "INSERT OR REPLACE INTO section(snum, header) VALUES (?, ?)",
-            (snum, header),
+            "INSERT OR REPLACE INTO section(snum, header, exact) VALUES (?, ?, ?)",
+            (snum, header, exact),
         )
         self.con.executemany(
             f"INSERT INTO trace({TRACE_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", rows
         )
 
     def _savedSection(self, snum : int) -> dict:
-        row = self.con.execute("SELECT header FROM section WHERE snum=?", (snum,)).fetchone()
-        return self._assemble(snum, _loadPart(row[0]))
+        row = self.con.execute("SELECT header, exact FROM section WHERE snum=?", (snum,)).fetchone()
+        return self._assemble(snum, *row)
 
     def _dropSection(self, snum : int):
         for table in ("trace", "section"):

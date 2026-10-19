@@ -111,6 +111,10 @@ def _assert_holds_what_today_writes(src, tmp_path):
     store = _import(fp)
     try:
         assert _held(store) == expected
+        # and value for value as the file reads back, where bytes cannot tell
+        # (a NaN kept by the store and a null in the file both write as null)
+        for snum, data in expected[0].items():
+            assert json.dumps(store.readSection(snum)) == json.dumps(json.loads(data)), snum
         assert store.isImported()
         assert store.matchesJser(str(fp))
     finally:
@@ -229,30 +233,92 @@ def test_the_fields_july_left_untested_import_as_they_open_today(tmp_path, store
         store.close()
 
 
-@pytest.mark.parametrize("where, lone_surrogate", [
-    ("trace", True), ("header", True), ("trace", False),
-], ids=["in-a-trace", "in-the-header", "read-by-orjson"])
-def test_an_integer_past_64_bits_imports_as_it_opens_today(where, lone_surrogate, tmp_path, store_root):
-    # A lone surrogate sends today's reader to the stdlib parser, which keeps an
-    # integer past 64 bits exactly; without one orjson reads it as a float. The
-    # store holds whichever today's open writes, though it reads a section in parts.
-    big = 2**65 + 1
+## values today's two JSON writers and readers treat differently: integers at
+## both 64-bit edges, NaN and the infinities, a lone surrogate, deep nesting
+_EDGE_VALUES = {
+    "int-2^63-1": 2**63 - 1, "int-2^63": 2**63, "int-2^64-1": 2**64 - 1, "int-2^64": 2**64,
+    "int-2^65+1": 2**65 + 1, "int--2^63": -(2**63), "int--2^63-1": -(2**63) - 1,
+    "nan": float("nan"), "inf": float("inf"), "-inf": float("-inf"),
+    "surrogate": "\ud800", "nested": [[[[[[[[1, [2.5, "\u00e9"]]]]]]]]],
+}
+## where a value goes, and where the lone surrogate that sends today's writer to
+## the stdlib goes when the case has one (always somewhere else in the section)
+_EDGE_PLACES = {
+    "header": ("src-tag", lambda sec, row, v: sec.__setitem__("mag", v)),
+    "coordinate": ("src", lambda sec, row, v: row[0].__setitem__(0, v)),
+    "tag": ("src", lambda sec, row, v: row[7].append(v)),
+    "series": ("src", None),
+}
+## today's open refuses a string or a nested list as a coordinate, and a nested
+## list as a tag, so those are not cases
+_EDGE_CASES = [
+    (place, name, surrogate)
+    for place in _EDGE_PLACES for name in _EDGE_VALUES for surrogate in (False, True)
+    if not (place == "coordinate" and name in ("surrogate", "nested"))
+    and not (place == "tag" and name == "nested")
+] + [("contour-name", "surrogate", False), ("duplicate-key", "inf", True)]
+
+
+def _edge_series(folder, place, name, surrogate):
+    """The parity series with one edge value in one place, written by the stdlib."""
+    value = _EDGE_VALUES[name]
     doc = json.loads(PARITY.read_bytes())
-    section = next(s for s in doc["sections"] if s and any(s["contours"].values()))
-    row = next(rows for rows in section["contours"].values() if rows)[0]
-    if where == "trace":
-        row[0][0] = big
-        if lone_surrogate:
-            section["src"] = "\ud800"
+    sec = next(s for s in doc["sections"] if s and any(s["contours"].values()))
+    cname, rows = next((n, r) for n, r in sec["contours"].items() if r)
+    row = rows[0]
+    if place == "series":
+        doc["series"]["an_edge_value"] = value
+    elif place == "contour-name":
+        sec["contours"] = {("\ud800" if n == cname else n): r for n, r in sec["contours"].items()}
+    elif place == "duplicate-key":
+        sec["mag"] = "DUPLICATE"
     else:
-        section["mag"] = big
-        row[7] = ["\ud800"]
-    src = tmp_path / "src" / "big.jser"
-    src.parent.mkdir()
-    src.write_text(json.dumps(doc))
-    expected = _today(src, tmp_path)
-    assert (str(big).encode() in b"".join(expected[0].values())) is lone_surrogate
-    _assert_holds_what_today_writes(src, tmp_path)
+        _EDGE_PLACES[place][1](sec, row, value)
+    if surrogate:
+        if _EDGE_PLACES.get(place, ("src",))[0] == "src":
+            sec["src"] = "\ud800"
+        else:
+            row[7].append("\ud800")
+    text = json.dumps(doc)
+    if place == "duplicate-key":
+        text = text.replace('"mag": "DUPLICATE"', '"mag": 0.5, "mag": Infinity')
+    fp = Path(folder) / "edge.jser"
+    fp.write_text(text)
+    return fp
+
+
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")  # today's open, on an infinite coordinate
+@pytest.mark.parametrize("place, name, surrogate", _EDGE_CASES,
+                         ids=[f"{p}-{n}" + ("-with-a-surrogate" if s else "") for p, n, s in _EDGE_CASES])
+def test_an_edge_value_imports_as_it_opens_today(place, name, surrogate, tmp_path, store_root):
+    # The store writes a section in parts (its header, each trace) but must hold
+    # what today's open writes as one file: whichever writer that file took.
+    folder = tmp_path / "src"
+    folder.mkdir()
+    _assert_holds_what_today_writes(_edge_series(folder, place, name, surrogate), tmp_path)
+
+
+def test_a_path_that_is_not_utf_8_is_recorded_as_it_is(tmp_path, store_root):
+    # a Linux name with a byte that is not UTF-8, or a Windows name with a lone
+    # surrogate, comes to Python as a lone surrogate
+    (tmp_path / "s.jser").touch()
+    store = HybridStore.forJser(str(tmp_path / "s.jser"))
+    try:
+        store.setMeta("jser_path", "/data/\udcff.jser")
+        assert store.meta("jser_path") == "/data/\udcff.jser"
+    finally:
+        store.close()
+
+
+def test_an_object_named_with_a_lone_surrogate_is_found_by_name(tmp_path, store_root):
+    folder = tmp_path / "src"
+    folder.mkdir()
+    store = _import(_edge_series(folder, "contour-name", "surrogate", False))
+    try:
+        found = store.objectTraces("\ud800")
+        assert found and all(snum in store.sectionNumbers() for snum, _ in found)
+    finally:
+        store.close()
 
 
 def _keyed(row, trace_id, fill_mode_key):
@@ -404,8 +470,9 @@ def test_a_second_import_replaces_everything_and_drops_unsaved_work(tmp_path, st
     [[-(2**63) - 1, 2.0], [3.0, 4.0], [0, 0, 0], True, False, False, ["none", "none"], []],
 ], ids=["floats", "an-int-coordinate", "empty", "keyed", "an-int-past-64-bits", "a-negative-int-past-64-bits"])
 def test_a_trace_row_comes_back_exactly(row):
-    shape, npts, xy, rest, *_ = packRow(row)
-    back = unpackRow(shape, npts, xy, rest)
+    exact = hybrid_store.wholeIsExact({"row": row})  # as its section would be written
+    shape, npts, xy, rest, *_ = packRow(row, exact)
+    back = unpackRow(shape, npts, xy, rest, exact)
     assert back == row
     assert json.dumps(back) == json.dumps(row)  # -0.0 and int stay as they were
     if isinstance(row, list) and row[0]:
