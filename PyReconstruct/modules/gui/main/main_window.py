@@ -12,6 +12,7 @@ from PySide6.QtCore import QEvent
 from .main_imports import *
 
 from PyReconstruct.modules.datatypes.section import Section, zarrHasScaleLevels
+from PyReconstruct.modules.datatypes import store_save
 from PyReconstruct.modules.backend.image_name_match import (
     matchByNumber, zarrImageNames,
 )
@@ -3170,6 +3171,7 @@ class MainWindow(QMainWindow):
             save = saveNotify()
             if save == "no":
                 if close:
+                    self._writeStoreSave()
                     self.series.close()
                 return
             elif save == "cancel":
@@ -3177,6 +3179,7 @@ class MainWindow(QMainWindow):
         
         # User closing and series not modified
         if close and not self.series.modified:
+            self._writeStoreSave()
             self.series.close()
             return
 
@@ -3188,6 +3191,10 @@ class MainWindow(QMainWindow):
             # the hidden dir holding the only copy of the work.
             if self.saveAsToJser(close=close) == "cancel":
                 return "cancel"
+        elif not close and self.series.saveToStore():
+            # the local store holds this Save; the .jser and its backup are
+            # written when the series closes (store_save.py)
+            pass
         else:
             # save the real jser once, then copy those bytes to the backup
             # (avoids a second full serialization of the whole series)
@@ -3199,6 +3206,33 @@ class MainWindow(QMainWindow):
         # mark series as unmodified
         self.seriesModified(False)
     
+    def _writeStoreSave(self):
+        """Write the .jser from the local store if it holds a Save the .jser lacks.
+
+        With Save writing the store only (store_save.py), the .jser is written
+        when the series closes, so that is when the automatic backup is made.
+        """
+        if store_save.ahead(self.series):
+            store_save.writeJser(self.series)
+            self.backup(check_auto=True, from_saved=True)
+
+    def exportJserNow(self):
+        """Save, and write the .jser now (File > Export series), with Save writing the store only."""
+        if self.series.jserSaveRunning():
+            self.series.refuseNestedSave(self.series.jser_fp)
+            return
+        if self.series.seriesStepRunning():
+            self.series.refuseSaveDuringStep(self.series.jser_fp)
+            return
+        self.saveAllData()
+        if self.series.saveToStore():
+            if store_save.ahead(self.series):
+                store_save.writeJser(self.series)
+        else:
+            self.series.saveJser()
+        self.backup(check_auto=True, from_saved=True)
+        self.seriesModified(False)
+
     def saveAsToJser(self, close=False):
         """Prompt user for save location.
 
