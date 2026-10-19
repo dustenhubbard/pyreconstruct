@@ -14,6 +14,7 @@ import json
 import os
 import subprocess
 import tarfile
+from dataclasses import replace
 
 import pytest
 
@@ -589,3 +590,135 @@ def test_a_quit_while_a_helper_runs_leaves_it_alone(dev):
         A.release_lock(held)
     assert dev.started == []
     assert not os.path.exists(os.path.join(dev.rel.staging, A.HEALTH))
+
+
+# --- A copy a finished run could not delete ----------------------------------------
+
+def _locked(monkeypatch, *names):
+    """Make ``_remove`` fail on these staging entries, as Windows does while a scanner holds a file."""
+    real = A._remove
+    held = {os.path.normcase(os.path.abspath(n)) for n in names}
+
+    def remove(path):
+        if os.path.normcase(os.path.abspath(path)) in held:
+            raise PermissionError(errno.EACCES, "The process cannot access the file", path)
+        real(path)
+    monkeypatch.setattr(A, "_remove", remove)
+    return lambda: monkeypatch.setattr(A, "_remove", real)
+
+
+def _run_helper(dev, healthy=True):
+    w = World()
+    w.install, w.staging = dev.rel.install, dev.rel.staging
+    w.healthy[NEW_V] = healthy
+    result = A.Applier(dev.rel.staging, FakePlatform(w), replace(FAST, health=0.2), host="windows").run()
+    # the release build ships its own helper; this test payload has none
+    _write(dev.rel.install, "_updater/" + S.HELPER_EXE, "the installed helper", 0o755)
+    return result
+
+
+def _journal(dev):
+    return A.read_json(os.path.join(dev.rel.staging, A.STATE))
+
+
+@pytest.mark.parametrize("result, leftover, healthy", [
+    ("updated", A.OLD, True),
+    ("rolled_back", A.REJECTED, False),
+], ids=["backup-after-update", "rejected-after-rollback"])
+def test_a_copy_a_finished_run_could_not_delete_is_cleared_at_the_next_staging(
+        dev, monkeypatch, result, leftover, healthy):
+    """A file held for a moment at cleanup must not keep every later update off in-place."""
+    dev.stage()
+    unlock = _locked(monkeypatch, os.path.join(dev.rel.staging, leftover))
+    assert _run_helper(dev, healthy)["status"] == result
+    assert os.path.isdir(os.path.join(dev.rel.staging, leftover))
+    assert _journal(dev)["status"] == "done" and _journal(dev)["result"] == result
+    installed = snapshot(dev.rel.install)
+    unlock()
+
+    # staged straight, as for a later release: a rollback keeps this version off in-place
+    plan = dev.rel.stage()
+
+    assert not os.path.lexists(os.path.join(dev.rel.staging, leftover))
+    assert A.load_plan(os.path.join(dev.rel.staging, A.PLAN)) == plan
+    assert snapshot(dev.rel.install) == installed
+    assert dev.started == []  # staging starts nothing
+
+
+def test_a_copy_still_locked_falls_back_to_the_installer_and_is_kept(dev, monkeypatch):
+    dev.stage()
+    old = os.path.join(dev.rel.staging, A.OLD)
+    unlock = _locked(monkeypatch, old)
+    assert _run_helper(dev)["status"] == "updated"
+    journal, kept, installed = _journal(dev), snapshot(old), snapshot(dev.rel.install)
+
+    dev.rel.fetched.clear()
+    for _ in range(A.MAX_DEFERRALS + 1):
+        with pytest.raises(S.StageError, match="could not remove"):
+            dev.stage()  # the dialog downloads the installer instead
+        assert snapshot(old) == kept and snapshot(dev.rel.install) == installed
+        assert _journal(dev) == journal  # still says what the copy is, for the next try
+        assert dev.rel.archive_name not in dev.rel.fetched
+
+    unlock()
+    assert I.still_staged(dev.stage())
+    assert not os.path.lexists(old)
+
+
+def _done(dev, result, installed, **plan):
+    pending = dev.stage()
+    A.atomic_write_json(os.path.join(dev.rel.staging, A.STATE), {
+        "format": A.FORMAT, "status": "done", "result": result, "installed": installed,
+        "plan": dict(pending.plan, **plan)})
+
+
+def _backup_is_a_link_to_the_install(dev):
+    _done(dev, "updated", "new")
+    old = os.path.join(dev.rel.staging, A.OLD)
+    if os.name == "nt":
+        import _winapi
+        _winapi.CreateJunction(dev.rel.install, old)
+        return
+    try:
+        os.symlink(dev.rel.install, old, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("this account cannot make links")
+
+
+def _backup_after_a_stuck_run(dev):
+    _done(dev, "stuck", None)
+    _write(os.path.join(dev.rel.staging, A.OLD), "PyReconstruct Dev.exe", "the only copy")
+
+
+def _backup_after_a_rollback(dev):
+    _done(dev, "rolled_back", "old")
+    _write(os.path.join(dev.rel.staging, A.OLD), "PyReconstruct Dev.exe", "the only copy")
+
+
+def _backup_for_another_install(dev):
+    _done(dev, "updated", "new", install=os.path.join(os.path.dirname(dev.rel.install), "Other"))
+    _write(os.path.join(dev.rel.staging, A.OLD), "PyReconstruct Dev.exe", "the only copy")
+
+
+def _backup_with_no_journal(dev):
+    dev.stage()
+    _write(os.path.join(dev.rel.staging, A.OLD), "PyReconstruct Dev.exe", "the only copy")
+
+
+@pytest.mark.parametrize("make_it", [
+    _backup_is_a_link_to_the_install, _backup_after_a_stuck_run, _backup_after_a_rollback,
+    _backup_for_another_install, _backup_with_no_journal,
+], ids=["link-to-install", "stuck", "old-after-rollback", "another-install", "no-journal"])
+def test_staging_never_clears_a_copy_that_may_be_the_only_one(dev, make_it):
+    make_it(dev)
+    old = os.path.join(dev.rel.staging, A.OLD)
+    kept = snapshot(old)
+    try:
+        with pytest.raises(S.StageError, match="earlier update"):
+            dev.stage()
+        assert snapshot(dev.rel.install) == dev.rel.before
+        assert os.path.lexists(old) and snapshot(old) == kept
+        assert dev.started == []
+    finally:
+        if os.name == "nt" and make_it is _backup_is_a_link_to_the_install:
+            os.rmdir(old)  # the junction only, never what it leads to
