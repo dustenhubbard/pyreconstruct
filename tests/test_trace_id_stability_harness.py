@@ -65,8 +65,8 @@ either, and `CARRY_TABLE` below lists both as unexercised with the reason. What
 today's code happens to do with them is left out on purpose, not turned into an
 expectation a future change would have to honor.
 
-THE MANIFEST IS THE DONE CRITERION
------------------------------------
+THE MANIFEST IS CHECKED
+-----------------------
 `CARRY_TABLE` is a data structure rather than a comment, and
 `test_every_carry_table_row_is_exercised_or_listed_unexercised` checks it: every
 row is either exercised by tests that exist in this module, or listed as
@@ -357,7 +357,7 @@ def _sectionStates(section, series):
 
 
 ## --------------------------------------------------------------------------
-## The Done criterion itself
+## The manifest check itself
 ## --------------------------------------------------------------------------
 
 def test_every_carry_table_row_is_exercised_or_listed_unexercised():

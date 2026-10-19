@@ -360,11 +360,64 @@ def test_mouse_move_width_changes_do_not_move_the_readout(main_window, qtbot):
 
 
 def test_pills_do_not_grow_the_status_bar(main_window):
-    """The rounded outline must live inside the bar the text already needs."""
+    """The rounded outline lives inside the bar the text already needs, plus
+    at most the pills' own padding: with DejaVu Sans the bar has room for it,
+    with Noto Sans its line fills the bar and the padding adds two pixels."""
     from PySide6.QtWidgets import QLabel, QStatusBar
+    from PyReconstruct.modules.gui.main.status_readout import StatusSegment
     plain = QStatusBar()
     plain.addWidget(QLabel("Section: 5"))
-    assert main_window.statusbar.sizeHint().height() <= plain.sizeHint().height()
+    assert (main_window.statusbar.sizeHint().height()
+            <= plain.sizeHint().height() + 2 * StatusSegment.V_PAD)
+
+
+def ink_rows(widget):
+    """The rows a widget paints text on, black on white, and its dark pixels."""
+    from PySide6.QtGui import QColor, QPalette
+    palette = widget.palette()
+    palette.setColor(QPalette.Window, QColor("white"))
+    palette.setColor(QPalette.WindowText, QColor("black"))
+    widget.setPalette(palette)
+    widget.setAutoFillBackground(True)
+    widget.resize(widget.sizeHint())
+    image = widget.grab().toImage()
+    dark = [(x, y) for y in range(image.height()) for x in range(image.width())
+            if image.pixelColor(x, y).lightness() < 255]
+    rows = sorted({y for _, y in dark})
+    return (rows[-1] - rows[0] + 1 if rows else 0), len(dark)
+
+
+@pytest.mark.parametrize("family,size,text", [
+    ("DejaVu Sans", 10.5, "Alignment: gjpqy ÁÉÍÓÚÅÇ"),
+    ("DejaVu Sans", 24, "Alignment: gjpqy ÁÉÍÓÚÅÇ"),
+    ("Noto Sans", 9, "Alignment: gjpqy ÁÉÍÓÚÅÇ"),
+    ("Noto Sans", 9, "Alignment: Ẫ"),
+    (None, 9, "Alignment: gjpqy ÁÉÍÓÚÅÇ"),
+])
+def test_pills_keep_accents_and_descenders(qapp, family, size, text):
+    """No pill cuts off its text. DejaVu Sans at 10.5 pt draws the tops of
+    accented capitals above its line, and Noto Sans at 9 pt the tilde of a
+    Vietnamese capital (U+1EAA); the pill's padding holds both. None is the
+    platform's own font."""
+    from PySide6.QtGui import QFont, QFontInfo
+    from PySide6.QtWidgets import QLabel
+    from PyReconstruct.modules.gui.main.status_readout import StatusSegment
+    previous = qapp.font()
+    font = QFont(family) if family else QFont(previous)
+    font.setPointSizeF(size)
+    if family and QFontInfo(font).family() != family:
+        pytest.skip(f"{family} is not installed")
+    qapp.setFont(font)
+    try:
+        pill = StatusSegment("Alignment", outlined=False)
+        pill.setText(text)
+        roomy = QLabel(text)
+        line = roomy.fontMetrics().height()
+        roomy.setContentsMargins(StatusSegment.H_PAD, line,
+                                 StatusSegment.H_PAD, line)
+        assert ink_rows(pill) == ink_rows(roomy)
+    finally:
+        qapp.setFont(previous)
 
 
 def test_popup_owns_the_pressed_state(main_window, qtbot):

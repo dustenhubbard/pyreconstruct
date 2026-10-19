@@ -569,7 +569,7 @@ def test_inline_code_matches_the_body_x_height_color_and_weight(qapp):
     inside a bold claim), with ordinary letter spacing and a faint tint.
     """
     import sys
-    from PySide6.QtGui import QFont, QFontMetricsF, QFontDatabase
+    from PySide6.QtGui import QFont, QFontInfo, QFontMetricsF, QFontDatabase
     from PyReconstruct.modules.gui.dialog.whats_new import (
         CODE_FAMILIES, notes_text_color, blend_toward_text, CODE_TINT_BLEND,
     )
@@ -583,7 +583,8 @@ def test_inline_code_matches_the_body_x_height_color_and_weight(qapp):
             ".jser", "pyreconstruct /path/to/series.jser"]
         platform = "linux" if sys.platform.startswith("linux") else sys.platform
         allowed = set(CODE_FAMILIES.get(platform, ())) | {
-            QFontDatabase.systemFont(QFontDatabase.FixedFont).family()}
+            QFontDatabase.systemFont(QFontDatabase.FixedFont).family(),
+            QFontInfo(body_font).family() + " Mono"}
         for text, fmt, prev in code:
             (family,) = fmt.fontFamilies()
             assert family in allowed

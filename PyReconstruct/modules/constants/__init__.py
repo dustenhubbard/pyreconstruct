@@ -17,6 +17,7 @@ from .frozen import (
 
 from .locations import (
     createHiddenDir,
+    removeSeriesFiles,
     createNewSeriesDir,
     src_dir,
     assets_dir,

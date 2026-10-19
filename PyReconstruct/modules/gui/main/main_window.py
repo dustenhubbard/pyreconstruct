@@ -28,6 +28,7 @@ from PyReconstruct.modules.backend.func.window_geometry import (
 from .status_readout import FieldStatusReadout, StatusSegment
 from PyReconstruct.modules.gui.table.history import setAsideText
 from .wheel_steps import WheelSteps, zoom_factor
+from PyReconstruct.modules.constants import removeSeriesFiles
 from PyReconstruct.modules.constants.settings_domain import (
     domain_for, fold_series_settings_once,
 )
@@ -777,8 +778,6 @@ class MainWindow(QMainWindow):
         self.showall_act.setChecked(self.field.show_all_traces)
         self.hideimage_act.setChecked(self.field.hide_image)
         self.blend_act.setChecked(self.field.blend_sections)
-        # nothing to move until the ROI box is on
-        self.moveroibox_act.setEnabled(self.field.roi_box_on)
 
         ## Focus mode needs a selection to turn ON (it focuses the selected
         ## object); disabling the checkbox when nothing is selected avoids the
@@ -1546,7 +1545,15 @@ class MainWindow(QMainWindow):
             prev_jser_fp = None
 
         if not series_obj:  # if series is not provided
-            new_series = self._acquireSeries(jser_fp)
+            try:
+                new_series = self._acquireSeries(jser_fp)
+            except Exception:
+                # The same holds for an open that fails (a working file held
+                # open): the closed series must not stay in the window, where
+                # its edits would go to a folder no open offers back.
+                if not first_open and self.series.closed:
+                    self._restoreAfterAbortedOpen(prev_jser_fp)
+                raise
             if new_series is _OPEN_ABORTED:
                 # The outgoing series was closed above, so its hidden dir is
                 # gone. Returning here left the window holding a series whose
@@ -1687,7 +1694,7 @@ class MainWindow(QMainWindow):
         if prev_jser_fp and os.path.isfile(prev_jser_fp):
             try:
                 recovered = Series.openJser(prev_jser_fp)
-            except SeriesOpenError:
+            except (SeriesOpenError, OSError):
                 recovered = None
 
         if recovered is None:
@@ -1896,6 +1903,7 @@ class MainWindow(QMainWindow):
             Params:
                 hidden_series_dir (str): the hidden dir to remove
         """
+        removeSeriesFiles(hidden_series_dir)
         for f in os.listdir(hidden_series_dir):
             os.remove(os.path.join(hidden_series_dir, f))
         os.rmdir(hidden_series_dir)
@@ -4301,7 +4309,7 @@ class MainWindow(QMainWindow):
         self.field.generateView()
 
     def editSelectedAttributes(self):
-        """Q8 top-level field-menu shortcut: open the primary "Edit ...
+        """Top-level field-menu shortcut: open the primary "Edit ...
         attributes..." dialog for the current selection.
 
         Routes to the trace dialog when traces are selected and to the z-trace
@@ -5330,7 +5338,8 @@ class MainWindow(QMainWindow):
         if shortcuts_dict is None:
             shortcuts_dict = {}
             for k in Series.qsettings_defaults:
-                if k.endswith("_act") and getattr(self, k):
+                # a held-back act (roibox_act) keeps its key but has no action
+                if k.endswith("_act") and getattr(self, k, None):
                     shortcuts_dict[k] = self.series.getOption(k)
         
         for act_name, kbd in shortcuts_dict.items():

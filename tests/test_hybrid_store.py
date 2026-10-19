@@ -17,6 +17,7 @@ What these pin:
 * where a store lives, how it is named, and that a network folder is refused.
 """
 import copy
+import hashlib
 import json
 import os
 import shutil
@@ -111,6 +112,10 @@ def _assert_holds_what_today_writes(src, tmp_path):
     store = _import(fp)
     try:
         assert _held(store) == expected
+        # and value for value as the file reads back, where bytes cannot tell
+        # (a NaN kept by the store and a null in the file both write as null)
+        for snum, data in expected[0].items():
+            assert json.dumps(store.readSection(snum)) == json.dumps(json.loads(data)), snum
         assert store.isImported()
         assert store.matchesJser(str(fp))
     finally:
@@ -225,6 +230,143 @@ def test_the_fields_july_left_untested_import_as_they_open_today(tmp_path, store
     try:
         assert "Status" in store.seriesData()["user_columns"]
         assert "a logged event" in store.logText()
+    finally:
+        store.close()
+
+
+## values today's two JSON writers and readers treat differently: integers at
+## both 64-bit edges, NaN and the infinities, a lone surrogate, deep nesting
+_EDGE_VALUES = {
+    "int-2^63-1": 2**63 - 1, "int-2^63": 2**63, "int-2^64-1": 2**64 - 1, "int-2^64": 2**64,
+    "int-2^65+1": 2**65 + 1, "int--2^63": -(2**63), "int--2^63-1": -(2**63) - 1,
+    "nan": float("nan"), "inf": float("inf"), "-inf": float("-inf"),
+    "surrogate": "\ud800", "nested": [[[[[[[[1, [2.5, "\u00e9"]]]]]]]]],
+}
+## where a value goes, and where the lone surrogate that sends today's writer to
+## the stdlib goes when the case has one (always somewhere else in the section)
+_EDGE_PLACES = {
+    "header": ("src-tag", lambda sec, row, v: sec.__setitem__("mag", v)),
+    "coordinate": ("src", lambda sec, row, v: row[0].__setitem__(0, v)),
+    "tag": ("src", lambda sec, row, v: row[7].append(v)),
+    "series": ("src", None),
+}
+## today's open refuses a string or a nested list as a coordinate, and a nested
+## list as a tag, so those are not cases
+_EDGE_CASES = [
+    (place, name, surrogate)
+    for place in _EDGE_PLACES for name in _EDGE_VALUES for surrogate in (False, True)
+    if not (place == "coordinate" and name in ("surrogate", "nested"))
+    and not (place == "tag" and name == "nested")
+] + [("contour-name", "surrogate", False), ("duplicate-key", "inf", True)]
+
+
+def _edge_series(folder, place, name, surrogate):
+    """The parity series with one edge value in one place, written by the stdlib."""
+    value = _EDGE_VALUES[name]
+    doc = json.loads(PARITY.read_bytes())
+    sec = next(s for s in doc["sections"] if s and any(s["contours"].values()))
+    cname, rows = next((n, r) for n, r in sec["contours"].items() if r)
+    row = rows[0]
+    if place == "series":
+        doc["series"]["an_edge_value"] = value
+    elif place == "contour-name":
+        sec["contours"] = {("\ud800" if n == cname else n): r for n, r in sec["contours"].items()}
+    elif place == "duplicate-key":
+        sec["mag"] = "DUPLICATE"
+    else:
+        _EDGE_PLACES[place][1](sec, row, value)
+    if surrogate:
+        if _EDGE_PLACES.get(place, ("src",))[0] == "src":
+            sec["src"] = "\ud800"
+        else:
+            row[7].append("\ud800")
+    text = json.dumps(doc)
+    if place == "duplicate-key":
+        text = text.replace('"mag": "DUPLICATE"', '"mag": 0.5, "mag": Infinity')
+    fp = Path(folder) / "edge.jser"
+    fp.write_text(text)
+    return fp
+
+
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")  # today's open, on an infinite coordinate
+@pytest.mark.parametrize("place, name, surrogate", _EDGE_CASES,
+                         ids=[f"{p}-{n}" + ("-with-a-surrogate" if s else "") for p, n, s in _EDGE_CASES])
+def test_an_edge_value_imports_as_it_opens_today(place, name, surrogate, tmp_path, store_root):
+    # The store writes a section in parts (its header, each trace) but must hold
+    # what today's open writes as one file: whichever writer that file took.
+    folder = tmp_path / "src"
+    folder.mkdir()
+    _assert_holds_what_today_writes(_edge_series(folder, place, name, surrogate), tmp_path)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="only Linux takes a file name that is not UTF-8")
+def test_a_file_named_with_a_byte_that_is_not_utf_8_gets_a_store(tmp_path, store_root):
+    folder = tmp_path / "src"
+    folder.mkdir()
+    src = folder / os.fsdecode(b"bad\xff.jser")  # reaches Python as a lone surrogate
+    shutil.copyfile(PARITY, src)
+    _assert_holds_what_today_writes(src, tmp_path)
+    fp = tmp_path / "store" / src.name
+    store = HybridStore.forJser(str(fp))
+    try:
+        assert store.meta("jser_path") == os.path.realpath(fp)
+    finally:
+        store.close()
+
+
+def _name_limit(folder) -> int:
+    try:
+        return os.pathconf(folder, "PC_NAME_MAX")
+    except (AttributeError, OSError, ValueError):
+        return 255
+
+
+@pytest.mark.parametrize("extra", [0, 20], ids=["at-the-limit", "20-short-of-it"])
+def test_a_series_with_a_long_name_gets_a_store(extra, tmp_path, store_root):
+    folder = tmp_path / "src"
+    folder.mkdir()
+    src = folder / ("a" * (_name_limit(folder) - len(".jser") - extra) + ".jser")
+    shutil.copyfile(PARITY, src)
+    _assert_holds_what_today_writes(src, tmp_path)  # today's open takes it first
+    store = HybridStore.forJser(str(tmp_path / "store" / src.name))
+    try:
+        store.writePendingSeries(store.seriesData())  # and SQLite makes its side files
+        made = [p.name for p in store_root.rglob("*")]
+        assert made and max(len(os.fsencode(n)) for n in made) <= _name_limit(store_root)
+        assert len(os.fsencode(Path(store.db_fp).name + "-journal")) <= _name_limit(store_root)
+    finally:
+        store.close()
+
+
+def test_a_utf_8_name_keeps_the_key_it_had(tmp_path, store_root):
+    if sys.getfilesystemencoding() != "utf-8":
+        pytest.skip("the file system encoding is not UTF-8")
+    fp = tmp_path / "caf\u00e9 \U0001f9e0.jser"
+    fp.touch()
+    real = hybrid_store.canonicalPath(str(fp))
+    key = hashlib.sha256(real.encode("utf-8")).hexdigest()[:16]
+    assert Path(hybrid_store.storePaths(str(fp))[0]).name == f"{key}.v{hybrid_store.SCHEMA_VERSION}.pyrstore"
+
+
+def test_a_path_that_is_not_utf_8_is_recorded_as_it_is(tmp_path, store_root):
+    # a Linux name with a byte that is not UTF-8, or a Windows name with a lone
+    # surrogate, comes to Python as a lone surrogate
+    (tmp_path / "s.jser").touch()
+    store = HybridStore.forJser(str(tmp_path / "s.jser"))
+    try:
+        store.setMeta("jser_path", "/data/\udcff.jser")
+        assert store.meta("jser_path") == "/data/\udcff.jser"
+    finally:
+        store.close()
+
+
+def test_an_object_named_with_a_lone_surrogate_is_found_by_name(tmp_path, store_root):
+    folder = tmp_path / "src"
+    folder.mkdir()
+    store = _import(_edge_series(folder, "contour-name", "surrogate", False))
+    try:
+        found = store.objectTraces("\ud800")
+        assert found and all(snum in store.sectionNumbers() for snum, _ in found)
     finally:
         store.close()
 
@@ -374,10 +516,13 @@ def test_a_second_import_replaces_everything_and_drops_unsaved_work(tmp_path, st
     [[1, 2.0, 3.0], [4.0, 5.0, 6.0], [0, 0, 0], True, False, False, ["none", "none"], []],
     [[], [], [0, 0, 0], False, False, False, ["none", "none"], []],
     {"x": [1.0, 2.0], "y": [3.0, 4.0], "color": [1, 2, 3]},
-], ids=["floats", "an-int-coordinate", "empty", "keyed"])
+    [[2**64, 2.0], [3.0, 4.0], [0, 0, 0], True, False, False, ["none", "none"], []],
+    [[-(2**63) - 1, 2.0], [3.0, 4.0], [0, 0, 0], True, False, False, ["none", "none"], []],
+], ids=["floats", "an-int-coordinate", "empty", "keyed", "an-int-past-64-bits", "a-negative-int-past-64-bits"])
 def test_a_trace_row_comes_back_exactly(row):
-    shape, npts, xy, rest, *_ = packRow(row)
-    back = unpackRow(shape, npts, xy, rest)
+    exact = hybrid_store.wholeIsExact({"row": row})  # as its section would be written
+    shape, npts, xy, rest, *_ = packRow(row, exact)
+    back = unpackRow(shape, npts, xy, rest, exact)
     assert back == row
     assert json.dumps(back) == json.dumps(row)  # -0.0 and int stay as they were
     if isinstance(row, list) and row[0]:
@@ -938,11 +1083,10 @@ def test_the_store_is_keyed_by_the_real_path_and_lives_in_the_store_folder(platf
     assert hybrid_store.storePaths(str(fp)) != hybrid_store.storePaths(str(other))
     db_fp, work = hybrid_store.storePaths(str(fp))
     assert Path(db_fp).parent == store_root == Path(work).parent
-    stem, _, key = Path(db_fp).name.rpartition("-")
-    key, version = key.split(".")[:2]
-    assert stem == fp.stem and len(key) == 16 and int(key, 16) >= 0
+    key, version = Path(db_fp).name.split(".")[:2]
+    assert len(key) == 16 and int(key, 16) >= 0
     assert version == f"v{hybrid_store.SCHEMA_VERSION}", "a build of another version never opens it"
-    assert Path(db_fp).name == f"{stem}-{key}.{version}.pyrstore" and Path(work).name == f"{stem}-{key}.{version}.work"
+    assert Path(db_fp).name == f"{key}.{version}.pyrstore" and Path(work).name == f"{key}.{version}.work"
 
 
 def _ignores_case(folder) -> bool:

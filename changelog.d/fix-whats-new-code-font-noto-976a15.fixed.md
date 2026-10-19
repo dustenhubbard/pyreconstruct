@@ -1,0 +1,1 @@
+- **On Linux with Noto Sans, code in What's New matches the size of the text around it.**

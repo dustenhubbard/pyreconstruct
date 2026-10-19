@@ -1,11 +1,25 @@
 import os
 from pathlib import Path
 
+def removeSeriesFiles(folder):
+    """Remove the .ser files directly in a working folder, before the rest of it.
+
+    An open writes the .ser last, and only a folder that has one is opened or
+    offered as unsaved work. Removed first, a removal stopped partway (a crash,
+    the app killed) leaves a folder the next open replaces from the .jser,
+    never one offered with sections or the history already gone.
+    """
+    for name in os.listdir(folder):
+        path = os.path.join(folder, name)
+        if name.lower().endswith(".ser") and not os.path.isdir(path):
+            os.remove(path)
+
 def createHiddenDir(jser_dir, series_name):
-    """Create a hidden folder to contain the individual section and series files."""    
+    """Create a hidden folder to contain the individual section and series files."""
     hidden_dir = os.path.join(jser_dir, f".{series_name}")
     # check if the folder exists, delete if it does
     if os.path.isdir(hidden_dir):
+        removeSeriesFiles(hidden_dir)
         for f in os.listdir(hidden_dir):
             os.remove(os.path.join(hidden_dir, f))
         os.rmdir(hidden_dir)

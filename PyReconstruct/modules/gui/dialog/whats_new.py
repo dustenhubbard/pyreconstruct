@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import (
     QColor, QPalette, QTextCursor, QTextCharFormat, QTextBlockFormat,
-    QFont, QFontDatabase, QFontMetricsF,
+    QFont, QFontDatabase, QFontInfo, QFontMetricsF,
 )
 from PySide6.QtCore import Qt, QSettings, QEvent, QRect
 
@@ -206,8 +206,8 @@ TYPE_GAP = 14
 # largest text on screen.
 VERSION_HEADING_STEP = 4
 
-# Inline code (`.jser`) in the notes: the platform's own monospace, first
-# installed one wins, and the system fixed font after these. Qt's markdown
+# Inline code (`.jser`) in the notes: the platform's own monospace, tried in
+# order (``code_font``), and the system fixed font after these. Qt's markdown
 # reader sets code in the system fixed font at its own size and normal weight,
 # which next to the body reads too large and too light, more so inside a bold
 # claim. ``restyle_code_runs`` resizes it so its x-height matches the body's
@@ -218,36 +218,58 @@ CODE_FAMILIES = {
     "linux": ("DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono"),
 }
 
+# How close, in pixels, a monospace's x-height has to land to the body's once
+# resized. A family whose x-height rounds to whole pixels can still miss a
+# body whose x-height does not by half a pixel (DejaVu Sans Mono beside Noto
+# Sans), and then the next family gets its turn.
+CODE_X_HEIGHT_TOLERANCE = 0.5
+
 # How far the tint behind inline code steps from the background toward the
 # text color: just enough to mark the span in either theme.
 CODE_TINT_BLEND = 0.07
 
 
-def code_font_family():
-    """The monospace family inline code is set in on this platform."""
+def code_font(base_font, base_pt):
+    """The monospace family and point size inline code is set in.
+
+    The size scales ``base_pt`` by the body's x-height over the monospace's,
+    so lowercase letters stand as tall in the code as around it. The family is
+    the body's own monospace when there is one (Noto Sans Mono beside Noto
+    Sans), else the first installed one from ``CODE_FAMILIES``, else the
+    system fixed font: the first of those whose x-height lands within
+    ``CODE_X_HEIGHT_TOLERANCE`` of the body's, or failing that the closest.
+    """
     installed = set(QFontDatabase.families())
     platform = "linux" if sys.platform.startswith("linux") else sys.platform
-    for family in CODE_FAMILIES.get(platform, ()):
-        if family in installed:
-            return family
-    return QFontDatabase.systemFont(QFontDatabase.FixedFont).family()
+    families = [f for f in (QFontInfo(base_font).family() + " Mono",
+                            *CODE_FAMILIES.get(platform, ()))
+                if f in installed]
+    fixed = QFontDatabase.systemFont(QFontDatabase.FixedFont).family()
+    families = list(dict.fromkeys([*families, fixed]))
+    body_x = QFontMetricsF(base_font).xHeight()
+    best = None
+    for family in families:
+        mono = QFont(family)
+        mono.setPointSizeF(base_pt)
+        mono_x = QFontMetricsF(mono).xHeight()
+        pt = base_pt * body_x / mono_x if mono_x > 0 else base_pt
+        mono.setPointSizeF(pt)
+        gap = abs(QFontMetricsF(mono).xHeight() - body_x)
+        if gap < CODE_X_HEIGHT_TOLERANCE:
+            return family, pt
+        if best is None or gap < best[0]:
+            best = (gap, family, pt)
+    return best[1], best[2]
 
 
 def code_char_format(base_font, base_pt, weight, color, tint):
-    """The character format for one run of inline code in the notes.
-
-    The point size scales ``base_pt`` by the body's x-height over the
-    monospace's, so lowercase letters stand as tall in the code as around it.
-    """
-    family = code_font_family()
-    mono = QFont(family)
-    mono.setPointSizeF(base_pt)
-    mono_x = QFontMetricsF(mono).xHeight()
-    body_x = QFontMetricsF(base_font).xHeight()
+    """The character format for one run of inline code in the notes; the
+    family and size come from ``code_font``."""
+    family, pt = code_font(base_font, base_pt)
     fmt = QTextCharFormat()
     fmt.setFontFamilies([family])
     fmt.setFontFixedPitch(True)
-    fmt.setFontPointSize(base_pt * body_x / mono_x if mono_x > 0 else base_pt)
+    fmt.setFontPointSize(pt)
     fmt.setFontWeight(weight)
     fmt.setFontLetterSpacingType(QFont.SpacingType.PercentageSpacing)
     fmt.setFontLetterSpacing(100)

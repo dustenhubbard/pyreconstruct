@@ -124,21 +124,9 @@ default_settings = {
     "deccon_act": "[",
     "inccon_act": "]",
     "blend_act": "Space",
-    # View > Toggle ROI box: shows only the traces inside a box clicked into
-    # the field, and then each click moves the box, so it is a tool as much as
-    # a view toggle, and both sit on bare letters (P, K, S; H, A, I, X). B for
-    # box. Unused across this whole dict and the shortcuts written in the
-    # source, and not a chord the 2026-08-23 sweep freed.
-    #   macOS   -- a bare letter; no OS binding.
-    #   Windows -- a bare letter; no OS binding, no menu mnemonic (no Alt).
-    #   Linux   -- a bare letter; not a desktop binding.
-    # Verified by reasoning against documented OS-reserved sequences, NOT by
-    # pressing it on a Windows or Linux box.
-    #
-    # Rejected: R (for ROI) sits beside Ctrl+R, which the sweep freed from
-    # restart on purpose so an old habit lands on silence; Ctrl+Shift+B is the
-    # manual backup; Ctrl+B is pasteattributes_act's legacy alias.
-    "roibox_act": "B",
+    # the ROI box has no menu entry or key until it returns as ROI mode, a
+    # palette tool; the key stays because a settings key is never removed
+    "roibox_act": "",
     "toggleztraces_act": "",  # checkable "Show z-traces"; no default key
     "homeview_act": "Home",
     "selectall_act": "Ctrl+A",

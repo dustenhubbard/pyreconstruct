@@ -1,20 +1,21 @@
-"""S3: the reader understands a keyed trace row AND ADOPTS ITS ID.
+"""The reader understands a keyed trace row AND ADOPTS ITS ID.
 
-S3 of `specs/phase1-keyed-row-v1-slices-2026-08-06.md`. The writer is untouched:
-nothing here makes this build emit a row shape it did not emit before.
+The writer is untouched: nothing here makes this build emit a row shape it did
+not emit before.
 
-WHAT THIS SLICE IS ACTUALLY ABOUT, AND IT IS NOT DECODING
----------------------------------------------------------
+WHAT THIS IS ACTUALLY ABOUT, AND IT IS NOT DECODING
+---------------------------------------------------
 Decoding a keyed row was never the hard half. `Section.updateJSON` has carried a
 `if type(trace) is dict:` branch since before `v1.19.0`, and the repository's own
 `dev/assets/checker/files/class_series.jser` fixture is written entirely in the
 keyed shape -- so "a keyed row loads" has been true for years and proves nothing
-about this slice. The half that did not exist is the `id`: a keyed row may carry
+about this file. The half that did not exist is the `id`: a keyed row may carry
 the trace's persisted identity, and every reader in the tree dropped it.
 
 Every test that matters here therefore asserts the trace's id is **the one the
 file named**, not merely that the trace loaded. That distinction is the whole
-slice, because S1 DERIVES an id from each row's own content: a reader that
+point, because the load DERIVES an id from each row's own content when the row
+stores none: a reader that
 throws the stored id away silently re-derives a plausible-looking id for every
 row and looks completely healthy. The ids these tests write into their fixtures
 are deliberately arbitrary strings that no derivation would ever produce, so a
@@ -199,9 +200,9 @@ def _openSeries(fp):
 def _storeIDs(series) -> dict:
     """`{(section, contour, index): id}` read back through the columnar store.
 
-    Through `SectionColumns.getID`, which is the done criterion's own endpoint:
-    the id has to survive the file, the unpack, the working copy, the object
-    model and the store build, and this reads it at the far end of all five.
+    Through `SectionColumns.getID`: the id has to survive the file, the unpack,
+    the working copy, the object model and the store build, and this reads it at
+    the far end of all five.
     """
     ids = {}
     for snum in sorted(series.sections):
@@ -219,12 +220,12 @@ def _storeIDs(series) -> dict:
 
 
 def test_a_keyed_jser_opens_with_every_id_preserved_to_getID(tmp_path):
-    """Done criterion 1, and the one that carries the slice.
+    """The test that carries this file.
 
     Every row keyed, every row carrying a hand-written id, read back at
     `SectionColumns.getID`. The ids are arbitrary strings, so a build that
     decodes the keyed row and drops the id passes every shape assertion here and
-    still fails: it returns S1's derived id, which is not any of these.
+    still fails: it returns the derived id, which is not any of these.
     """
     nextID = _idFactory()
 
@@ -261,12 +262,12 @@ def test_a_keyed_jser_opens_with_every_id_preserved_to_getID(tmp_path):
 
 
 def test_a_mixed_section_loads_every_shape_correctly(tmp_path):
-    """Done criterion 2: four row shapes in one section, all four correct.
+    """Four row shapes in one section, all four correct.
 
     Keyed+id, keyed without an id, positional, and -- the case the spec names
     but the obvious implementation misses -- the two spellings of the fill mode
-    side by side in one contour. A row with no id must still get one (derived,
-    per S1), and it must not accidentally receive a neighbour's.
+    side by side in one contour. A row with no id must still get one (derived
+    from its content), and it must not accidentally receive a neighbor's.
     """
     nextID = _idFactory()
 
@@ -319,9 +320,8 @@ def test_both_fill_mode_spellings_decode_to_the_same_trace(tmp_path):
     Read tolerance is not a preference here, it is the 2026-07-27 non-negotiable
     ("the READER must keep reading every past shape forever"): `mode` is what
     every shipped build since `v1.19.0` writes, `fill_mode` is what the model
-    and `docs/JSER_FORMAT.md` call the field. This slice takes no position on
-    which one a writer should emit -- that is Q1 -- it only refuses to lose
-    either.
+    and `docs/JSER_FORMAT.md` call the field. The reader takes no position on
+    which one a writer should emit; it only refuses to lose either.
     """
     modes = {}
     nextID = _idFactory()
@@ -356,7 +356,7 @@ def test_both_fill_mode_spellings_decode_to_the_same_trace(tmp_path):
 
 
 def test_a_duplicate_id_across_two_sections_is_reported_by_name(tmp_path):
-    """Done criterion 4: detected and reported, never silently adopted.
+    """Detected and reported, never silently adopted.
 
     One id planted on a row in two different sections. The policy
     `trace_id.py` records is refuse-and-report: the first claim wins, the second
@@ -423,7 +423,7 @@ def test_a_duplicate_id_across_two_sections_is_reported_by_name(tmp_path):
 
 
 def test_the_undo_baseline_reads_a_keyed_section_file(tmp_path):
-    """Done criterion 3, and mechanism 5: the one silent trap in the read path.
+    """The one silent trap in the read path.
 
     `SectionStates.initialize` `shutil.copyfile`s the section file as the undo
     baseline and `FieldState.getContours` parses that copy by calling
@@ -508,7 +508,7 @@ def test_the_undo_baseline_reads_a_keyed_section_file(tmp_path):
 def test_the_unpack_preserves_the_id_into_the_hidden_working_copy(tmp_path):
     """`Series.openJser` must not write the id out of existence.
 
-    This is the hole that made every other done criterion unreachable, and it
+    This is the hole that made every other test here unreachable, and it
     sits ABOVE the load path rather than in it. `openJser` runs
     `Section.updateJSON` over the unpacked document -- which converts a keyed
     row to the positional shape -- and writes the RESULT into the hidden working
@@ -557,10 +557,10 @@ def test_the_working_copy_keeps_the_spelling_the_file_used(tmp_path):
 
     The working copy is what `saveJser` copies verbatim into a `.jser` for a
     section nobody touched, so a spelling chosen here becomes a spelling in the
-    user's file. A reader slice is entitled to preserve what it read and not to
+    user's file. A reader is entitled to preserve what it read and not to
     pick: a row that arrived spelling `mode` is written back spelling `mode`, so
     the set of builds that can open the section is exactly what it was. Which
-    spelling a WRITER emits is Q1 and is decided elsewhere.
+    spelling a WRITER emits is decided elsewhere.
     """
     spellings = {}
     nextID = _idFactory()
@@ -753,7 +753,7 @@ def test_a_file_with_no_stored_ids_is_untouched_by_any_of_this(tmp_path):
     This is the whole installed base: the keyed shape has shipped since before
     `v1.19.0` and no build has ever written an `id` onto a row. Such a row must
     convert to the positional form in the working copy exactly as it always did,
-    derive its id per S1, and report nothing.
+    derive its id from its content, and report nothing.
     """
     destination = tmp_path / "stock.jser"
     shutil.copy(SERIES_FIXTURE, destination)
@@ -775,7 +775,7 @@ def test_a_file_with_no_stored_ids_is_untouched_by_any_of_this(tmp_path):
         assert all(
             value is not None and len(value) == TRACE_ID_LENGTH
             for value in ids.values()
-        ), "S1's derivation stopped covering rows that carry no stored id"
+        ), "id derivation stopped covering rows that carry no stored id"
         assert series.trace_id_issuer.collisions == ()
         assert series.trace_id_issuer.malformed == ()
     finally:
