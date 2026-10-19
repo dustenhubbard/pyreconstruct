@@ -235,3 +235,49 @@ def test_declined_unsaved_work_is_cleared_series_file_first(
         MainWindow._clearHiddenSeriesDir(str(folder))
     assert stop_after_first_remove == ["series.ser"]
     assert not _ser_files(folder)
+
+
+@pytest.fixture
+def log_held(monkeypatch):
+    """existing_log.csv cannot be removed, as when another program holds it on Windows."""
+    def held(real):
+        def remove(path, *args, **kwargs):
+            if os.path.basename(str(path)) == "existing_log.csv":
+                raise PermissionError(13, "Permission denied", path)
+            return real(path, *args, **kwargs)
+        return remove
+
+    monkeypatch.setattr(os, "remove", held(os.remove))
+    monkeypatch.setattr(os, "unlink", held(os.unlink))
+
+
+def test_close_finishes_once_its_series_file_is_gone(series_jser, log_held):
+    """A file held after the .ser is gone leaves nothing to edit in the folder."""
+    series = _open(series_jser)
+    hidden = series.hidden_dir
+    sections = dict(series.sections)
+    series.close()  # does not raise
+    assert series.closed
+    assert os.listdir(hidden) == ["existing_log.csv"]
+
+    reopened = _open(series_jser)
+    try:
+        assert not reopened.leave_open
+        assert reopened.sections == sections
+    finally:
+        reopened.close()
+
+
+@pytest.mark.gui
+def test_opening_another_series_with_a_held_file_moves_the_window_on(
+    main_window, series_jser, tmp_path, log_held
+):
+    """The window never keeps editing a series whose folder lost its .ser."""
+    old = main_window.series
+    other = tmp_path / "other" / "other.jser"
+    other.parent.mkdir()
+    shutil.copy(series_jser, other)
+    main_window.openSeries(jser_fp=str(other), query_prev=False)
+    assert main_window.series is not old
+    assert main_window.series.jser_fp == str(other)
+    assert old.closed and not _ser_files(old.hidden_dir)

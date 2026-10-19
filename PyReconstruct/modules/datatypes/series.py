@@ -1720,14 +1720,25 @@ class Series():
 
         if os.path.isdir(self.hidden_dir):
 
+            # a .ser that cannot be removed (held open) stops the close with
+            # every file in place, and the series stays in the window, usable
             removeSeriesFiles(self.hidden_dir)
+
+            # Without its .ser the folder is never offered as unsaved work, so
+            # an edit saved in it now would be lost. The close finishes
+            # instead: a file that cannot be removed is left for the next open,
+            # which replaces the folder from the .jser.
+            self.closed = True
             for f in os.listdir(self.hidden_dir):
-                os.remove(os.path.join(self.hidden_dir, f))
+                try:
+                    os.remove(os.path.join(self.hidden_dir, f))
+                except OSError:
+                    pass
+            try:
+                os.rmdir(self.hidden_dir)
+            except OSError:
+                pass
 
-            os.rmdir(self.hidden_dir)
-
-        # only once its files are gone: a close that raised part-way (a
-        # locked working file) leaves the series in the window, still usable
         self.closed = True
     
     @staticmethod
