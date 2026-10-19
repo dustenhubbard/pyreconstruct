@@ -31,11 +31,18 @@ behind it. A store that cannot be read is not clean, so it is kept.
 
 Cleanup removes a clean store not opened for MAX_AGE_DAYS, then, while the
 folder is over SIZE_CAP, clean stores oldest first. Every removal takes the
-store's own lock and reads the store again under it first. A file is removed
-only by a name built from the store folder and a name of the store's own
-shape (no separator, so no other folder), only when it is a plain file (a
-link is never followed or removed), and the working folder only when it is
-empty (os.rmdir).
+store's own lock and reads the store again under it first, and removes it
+only when it is still clean and still due (an open since the scan makes it
+recent). A file is removed only by a name of the store's own shape (no
+separator, so no other folder), only when it is a plain file when looked at
+(removing a name never touches what a link points at), and the working folder
+only when it is empty (os.rmdir). Off Windows the store folder is held open
+and every lock and removal goes through it (dir_fd), so a folder moved or
+swapped for a link meanwhile is never reached through its path; on Windows a
+folder with an open file in it cannot be moved. The lock file is never
+removed: an opener that had opened it before the removal would lock the
+removed file while the next opener locks a new one, and both would hold the
+store.
 """
 
 import os
@@ -44,6 +51,7 @@ import sqlite3
 import stat
 import sys
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -64,11 +72,11 @@ MAX_AGE_DAYS = 30
 SIZE_CAP = 20 * 1024 ** 3
 
 _STORE = re.compile(rf"[0-9a-f]{{16}}\.v{SCHEMA_VERSION}\.pyrstore")
-## a store's own files: the store, SQLite's side files, the file `_create`
-## writes first and its journal, and the lock
+## the files of a store cleanup removes: the store, SQLite's side files, and
+## the file `_create` writes first and its journal; never the lock
 _STORE_FILE = re.compile(
     rf"[0-9a-f]{{16}}\.v{SCHEMA_VERSION}\.pyrstore"
-    r"(-wal|-shm|-journal|\.new|\.new-journal|\.lock)?"
+    r"(-wal|-shm|-journal|\.new|\.new-journal)?"
 )
 _WORK_DIR = re.compile(rf"[0-9a-f]{{16}}\.v{SCHEMA_VERSION}\.work")
 ## removed in this order: SQLite's side files before the store, so a removal
@@ -119,9 +127,22 @@ def settingOn() -> bool:
     store = default_settings_store()
     if isinstance(store, QSettingsStore) and "PySide6.QtCore" not in sys.modules:
         return False
+    return _isOn(store)
+
+
+def _isOn(store) -> bool:
     if not store.contains(None, SETTING):
         return False
     return store.value(None, SETTING, bool) in (True, "true", 1, "1")
+
+
+def storedSetting(series) -> bool:
+    """The setting as stored for the Options dialog; False when never set.
+
+    Reads only: `Series.getOption` stores the default of an option it does
+    not find, and the dialog writes nothing before OK.
+    """
+    return _isOn(series._settingsStore())
 
 
 def setSetting(series, on : bool):
@@ -161,29 +182,65 @@ class CleanupReport:
     freed : int = 0                                # bytes
 
 
-def _lockedStore(db_fp : str):
+## os.open, os.stat (and so os.lstat), os.unlink and os.rmdir take dir_fd
+## (not on Windows)
+_DIR_FD = {os.open, os.stat, os.unlink, os.rmdir} <= os.supports_dir_fd
+
+
+class _Folder:
+    """The store folder as cleanup found it: held open off Windows.
+
+    `path(name)` is the name to pass with `dir_fd=fd`: the bare name when the
+    folder is held open, so the call reaches the held folder whatever is at
+    its path now, else the full path.
+    """
+
+    def __init__(self, root : str):
+        self.root = root
+        self.fd = None
+        if _DIR_FD:
+            self.fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+
+    def path(self, name : str) -> str:
+        return name if self.fd is not None else os.path.join(self.root, name)
+
+    def same(self) -> bool:
+        """True while the folder's path still names the folder held open."""
+        if self.fd is None:
+            return True
+        try:
+            at_path = os.lstat(self.root)
+        except OSError:
+            return False
+        held = os.fstat(self.fd)
+        return (at_path.st_dev, at_path.st_ino) == (held.st_dev, held.st_ino)
+
+    def close(self):
+        if self.fd is not None:
+            os.close(self.fd)
+            self.fd = None
+
+
+@contextmanager
+def _held(root : str, folder : _Folder | None):
+    """folder when the caller holds one, else the folder at root, for this call."""
+    if folder is not None:
+        yield folder
+        return
+    folder = _Folder(root)
+    try:
+        yield folder
+    finally:
+        folder.close()
+
+
+def _lockedStore(folder : _Folder, name : str):
     """The store's lock fd, or None when another holder has it.
 
     The lock HybridStore takes for every open, so a store being opened or
     imported is never read or removed here.
     """
-    return hybrid_store._lockFile(db_fp + ".lock")
-
-
-def _release(fd, lock_fp : str | None = None):
-    """Let go of a store's lock, removing its lock file when lock_fp is given.
-
-    Off Windows the file is removed while the lock is held, so no other
-    opener can take this lock file between the two. Windows will not remove
-    a file that is open, so there it is closed first.
-    """
-    try:
-        if lock_fp is not None and sys.platform != "win32":
-            _removeFile(*os.path.split(lock_fp))
-    finally:
-        os.close(fd)
-    if lock_fp is not None and sys.platform == "win32":
-        _removeFile(*os.path.split(lock_fp))
+    return hybrid_store._lockFile(folder.path(name + ".lock"), dir_fd=folder.fd)
 
 
 def _seconds(utc):
@@ -233,8 +290,9 @@ def _readState(root : str, name : str) -> StoreState:
         ):
             state.why = UNREADABLE
             return state
-        # mode=rw: a store that is gone is not made again by reading it
-        con = sqlite3.connect(Path(db_fp).as_uri() + "?mode=rw", uri=True, timeout=1)
+        # mode=rw: a store that is gone is not made again by reading it.
+        # A file URI needs a full path (the folder may be set relative).
+        con = sqlite3.connect(Path(os.path.abspath(db_fp)).as_uri() + "?mode=rw", uri=True, timeout=1)
         try:
             tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             if not REQUIRED_TABLES <= tables:
@@ -278,85 +336,99 @@ def _readState(root : str, name : str) -> StoreState:
         return state
 
 
-def readState(root : str, name : str) -> StoreState:
+def readState(root : str, name : str, folder : _Folder | None = None) -> StoreState:
     """One store's record, read under its lock (released after)."""
-    fd = _lockedStore(os.path.join(root, name))
-    if fd is None:
-        return StoreState(name, why=IN_USE)
-    try:
-        return _readState(root, name)
-    finally:
-        os.close(fd)
+    with _held(root, folder) as folder:
+        try:
+            fd = _lockedStore(folder, name)
+        except OSError as e:
+            log_note(f"Local copy {name} could not be locked: {e}")
+            return StoreState(name, why=UNREADABLE)
+        if fd is None:
+            return StoreState(name, why=IN_USE)
+        try:
+            return _readState(root, name)
+        finally:
+            os.close(fd)
 
 
 ## ---------------------------------------------------------------------------
 ## removing a store
 ## ---------------------------------------------------------------------------
 
-def _removeFile(root : str, name : str):
-    """Remove root/name when it is a plain file of a store; nothing else.
+def _removeFile(folder : _Folder, name : str):
+    """Remove a plain file of a store from the folder; nothing else.
 
-    root is the store folder and name must be a store file's own name, which
-    holds no separator, so no path outside the folder can be reached. A link
-    is never followed or removed. A file that is not there is fine.
+    name must be a store file's own name, which holds no separator, so no
+    other folder can be reached. A link is never followed: removing a name
+    removes that name only. A file that is not there is fine.
     """
     if not _STORE_FILE.fullmatch(name):
         raise ValueError(f"not a local store file: {name!r}")
-    fp = os.path.join(root, name)
+    fp = folder.path(name)
     try:
-        st = os.lstat(fp)
+        st = os.lstat(fp, dir_fd=folder.fd)
     except FileNotFoundError:
         return
     if not stat.S_ISREG(st.st_mode):
-        raise OSError(f"{fp} is not a plain file; it was left as it is")
-    os.unlink(fp)
+        raise OSError(f"{name} is not a plain file; it was left as it is")
+    os.unlink(fp, dir_fd=folder.fd)
 
 
-def _removeWorkDir(root : str, name : str):
+def _removeWorkDir(folder : _Folder, name : str):
     """Remove a store's working folder when it is an empty folder; nothing else."""
     if not _WORK_DIR.fullmatch(name):
         raise ValueError(f"not a local store folder: {name!r}")
-    fp = os.path.join(root, name)
+    fp = folder.path(name)
     try:
-        st = os.lstat(fp)
+        st = os.lstat(fp, dir_fd=folder.fd)
     except FileNotFoundError:
         return
     if not stat.S_ISDIR(st.st_mode):
-        raise OSError(f"{fp} is not a folder; it was left as it is")
-    os.rmdir(fp)  # refuses a folder with anything in it
+        raise OSError(f"{name} is not a folder; it was left as it is")
+    os.rmdir(fp, dir_fd=folder.fd)  # refuses a folder with anything in it
 
 
-def removeIfClean(root : str, name : str) -> StoreState:
+def removeIfClean(root : str, name : str, folder : _Folder | None = None, due=None) -> StoreState:
     """Remove one store if it is clean, read again under its lock.
 
-    Returns its state; `clean` is True only when it was removed.
+    due, when given, is asked again of the state read under the lock: a store
+    opened since the caller looked is no longer due. Returns its state;
+    `clean` is True only when it was removed.
     """
     if not _STORE.fullmatch(name):
         raise ValueError(f"not a local store: {name!r}")
-    db_fp = os.path.join(root, name)
-    fd = _lockedStore(db_fp)
-    if fd is None:
-        return StoreState(name, why=IN_USE)
-    lock_fp : str | None = None
-    try:
-        state = _readState(root, name)
-        if not state.clean:
-            return state
+    with _held(root, folder) as folder:
         try:
-            for suffix in _SIDE_FILES:
-                _removeFile(root, name + suffix)
-            _removeFile(root, name)
-            _removeWorkDir(root, name[:-len(".pyrstore")] + ".work")
+            fd = _lockedStore(folder, name)
         except OSError as e:
-            log_note(f"Local copy {name} was not fully removed: {e}")
-            return StoreState(name, why=UNREADABLE, size=state.size, last_used=state.last_used)
-        lock_fp = db_fp + ".lock"
-        return state
-    finally:
+            log_note(f"Local copy {name} could not be locked: {e}")
+            return StoreState(name, why=UNREADABLE)
+        if fd is None:
+            return StoreState(name, why=IN_USE)
         try:
-            _release(fd, lock_fp)
-        except OSError:
-            pass
+            # what is read is what is removed: the folder at root is still
+            # the one held open, before the read and after it
+            state = _readState(root, name) if folder.same() else None
+            if state is None or (state.clean and not folder.same()):
+                log_note(f"Local copy {name} was kept: the store folder moved while it was read")
+                return StoreState(name, why=UNREADABLE)
+            if not state.clean:
+                return state
+            if due is not None and not due(state):
+                state.clean = False
+                return state
+            try:
+                for suffix in _SIDE_FILES:
+                    _removeFile(folder, name + suffix)
+                _removeFile(folder, name)
+                _removeWorkDir(folder, name[:-len(".pyrstore")] + ".work")
+            except OSError as e:
+                log_note(f"Local copy {name} was not fully removed: {e}")
+                return StoreState(name, why=UNREADABLE, size=state.size, last_used=state.last_used)
+            return state
+        finally:
+            os.close(fd)
 
 
 ## ---------------------------------------------------------------------------
@@ -411,24 +483,28 @@ def cleanUp(now : float | None = None, max_age_days : float = MAX_AGE_DAYS, cap 
         return report
     if now is None:
         now = datetime.now(timezone.utc).timestamp()
-    states = [readState(root, name) for name in storeNames(root)]
-    total = folderSize()
-    for s in states:
-        if not s.clean:
-            report.kept.append((s.name, s.why))
-    # oldest first: every old one, then more while the folder is over the cap
-    for s in sorted((s for s in states if s.clean), key=lambda s: s.last_used):
-        old = now - s.last_used > max_age_days * 86400
-        if not old and total <= cap:
-            report.kept.append((s.name, ""))
-            continue
-        done = removeIfClean(root, s.name)
-        if done.clean:
-            report.removed.append(s.name)
-            report.freed += done.size
-            total -= done.size
-        else:
-            report.kept.append((s.name, done.why))
+    with _held(root, None) as folder:
+        states = [readState(root, name, folder) for name in storeNames(root)]
+        total = folderSize()
+
+        def due(s):
+            return now - s.last_used > max_age_days * 86400 or total > cap
+
+        for s in states:
+            if not s.clean:
+                report.kept.append((s.name, s.why))
+        # oldest first: every old one, then more while the folder is over the cap
+        for s in sorted((s for s in states if s.clean), key=lambda s: s.last_used):
+            if not due(s):
+                report.kept.append((s.name, ""))
+                continue
+            done = removeIfClean(root, s.name, folder, due)
+            if done.clean:
+                report.removed.append(s.name)
+                report.freed += done.size
+                total -= done.size
+            else:
+                report.kept.append((s.name, done.why))
     return report
 
 
@@ -438,13 +514,14 @@ def removeClean() -> CleanupReport:
     root = storeFolder()
     if root is None:
         return report
-    for name in storeNames(root):
-        done = removeIfClean(root, name)
-        if done.clean:
-            report.removed.append(name)
-            report.freed += done.size
-        else:
-            report.kept.append((name, done.why))
+    with _held(root, None) as folder:
+        for name in storeNames(root):
+            done = removeIfClean(root, name, folder)
+            if done.clean:
+                report.removed.append(name)
+                report.freed += done.size
+            else:
+                report.kept.append((name, done.why))
     return report
 
 
@@ -487,19 +564,27 @@ def noteWorkAtOpen(jser_fp : str, notifier=None) -> bool:
     """
     try:
         db_fp, _ = storePaths(jser_fp)
-    except OSError:
+        if not os.path.isfile(db_fp):
+            return False
+        # the folder's real, full path, as cleanup reads it (storeFolder)
+        root, store_name = os.path.split(db_fp)
+        root = os.path.realpath(root)
+        db_fp = os.path.join(root, store_name)
+        state = readState(root, store_name)
+    except (OSError, ValueError) as e:
+        # a notice only: the open goes on whatever happens here
+        log_note(f"Could not look for a local copy of {jser_fp}: {e!r}")
         return False
-    if not os.path.isfile(db_fp):
-        return False
-    state = readState(*os.path.split(db_fp))
     if not state.work:
         return False
     name = os.path.splitext(os.path.basename(jser_fp))[0]
-    log_note(f"Local copy of {name} holds work its .jser lacks; opened the .jser ({db_fp})")
+    log_note(f"Local copy of {name} holds work its .jser lacks; it was not used ({db_fp})")
+    # true whichever way the open goes: the .jser, or the working folder
+    # (the hidden folder beside it) a session left
     message = (
         f"The local copy of {name} on this computer holds work that "
         f"{name}.jser does not have.\n\n"
-        f"Fast local copy is off, so this opens the .jser. "
+        f"Fast local copy is off, so this open does not use it. "
         f"The local copy is kept, and cleanup never removes it."
     )
     if notifier is None:

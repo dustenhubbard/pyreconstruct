@@ -58,7 +58,9 @@ class LocalStoreOptionWidget(BorderedWidget):
         layout.setContentsMargins(8, 6, 8, 8)
 
         self.check = QCheckBox("Fast local copy for large series", self)
-        self.check.setChecked(bool(series.getOption(local_stores.SETTING, use_defaults)))
+        # read without writing: getOption stores a default it does not find
+        on = series.getOption(local_stores.SETTING, True) if use_defaults else local_stores.storedSetting(series)
+        self.check.setChecked(bool(on))
         layout.addWidget(self.check)
         explain = QLabel(EXPLAIN, self)
         explain.setWordWrap(True)

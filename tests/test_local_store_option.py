@@ -81,10 +81,13 @@ def test_a_stable_build_has_no_row_no_tab_and_writes_no_setting(qapp, series, se
 def test_the_setting_waits_for_ok(qapp, series, settings, store_root, monkeypatch):  # noqa: F811
     monkeypatch.setattr(build_flavor, "is_dev_build", lambda: True)
     dlg = AllOptionsDialog(None, series)
+    # showing the row writes nothing, not even the default
+    assert not settings.contains(None, SETTING)
     dlg.all_widgets["local_store"].check.setChecked(True)
     assert not local_stores.enabled()
     dlg.reject()
     assert not local_stores.enabled()
+    assert not settings.contains(None, SETTING)
 
     dlg = AllOptionsDialog(None, series)
     assert not dlg.all_widgets["local_store"].check.isChecked()

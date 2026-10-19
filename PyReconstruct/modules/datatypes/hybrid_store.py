@@ -106,13 +106,13 @@ def _isBusy(err : Exception) -> bool:
     return "locked" in text or "busy" in text
 
 
-def _lockFile(path : str):
+def _lockFile(path : str, dir_fd=None):
     """Hold an exclusive lock on path for the life of the process, or None.
 
     The operating system drops the lock when the process ends, so a crash
-    never leaves a series locked.
+    never leaves a series locked. dir_fd: as os.open's (local_stores.py).
     """
-    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600, dir_fd=dir_fd)
     try:
         if sys.platform == "win32":
             import msvcrt

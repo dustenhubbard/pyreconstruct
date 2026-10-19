@@ -16,6 +16,7 @@ What these pin:
 * with the store off, an open names a store that holds work its .jser lacks.
 """
 import os
+import shutil
 import time
 from datetime import datetime, timezone
 
@@ -25,7 +26,7 @@ from PyReconstruct.modules.backend import settings_store
 from PyReconstruct.modules.backend.progress import NullProgressReporter
 from PyReconstruct.modules.backend.settings_store import DictSettingsStore
 from PyReconstruct.modules.constants import build_flavor
-from PyReconstruct.modules.datatypes import local_stores, store_open
+from PyReconstruct.modules.datatypes import hybrid_store, local_stores, store_open
 from PyReconstruct.modules.datatypes.hybrid_store import HybridStore, storePaths
 from PyReconstruct.modules.datatypes.local_stores import (
     ENV_SWITCH, META_OPENED, SETTING, cleanUp, removeClean,
@@ -197,7 +198,8 @@ def test_a_clean_store_unused_for_30_days_is_removed_and_a_recent_one_kept(tmp_p
     _, recent = make_store(tmp_path / "recent", monkeypatch, days_ago=29)
     report = cleanUp()
     assert report.removed == [os.path.basename(old)]
-    assert files_of(old) == []
+    # the lock file stays (test_the_lock_file_outlives_the_store)
+    assert files_of(old) == [os.path.basename(old) + ".lock"]
     assert os.path.isfile(recent)
     assert local_stores.readState(*os.path.split(recent)).clean
 
@@ -351,9 +353,101 @@ def test_a_non_empty_working_folder_is_never_emptied(tmp_path):
     work = tmp_path / "0123456789abcdef.v1.work"
     work.mkdir()
     (work / "x").write_text("work")
-    with pytest.raises(OSError):
-        local_stores._removeWorkDir(str(tmp_path), work.name)
+    folder = local_stores._Folder(str(tmp_path))
+    try:
+        with pytest.raises(OSError):
+            local_stores._removeWorkDir(folder, work.name)
+    finally:
+        folder.close()
     assert (work / "x").read_text() == "work"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="flock; Windows will not remove an open file")
+def test_the_lock_file_outlives_the_store(tmp_path, store_root, monkeypatch):  # noqa: F811
+    """An opener that opened the lock file before a removal locks the same
+    file as the next opener, so only one of them holds the store."""
+    import fcntl
+    _, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
+    early = os.open(db + ".lock", os.O_RDWR)  # opened, not yet locked
+    try:
+        assert local_stores.removeIfClean(*os.path.split(db)).clean
+        assert os.path.isfile(db + ".lock")
+        fcntl.flock(early, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert hybrid_store._lockFile(db + ".lock") is None
+    finally:
+        os.close(early)
+
+
+def _swap_folder_after_the_read(monkeypatch, folder, outside):
+    """Once the store is read, move the store folder away and put a link to
+    outside at its path, as another program could."""
+    read = local_stores._readState
+
+    def read_then_swap(root, name):
+        state = read(root, name)
+        if not os.path.islink(folder):
+            os.rename(folder, str(folder) + ".moved")
+            os.symlink(outside, folder)
+        return state
+
+    monkeypatch.setattr(local_stores, "_readState", read_then_swap)
+
+
+def _same_names_outside(db, outside):
+    """Copies of the store's files, by the same names, in a folder outside."""
+    outside.mkdir()
+    root, name = os.path.split(db)
+    for n in os.listdir(root):
+        if n.startswith(name[:16]) and os.path.isfile(os.path.join(root, n)):
+            shutil.copyfile(os.path.join(root, n), outside / n)
+    return sorted(os.listdir(outside))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="links need rights on Windows")
+@pytest.mark.parametrize("remove", [lambda: cleanUp(cap=0), removeClean], ids=["cleanup", "button"])
+def test_a_store_folder_swapped_for_a_link_is_never_reached(remove, tmp_path, store_root, notes, monkeypatch):  # noqa: F811
+    _, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
+    outside = tmp_path / "outside"
+    names = _same_names_outside(db, outside)
+    _swap_folder_after_the_read(monkeypatch, store_root, outside)
+    report = remove()
+    assert report.removed == []
+    assert report.kept == [(os.path.basename(db), local_stores.UNREADABLE)]
+    assert sorted(os.listdir(outside)) == names
+    assert os.path.isfile(os.path.join(str(store_root) + ".moved", os.path.basename(db)))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="links need rights on Windows")
+def test_a_removal_lands_in_the_folder_held_open(tmp_path, store_root, notes, monkeypatch):  # noqa: F811
+    """Even past the check that the folder is still at its path, a removal
+    reaches only the folder that was read."""
+    _, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
+    outside = tmp_path / "outside"
+    names = _same_names_outside(db, outside)
+    _swap_folder_after_the_read(monkeypatch, store_root, outside)
+    monkeypatch.setattr(local_stores._Folder, "same", lambda self: True)
+    assert cleanUp(cap=0).removed == [os.path.basename(db)]
+    assert sorted(os.listdir(outside)) == names
+    moved = str(store_root) + ".moved"
+    assert not os.path.exists(os.path.join(moved, os.path.basename(db)))
+
+
+def test_a_store_opened_since_the_scan_is_not_removed(tmp_path, store_root, monkeypatch):  # noqa: F811
+    """Old when cleanup looked, opened before it took the store's lock: it
+    is recent now, and under the cap it stays."""
+    _, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
+    read = local_stores.readState
+
+    def read_then_open(root, name, folder=None):
+        state = read(root, name, folder)
+        set_meta(db, **{META_OPENED: _utc(time.time())})
+        return state
+
+    monkeypatch.setattr(local_stores, "readState", read_then_open)
+    report = cleanUp()
+    assert report.removed == []
+    assert report.kept == [(os.path.basename(db), "")]
+    assert os.path.isfile(db)
 
 
 def test_cleanup_with_no_store_folder_makes_none(store_root):  # noqa: F811
@@ -399,6 +493,35 @@ def test_with_the_store_off_an_open_names_a_store_with_work(tmp_path, store_root
     assert len(notes) == 1
     # the store is left as it was
     assert local_stores.readState(*os.path.split(db)).work
+
+
+def test_with_the_store_off_and_the_store_folder_set_relative_the_series_opens(tmp_path, store_root, settings, dev, no_switch, notes, monkeypatch):  # noqa: F811
+    fp, db = make_store(tmp_path / "s", monkeypatch)
+    _pending(db)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(hybrid_store.ENV_DIR, "stores")
+    told = _Told()
+    _open(fp, notifier=told).close()
+    assert len(told.told) == 1
+
+
+def test_the_notice_is_true_when_the_open_resumes_a_working_folder(tmp_path, store_root, settings, dev, no_switch, notes, monkeypatch):  # noqa: F811
+    """A working folder left beside the .jser is what opens, not the .jser."""
+    fp, db = make_store(tmp_path / "s", monkeypatch)
+    _pending(db)
+    first = _open(fp, notifier=_Told())
+    try:
+        told = _Told()
+        resumed = _open(fp, notifier=told)
+        assert resumed.leave_open
+        assert told.told == [
+            "The local copy of parity_series on this computer holds work that "
+            "parity_series.jser does not have.\n\n"
+            "Fast local copy is off, so this open does not use it. "
+            "The local copy is kept, and cleanup never removes it."
+        ]
+    finally:
+        first.close()
 
 
 def test_with_the_store_off_a_clean_store_says_nothing(tmp_path, store_root, settings, dev, no_switch, monkeypatch):  # noqa: F811
