@@ -346,8 +346,12 @@ _SERIES_LOCK_HEARTBEAT = 7
 
 class MainWindow(QMainWindow):
 
-    def __init__(self, filename):
-        """Constructs a skeleton for an empty main window."""
+    def __init__(self, filename, staged_update=None):
+        """Constructs a skeleton for an empty main window.
+
+        ``staged_update`` is what an in-app restart hands on from the window
+        before (``stagedUpdate``), so the update still goes in at the quit.
+        """
         super().__init__() # initialize QMainWindow
 
         ## Catch all exceptions and display errors
@@ -389,6 +393,9 @@ class MainWindow(QMainWindow):
         self._pending_installer     =  None   # launched on the accepted close
         self._pending_update_dir    =  None
         self._pending_inplace       =  None   # an update staged in place, swapped in at quit
+        if staged_update is not None:
+            from PyReconstruct.modules.backend.updater import inplace
+            self._pending_inplace = inplace.Pending(**staged_update)
         self.check_actions_enabled  =  False
         self.actions_initialized    =  False
 
@@ -5949,6 +5956,18 @@ class MainWindow(QMainWindow):
         else:
             return self.field
 
+    def stagedUpdate(self):
+        """The update staged in place, as plain data for the window an in-app restart builds next.
+
+        Plain data, since the restart reloads the modules and ``Pending`` is a
+        new class after it. The plan keeps its session token, and the quit
+        still checks it against the plan on disk.
+        """
+        if self._pending_inplace is None:
+            return None
+        import dataclasses
+        return dataclasses.asdict(self._pending_inplace)
+
     def restart(self):
         self.restart_mainwindow = True
 
@@ -6010,6 +6029,7 @@ class MainWindow(QMainWindow):
         # or start the helper that swaps in an update staged in place, or with
         # nothing staged, one that finishes an update a helper left part way.
         # Not on an in-app restart: this process lives on, and the helper waits on it.
+        # The next window gets the staged update instead (run.py, stagedUpdate).
         elif not self.restart_mainwindow:
             from PyReconstruct.modules.backend.updater import inplace
             try:

@@ -13,6 +13,8 @@ and the helper's start recorded instead of run.
 * A quit with nothing staged finishes a run a helper left part way.
 * Nothing starts for a plan this window did not stage, even a valid one on
   disk, or on an in-app restart.
+* An in-app restart hands the staged update to the next window, through
+  run.py's loop, so the real quit after it still starts the helper.
 * The dialog says the update installs at quit, and Restart Now closes the
   window; any other build, or a copy an earlier update left, falls back to
   the installer as before.
@@ -130,6 +132,153 @@ def test_an_in_app_restart_does_not_start_the_helper(main_window, dev, quit_call
     assert main_window.close() is True
     assert dev.started == []
     main_window.restart_mainwindow = False
+
+
+@pytest.fixture
+def restart_loop(qapp, series_jser, qsettings_snapshot, main_window_dialogs, monkeypatch, dev, quit_calls):  # noqa: F811
+    """run.py's window loop on real windows. Each ``app.exec()`` runs the next step on the window up.
+
+    The module reload of an in-app restart is a stand-in, but it does the part
+    that matters here: :class:`inplace.Pending` is a new class afterward, as it is
+    after a real reload.
+    """
+    import dataclasses
+    import sys
+    from types import SimpleNamespace
+
+    from PySide6.QtCore import QSettings
+
+    import PyReconstruct.run as run_mod
+    from PyReconstruct.modules.backend.func import installer_image, logging_setup
+    from PyReconstruct.modules.backend.updater import updater
+    from PyReconstruct.modules.constants import settings_domain
+    from PyReconstruct.modules.gui import utils
+    from PyReconstruct.modules.gui.dialog.whats_new import APP, ORG, current_version_str
+    from PyReconstruct.modules.gui.main import MainWindow, first_launch
+    from PyReconstruct.modules.gui.main.first_launch import WHATSNEW_KEY
+
+    QSettings(ORG, APP).setValue(WHATSNEW_KEY, current_version_str())
+    windows, steps = [], []
+
+    class App:
+        def __init__(self, argv):
+            pass
+
+        def installEventFilter(self, f):
+            pass
+
+        def processEvents(self):
+            qapp.processEvents()
+
+        def setStyle(self, style):
+            pass
+
+        def exec(self):
+            steps.pop(0)(windows[-1])
+            return 0
+
+    def window(*args, **kwargs):
+        w = MainWindow(*args, **kwargs)
+        w._captureListLayout = lambda: None  # as the main_window fixture does
+        windows.append(w)
+        return w
+
+    def reload(module):
+        if module is I:
+            monkeypatch.setattr(I, "Pending", dataclasses.make_dataclass(
+                "Pending", [f.name for f in dataclasses.fields(I.Pending)]))
+        return module
+
+    for module, name, value in [
+        (logging_setup, "install_file_logging", lambda: None),
+        (settings_domain, "fold_flavor_settings_once", lambda: None),
+        (first_launch, "reset_whats_new_popup_startup", lambda: None),
+        (installer_image, "eject_installer_image", lambda **k: None),
+        (utils, "MenuShortcutSpacingStyle", lambda: None),
+        (updater, "report_update_started", lambda: None),
+        (run_mod, "QApplication", App),
+        (run_mod.main, "MainWindow", window),
+        (run_mod, "importlib", SimpleNamespace(reload=reload)),
+        (os, "system", lambda cmd: 0),  # restart() clears the console
+    ]:
+        monkeypatch.setattr(module, name, value)
+
+    def run(*script):
+        steps.extend(script)
+        run_mod.runPyReconstruct(str(series_jser))
+        assert steps == []
+
+    previous_excepthook = sys.excepthook
+    try:
+        yield SimpleNamespace(run=run, windows=windows, series=str(series_jser))
+    finally:
+        sys.excepthook = previous_excepthook
+        for w in windows:
+            w._pending_inplace = None
+            w.series.modified = False
+            if w.isVisible():
+                w.close()
+            w.deleteLater()
+
+
+def _stage_then_restart(dev, staged):  # noqa: F811
+    def step(window):
+        staged.append(dev.stage())
+        window._pending_inplace = staged[-1]  # staged, and the user clicked Later
+        window.restart()  # File > Restart
+        assert dev.started == []
+    return step
+
+
+def test_a_staged_update_goes_in_at_the_quit_after_an_in_app_restart(restart_loop, dev, quit_calls):  # noqa: F811
+    staged = []
+
+    def quit_(window):
+        pending = staged[0]
+        assert window._pending_inplace.plan == pending.plan  # the session token included
+        assert I.still_staged(window._pending_inplace)
+        assert window.close() is True
+
+    restart_loop.run(_stage_then_restart(dev, staged), quit_)
+
+    assert len(restart_loop.windows) == 2
+    pending = staged[0]
+    (argv, kw), = dev.started
+    assert argv == [I.helper_path(pending), pending.staging, "--pid", str(os.getpid()),
+                    "--open", restart_loop.series]
+    assert kw["cwd"] == pending.staging
+    assert quit_calls == ["quit"]
+
+
+def test_a_canceled_quit_after_an_in_app_restart_keeps_the_update_staged(
+        restart_loop, main_window_dialogs, dev, quit_calls):  # noqa: F811
+    staged = []
+
+    def cancel_then_quit(window):
+        window.series.modified = True
+        main_window_dialogs.save_response = "cancel"
+        assert window.close() is False
+        assert window._pending_inplace.plan == staged[0].plan and I.still_staged(window._pending_inplace)
+        assert dev.started == [] and quit_calls == []
+        window.series.modified = False
+        assert window.close() is True
+
+    restart_loop.run(_stage_then_restart(dev, staged), cancel_then_quit)
+
+    (argv, kw), = dev.started
+    assert argv[:2] == [I.helper_path(staged[0]), staged[0].staging]
+    assert quit_calls == ["quit"]
+
+
+def test_a_restart_hands_on_only_what_this_window_staged(restart_loop, dev, quit_calls):  # noqa: F811
+    def restart(window):
+        dev.stage()  # a valid plan on disk that no window here staged
+        window.restart()
+
+    restart_loop.run(restart, lambda window: window.close())
+
+    assert restart_loop.windows[1]._pending_inplace is None
+    assert dev.started == [] and quit_calls == []
 
 
 def test_a_pending_installer_still_opens_the_installer(main_window, dev, quit_calls, monkeypatch, tmp_path):  # noqa: F811

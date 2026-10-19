@@ -150,9 +150,10 @@ def runPyReconstruct(filename=None):
     # and recreates the window)
     run = True
     first_window = True
+    staged_update = None
     while run:
 
-        main_window = main.MainWindow(filename)
+        main_window = main.MainWindow(filename, staged_update=staged_update)
         file_open_watcher.main_window = main_window
         if first_window:
             # An in-place update helper that started this version waits for
@@ -169,6 +170,8 @@ def runPyReconstruct(filename=None):
 
             if not main_window.series.isWelcomeSeries():
                 filename = main_window.series.jser_fp
+            # an update staged in place still goes in at the next real quit
+            staged_update = main_window.stagedUpdate()
 
             # reload PyReconstruct modules
             loaded_modules = list(sys.modules.items())
