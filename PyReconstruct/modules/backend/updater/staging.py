@@ -78,31 +78,31 @@ def _clear(staging):
         raise StageError(f"could not clear the staging folder: {', '.join(failed)}")
 
 
-def _clear_spare_copy(staging, state, install):
-    """Delete the copy a finished run could not, when the install is back in place. OSError if it stays.
+def _spare_copy(staging, state, install):
+    """The copy a finished run could not delete, when the install is back in place; else None.
 
     Windows refuses to delete a file a scanner or the indexer holds for a
     moment, so a run that ended well can leave old/ (after a healthy update,
     the version before it) or rejected/ (after a rollback, the version that
     failed) behind. Either is a spare once the install is back. Anything else
-    stays: a run that ended stuck, a journal for another install, no journal,
+    is not: a run that ended stuck, a journal for another install, no journal,
     or a link, since old/ may be the only copy of the install.
     """
     if not isinstance(state, dict) or state.get("status") != "done":
-        return
+        return None
     spare, installed = _SPARE_COPY.get(state.get("result"), (None, None))
     plan = state.get("plan")
     if spare is None or state.get("installed") != installed or not isinstance(plan, dict):
-        return
+        return None
     if not isinstance(plan.get("install"), str) or A._norm_win(plan["install"]) != A._norm_win(install):
-        return
+        return None
     path = os.path.join(staging, spare)
     if not os.path.lexists(path) or _is_link(path) or not os.path.isdir(install) or _is_link(install):
-        return
+        return None
     if A._at_or_inside(os.path.realpath(install), os.path.realpath(path)) or \
             A._at_or_inside(os.path.realpath(path), os.path.realpath(install)):
-        return
-    A._remove(path)
+        return None
+    return path
 
 
 def stage_update(release, *, install, app_name, flavor, from_version, pid=None,
@@ -133,12 +133,9 @@ def stage_update(release, *, install, app_name, flavor, from_version, pid=None,
         state = A.read_json(os.path.join(staging, A.STATE))
         if isinstance(state, dict) and state.get("status") == "running":
             raise StageError("an earlier update has not finished")  # the helper finishes or undoes it
-        try:
-            _clear_spare_copy(staging, state, install)
-        except OSError as e:
-            # Kept, and tried again at the next staging; the journal still says what it is.
-            raise StageError(f"could not remove what an earlier update left: {e}") from e
-        if any(os.path.lexists(os.path.join(staging, n)) for n in (A.OLD, A.REJECTED)):
+        spare = _spare_copy(staging, state, install)
+        if any(os.path.lexists(p) and p != spare
+               for p in (os.path.join(staging, n) for n in (A.OLD, A.REJECTED))):
             # old/ may be the only copy of the install
             raise StageError("an earlier update has not finished")
         try:
@@ -148,6 +145,16 @@ def stage_update(release, *, install, app_name, flavor, from_version, pid=None,
             plan = _stage(release, str(version), staging, install, app_name, flavor,
                           from_version, pid, registry_key, trusted_keys, progress_cb, cancel_cb,
                           session)
+            if spare is not None:
+                # Last, once the update is staged and checked: the install may
+                # have been damaged since, and until then this copy is the good one.
+                if _spare_copy(staging, state, install) != spare:
+                    raise StageError("an earlier update has not finished")
+                try:
+                    A._remove(spare)
+                except OSError as e:
+                    # Kept, and tried again at the next staging; the journal still says what it is.
+                    raise StageError(f"could not remove what an earlier update left: {e}") from e
         except BaseException as e:
             try:
                 _clear(staging)

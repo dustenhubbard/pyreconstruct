@@ -652,17 +652,68 @@ def test_a_copy_still_locked_falls_back_to_the_installer_and_is_kept(dev, monkey
     assert _run_helper(dev)["status"] == "updated"
     journal, kept, installed = _journal(dev), snapshot(old), snapshot(dev.rel.install)
 
-    dev.rel.fetched.clear()
     for _ in range(A.MAX_DEFERRALS + 1):
         with pytest.raises(S.StageError, match="could not remove"):
             dev.stage()  # the dialog downloads the installer instead
         assert snapshot(old) == kept and snapshot(dev.rel.install) == installed
         assert _journal(dev) == journal  # still says what the copy is, for the next try
-        assert dev.rel.archive_name not in dev.rel.fetched
+        assert not os.path.lexists(os.path.join(dev.rel.staging, A.PLAN))
 
     unlock()
     assert I.still_staged(dev.stage())
     assert not os.path.lexists(old)
+
+
+def _no_payload_for_this_build(rel):
+    del rel.files[rel.archive_name]
+    return rel.stage()
+
+
+def _a_bad_signature(rel):
+    rel.files["SHA256SUMS"] = rel.files["SHA256SUMS"].replace(b"  ", b" *", 1)
+    return rel.stage()
+
+
+def _canceled(rel):
+    return S.stage_update(rel.release(), install=rel.install, app_name=rel.app_name,
+                          flavor=rel.flavor, from_version=OLD_V, trusted_keys=[TEST_PUB],
+                          cancel_cb=lambda: True)
+
+
+def _a_damaged_payload(rel):
+    data = bytearray(rel.files[rel.archive_name])
+    data[len(data) // 2] ^= 0xFF
+    rel.files[rel.archive_name] = bytes(data)
+    return rel.stage()
+
+
+def _a_plan_the_helper_refuses(rel, monkeypatch):
+    def refuse(path):
+        raise A.Refused("the plan is refused")
+    monkeypatch.setattr(A, "load_plan", refuse)
+    return rel.stage()
+
+
+@pytest.mark.parametrize("fail", [
+    _no_payload_for_this_build, _a_bad_signature, _canceled, _a_damaged_payload,
+    _a_plan_the_helper_refuses,
+], ids=["no-payload", "bad-signature", "canceled", "damaged-payload", "plan-refused"])
+def test_a_staging_that_fails_keeps_the_copy_a_finished_run_left(dev, monkeypatch, fail):
+    """The install may be damaged since; with no update staged, that copy may be the good one."""
+    dev.stage()
+    old = os.path.join(dev.rel.staging, A.OLD)
+    unlock = _locked(monkeypatch, old)
+    assert _run_helper(dev)["status"] == "updated"
+    unlock()
+    journal, kept = _journal(dev), snapshot(old)
+    os.remove(os.path.join(dev.rel.install, "_internal", "base_library.zip"))
+
+    args = (dev.rel, monkeypatch) if fail is _a_plan_the_helper_refuses else (dev.rel,)
+    with pytest.raises((S.StageError, U.UpdateCancelled)):
+        fail(*args)  # the dialog downloads the installer instead
+    assert os.path.isdir(old) and snapshot(old) == kept
+    assert _journal(dev) == journal
+    assert not os.path.lexists(os.path.join(dev.rel.staging, A.PLAN))
 
 
 def _done(dev, result, installed, **plan):
