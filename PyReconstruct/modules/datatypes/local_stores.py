@@ -646,23 +646,15 @@ class TurnOffReport:
     in_use : int = 0                               # stores other windows hold
 
 
-def _writeOut(series) -> bool:
+def _writeOut(series):
     """Write the .jser from the store it holds, as a close does, with no backup."""
     from .series import SeriesSaveError
     try:
         store_save.writeJser(series)
     except (OSError, SeriesSaveError):
         # the user was told (Series._surfaceSaveError)
-        return False
-    return True
-
-
-def _files(folder : str) -> set:
-    try:
-        with os.scandir(folder) as entries:
-            return {e.path for e in entries if e.is_file(follow_symlinks=False)}
-    except OSError:
-        return set()
+        return None
+    return [series.jser_fp]
 
 
 def turnOff(series, write_out=None) -> TurnOffReport:
@@ -673,8 +665,9 @@ def turnOff(series, write_out=None) -> TurnOffReport:
     write_out(series) writes the .jser from the store, as File > Export
     series > To .jser now does, and makes the automatic backup (the main
     window's; with none given the .jser is written with no backup). It
-    returns False when the write failed, and the user was told. The series
-    then lets go of the store, so a Save writes the .jser from now on.
+    returns the files it wrote, or None when the write failed, and the user
+    was told. The series then lets go of the store, so a Save writes the
+    .jser from now on.
 
     A write that fails removes nothing and sets nothing aside: the series
     keeps its store, saves to it, and writes the .jser when it closes, as
@@ -692,12 +685,9 @@ def turnOff(series, write_out=None) -> TurnOffReport:
     if store_save.heldStore(series) is not None:
         own = os.path.basename(storePaths(series.jser_fp)[0])
         if store_save.ahead(series):
-            backups = series.backupFolder()
-            before = _files(backups) if backups else set()
-            if write_out(series) and not store_save.ahead(series):
-                report.written.append(series.jser_fp)
-                if backups:
-                    report.written.extend(sorted(_files(backups) - before))
+            written = write_out(series)
+            if written is not None and not store_save.ahead(series):
+                report.written.extend(written)
             else:
                 report.failed.append(series.jser_fp)
         if not store_save.ahead(series):

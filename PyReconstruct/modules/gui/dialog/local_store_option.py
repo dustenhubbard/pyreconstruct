@@ -124,7 +124,8 @@ class LocalStoreOptionWidget(BorderedWidget):
         write_out = getattr(owner, "_writeStoreSave", None)
         if write_out is not None and getattr(owner, "series", None) is self.series:
             def write(series, write_out=write_out):
-                return write_out()
+                written = []
+                return written if write_out(written) else None
         else:
             write = None
         report = local_stores.setSetting(self.series, self.check.isChecked(), write)

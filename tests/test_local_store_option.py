@@ -243,3 +243,64 @@ def test_unticking_it_when_the_write_fails_keeps_the_copy_and_the_close_writes_i
         window.close()
     assert kept.read_bytes() != before
     assert _section_in_the_jser(kept, snum) == edited
+
+
+def test_unticking_it_names_a_backup_made_in_a_folder_picked_then(kept, tmp_path, main_window_dialogs, monkeypatch):  # noqa: F811
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    try:
+        _, _, backups = _setting_on_and_saved(window, tmp_path, monkeypatch)
+        # the set folder is gone; the backup asks for one, and the user picks it
+        window.series.setOption("backup_dir", str(tmp_path / "gone"))
+        picked = tmp_path / "picked"
+        picked.mkdir()
+        monkeypatch.setattr(window, "setBackup", lambda: window.series.setOption("backup_dir", str(picked)))
+        told = _untick(window, monkeypatch)
+        written = sorted(picked.iterdir())
+        assert len(written) == 1
+        assert written[0].read_bytes() == kept.read_bytes()
+        assert list(backups.iterdir()) == []
+        assert told == [
+            "Fast local copy is off. The last Save in the local copy was written to:\n"
+            f"{kept}\n{written[0]}"
+        ]
+        assert store_save.heldStore(window.series) is None
+    finally:
+        window.close()
+
+
+def test_a_parent_window_with_another_series_does_not_write_this_one(qapp, kept, tmp_path, main_window_dialogs, monkeypatch):  # noqa: F811
+    from PySide6.QtWidgets import QWidget
+
+    class Other(QWidget):
+        """A main window holding another series."""
+        series = object()
+        calls = []
+
+        def _writeStoreSave(self, written=None):
+            self.calls.append(written)
+            return True
+
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    try:
+        snum, edited, backups = _setting_on_and_saved(window, tmp_path, monkeypatch)
+        before = kept.read_bytes()
+        told = []
+        monkeypatch.setattr(local_store_option, "notify", told.append)
+        other = Other()
+        dlg = AllOptionsDialog(other, window.series)
+        dlg.all_widgets["local_store"].check.setChecked(False)
+        assert dlg.accept() is True
+        # this series' own write-out ran, with no backup: the other window's
+        # writes its own series
+        assert Other.calls == []
+        assert kept.read_bytes() != before
+        assert list(backups.iterdir()) == []
+        assert told == [
+            f"Fast local copy is off. The last Save in the local copy was written to:\n{kept}"
+        ]
+        assert store_save.heldStore(window.series) is None
+    finally:
+        window.close()
+    assert _section_in_the_jser(kept, snum) == edited

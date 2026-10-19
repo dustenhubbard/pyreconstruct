@@ -3083,6 +3083,9 @@ class MainWindow(QMainWindow):
             from_saved (bool): if True, copy the already-saved jser file rather
                 than re-serializing the entire series again. Used by the save
                 paths so a save + autobackup is one full serialization, not two.
+        Returns:
+            (str): the backup file written, or None when none was. It can be
+                in a folder the user picked here, when the set one is missing.
         """
         if check_auto and not self.series.autobackupOn():
             return
@@ -3130,6 +3133,7 @@ class MainWindow(QMainWindow):
                 shutil.copyfile(self.series.jser_fp, fp)
             else:
                 self.series.saveJser(fp)
+            return fp
         else:
             notify(
                 "Backup folder not found.\n" +
@@ -3230,12 +3234,15 @@ class MainWindow(QMainWindow):
         # mark series as unmodified
         self.seriesModified(False)
     
-    def _writeStoreSave(self) -> bool:
+    def _writeStoreSave(self, written=None) -> bool:
         """Write the .jser from the local store if it holds a Save the .jser lacks.
 
         With Save writing the store only (store_save.py), the .jser is written
         when the series closes, so that is when the automatic backup is made.
 
+            Params:
+                written (list): when given, the files written are added to it:
+                    the .jser, then the backup file
             Returns:
                 (bool): False if the .jser could not be written. The user was
                     told, and the series keeps its store and working folder,
@@ -3247,7 +3254,11 @@ class MainWindow(QMainWindow):
             store_save.writeJser(self.series)
         except (OSError, SeriesSaveError):
             return False
-        self.backup(check_auto=True, from_saved=True)
+        backup = self.backup(check_auto=True, from_saved=True)
+        if written is not None:
+            written.append(self.series.jser_fp)
+            if backup:
+                written.append(backup)
         return True
 
     def exportJserNow(self):

@@ -810,21 +810,25 @@ def test_turning_it_off_writes_the_save_to_the_jser_and_lets_go_of_the_store(tmp
     _in_the_jser(fp, snum, edited, monkeypatch)
 
 
-def test_turning_it_off_names_the_backup_write_out_made(tmp_path, setting_on, monkeypatch):
+def test_turning_it_off_names_the_files_the_write_out_wrote(tmp_path, setting_on, monkeypatch):
     fp, series, _ = _on_and_saved(tmp_path, monkeypatch)
     backups = tmp_path / "backups"
     backups.mkdir()
     series.setBackupUsesDefaults(False)
     series.setOption("backup_dir", str(backups))
+    # the set folder was missing, so the backup went to one picked then
+    picked = tmp_path / "picked"
+    picked.mkdir()
 
     def write_out(s):
         store_save.writeJser(s)
-        shutil.copyfile(s.jser_fp, backups / "s-backup.jser")
-        return True
+        shutil.copyfile(s.jser_fp, picked / "s-backup.jser")
+        return [s.jser_fp, str(picked / "s-backup.jser")]
 
     try:
         report = local_stores.setSetting(series, False, write_out)
-        assert report.written == [str(fp), str(backups / "s-backup.jser")]
+        assert report.written == [str(fp), str(picked / "s-backup.jser")]
+        assert store_save.heldStore(series) is None
     finally:
         series.close()
 
@@ -866,6 +870,36 @@ def test_a_write_out_that_fails_keeps_the_store_its_save_and_its_hold(tmp_path, 
     finally:
         series.close()
     # the close wrote it
+    _in_the_jser(fp, snum, edited, monkeypatch)
+
+
+def test_ok_again_with_the_setting_off_writes_out_what_failed_before(tmp_path, setting_on, monkeypatch):
+    fp, series, snum = _on_and_saved(tmp_path, monkeypatch)
+    edited = series.loadSection(snum).getDict()
+    before = fp.read_bytes()
+    series._surfaceSaveError = lambda fp, err, message=None: None
+    write = series_module._atomicWrite
+
+    def full(path, data):
+        if str(path) == series.jser_fp:
+            raise OSError(28, "No space left on device")
+        return write(path, data)
+
+    monkeypatch.setattr(series_module, "_atomicWrite", full)
+    try:
+        assert local_stores.setSetting(series, False).failed == [str(fp)]
+        assert store_save.heldStore(series) is not None
+        monkeypatch.setattr(series_module, "_atomicWrite", write)
+        # the setting is off already; OK again writes the Save out
+        report = local_stores.setSetting(series, False)
+        assert report.written == [str(fp)]
+        assert report.failed == []
+        assert fp.read_bytes() != before
+        assert store_save.heldStore(series) is None
+        # with the store let go of, OK again does nothing
+        assert local_stores.setSetting(series, False) is None
+    finally:
+        series.close()
     _in_the_jser(fp, snum, edited, monkeypatch)
 
 
