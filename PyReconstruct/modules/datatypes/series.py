@@ -26,7 +26,7 @@ from .objects import Objects
 from .default_settings import default_settings, default_series_settings
 from .host_tree import HostTree
 from .filters import passesFilters
-from . import store_open, store_save
+from . import store_open, store_recovery, store_save
 
 from PyReconstruct.modules.calc import traceGeometry
 
@@ -1075,6 +1075,9 @@ class Series():
             series = Series(ser_filepath, sections)
             series.jser_fp = fp
             series.leave_open = True
+            # with the store switch on, the series takes its local store
+            if store_open.enabled():
+                store_recovery.resumed(series, notifier)
             return series
 
         # with the store switch on, through the local store (store_open.py)

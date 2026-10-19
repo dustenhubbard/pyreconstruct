@@ -239,7 +239,7 @@ def test_only_the_value_1_turns_it_on_and_off_no_store_is_made(value, tmp_path, 
     assert not store_root.exists()
 
 
-def test_a_working_folder_to_resume_is_resumed_and_the_store_is_not_touched(tmp_path, switch_on, monkeypatch):
+def test_a_working_folder_to_resume_is_resumed_not_opened_from_the_store(tmp_path, switch_on, monkeypatch):
     fp = _copy(PARITY, tmp_path / "s")
     series = _open(fp)
     series.leave_open = True  # a crash: the working folder stays
@@ -248,7 +248,9 @@ def test_a_working_folder_to_resume_is_resumed_and_the_store_is_not_touched(tmp_
     def refuse(*a, **k):
         raise AssertionError("the store was opened")
 
-    monkeypatch.setattr(store_open.StoreForOpen, "attempt", staticmethod(refuse))
+    # the resume may give the series its store (store_recovery.resumed), but
+    # the series comes from the folder
+    monkeypatch.setattr(store_open, "openJser", refuse)
     again = _open(fp)
     assert again.getwdir() == wdir
     again.close()
@@ -705,33 +707,73 @@ def test_the_kept_hash_is_of_the_bytes_the_open_decoded_not_of_the_file_after(tm
     assert opens == []
 
 
-@pytest.mark.parametrize("work", ["pending", "dirty"])
-def test_a_store_with_work_the_jser_lacks_is_not_read_or_replaced(work, tmp_path, switch_on, notes, monkeypatch):
+class _Asked:
+    """A notifier that answers every question with `answer` and keeps what it was told."""
+
+    def __init__(self, answer=None):
+        self.answer = answer
+        self.asked = []
+        self.told = []
+
+    def confirm(self, message, title="Confirm"):
+        self.asked.append(message)
+        return self.answer
+
+    def notify(self, message):
+        self.told.append(message)
+        return True
+
+
+def test_a_store_with_working_rows_is_set_aside_not_read_or_replaced(tmp_path, switch_on, notes, monkeypatch):
     fp = _copy(PARITY, tmp_path / "s")
     _open(fp).close()
     store = HybridStore.forJser(str(fp))
-    if work == "pending":
-        store.writePendingSeries({"marker": 1})
-    else:
-        store.setMeta("dirty", 1)
+    store.writePendingSeries({"marker": 1})
     store.close()
     expected = _today(fp, tmp_path, monkeypatch)
     opens = _store_opens(monkeypatch)
-    series = _open(fp)
+    asker = _Asked()
+    series = _open(fp, notifier=asker)
     try:
         assert opens == []
         assert _snapshot(series) == expected
     finally:
         series.close()
-    store = HybridStore.forJser(str(fp))
+    assert asker.asked == []
+    kept = sorted(store_root_glob(fp))
+    assert len(kept) == 1 and len(asker.told) == 1 and kept[0] in asker.told[0]
+    aside = HybridStore(kept[0], str(tmp_path / "w"))
     try:
-        if work == "pending":
-            assert store.hasPending()
-        else:
-            assert store.meta("dirty") == "1"
+        assert aside.seriesData() == {"marker": 1}
     finally:
-        store.close()
-    assert notes == ["Local store not kept for parity_series.jser: it holds work the .jser lacks"]
+        aside.close()
+
+
+def test_a_store_with_a_save_the_jser_lacks_is_offered_and_opened(tmp_path, switch_on, notes, monkeypatch):
+    fp = _copy(PARITY, tmp_path / "s")
+    _open(fp).close()
+    store = HybridStore.forJser(str(fp))
+    store.setMeta("dirty", 1)
+    store.close()
+    expected = _today(fp, tmp_path, monkeypatch)
+    opens = _store_opens(monkeypatch)
+    asker = _Asked()
+    series = _open(fp, notifier=asker)
+    try:
+        assert opens == [series.name]
+        assert _snapshot(series) == expected
+    finally:
+        series.leave_open = True
+        from PyReconstruct.modules.datatypes import store_save
+        store_save.release(series)
+    assert len(asker.asked) == 1 and "Open it with that work?" in asker.asked[0]
+    assert asker.told == [] and store_root_glob(fp) == []
+
+
+def store_root_glob(fp):
+    """The set-aside stores of a .jser."""
+    db, _ = storePaths(str(fp))
+    return sorted(str(p) for p in Path(db).parent.glob(Path(db).name[:-len(".pyrstore")] + ".conflict-*.pyrstore"))
 
 
 def test_a_merge_on_open_is_not_kept_so_the_next_open_asks_again(tmp_path, switch_on, notes, monkeypatch):

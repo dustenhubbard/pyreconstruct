@@ -315,18 +315,22 @@ def test_two_saves_in_one_session_each_keep_the_store(mode, tmp_path, switch_on,
         series.close()
 
 
-def test_a_series_resumed_from_its_working_folder_holds_no_store(tmp_path, switch_on, monkeypatch):  # noqa: F811
+def test_a_series_resumed_from_its_working_folder_holds_its_store(tmp_path, switch_on, store_mode, monkeypatch):  # noqa: F811
     fp = _kept(PARITY, tmp_path)
+    before = fp.read_bytes()
     first = _open(fp)
     assert store_save.heldStore(first) is not None
     # a crash: the working folder stays, and the next open resumes it
     store_save.release(first)
     second = _open(fp)
     try:
-        assert store_save.heldStore(second) is None
-        assert second.saveToStore() is False
+        assert store_save.heldStore(second) is not None
+        _edit(second)
+        assert second.saveToStore() is True
+        assert fp.read_bytes() == before
     finally:
         second.close()
+    assert fp.read_bytes() != before
 
 
 def test_the_store_is_held_until_the_series_closes(tmp_path, switch_on, monkeypatch):  # noqa: F811
