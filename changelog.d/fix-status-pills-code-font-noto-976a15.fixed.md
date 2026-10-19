@@ -1,2 +1,1 @@
-- **On Linux with Noto Sans, the status bar keeps its height and What's New code
-  matches its text.**
+- **On Linux with Noto Sans, code in What's New matches the size of the text around it.**

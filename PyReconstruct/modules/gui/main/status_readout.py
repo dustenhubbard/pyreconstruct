@@ -26,10 +26,8 @@ Two properties of the old flat label are kept deliberately:
     clickable ones untouched.
 """
 
-import math
-
 from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QColor, QFontMetrics
+from PySide6.QtGui import QColor
 from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import (
     QApplication, QHBoxLayout, QLabel, QLineEdit, QListWidget,
@@ -38,65 +36,6 @@ from PySide6.QtWidgets import (
 
 
 SEPARATOR = "  |  "
-
-
-def status_bar_room():
-    """How tall a widget can be before it makes a status bar taller.
-
-    A plain bar is its font's line plus Qt's own spacing, or its size grip,
-    whichever is taller, so the answer depends on the font and the style:
-    with DejaVu Sans a 9 pt line leaves three pixels to spare, with Noto
-    Sans none. Measured on two throwaway bars rather than assumed.
-    """
-    from PySide6.QtWidgets import QStatusBar
-    plain = QStatusBar()
-    plain.addWidget(QLabel("Section: 5"))
-    height = plain.sizeHint().height()
-    tall = QStatusBar()
-    filler = QLabel()
-    filler.setFixedHeight(2 * height)
-    tall.addWidget(filler)
-    spacing = tall.sizeHint().height() - 2 * height
-    return height - spacing
-
-
-#: accented capitals, descenders and brackets: the tallest and deepest ink a
-#: readout value is likely to carry
-INK_SAMPLE = "ÁÅÇÊÑÔ gjpqy ()|"
-
-
-def text_overhang(font):
-    """How many pixels of a label's ink fall outside its own line.
-
-    A font's line height does not always hold its glyphs: DejaVu Sans at
-    10.5 pt draws the tops of accented capitals one pixel above it. Measured
-    by painting INK_SAMPLE on a throwaway label with room to spare, rather
-    than read from the metrics, which round differently from the painted ink.
-    """
-    from PySide6.QtGui import QImage, QPalette
-    room = QFontMetrics(font).height()
-    label = QLabel(INK_SAMPLE)
-    label.setFont(font)
-    label.setContentsMargins(0, room, 0, room)
-    palette = label.palette()
-    palette.setColor(QPalette.Window, QColor("white"))
-    palette.setColor(QPalette.WindowText, QColor("black"))
-    label.setPalette(palette)
-    label.setAutoFillBackground(True)
-    label.resize(label.sizeHint())
-    image = label.grab().toImage().convertToFormat(QImage.Format_Grayscale8)
-    scale = image.devicePixelRatio()
-    pixels = image.constBits()
-    stride = image.bytesPerLine()
-    width = image.width()
-    inked = [y for y in range(image.height())
-             if min(pixels[y * stride:y * stride + width]) < 255]
-    if not inked:
-        return 0
-    line = label.contentsRect()
-    above = line.top() * scale - inked[0]
-    below = inked[-1] + 1 - (line.bottom() + 1) * scale
-    return max(0, math.ceil(max(above, below) / scale))
 
 
 class StatusSegment(QLabel):
@@ -120,9 +59,7 @@ class StatusSegment(QLabel):
     right_clicked = Signal()
 
     #: inner padding so the outline does not hug the glyphs; the vertical
-    #: pixel is the most it gets, less where the bar has no room for it
-    #: (see status_bar_room; test_pills_do_not_grow_the_status_bar), and
-    #: never less than the ink that would otherwise be cut off (text_overhang)
+    #: pixel is measured by test_pills_do_not_grow_the_status_bar
     H_PAD = 8
     V_PAD = 1
 
@@ -137,10 +74,7 @@ class StatusSegment(QLabel):
         self.setToolTip(tooltip)
         self.setCursor(Qt.PointingHandCursor)
         self.setAttribute(Qt.WA_Hover)
-        room = status_bar_room() - self.fontMetrics().height()
-        v_pad = max(text_overhang(self.font()),
-                    min(self.V_PAD, room // 2))
-        self.setContentsMargins(self.H_PAD, v_pad, self.H_PAD, v_pad)
+        self.setContentsMargins(self.H_PAD, self.V_PAD, self.H_PAD, self.V_PAD)
         self._outlined = outlined
         self._hovered = False
         self._popup_open = False

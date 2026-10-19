@@ -360,32 +360,15 @@ def test_mouse_move_width_changes_do_not_move_the_readout(main_window, qtbot):
 
 
 def test_pills_do_not_grow_the_status_bar(main_window):
-    """The rounded outline must live inside the bar the text already needs."""
+    """The rounded outline lives inside the bar the text already needs, plus
+    at most the pills' own padding: with DejaVu Sans the bar has room for it,
+    with Noto Sans its line fills the bar and the padding adds two pixels."""
     from PySide6.QtWidgets import QLabel, QStatusBar
+    from PyReconstruct.modules.gui.main.status_readout import StatusSegment
     plain = QStatusBar()
     plain.addWidget(QLabel("Section: 5"))
-    assert main_window.statusbar.sizeHint().height() <= plain.sizeHint().height()
-
-
-def test_pill_padding_gives_way_where_the_bar_has_no_room(qapp, monkeypatch):
-    """One pixel above and below the text where the bar has room for it, as
-    with DejaVu Sans; none where the font's line already fills the bar, as
-    with Noto Sans. Ink drawn outside the line keeps its padding either way."""
-    from PyReconstruct.modules.gui.main import status_readout
-    from PySide6.QtWidgets import QLabel
-    line = QLabel().fontMetrics().height()
-    pads = {}
-    for overhang in (0, 2):
-        monkeypatch.setattr(status_readout, "text_overhang",
-                            lambda font: overhang)
-        for spare in (0, 1, 2, 10):
-            monkeypatch.setattr(status_readout, "status_bar_room",
-                                lambda: line + spare)
-            margins = status_readout.StatusSegment("Jump").contentsMargins()
-            assert margins.top() == margins.bottom()
-            pads[overhang, spare] = margins.top()
-    assert pads == {(0, 0): 0, (0, 1): 0, (0, 2): 1, (0, 10): 1,
-                    (2, 0): 2, (2, 1): 2, (2, 2): 2, (2, 10): 2}
+    assert (main_window.statusbar.sizeHint().height()
+            <= plain.sizeHint().height() + 2 * StatusSegment.V_PAD)
 
 
 def ink_rows(widget):
@@ -404,14 +387,19 @@ def ink_rows(widget):
     return (rows[-1] - rows[0] + 1 if rows else 0), len(dark)
 
 
-@pytest.mark.parametrize("family,size", [
-    ("DejaVu Sans", 10.5), ("DejaVu Sans", 24), ("Noto Sans", 9),
-    (None, 9), (None, 18),
+@pytest.mark.parametrize("family,size,text", [
+    ("DejaVu Sans", 10.5, "Alignment: gjpqy ÁÉÍÓÚÅÇ"),
+    ("DejaVu Sans", 24, "Alignment: gjpqy ÁÉÍÓÚÅÇ"),
+    ("Noto Sans", 9, "Alignment: gjpqy ÁÉÍÓÚÅÇ"),
+    ("Noto Sans", 9, "Alignment: Ẫ"),
+    (None, 9, "Alignment: gjpqy ÁÉÍÓÚÅÇ"),
+    (None, 9, "Alignment: Ẫ"),
 ])
-def test_pills_keep_accents_and_descenders(qapp, family, size):
-    """No pill cuts off its text: DejaVu Sans at 10.5 pt draws the tops of
-    accented capitals above its line, so padding the bar has no room for
-    still stays where the ink needs it. None is the platform's own font."""
+def test_pills_keep_accents_and_descenders(qapp, family, size, text):
+    """No pill cuts off its text. DejaVu Sans at 10.5 pt draws the tops of
+    accented capitals above its line, and Noto Sans at 9 pt the tilde of a
+    Vietnamese capital (U+1EAA); the pill's padding holds both. None is the
+    platform's own font."""
     from PySide6.QtGui import QFont, QFontInfo
     from PySide6.QtWidgets import QLabel
     from PyReconstruct.modules.gui.main.status_readout import StatusSegment
@@ -422,7 +410,6 @@ def test_pills_keep_accents_and_descenders(qapp, family, size):
         pytest.skip(f"{family} is not installed")
     qapp.setFont(font)
     try:
-        text = "Alignment: gjpqy ÁÉÍÓÚÅÇ"
         pill = StatusSegment("Alignment", outlined=False)
         pill.setText(text)
         roomy = QLabel(text)
