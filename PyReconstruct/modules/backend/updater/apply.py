@@ -1121,12 +1121,12 @@ class Applier:
         Recovery runs this as well: the install path may be empty then, so
         only its parent is compared.
         """
-        install, staging = self.install, self.staging
+        plan, install, staging = self.plan, self.install, self.staging
         if os.path.islink(staging) or not os.path.isdir(staging):
             raise Refused("the staging folder is missing or a link")
         same_parent = (os.path.normcase(os.path.realpath(os.path.dirname(install)))
                        == os.path.normcase(os.path.realpath(os.path.dirname(staging))))
-        if not same_parent or os.path.basename(staging) != f".{self.plan['app_name']}-update":
+        if not same_parent or os.path.basename(staging) != f".{plan['app_name']}-update":
             raise Refused("the staging folder is not next to the install")
         on = install if os.path.lexists(install) else os.path.dirname(install)
         if os.stat(on).st_dev != os.stat(staging).st_dev:

@@ -207,7 +207,35 @@ def dev_keys():
     return [TEST_PUB]
 
 
-def test_the_download_worker_stages_in_place_and_skips_the_installer(qapp, qtbot, dev, monkeypatch):  # noqa: F811
+class InlinePool:
+    """A thread pool that runs its one job on the test's thread, so the job's result is there at once."""
+
+    def createWorker(self, fn):
+        from types import SimpleNamespace
+        self.fn, self.slots = fn, {"result": [], "error": []}
+
+        def signal(name):
+            return SimpleNamespace(connect=self.slots[name].append, emit=lambda *a: None)
+
+        progress = SimpleNamespace(connect=lambda f: None, emit=lambda p: None)
+        return SimpleNamespace(signals=SimpleNamespace(
+            progress=progress, result=signal("result"), error=signal("error")))
+
+    def start(self, worker):
+        import sys
+        try:
+            value = self.fn()
+        except Exception:
+            for slot in self.slots["error"]:
+                slot(sys.exc_info())
+            return
+        for slot in self.slots["result"]:
+            slot(value)
+
+
+def test_the_download_worker_stages_in_place_and_skips_the_installer(qapp, dev, monkeypatch):  # noqa: F811
+    from PyReconstruct.modules.gui.dialog import update_dialog
+    monkeypatch.setattr(update_dialog, "ThreadPool", InlinePool)
     dlg = _dialog(None, dev)
     dlg.show()
     monkeypatch.setattr(I, "running_install", lambda: dev.install)
@@ -216,7 +244,8 @@ def test_the_download_worker_stages_in_place_and_skips_the_installer(qapp, qtbot
         release, offered, platform=dev.registry, trusted_keys=dev_keys(), **kw))
 
     dlg._start_download()
-    qtbot.waitUntil(lambda: dlg._parent._pending_inplace is not None, timeout=15000)
+
+    assert dlg._parent._pending_inplace is not None
 
     assert I.still_staged(dlg._parent._pending_inplace)
     assert not any(n.endswith("Setup.exe") for n in dev.rel.fetched)  # the installer was never fetched
