@@ -61,6 +61,9 @@ default_settings = {
     "left_handed": False,  # MFO
     "utc": False,  # MFO
     "cpu_max": 50,  # % of cores -> parallel zarr-conversion workers; ~half leaves headroom
+    # a local copy of each series opened, for a fast open (Dev builds only;
+    # PYRECON_HYBRID_STORE wins over it: datatypes/local_stores.py)
+    "hybrid_store": False,  # MFO
 
     # view
     "3D_xy_res": 0,  # 0-100  # MFO

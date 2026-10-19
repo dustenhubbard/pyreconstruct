@@ -59,6 +59,7 @@
     "hideimage_act": "str",
     "hidetraces_act": "str",
     "homeview_act": "str",
+    "hybrid_store": "bool",
     "incbr_act": "str",
     "inccon_act": "str",
     "incpalettedown_act": "str",

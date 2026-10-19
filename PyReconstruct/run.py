@@ -139,6 +139,12 @@ def runPyReconstruct(filename=None):
         filename = file_open_watcher.pending
         file_open_watcher.pending = None
 
+    # remove local copies of series that are no longer used, in the
+    # background (datatypes/local_stores.py); with no copies, nothing runs.
+    # Once per process, so an in-app restart below does not run it again.
+    from PyReconstruct.modules.datatypes.local_stores import startCleanup
+    startCleanup()
+
     # push menu shortcut keybinds clear of their labels (the native style packs
     # them within a few pixels of the widest label). A QProxyStyle survives the
     # setTheme stylesheet swaps, so it is installed once, here.
