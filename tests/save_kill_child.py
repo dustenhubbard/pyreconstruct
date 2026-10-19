@@ -8,13 +8,21 @@ folder, then the .jser.
 
 At the named kill point it prints ``AT <point>`` and blocks, and the test
 SIGKILLs it there. The points are reached by wrapping functions from this script
-only, so no product code knows about the test. Whatever the product wrote before
-the point is on disk when ``AT`` is printed: the wrappers flush first, and a
-flushed write is visible to the next process even without an fsync.
+only, so no product code knows about the test.
+
+Five points are boundaries in the product's own I/O: the wrapper only waits
+there, and changes nothing about what is on disk. The two ``injected-`` points
+are not. The .jser is written section by section into a buffered temp file that
+the product flushes and fsyncs once, at the end, so a kill partway through
+leaves whatever prefix the OS had been handed. These two points force one such
+prefix onto disk: half of the write that carries section 3, or sections 0 to 2
+flushed. They stand in for a kill the product's own buffering might or might
+not produce at exactly that byte.
 
 ``none`` runs the whole save and prints ``SAVED``, which gives the test the state
-a finished save leaves. A point that is never reached also ends in ``SAVED``, and
-the test fails on it.
+a finished save leaves. ``none-without-current`` does the same without the edit
+to the section on screen. A point that is never reached also ends in ``SAVED``,
+and the test fails on it.
 
 PySide6 cannot be imported here at all, so this process cannot reach the real
 application settings (QSettings), and the settings it does read come from an
@@ -53,12 +61,15 @@ from PyReconstruct.modules.datatypes.series import Series  # noqa: E402
 POINTS = (
     "section-replace",  # the current section's working file, before its rename
     "ser-replace",  # the working folder's series file, before its rename
-    "jser-mid-write",  # partway through the bytes of one section in the .jser
-    "jser-between-sections",  # after some sections are in the new .jser
+    "injected-jser-half-write",  # half of section 3's bytes forced into the temp .jser
+    "injected-jser-flush-between-sections",  # sections 0 to 2 forced into the temp .jser
     "jser-before-rename",  # the new .jser complete and synced, not renamed
     "jser-after-rename",  # the new .jser renamed into place
-    "close-remove",  # Save and close: the working folder partly removed
+    "close-remove",  # Save and close: two files of the working folder removed
 )
+
+#: The two finished saves the test compares against.
+CONTROLS = ("none", "none-without-current")
 
 #: Sections edited before the save, and the one still open in the window.
 EDITED = (0, 2, 4)
@@ -106,7 +117,7 @@ def arm(point, series):
     real_write_jser = series_mod.write_jser
 
     def write_jser(f, sections, tail, *args, **kwargs):
-        if point not in ("jser-between-sections", "jser-mid-write"):
+        if not point.startswith("injected-jser-"):
             return real_write_jser(f, sections, tail, *args, **kwargs)
         out = _StoppingFile(f, point)
 
@@ -114,7 +125,7 @@ def arm(point, series):
             for i, s in enumerate(sections()):
                 if i == CURRENT:
                     # sections 0 to 2 are in the file; 3, edited, is next
-                    if point == "jser-between-sections":
+                    if point == "injected-jser-flush-between-sections":
                         f.flush()
                         stop(point)
                     out.stop_in_next_write = True
@@ -125,36 +136,33 @@ def arm(point, series):
     series_mod.write_jser = write_jser
 
     if point == "close-remove":
+        # Stops after the second file of the working folder is removed,
+        # whichever files those are, so a close that removes the series file
+        # first reaches this point too and leaves no series file behind.
         real_remove = os.remove
         removed = []
 
         def remove(path, *args, **kwargs):
             if os.path.dirname(os.path.abspath(path)) == hidden:
-                ser_left = any(n.endswith(".ser") for n in os.listdir(hidden))
-                if removed and ser_left and _is_section_file(path):
+                if len(removed) == 2:
                     stop(point)
-                if _is_section_file(path):
-                    removed.append(path)
+                removed.append(path)
             real_remove(path, *args, **kwargs)
 
-        os.remove = remove
+        os.remove = os.unlink = remove
 
         # The order close() removes files in is the folder listing's, which the
-        # file system picks. Sorted is one real order, and the one that leaves
-        # the series file for last.
+        # file system picks. Sorted with the series file last is one real
+        # order, and the same on every file system.
         real_listdir = os.listdir
 
         def listdir(path="."):
             names = real_listdir(path)
             if os.path.abspath(path) == hidden:
-                names = sorted(names, key=lambda n: n.endswith(".ser"))
+                names = sorted(names, key=lambda n: (n.endswith(".ser"), n))
             return names
 
         os.listdir = listdir
-
-
-def _is_section_file(path):
-    return os.path.basename(path).rsplit(".", 1)[-1].isdigit()
 
 
 class _StoppingFile:
@@ -179,7 +187,7 @@ class _StoppingFile:
 
 
 def main(jser_fp, point):
-    if point != "none" and point not in POINTS:
+    if point not in CONTROLS and point not in POINTS:
         sys.exit(f"unknown kill point {point!r}")
 
     series = Series.openJser(jser_fp, progress=NullProgressReporter, notifier=NullNotifier())
@@ -197,14 +205,17 @@ def main(jser_fp, point):
 
     # The section on screen, edited and not yet written
     current = series.loadSection(CURRENT)
-    edit(current, tag=1)
+    if point != "none-without-current":
+        edit(current, tag=1)
 
     print("SAVING", flush=True)
-    if point != "none":
+    if point not in CONTROLS:
         arm(point, series)
 
-    # What MainWindow.saveToJser does: saveAllData, then the .jser
-    current.save()
+    # What MainWindow.saveToJser does: saveAllData, which writes the section on
+    # screen only if it changed, then the .jser
+    if current.isModified():
+        current.save(update_series_data=False)
     series.save()
     series.saveJser(close=(point == "close-remove"))
     print("SAVED", flush=True)

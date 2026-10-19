@@ -4,22 +4,27 @@
 edits four of its five sections and one object attribute, and saves the way
 Save (Cmd+S, Ctrl+S on Windows/Linux) does. It stops at one named point in the
 save and this test SIGKILLs it there: no ``finally`` block, ``atexit`` hook or
-buffered write runs after that.
+buffered write runs after that. Two of the points force a partial write onto
+disk rather than wait at a boundary; the child's docstring says which and why.
 
 Then the folder is reopened both ways the window offers after a crash, each on
 its own copy:
 
 * declining the unsaved work: the working folder is deleted, as the window
-  deletes it, and the .jser opens. It must hold exactly the series before the
-  save or exactly the series after it, never some sections of each.
-* opening the unsaved work: the working folder opens. It must hold every edit
-  that had reached it, every section, and the series history, and a save from
-  it must write all of that to the .jser.
+  deletes it, and the .jser opens. The .jser must be exactly the series before
+  the save or exactly the series after it.
+* opening the unsaved work: the working folder opens, every section loads, and
+  the .jser a save from it writes must be exactly the state the folder held at
+  that point, listed per point in ``POINTS``.
 
-The states compared against are the fixture as checked in and the result of the
-same child run with no kill.
+"Exactly" is the whole .jser document, every section, the series and the
+history, compared as parsed JSON. The only thing left out is the date and time
+of each history line, which differ from run to run. The states compared against
+come from finished runs of the same child: the fixture as checked in, the
+finished save, and the finished save without the edit to the section on screen.
 """
 
+import json
 import os
 import queue
 import re
@@ -47,14 +52,24 @@ TIMEOUT = 120
 
 TEMP_NAME = re.compile(r"\.save-[0-9a-f]{6}\.tmp")
 
-# Each point, what the .jser must hold after the kill, and what the working
-# folder must hold. "pre-current" is the finished save without the edit to
-# the section on screen, whose working file had not been renamed into place.
+# Each point, the state the .jser must hold after the kill, and the state the
+# working folder must hold.
+#   old          the fixture
+#   new          the finished save
+#   pre-current  the finished save without the edit to the section on screen,
+#                whose working file had not been renamed into place
+#   sections-ahead  the sections of "new" with the series file of
+#                "pre-current": the section on screen was written to the
+#                working folder and the series file after it was not. The
+#                series file is the history, so this one entry is missing. A
+#                crash between leaving a section and the next series write
+#                leaves the same state; the two files are never written as one.
+#   gone-or-new  no series file left to offer, or "new"
 POINTS = {
     "section-replace": ("old", "pre-current"),
-    "ser-replace": ("old", "new"),
-    "jser-mid-write": ("old", "new"),
-    "jser-between-sections": ("old", "new"),
+    "ser-replace": ("old", "sections-ahead"),
+    "injected-jser-half-write": ("old", "new"),
+    "injected-jser-flush-between-sections": ("old", "new"),
     "jser-before-rename": ("old", "new"),
     "jser-after-rename": ("new", "new"),
     "close-remove": ("new", "gone-or-new"),
@@ -63,11 +78,20 @@ POINTS = {
 CLOSE_REMOVE_ISSUE = "https://github.com/dustenhubbard/pyreconstruct/issues/962"
 
 
-def run_child(jser_fp, point):
-    """Run the child to `point` and SIGKILL it there. Returns its stdout lines.
+class IncompleteWorkingFolder(Exception):
+    """The working folder is offered as unsaved work with files already gone.
 
-    Fails if the child finishes, dies or stalls before it reports the point.
+    Its own class, so the close-remove xfail expects this failure and no other.
     """
+
+
+def run_child(jser_fp, point):
+    """Run the child to `point` and SIGKILL it there, or to the end for a control.
+
+    Any other outcome is a plain test failure (pytest.fail), never an assertion
+    an xfail could take for the expected one.
+    """
+    control = point.startswith("none")
     env = dict(os.environ)
     env["PYTHONPATH"] = ROOT + os.pathsep + env.get("PYTHONPATH", "")
     err_fp = jser_fp + ".child-stderr.txt"
@@ -86,19 +110,21 @@ def run_child(jser_fp, point):
 
     threading.Thread(target=read, daemon=True).start()
     seen = []
+    timed_out = False
     try:
         while True:
             try:
                 line = lines.get(timeout=TIMEOUT)
             except queue.Empty:
-                pytest.fail(f"the child did not reach {point} in {TIMEOUT} s: {seen}")
+                timed_out = True
+                break
             if line is None:
                 break
             seen.append(line)
-            if line == f"AT {point}" or (point == "none" and line == "SAVED"):
+            if line == f"AT {point}" or (control and line == "SAVED"):
                 break
     finally:
-        if point != "none":
+        if not control or timed_out:
             proc.kill()
         proc.wait(timeout=60)
         proc.stdout.close()
@@ -106,15 +132,16 @@ def run_child(jser_fp, point):
         stderr = f.read()
     os.remove(err_fp)
 
-    if point == "none":
-        assert proc.returncode == 0 and seen[-1:] == ["SAVED"], (seen, stderr)
-    else:
-        assert seen[-1:] == [f"AT {point}"], (
-            f"the child never reached {point}: {seen}\n{stderr}"
-        )
-        if os.name == "posix":
-            assert proc.returncode == -signal.SIGKILL, (proc.returncode, stderr)
-    return seen
+    if timed_out:
+        pytest.fail(f"the child did not reach {point} in {TIMEOUT} s: {seen}\n{stderr}")
+    if control:
+        if proc.returncode != 0 or seen[-1:] != ["SAVED"]:
+            pytest.fail(f"the control save {point} did not finish: {seen}\n{stderr}")
+        return
+    if seen[-1:] != [f"AT {point}"]:
+        pytest.fail(f"the child never reached {point}: {seen}\n{stderr}")
+    if os.name == "posix" and proc.returncode != -signal.SIGKILL:
+        pytest.fail(f"the child was not SIGKILLed: {proc.returncode}\n{stderr}")
 
 
 def open_series(jser_fp):
@@ -125,41 +152,15 @@ def open_series(jser_fp):
     return series
 
 
-def content(series):
-    """What a save must keep, compared exactly: every section's traces, and the attribute."""
-    sections = {}
-    for snum in sorted(series.sections):
-        section = series.loadSection(snum)
-        sections[snum] = sorted(
-            (name, tuple((round(x, 6), round(y, 6)) for x, y in trace.points))
-            for name, contour in section.contours.items()
-            for trace in contour
-        )
-    return {
-        "sections": sections,
-        "comment": series.getAttr("kill_test", "comment"),
-    }
-
-
-def history(series):
-    """The series history the next save writes: the file's, then this session's.
-
-    Each line without its date and time, which differ from run to run.
-    """
-    log_fp = os.path.join(series.hidden_dir, "existing_log.csv")
-    text = ""
-    if os.path.isfile(log_fp):
-        with open(log_fp, encoding="utf-8") as f:
-            text = f.read()
-    text += "\n" + str(series.log_set)
-    return [", ".join(line.split(", ")[2:]) for line in text.splitlines() if line.strip()]
-
-
-def check_history(got, old, expect):
-    """Nothing the file already had is gone, and a save's own entries are there."""
-    assert got[:len(old)] == old, "the series history lost entries"
-    if expect != "old":
-        assert any("kill_test" in line for line in got[len(old):]), got
+def document(jser_fp):
+    """The whole .jser, parsed, with the date and time cut from each history line."""
+    with open(jser_fp, "rb") as f:
+        doc = json.loads(f.read())
+    doc["log"] = [
+        ", ".join(line.split(", ")[2:])
+        for line in doc.get("log", "").splitlines() if line.strip()
+    ]
+    return doc
 
 
 def hidden_dir(folder):
@@ -176,13 +177,16 @@ def clear_hidden(folder):
 
 
 def open_jser_only(folder):
-    """Decline the unsaved work, open the .jser, and close it again."""
+    """Decline the unsaved work, open the .jser (every section), close it again."""
     clear_hidden(folder)
-    series = open_series(os.path.join(folder, f"{NAME}.jser"))
+    jser_fp = os.path.join(folder, f"{NAME}.jser")
+    series = open_series(jser_fp)
     try:
-        return content(series), history(series)
+        for snum in series.sections:
+            series.loadSection(snum)
     finally:
         series.close()
+    return document(jser_fp)
 
 
 def has_working_series(folder):
@@ -191,36 +195,37 @@ def has_working_series(folder):
     return os.path.isdir(hidden) and any(f.endswith(".ser") for f in os.listdir(hidden))
 
 
+def finished_save(base, control):
+    folder = base / control
+    folder.mkdir()
+    shutil.copyfile(FIXTURE, folder / f"{NAME}.jser")
+    run_child(str(folder / f"{NAME}.jser"), control)
+    return open_jser_only(str(folder))
+
+
 @pytest.fixture(scope="module")
 def states(tmp_path_factory):
-    """The series before the save, after it, and after it minus the current section.
-
-    Also the history the file had before the save, under "old-history".
-    """
+    """Every state a kill may leave, as whole documents (see POINTS)."""
     base = tmp_path_factory.mktemp("save-kill-states")
+    (base / "old").mkdir()
+    shutil.copyfile(FIXTURE, base / "old" / f"{NAME}.jser")
+    old = open_jser_only(str(base / "old"))
+    new = finished_save(base, "none")
+    pre_current = finished_save(base, "none-without-current")
+    sections_ahead = dict(pre_current, sections=new["sections"])
 
-    old_dir = base / "old"
-    old_dir.mkdir()
-    shutil.copyfile(FIXTURE, old_dir / f"{NAME}.jser")
-    old, old_history = open_jser_only(str(old_dir))
-
-    new_dir = base / "new"
-    new_dir.mkdir()
-    shutil.copyfile(FIXTURE, new_dir / f"{NAME}.jser")
-    run_child(str(new_dir / f"{NAME}.jser"), "none")
-    new, new_history = open_jser_only(str(new_dir))
-
-    # the edits are all there, so "old" and "new" can be told apart per section
-    for snum in (0, 2, 3, 4):
-        assert any(name == "kill_test" for name, _ in new["sections"][snum]), snum
-        assert new["sections"][snum] != old["sections"][snum], snum
-    assert new["sections"][1] == old["sections"][1]
-    assert new["comment"] == "edited before the save" != old["comment"]
-    assert old_history
-    check_history(new_history, old_history, "new")
-
-    pre_current = dict(new, sections={**new["sections"], 3: old["sections"][3]})
-    return {"old": old, "new": new, "pre-current": pre_current, "old-history": old_history}
+    # the states differ where they should, so an equal one is not luck. (Every
+    # section differs from the fixture's: an open locks each section and
+    # rewrites it in today's layout, edited or not.)
+    assert [s == o for s, o in zip(pre_current["sections"], new["sections"])] == [
+        True, True, True, False, True]
+    assert new["log"] != pre_current["log"] != old["log"]
+    assert len({json.dumps(d, sort_keys=True) for d in (
+        old, new, pre_current, sections_ahead)}) == 4
+    return {
+        "old": old, "new": new, "pre-current": pre_current,
+        "sections-ahead": sections_ahead,
+    }
 
 
 def kill_at(tmp_path, point):
@@ -238,11 +243,10 @@ def check_jser(folder, untouched, expect, states, tmp_path):
     """Decline the unsaved work: the .jser alone is the old series or the new one."""
     declined = tmp_path / "declined"
     shutil.copytree(folder, declined)
-    got, got_history = open_jser_only(str(declined))
+    got = open_jser_only(str(declined))
     if expect == "old":
         assert untouched, "the .jser was written before the save finished"
-    assert got == states[expect], f"the .jser does not hold the {expect} series"
-    check_history(got_history, states["old-history"], expect)
+    assert got == states[expect], f"the .jser is not exactly the {expect} series"
     leftovers = [
         f for f in os.listdir(declined)
         if f != f"{NAME}.jser" and f != f".{NAME}"
@@ -252,7 +256,7 @@ def check_jser(folder, untouched, expect, states, tmp_path):
 
 
 def check_working_folder(folder, expect, states, tmp_path):
-    """Open the unsaved work: it holds every edit, and a save from it keeps them."""
+    """Open the unsaved work: a save from it writes exactly the state it held."""
     accepted = tmp_path / "accepted"
     shutil.copytree(folder, accepted)
     if expect == "gone-or-new" and not has_working_series(str(accepted)):
@@ -260,22 +264,32 @@ def check_working_folder(folder, expect, states, tmp_path):
     assert has_working_series(str(accepted)), "the working folder is not offered"
     want = states["new" if expect == "gone-or-new" else expect]
 
+    hidden = hidden_dir(str(accepted))
+    missing = [
+        f"{NAME}.{snum}" for snum, section in enumerate(want["sections"])
+        if section is not None and not os.path.isfile(os.path.join(hidden, f"{NAME}.{snum}"))
+    ]
+    if not os.path.isfile(os.path.join(hidden, "existing_log.csv")):
+        missing.append("existing_log.csv")
+    if missing:
+        raise IncompleteWorkingFolder(f"offered as unsaved work without {missing}")
+
     series = open_series(str(accepted / f"{NAME}.jser"))
     try:
-        assert content(series) == want, "the working folder lost work"
-        check_history(history(series), states["old-history"], "new")
+        for snum in series.sections:
+            series.loadSection(snum)
         series.saveJser()
     finally:
         series.close()
-    got, got_history = open_jser_only(str(accepted))
-    assert got == want, "a save from the working folder lost work"
-    check_history(got_history, states["old-history"], "new")
+    assert document(str(accepted / f"{NAME}.jser")) == want, (
+        f"a save from the working folder is not exactly the {expect} state"
+    )
 
 
 @pytest.mark.parametrize("point", [
     pytest.param(point, marks=pytest.mark.xfail(
         strict=True,
-        raises=AssertionError,
+        raises=IncompleteWorkingFolder,
         reason=f"Save and close killed while the working folder is removed: {CLOSE_REMOVE_ISSUE}",
     )) if point == "close-remove" else point
     for point in POINTS
@@ -285,3 +299,29 @@ def test_kill_during_save_then_reopen(tmp_path, states, point):
     folder, untouched = kill_at(tmp_path, point)
     check_jser(folder, untouched, jser_expect, states, tmp_path)
     check_working_folder(folder, hidden_expect, states, tmp_path)
+
+
+def test_a_mixed_series_matches_no_state(states):
+    """The comparison is strict enough to see a series that is part old, part new."""
+    new, old = states["new"], states["old"]
+
+    def changed(doc, edit):
+        doc = json.loads(json.dumps(doc))
+        edit(doc)
+        return doc
+
+    def stale_section(doc):
+        doc["sections"][3] = old["sections"][3]
+
+    def recolored(doc):
+        doc["sections"][2]["contours"]["kill_test"][0][2] = [0, 0, 0]  # color
+
+    def history_short(doc):
+        doc["log"] = doc["log"][:-1]
+
+    def series_stale(doc):
+        doc["series"] = old["series"]
+
+    for edit in (stale_section, recolored, history_short, series_stale):
+        mixed = changed(new, edit)
+        assert mixed not in states.values(), edit.__name__
