@@ -912,6 +912,7 @@ class MainWindow(QMainWindow):
             ("usegrid_act", lambda : self.mouse_palette.activateModeButton("Grid")),
             ("useflag_act", lambda : self.mouse_palette.activateModeButton("Flag")),
             ("usehost_act", lambda : self.mouse_palette.activateModeButton("Host")),
+            ("useroi_act", lambda : self.mouse_palette.activateModeButton("ROI mode")),
         ]
   
         for act_name, act in mode_shortcuts:
@@ -5338,7 +5339,7 @@ class MainWindow(QMainWindow):
         if shortcuts_dict is None:
             shortcuts_dict = {}
             for k in Series.qsettings_defaults:
-                # a held-back act (roibox_act) keeps its key but has no action
+                # a settings key whose action is gone is skipped
                 if k.endswith("_act") and getattr(self, k, None):
                     shortcuts_dict[k] = self.series.getOption(k)
         
