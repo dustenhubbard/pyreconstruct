@@ -388,6 +388,7 @@ class MainWindow(QMainWindow):
         self._updater_pool          =  None   # in-flight update guard
         self._pending_installer     =  None   # launched on the accepted close
         self._pending_update_dir    =  None
+        self._pending_inplace       =  None   # an update staged in place, swapped in at quit
         self.check_actions_enabled  =  False
         self.actions_initialized    =  False
 
@@ -5031,8 +5032,9 @@ class MainWindow(QMainWindow):
         dialog = UpdateDialog(self, info, channel)
         self.clearUpdateNotice()  # the update is open now; the notice is done
         # the dialog downloads + verifies, sets _pending_installer, and accepts;
-        # closing then launches the installer (see closeEvent).
-        if dialog.exec() and self._pending_installer:
+        # closing then launches the installer (see closeEvent). An update
+        # staged in place waits for the quit, unless the user picks Restart Now.
+        if dialog.exec() and (self._pending_installer or dialog.restart_now):
             self.close()
 
     def checkForUpdatesStartup(self):
@@ -5967,9 +5969,14 @@ class MainWindow(QMainWindow):
         # did not survive a relaunch. A canceled close leaves the early capture
         # behind, which is merely current.
         self._captureListLayout()
+        # the series to reopen after an in-place update, read before the save closes it
+        reopen = None
+        if self.series is not None and not self.series.isWelcomeSeries():
+            reopen = self.series.jser_fp
         response = self.saveToJser(notify=True, close=True)
         if response == "cancel":
             event.ignore()
+            # an update staged in place stays staged for the next quit
             # a deferred update installer must NOT run if the user aborted the close
             if self._pending_installer:
                 self._cleanupUpdateDir(self._pending_update_dir)
@@ -5999,6 +6006,19 @@ class MainWindow(QMainWindow):
                 QApplication.quit()
             except Exception as e:
                 notify(f"Could not launch the installer:\n{e}\n\nFind it at: {self._pending_installer}")
+        # or start the helper that swaps in an update staged in place. Not on
+        # an in-app restart: this process lives on, and the helper waits on it.
+        elif self._pending_inplace and not self.restart_mainwindow:
+            from PyReconstruct.modules.backend.updater.inplace import start_helper
+            try:
+                if start_helper(self._pending_inplace, os.getpid(), reopen):
+                    QApplication.quit()
+                else:
+                    print("Update not installed: the staged update changed after it was staged.")
+            except Exception:
+                print("Update not installed: the update helper did not start.")
+                traceback.print_exc()
+            self._pending_inplace = None
         event.accept()
 
 

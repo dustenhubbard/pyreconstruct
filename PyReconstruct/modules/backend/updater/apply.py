@@ -39,7 +39,8 @@ Staging layout, ``<parent>/.<AppName>-update/``::
     deferrals.json       how many times a locked install put this version off
     helper.lock          held by the running helper, so only one runs at a time
     helper.log           a line per step, for bug reports
-    selftest.log         what the self-test printed
+    selftest.log         what the self-test printed, its last part only
+    helper/              this helper, copied from the install (Windows)
 
 The OS-specific parts (waiting on and killing processes, launching, the
 Windows uninstall registry entry) sit behind ``Platform`` so tests can drive
@@ -88,6 +89,8 @@ DEFERRALS = "deferrals.json"
 LOG = "helper.log"
 LOCK = "helper.lock"
 SELFTEST_LOG = "selftest.log"
+# selftest.log grows by one run per quit; past this many bytes only the last half is kept.
+SELFTEST_LOG_MAX = 1 << 20
 NEW = "new"
 OLD = "old"
 REJECTED = "rejected"
@@ -255,6 +258,20 @@ def _remove(path):
         except PermissionError:
             os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
             os.unlink(path)
+
+
+def _trim_log(path, limit):
+    """Keep the last half of ``path`` once it is over ``limit`` bytes. A log is never worth a failed run."""
+    try:
+        if os.path.getsize(path) <= limit:
+            return
+        with open(path, "rb") as f:
+            f.seek(-(limit // 2), os.SEEK_END)
+            tail = f.read()
+        with open(path, "wb") as f:
+            f.write(tail)
+    except OSError:
+        pass
 
 
 def write_health(staging, version, pid=None):
@@ -966,12 +983,13 @@ def release_lock(fd):
 class Applier:
     """One helper run over one staging folder: apply the plan, or recover an unfinished one."""
 
-    def __init__(self, staging, platform, timings=None, *, host=None, pid=None):
+    def __init__(self, staging, platform, timings=None, *, host=None, pid=None, open_path=None):
         self.staging = os.path.abspath(staging)
         self.platform = platform
         self.timings = timings or default_timings(host)
         self.host = host or os_key()
         self.pid_override = pid
+        self.open_path = open_path
         self.state = None
         self.plan = None
         self.state_path = os.path.join(self.staging, STATE)
@@ -1084,25 +1102,35 @@ class Applier:
 
     def _check_placement(self):
         plan = self.plan
-        install, staging = self.install, self.staging
+        install = self.install
         if not os.path.lexists(install):
             raise Refused("the install is missing")
         if os.path.islink(install):
             raise Refused("the install is a link")
-        if os.path.islink(staging) or not os.path.isdir(staging):
-            raise Refused("the staging folder is missing or a link")
         if plan["kind"] == "folder" and not os.path.isdir(install):
             raise Refused("the install is not a folder")
         if plan["kind"] == "file" and not os.path.isfile(install):
             raise Refused("the install is not a file")
-        same_parent = (os.path.normcase(os.path.realpath(os.path.dirname(install)))
-                       == os.path.normcase(os.path.realpath(os.path.dirname(staging))))
-        if not same_parent or os.path.basename(staging) != f".{plan['app_name']}-update":
-            raise Refused("the staging folder is not next to the install")
-        if os.stat(install).st_dev != os.stat(staging).st_dev:
-            raise Refused("the staging folder is on another volume")
+        self._check_staging_placement()
         if not os.path.lexists(self.new) or os.path.islink(self.new):
             raise Refused("nothing is staged")
+
+    def _check_staging_placement(self):
+        """Staging is a real folder beside the install, on its volume. Holds part way through a swap too.
+
+        Recovery runs this as well: the install path may be empty then, so
+        only its parent is compared.
+        """
+        install, staging = self.install, self.staging
+        if os.path.islink(staging) or not os.path.isdir(staging):
+            raise Refused("the staging folder is missing or a link")
+        same_parent = (os.path.normcase(os.path.realpath(os.path.dirname(install)))
+                       == os.path.normcase(os.path.realpath(os.path.dirname(staging))))
+        if not same_parent or os.path.basename(staging) != f".{self.plan['app_name']}-update":
+            raise Refused("the staging folder is not next to the install")
+        on = install if os.path.lexists(install) else os.path.dirname(install)
+        if os.stat(on).st_dev != os.stat(staging).st_dev:
+            raise Refused("the staging folder is on another volume")
 
     def _check_install_identity(self):
         plan, install = self.plan, self.install
@@ -1215,6 +1243,7 @@ class Applier:
             "format": FORMAT, "status": "running", "plan": self.plan,
             "helper_pid": os.getpid(), "helper_start": self.platform.start_time(os.getpid()),
             "started": _now(), "installed": "old", "carried": [], "launched_pid": None,
+            "open": self.open_path,
         }
         return self._steps(FORWARD, 0)
 
@@ -1278,8 +1307,9 @@ class Applier:
 
     def _do_selftest(self):
         cwd = self.new if self.plan["kind"] == "folder" else self.staging
-        code = self.platform.run(self._selftest_argv(), self.timings.selftest, cwd,
-                                 log=os.path.join(self.staging, SELFTEST_LOG))
+        log = os.path.join(self.staging, SELFTEST_LOG)
+        _trim_log(log, SELFTEST_LOG_MAX)
+        code = self.platform.run(self._selftest_argv(), self.timings.selftest, cwd, log=log)
         if code is None:
             # A first run of new files can be slow while Defender scans them.
             # Try again at the next quit; three of these count as three deferrals.
@@ -1452,9 +1482,15 @@ class Applier:
         return None
 
     def _launch_argv(self):
+        """The program and its arguments, then the series that was open at quit, if any."""
         if self.plan["kind"] == "file":
-            return [self.install] + self.plan["args"]
-        return [os.path.join(self.install, *self.plan["exe"].split("/"))] + self.plan["args"]
+            argv = [self.install] + self.plan["args"]
+        else:
+            argv = [os.path.join(self.install, *self.plan["exe"].split("/"))] + self.plan["args"]
+        series = (self.state or {}).get("open")
+        if isinstance(series, str) and os.path.isabs(series):
+            argv.append(series)
+        return argv
 
     def _stop(self, pids):
         pids = [p for p in pids if p and self.platform.pid_alive(p)]
@@ -1487,8 +1523,16 @@ class Applier:
         return None
 
     def _healthy(self):
+        """health.json names the new version and, once the launch is recorded, the process launched.
+
+        A copy the user started from the install would write the same
+        version, so the process ID is what ties the report to this launch.
+        """
         report = read_json(os.path.join(self.staging, HEALTH))
-        return isinstance(report, dict) and report.get("version") == self.plan["to_version"]
+        if not isinstance(report, dict) or report.get("version") != self.plan["to_version"]:
+            return False
+        launched = (self.state or {}).get("launched_pid")
+        return launched is None or report.get("pid") == launched
 
     def _do_health(self):
         pid = self.state.get("launched_pid")
@@ -1580,7 +1624,13 @@ class Applier:
         self.plan = state.get("plan")
         if not isinstance(self.plan, dict):
             return {"status": "error", "installed": None, "reason": "state.json has no plan"}
-        self.install = os.path.abspath(self.plan["install"])
+        try:
+            self.install = os.path.abspath(self.plan["install"])
+            self._check_staging_placement()
+        except (Refused, KeyError, TypeError, OSError) as e:
+            # The journal is left as it is: the disk may be part way through a swap.
+            self._log(f"not recovering: {e}")
+            return {"status": "error", "installed": None, "reason": f"not recovering: {e}"}
         helper = state.get("helper_pid")
         if helper and helper != os.getpid() and self._helper_running(helper, state.get("helper_start")):
             return {"status": "busy", "installed": None, "reason": f"helper {helper} is still running"}
@@ -1636,19 +1686,22 @@ class Applier:
 
 
 def main(argv=None):
-    """``__apply_update__ <staging> [--pid N]``: apply or recover, exit 0 when the new version is in."""
+    """``__apply_update__ <staging> [--pid N] [--open SERIES]``: apply or recover, exit 0 when the new version is in."""
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == APPLY_ARG:
         argv = argv[1:]
     parser = argparse.ArgumentParser(prog=APPLY_ARG)
     parser.add_argument("staging", help="the .<AppName>-update folder next to the install")
     parser.add_argument("--pid", type=int, default=None, help="wait for this process to exit first")
+    parser.add_argument("--open", dest="open_path", default=None,
+                        help="the series to open in the version this run starts (an absolute path)")
     args = parser.parse_args(argv)
+    open_path = args.open_path if args.open_path and os.path.isabs(args.open_path) else None
     # A working folder inside the install would lock it on Windows, and the
     # helper may have been started from there. Staging is never moved.
     staging = os.path.abspath(args.staging)
     os.chdir(staging)
-    applier = Applier(staging, default_platform(), pid=args.pid)
+    applier = Applier(staging, default_platform(), pid=args.pid, open_path=open_path)
     result = applier.run()
     return 0 if result.get("installed") == "new" else 1
 

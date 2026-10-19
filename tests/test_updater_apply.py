@@ -23,6 +23,7 @@ import subprocess
 import sys
 import time
 from dataclasses import replace
+from unittest import mock
 
 import pytest
 
@@ -733,7 +734,11 @@ class ReportingPlatform(FakePlatform):
         pid = super().launch(argv, cwd)
         if pid in self.w.alive:
             version = self.w.versions[pid]
-            self.reports.append((version, A.report_started(self.w.install, "PyReconstruct", version)))
+            # the report carries the reporting process's own pid, which is the launched one
+            # (swap-windows on a real install logs both)
+            with mock.patch.object(A.os, "getpid", return_value=pid):
+                reported = A.report_started(self.w.install, "PyReconstruct", version)
+            self.reports.append((version, reported))
         return pid
 
 
@@ -1370,3 +1375,99 @@ def test_build_tree_round_trips_through_verify(tmp_path, can_symlink):
     assert {"path": "Contents/Resources/empty", "type": "dir",
             "mode": stat.S_IMODE(os.stat(os.path.join(root, "Contents", "Resources", "empty")).st_mode)} \
         in tree["files"]
+
+
+# --- Wired to the app's quit (fork #435, step 5) ------------------------------------
+
+def test_a_health_report_from_another_process_does_not_count(win):
+    """Only the copy this run launched may say the new version started; a copy the user started may not."""
+    win.world.healthy[NEW_V] = False  # the launched copy never reports
+    others = []
+
+    def user_starts_a_copy():
+        if win.world.launches and not others:  # once the new version is in and launched
+            others.append(win.world.spawn(os.path.join(win.install, "PyReconstruct.exe")))
+            A.write_health(win.staging, NEW_V, others[0])
+
+    win.world.on_poll = user_starts_a_copy
+
+    result = win.applier().run()
+
+    assert others and result["status"] == "rolled_back", result
+    assert win.settled() == "old"
+
+
+def test_the_series_open_at_quit_reopens_in_the_new_version(win, tmp_path):
+    series = str(tmp_path / "open at quit.jser")
+
+    result = win.applier(open_path=series).run()
+
+    assert result["status"] == "updated", result
+    assert win.world.launches[-1] == [win.exe(win.install)] + win.plan["args"] + [series]
+
+
+def test_the_series_reopens_in_the_old_version_after_a_rollback(win, tmp_path):
+    series = str(tmp_path / "open at quit.jser")
+    win.world.healthy[NEW_V] = False
+
+    result = win.applier(open_path=series).run()
+
+    assert result["status"] == "rolled_back", result
+    assert [argv[-1] for argv in win.world.launches] == [series, series]
+
+
+@pytest.mark.parametrize("given, passed", [
+    (lambda tmp: os.path.join(str(tmp), "a.jser"), True),
+    (lambda tmp: "a.jser", False),  # relative: it would resolve against the helper's folder
+    (lambda tmp: None, False),
+])
+def test_the_helper_takes_only_an_absolute_series_path(tmp_path, monkeypatch, given, passed):
+    seen = {}
+
+    class Recorder:
+        def __init__(self, staging, platform, **kw):
+            seen.update(kw)
+
+        def run(self):
+            return {"installed": "old"}
+
+    monkeypatch.setattr(A, "Applier", Recorder)
+    monkeypatch.setattr(A, "default_platform", lambda: None)
+    monkeypatch.chdir(tmp_path)  # main() moves into staging; this puts the test's folder back
+    path = given(tmp_path)
+    argv = [str(tmp_path), "--pid", "7"] + (["--open", path] if path else [])
+
+    assert A.main(argv) == 1
+    assert seen == {"pid": 7, "open_path": path if passed else None}
+
+
+def test_recovery_refuses_a_journal_whose_install_is_not_beside_staging(win, tmp_path):
+    """A journal copied or moved away from its install must not drive renames there."""
+    elsewhere = os.path.join(str(tmp_path), "Elsewhere", "PyReconstruct")
+    windows_tree(elsewhere, OLD_V)
+    before = snapshot(elsewhere)
+    state = {"format": A.FORMAT, "status": "running", "step": "swap_out", "phase": "begin",
+             "plan": dict(win.plan, install=elsewhere), "installed": "old"}
+    A.atomic_write_json(os.path.join(win.staging, "state.json"), state)
+    _write(win.staging, "old/PyReconstruct.exe", "a backup")
+
+    result = win.applier().run()
+
+    assert result["status"] == "error" and "not next to the install" in result["reason"], result
+    assert win.read("state.json") == state  # left for a look, not closed as if nothing happened
+    assert snapshot(elsewhere) == before
+    assert os.path.isfile(os.path.join(win.staging, "old", "PyReconstruct.exe"))
+    assert snapshot(win.install) == win.old_snap
+
+
+def test_selftest_log_keeps_only_its_last_part(win):
+    log = os.path.join(win.staging, A.SELFTEST_LOG)
+    with open(log, "wb") as f:
+        f.write(b"o" * A.SELFTEST_LOG_MAX + b"the newest line\n")
+
+    assert win.applier().run()["status"] == "updated"
+
+    with open(log, "rb") as f:
+        kept = f.read()
+    assert len(kept) == A.SELFTEST_LOG_MAX // 2
+    assert kept.endswith(b"the newest line\n")
