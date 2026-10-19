@@ -636,43 +636,111 @@ def test_a_failed_open_lets_go_of_the_lock_when_the_working_folder_fails(tmp_pat
     assert _lock_is_free(db_fp)
 
 
-def test_a_failed_open_lets_go_of_the_lock_when_the_file_is_not_a_database(tmp_path):
-    db_fp = tmp_path / "s.pyrstore"
-    junk = b"this is not a SQLite file " * 200
-    db_fp.write_bytes(junk)
-    with pytest.raises(sqlite3.DatabaseError):
-        HybridStore(str(db_fp), str(tmp_path / "s.work"))
+def test_a_failed_open_lets_go_of_the_lock_when_the_database_fails(tmp_path, monkeypatch):
+    db_fp, work = tmp_path / "s.pyrstore", tmp_path / "s.work"
+    HybridStore(str(db_fp), str(work)).close()  # a real store, so every check passes
+
+    def connect(*a, **k):
+        raise sqlite3.DatabaseError("database disk image is malformed")
+    monkeypatch.setattr(hybrid_store.sqlite3, "connect", connect)
+    with pytest.raises(sqlite3.DatabaseError, match="malformed"):
+        HybridStore(str(db_fp), str(work))
+    monkeypatch.undo()
     assert _lock_is_free(db_fp)
-    assert db_fp.read_bytes() == junk
 
 
-@pytest.mark.parametrize("version, table", [
-    (hybrid_store.SCHEMA_VERSION + 998, "meta(key TEXT PRIMARY KEY, value TEXT)"),
-    (0, "something_else(x)"),
-], ids=["a-newer-schema", "another-program-s-database"])
-def test_a_store_of_another_schema_is_refused_and_left_as_it_was(version, table, tmp_path):
-    db_fp = tmp_path / "s.pyrstore"
+def _side_files(db_fp) -> list:
+    name = Path(db_fp).name
+    return sorted(p.name for p in Path(db_fp).parent.iterdir()
+                  if p.name.startswith(name) and p.name not in (name, name + ".lock"))
+
+
+def _foreign(db_fp, version, app_id, tables):
     con = sqlite3.connect(db_fp)
-    con.execute(f"CREATE TABLE {table}")
+    for table in tables:
+        con.execute(f"CREATE TABLE {table}")
     con.execute(f"PRAGMA user_version={version}")
+    con.execute(f"PRAGMA application_id={app_id}")
     con.commit()
     con.close()
+
+
+STORE_TABLES = [
+    "meta(key TEXT PRIMARY KEY, value TEXT)", "series(id, data)", "log(id, text)",
+    "section(snum, header)", "trace(id)", "pending_section(snum, data)", "pending_series(id, data)",
+]
+
+
+@pytest.mark.parametrize("version, app_id, tables, why", [
+    (hybrid_store.SCHEMA_VERSION, 0, ["unrelated(x)"], "another program's database"),
+    (0, 0, ["something_else(x)"], "another program's database"),
+    (hybrid_store.SCHEMA_VERSION + 998, hybrid_store.APPLICATION_ID, STORE_TABLES, "schema version 999"),
+    (hybrid_store.SCHEMA_VERSION, hybrid_store.APPLICATION_ID, ["unrelated(x)"], "missing"),
+], ids=["another-program-at-this-version", "another-program-at-version-0",
+        "a-newer-store", "marked-but-not-a-store"])
+def test_a_file_that_is_not_a_store_of_this_schema_is_refused_and_left_as_it_was(
+        version, app_id, tables, why, tmp_path):
+    db_fp = tmp_path / "s.pyrstore"
+    _foreign(db_fp, version, app_id, tables)
     before = db_fp.read_bytes()
-    with pytest.raises(hybrid_store.StoreSchemaError, match=f"schema version {version}"):
+    with pytest.raises(hybrid_store.StoreSchemaError, match=why):
         HybridStore(str(db_fp), str(tmp_path / "s.work"))
     assert _lock_is_free(db_fp)
     assert db_fp.read_bytes() == before
-    assert not Path(str(db_fp) + "-wal").exists()
+    assert _side_files(db_fp) == [], "no WAL, shared-memory or journal file was made"
+
+
+def test_a_file_that_is_not_sqlite_is_refused_and_left_as_it_was(tmp_path):
+    db_fp = tmp_path / "s.pyrstore"
+    junk = b"this is not a SQLite file " * 200
+    db_fp.write_bytes(junk)
+    with pytest.raises(hybrid_store.StoreSchemaError, match="not a SQLite file"):
+        HybridStore(str(db_fp), str(tmp_path / "s.work"))
+    assert _lock_is_free(db_fp)
+    assert db_fp.read_bytes() == junk
+    assert _side_files(db_fp) == []
+
+
+@pytest.mark.parametrize("ext", ["-wal", "-journal"])
+def test_a_journal_left_with_no_store_is_never_joined_to_a_new_one(ext, tmp_path):
+    db_fp = tmp_path / "s.pyrstore"
+    left = Path(str(db_fp) + ext)
+    left.write_bytes(b"pages of some other database")
+    with pytest.raises(hybrid_store.StoreSchemaError, match=ext[1:]):
+        HybridStore(str(db_fp), str(tmp_path / "s.work"))
+    assert not db_fp.exists()
+    assert left.read_bytes() == b"pages of some other database"
+    assert _lock_is_free(db_fp)
+
+
+def test_a_store_s_existing_wal_is_kept_and_read(tmp_path):
+    db_fp, work = tmp_path / "s.pyrstore", tmp_path / "s.work"
+    store = HybridStore(str(db_fp), str(work))
+    store.con.execute("PRAGMA wal_autocheckpoint=0")
+    store.writePendingSeries({"in the wal": True})
+    # the process dies with the write only in the WAL
+    os.close(store._lock_fd)
+    store._lock_fd = None
+    assert Path(str(db_fp) + "-wal").stat().st_size > 0
+    again = HybridStore(str(db_fp), str(work))
+    try:
+        assert again.seriesData() == {"in the wal": True}
+    finally:
+        again.close()
+        store.con.close()
 
 
 def test_a_new_store_s_schema_is_written_whole(tmp_path):
     db_fp = tmp_path / "s.pyrstore"
+    Path(str(db_fp) + ".new").write_bytes(b"left by a create that crashed")
     HybridStore(str(db_fp), str(tmp_path / "s.work")).close()
+    assert not Path(str(db_fp) + ".new").exists()
     store = HybridStore(str(db_fp), str(tmp_path / "s.work"))  # and it opens again
     try:
         tables = {r[0] for r in store.con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        assert {"meta", "series", "log", "section", "trace", "pending_section", "pending_series"} <= tables
+        assert hybrid_store.REQUIRED_TABLES <= tables
         assert store.meta("created_utc")
+        assert store.con.execute("PRAGMA application_id").fetchone() == (hybrid_store.APPLICATION_ID,)
     finally:
         store.close()
 
@@ -765,6 +833,29 @@ def test_two_spellings_of_one_file_share_a_store(tmp_path, store_root):
             HybridStore.forJser(str(alias))
     finally:
         first.close()
+
+
+def test_two_spellings_of_a_file_not_written_yet_share_a_store(tmp_path, store_root):
+    folder = tmp_path / "Data"
+    folder.mkdir()
+    if not _ignores_case(folder):
+        pytest.skip("this disk tells names apart by case")
+    a = folder / "New Series.jser"
+    b = tmp_path / "DATA" / "new series.JSER"
+    assert not a.exists() and not b.exists()
+    before = hybrid_store.storePaths(str(a))
+    assert hybrid_store.storePaths(str(b)) == before
+    # and the store stays the same one once the file exists, in either spelling
+    b.write_bytes(PARITY.read_bytes())
+    assert hybrid_store.storePaths(str(a)) == before
+    assert hybrid_store.storePaths(str(b)) == before
+
+
+def test_a_disk_that_tells_case_apart_keeps_two_spellings_apart(tmp_path, store_root, monkeypatch):
+    monkeypatch.setattr(hybrid_store, "_ignoresCase", lambda path: False)
+    a = tmp_path / "series.jser"
+    b = tmp_path / "SERIES.jser"
+    assert hybrid_store.storePaths(str(a)) != hybrid_store.storePaths(str(b))
 
 
 @pytest.mark.parametrize("platform, env, expected", [

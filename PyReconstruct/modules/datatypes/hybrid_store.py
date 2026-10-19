@@ -29,6 +29,7 @@ import os
 import sys
 import hashlib
 import sqlite3
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -40,6 +41,10 @@ from PyReconstruct.modules.constants import fast_loads, fast_dumps
 ENV_DIR = "PYRECON_HYBRID_STORE_DIR"
 BUSY_TIMEOUT_MS = 5000
 SCHEMA_VERSION = 1
+## Marks a SQLite file as a store (PRAGMA application_id; "PyRS")
+APPLICATION_ID = 0x50795253
+SQLITE_MAGIC = b"SQLite format 3\x00"
+REQUIRED_TABLES = {"meta", "series", "log", "section", "trace", "pending_section", "pending_series"}
 
 ## File systems a SQLite file must not sit on (Linux names, /proc/self/mountinfo)
 NETWORK_FS = {"nfs", "nfs4", "cifs", "smb3", "smbfs", "fuse.sshfs", "9p", "afs"}
@@ -133,32 +138,56 @@ def storeRoot() -> Path:
     return Path(base) / "PyReconstruct" / "stores"
 
 
-def canonicalPath(fp : str) -> str:
-    """The real path of fp, spelled as the disk spells it.
+## pathconf name for case sensitivity on macOS (<sys/unistd.h>); Python's
+## table does not list it
+_PC_CASE_SENSITIVE = 11
 
-    `os.path.realpath` resolves links but keeps the case it was given, and the
-    usual macOS and Windows disks ignore case, so one file can be named in
-    many spellings. On macOS an existing file's path is read back from the
-    open file (F_GETPATH), in the case the disk stores; on Windows the path is
-    folded with `normcase`. Elsewhere, and for a file that cannot be opened,
-    it is the real path.
+
+def _existingAncestor(path : str) -> str:
+    """path, or the nearest folder above it that exists."""
+    while not os.path.exists(path):
+        parent = os.path.dirname(path)
+        if parent == path:
+            break
+        path = parent
+    return path
+
+
+def _ignoresCase(path : str) -> bool:
+    """True when names on the disk holding path ignore letter case."""
+    if sys.platform == "win32":
+        return True
+    if sys.platform != "darwin":
+        return False
+    folder = _existingAncestor(path)
+    try:
+        return os.pathconf(folder, _PC_CASE_SENSITIVE) == 0
+    except (OSError, ValueError):
+        swapped = folder.swapcase()
+        if swapped == folder:
+            return True  # nothing to compare; macOS disks ignore case by default
+        try:
+            return os.path.samefile(folder, swapped)
+        except OSError:
+            return False
+
+
+def canonicalPath(fp : str) -> str:
+    """One spelling of fp for every name of the same file, existing or not.
+
+    `os.path.realpath` resolves links but keeps the case it was given. On a
+    disk that ignores case (the usual macOS and Windows disks) the real path
+    is also folded to one case, and on macOS to one Unicode form, so the key
+    does not depend on how the name was typed or on whether the file exists
+    yet. A disk that tells names apart by case keeps them apart.
     """
     real = os.path.realpath(fp)
     if sys.platform == "win32":
         return os.path.normcase(real)
     if sys.platform == "darwin":
-        import fcntl
-        try:
-            fd = os.open(real, os.O_RDONLY)
-        except OSError:
-            return real
-        try:
-            buf = fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024))
-            return os.fsdecode(buf.split(b"\0", 1)[0])
-        except OSError:
-            return real
-        finally:
-            os.close(fd)
+        real = unicodedata.normalize("NFC", real)
+        if _ignoresCase(real):
+            real = real.casefold()
     return real
 
 
@@ -259,8 +288,9 @@ class HybridStore():
             Raises:
                 OSError: if the store folder is on a network file system
                 StoreBusyError: if another process holds the store
-                StoreSchemaError: if the file is a store of another schema
-                    version, or not a store at all; it is left as it was
+                StoreSchemaError: if the file is not a store of this schema
+                    version (another version, or not a store at all); it is
+                    left as it was
         """
         self.db_fp = db_fp
         self.work_dir = work_dir
@@ -274,9 +304,12 @@ class HybridStore():
         # from here on the lock is held: any failure lets go of it
         try:
             os.makedirs(work_dir, exist_ok=True)
+            if not os.path.exists(db_fp):
+                self._create()
+            self._checkHeader()
             self.con = sqlite3.connect(db_fp, isolation_level=None)
             self.con.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
-            self._checkSchema()
+            self._checkTables()
             self.con.execute("PRAGMA journal_mode=WAL")
             self.con.execute("PRAGMA synchronous=FULL")
         except BaseException as e:
@@ -285,32 +318,70 @@ class HybridStore():
                 raise StoreBusyError(IN_USE) from e
             raise
 
-    def _checkSchema(self):
-        """Create the schema in a new file; refuse a file of any other version.
-
-        Read before anything is written, so a store another build made, or a
-        file that is not a store, is left exactly as it was.
-        """
-        version = self.con.execute("PRAGMA user_version").fetchone()[0]
-        if version == SCHEMA_VERSION:
-            return
-        has_tables = self.con.execute(
-            "SELECT 1 FROM sqlite_master LIMIT 1"
-        ).fetchone() is not None
-        if version != 0 or has_tables:
-            raise StoreSchemaError(
-                f"{self.db_fp} is not a local store this version of PyReconstruct "
-                f"can read (schema version {version}). It was left as it was."
-            )
-        # a new file: the schema and its version in one transaction, so a
-        # crash leaves either an empty file or a whole schema
-        self.con.executescript(
-            "BEGIN IMMEDIATE;\n" + SCHEMA
-            + f"PRAGMA user_version={SCHEMA_VERSION};\n"
-            + "INSERT INTO meta(key, value) VALUES "
-            + f"('schema_version', '{SCHEMA_VERSION}'), ('created_utc', '{_now()}');\n"
-            + "COMMIT;"
+    def _refuse(self, why : str):
+        raise StoreSchemaError(
+            f"{self.db_fp} is not a local store this version of PyReconstruct "
+            f"can read ({why}). It was left as it was."
         )
+
+    def _create(self):
+        """Write a new, empty store beside db_fp, then move it into place.
+
+        So the store file is either absent or whole: a crash while the schema
+        is written leaves only the temporary file, which the next create
+        replaces. A journal or WAL file already beside the missing store is
+        another file's, and is never joined to a new one.
+        """
+        for ext in ("-wal", "-journal"):
+            if os.path.exists(self.db_fp + ext):
+                self._refuse(f"a {ext[1:]} file is beside it with no store")
+        tmp = self.db_fp + ".new"
+        for leftover in (tmp, tmp + "-journal"):
+            if os.path.exists(leftover):
+                os.remove(leftover)
+        con = sqlite3.connect(tmp, isolation_level=None)
+        try:
+            con.executescript(
+                "PRAGMA synchronous=FULL;\nBEGIN IMMEDIATE;\n" + SCHEMA
+                + f"PRAGMA user_version={SCHEMA_VERSION};\n"
+                + f"PRAGMA application_id={APPLICATION_ID};\n"
+                + "INSERT INTO meta(key, value) VALUES "
+                + f"('schema_version', '{SCHEMA_VERSION}'), ('created_utc', '{_now()}');\n"
+                + "COMMIT;"
+            )
+        finally:
+            con.close()
+        with open(tmp, "r+b") as f:
+            os.fsync(f.fileno())
+        os.replace(tmp, self.db_fp)
+        _fsyncFolder(os.path.dirname(self.db_fp))
+
+    def _checkHeader(self):
+        """Refuse a file that is not a store of this schema, from its header.
+
+        Read from the file itself, before SQLite opens it: opening a database
+        can replay its journal or WAL and make side files, and a file that is
+        not ours must be left exactly as it was.
+        """
+        with open(self.db_fp, "rb") as f:
+            header = f.read(100)
+        if len(header) < 100 or not header.startswith(SQLITE_MAGIC):
+            self._refuse("not a SQLite file")
+        version = int.from_bytes(header[60:64], "big")
+        app_id = int.from_bytes(header[68:72], "big")
+        if app_id != APPLICATION_ID:
+            self._refuse("another program's database")
+        if version != SCHEMA_VERSION:
+            self._refuse(f"schema version {version}")
+
+    def _checkTables(self):
+        """Refuse a file marked as a store that lacks the store's tables."""
+        tables = {r[0] for r in self.con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )}
+        missing = REQUIRED_TABLES - tables
+        if missing or self.meta("schema_version") != str(SCHEMA_VERSION):
+            self._refuse(f"missing {', '.join(sorted(missing)) or 'its schema record'}")
 
     @staticmethod
     def forJser(jser_fp : str) -> "HybridStore":
@@ -349,7 +420,7 @@ class HybridStore():
 
     def recordJser(self, jser_fp : str):
         st = os.stat(jser_fp)
-        self.setMeta("jser_path", canonicalPath(jser_fp))
+        self.setMeta("jser_path", os.path.realpath(jser_fp))
         self.setMeta("jser_size", st.st_size)
         self.setMeta("jser_mtime_ns", st.st_mtime_ns)
 
@@ -650,6 +721,17 @@ class _Transaction():
         else:
             self.con.execute("ROLLBACK")
         return False
+
+
+def _fsyncFolder(folder : str):
+    """Make a rename in folder durable (POSIX; a no-op where folders cannot be opened)."""
+    if sys.platform == "win32":
+        return
+    fd = os.open(folder, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def _now() -> str:
