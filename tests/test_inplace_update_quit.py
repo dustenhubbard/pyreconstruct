@@ -10,7 +10,7 @@ and the helper's start recorded instead of run.
   process's ID, and the series that was open, then quits.
 * A cancelled quit keeps the update staged and starts nothing.
 * Nothing starts for a plan this window did not stage, even a valid one on
-  disk (hub #95), or on an in-app restart.
+  disk, or on an in-app restart.
 * The dialog says the update installs at quit, and Restart Now closes the
   window; any other build falls back to the installer as before.
 """

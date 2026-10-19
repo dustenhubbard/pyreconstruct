@@ -8,8 +8,7 @@ the user quits. Anything that stops it raises :class:`NotEligible` or
 committed quit, :func:`start_helper` starts the staged helper on the plan,
 with the app's process ID and the open series, and the app quits.
 
-Eligibility, from the design (hub ``specs/in-place-updates-2026-09-28.md``,
-section 2): a frozen Windows x86_64 build of a flavor turned on here; the
+Eligibility: a frozen Windows x86_64 build of a flavor turned on here; the
 release's ``update-manifest.json``, checked against its signed
 ``SHA256SUMS``, turns in-place on for this platform and flavor and names a
 ``min_client`` this build meets; the version has not failed in place, nor
@@ -19,10 +18,10 @@ and the helper are in it). An all-users install has no HKCU entry, so it
 keeps the installer.
 
 Only the Dev flavor is on. Stable follows once Dev has gone two weeks with
-no rollback reports (the design, section 4).
+no rollback reports.
 
 The helper is started only for the plan this process staged, for exactly
-the version the dialog offered (hub #95). plan.json carries a token made
+the version the dialog offered. plan.json carries a token made
 fresh for each staging, and the plan on disk has to match the one staged,
 token and all, when the app quits.
 """

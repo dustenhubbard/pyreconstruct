@@ -258,7 +258,7 @@ def test_an_unfinished_swap_is_left_for_the_helper(rel):
     assert rel.fetched == []
 
 
-# --- Hub #95: a stale plan never outlives a refusal -------------------------------
+# --- A stale plan never outlives a refusal -----------------------------------------
 
 def test_a_release_with_no_version_clears_the_earlier_plan_first(rel):
     rel.stage()  # a plan from an earlier staging
@@ -465,7 +465,7 @@ def test_the_helper_starts_only_for_this_sessions_plan(dev):
     pending = dev.stage()
     plan_path = os.path.join(dev.rel.staging, A.PLAN)
     earlier = dict(pending.plan, session="an earlier session")
-    A.atomic_write_json(plan_path, earlier)  # the plan a failed clear could leave (hub #95 case b)
+    A.atomic_write_json(plan_path, earlier)  # the plan a failed clear could leave
 
     assert not I.still_staged(pending)
     assert I.start_helper(pending, 4321, popen=dev.popen) is None
