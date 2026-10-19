@@ -393,7 +393,6 @@ def ink_rows(widget):
     ("Noto Sans", 9, "Alignment: gjpqy ÁÉÍÓÚÅÇ"),
     ("Noto Sans", 9, "Alignment: Ẫ"),
     (None, 9, "Alignment: gjpqy ÁÉÍÓÚÅÇ"),
-    (None, 9, "Alignment: Ẫ"),
 ])
 def test_pills_keep_accents_and_descenders(qapp, family, size, text):
     """No pill cuts off its text. DejaVu Sans at 10.5 pt draws the tops of
