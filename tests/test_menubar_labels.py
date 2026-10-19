@@ -58,6 +58,8 @@ class _SeriesStub(_Anything):
             groups_visibility={},
             user_columns={},
             alignments=set(),
+            # no local store, as with the store switch off (store_save.py)
+            _local_store=None,
         )
         self.opts = {"recently_opened_series": list(recents or [])}
 

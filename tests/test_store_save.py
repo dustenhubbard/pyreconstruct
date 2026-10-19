@@ -6,7 +6,9 @@ save wrote is what the next open from the store must give.
 
 What these pin:
 
-* with the switch off, no store code runs: Save, close and the menu are today's;
+* with the switch off, no store is made, read or written: Save, close and the
+  menu are today's;
+* "store" mode is the default;
 * "jser" mode: Save writes today's bytes, and the next open comes from the
   store and equals today's open of that file, after an edit, an inserted or
   deleted section, or a changed alignment;
@@ -25,7 +27,7 @@ import os
 
 import pytest
 
-from PyReconstruct.modules.constants import fast_dumps, fast_loads, jser_format
+from PyReconstruct.modules.constants import fast_dumps, fast_loads, getdatetime, jser_format
 from PyReconstruct.modules.datatypes import hybrid_store, series as series_module, store_open, store_save
 
 from test_hybrid_store import PARITY, _EDGE_CASES, _edge_series, store_root  # noqa: F401  (fixture)
@@ -33,6 +35,13 @@ from test_store_open import (
     SOURCES, _copy, _open, _snapshot, _store_opens, _today, rich_series,
     switch_on, notes,  # noqa: F401  (fixture)
 )
+
+
+@pytest.fixture(autouse=True)
+def log_clock(monkeypatch):
+    """One minute for every log entry, so two Saves of the same edit log the same time."""
+    now = getdatetime.get_now().replace(second=0, microsecond=0)
+    monkeypatch.setattr(getdatetime, "get_now", lambda: now)
 
 
 @pytest.fixture(params=[store_save.MODE_JSER, store_save.MODE_STORE])
@@ -96,7 +105,7 @@ def _kept(src, tmp_path, name="s"):
 # the switch
 # ---------------------------------------------------------------------------
 
-def test_with_the_switch_off_no_store_code_runs(tmp_path, store_root, monkeypatch):  # noqa: F811
+def test_with_the_switch_off_no_store_is_made_or_written(tmp_path, store_root, monkeypatch):  # noqa: F811
     monkeypatch.delenv(store_open.ENV_SWITCH, raising=False)
     monkeypatch.setenv(store_save.ENV_MODE, store_save.MODE_STORE)
 
