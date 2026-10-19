@@ -161,8 +161,7 @@ def test_clear_latched_modifiers_is_a_no_op_when_nothing_is_latched(qapp):
 
 def test_the_autouse_guard_clears_a_latch_on_the_way_in_and_out(qapp, request):
     """Every test gets the guard, and the guard clears a standing latch at
-    setup and at teardown. Removing `_no_latched_modifiers` from `conftest.py`,
-    or either of its two clears, makes this fail."""
+    setup and at teardown."""
     assert "_no_latched_modifiers" in request.fixturenames
 
     target = QWidget()
