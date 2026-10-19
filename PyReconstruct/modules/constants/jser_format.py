@@ -125,9 +125,9 @@ def pretty_default() -> bool:
 #: renames keys, and a file written with it on is a different document from the
 #: one written with it off.
 #:
-#: **It is off by default and defaulting it on is a separate decision** (S7 of
-#: `specs/phase1-keyed-row-v1-slices-2026-08-06.md`), because of what it costs
-#: with an older build on the other end -- see ``KEYED_TRACE_ROW_KEYS``.
+#: **It is off by default and defaulting it on is a separate decision**, because
+#: of what it costs with an older build on the other end -- see
+#: ``KEYED_TRACE_ROW_KEYS``.
 KEYED_ROWS_ENV_VAR = "PYRECON_JSER_KEYED_ROWS"
 
 

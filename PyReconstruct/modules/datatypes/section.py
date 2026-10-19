@@ -2007,8 +2007,7 @@ class Section():
         **The residue this paragraph used to record is closed.** A save that
         DOES find drift adopts the rebuild, and that used to lose the ids with
         it -- exactly as the fourteen `resyncColumnarStore()` call sites did --
-        which was left as the rebuild-carries-ids scope call in
-        `specs/phase1-foreign-trace-id-acquisition-2026-08-05.md` §5. D10 made
+        which was left open as the rebuild-carries-ids scope call. D10 made
         that call: `_rebuildColumnarStore` now carries both the issuer and the
         outgoing ids into the replacement, so a drifted save keeps every id it
         can correlate through the outgoing row map. The two mechanisms are

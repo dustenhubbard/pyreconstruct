@@ -287,8 +287,7 @@ only, and report it.** That is
 technically a reissue, which the policy names as forbidden; the policy forbids
 *silent* reissuing, and this one is reported through both channels below, so it
 satisfies the policy's intent rather than its letter. The three rejected
-answers and why, in
-`specs/phase1-foreign-trace-id-acquisition-2026-08-05.md` §4(b): raising turns
+answers and why: raising turns
 a merge conflict into a mid-import exception, against the grain of an import
 path that flags conflicts and continues; keeping the duplicate leaves two live
 rows sharing one identity; storing `None` produces the trace this module's own
@@ -1914,7 +1913,7 @@ class ContourView():
 
     ON D1, AND ONE INCONSISTENCY WORTH FLAGGING RATHER THAN INHERITING
     ------------------------------------------------------------------
-    `specs/phase1-rewiring-slices-2026-08-04.md` heads Track B with "needs D1
+    The rewiring plan heads Track B with "needs D1
     confirmed", so citing D1 as a precondition for shim work is defensible. Two
     things temper it, and neither is settled precedent. Slices 4, 6 and 7a all
     shipped under the identical unconfirmed D1, so treating it as *blocking* is

@@ -1,6 +1,6 @@
 """S3: the reader understands a keyed trace row AND ADOPTS ITS ID.
 
-S3 of `specs/phase1-keyed-row-v1-slices-2026-08-06.md`. The writer is untouched:
+The writer is untouched:
 nothing here makes this build emit a row shape it did not emit before.
 
 WHAT THIS SLICE IS ACTUALLY ABOUT, AND IT IS NOT DECODING

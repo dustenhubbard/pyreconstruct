@@ -3276,8 +3276,7 @@ def _installAStoreCarryingIDs(section):
     `resyncColumnarStore`, and a section with no outgoing store has no issuer
     to carry into the new one, so every row's id is `None` and `Trace` carries
     no id attribute at all. The tests below are about what happens on the day
-    one IS wired (D10,
-    `specs/phase1-foreign-trace-id-acquisition-2026-08-05.md`), so they have to
+    one IS wired (D10), so they have to
     build that state by hand.
 
     Mirrors `resyncColumnarStore`'s own row-map construction rather than
@@ -3394,7 +3393,7 @@ def test_a_drifted_save_keeps_the_ids_it_can_correlate(real_section):
 def test_a_no_op_rebuild_does_not_re_identify_an_unchanged_trace(real_section):
     """D10's part one, against the defect exactly as it was reproduced.
 
-    `specs/phase1-foreign-trace-id-acquisition-2026-08-05.md` §5 measured this
+    The investigation behind D10 measured this
     directly and recorded `PRESERVED: False`: a trace that nothing touched came
     out of a rebuild under a new id. `resyncColumnarStore()` is reached from
     fourteen call sites -- undo, redo, six in `series.py`, autoseg, three in
