@@ -288,7 +288,9 @@ def test_the_import_reads_the_jser_one_section_at_a_time(tmp_path, store_root, m
 
     def one_at_a_time(self):
         for snum, section_data, found in real(self):
-            if last:
+            if last and last[-1]() is not None:
+                # reference counting frees a dropped section at once; a full
+                # collection (slow on a large heap) only for one still alive
                 gc.collect()
                 assert last[-1]() is None, f"section {snum} decoded while the last is held"
             held = Held(section_data)
