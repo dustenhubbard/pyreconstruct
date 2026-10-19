@@ -777,8 +777,6 @@ class MainWindow(QMainWindow):
         self.showall_act.setChecked(self.field.show_all_traces)
         self.hideimage_act.setChecked(self.field.hide_image)
         self.blend_act.setChecked(self.field.blend_sections)
-        # nothing to move until the ROI box is on
-        self.moveroibox_act.setEnabled(self.field.roi_box_on)
 
         ## Focus mode needs a selection to turn ON (it focuses the selected
         ## object); disabling the checkbox when nothing is selected avoids the
