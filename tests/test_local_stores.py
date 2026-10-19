@@ -17,8 +17,11 @@ What these pin:
 """
 import os
 import shutil
+import subprocess
+import sys
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -236,8 +239,23 @@ def _work_file(db):
         f.write("{}")
 
 
-@pytest.mark.parametrize("give_work", [_pending, _dirty, _work_file],
-                         ids=["working-rows", "saved-past-its-jser", "a-file-in-its-working-folder"])
+def _work_in_the_wal(db):
+    """Saved past its .jser by a process that then crashed: the write is in
+    the WAL, not yet in the store file."""
+    script = (
+        "import os, sqlite3, sys\n"
+        "con = sqlite3.connect(sys.argv[1], isolation_level=None)\n"
+        "con.execute('PRAGMA wal_autocheckpoint=0')\n"
+        "con.execute(\"INSERT OR REPLACE INTO meta(key, value) VALUES ('dirty', '1')\")\n"
+        "os._exit(0)\n"
+    )
+    subprocess.run([sys.executable, "-c", script, db], check=True)
+    assert os.path.getsize(db + "-wal") > 0
+
+
+@pytest.mark.parametrize("give_work", [_pending, _dirty, _work_file, _work_in_the_wal],
+                         ids=["working-rows", "saved-past-its-jser", "a-file-in-its-working-folder",
+                              "a-write-a-crash-left-in-its-wal"])
 def test_a_store_with_work_is_never_removed(give_work, tmp_path, store_root, monkeypatch):  # noqa: F811
     _, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
     give_work(db)
@@ -383,8 +401,8 @@ def _swap_folder_after_the_read(monkeypatch, folder, outside):
     outside at its path, as another program could."""
     read = local_stores._readState
 
-    def read_then_swap(root, name):
-        state = read(root, name)
+    def read_then_swap(folder_held, name):
+        state = read(folder_held, name)
         if not os.path.islink(folder):
             os.rename(folder, str(folder) + ".moved")
             os.symlink(outside, folder)
@@ -406,30 +424,111 @@ def _same_names_outside(db, outside):
 @pytest.mark.skipif(os.name == "nt", reason="links need rights on Windows")
 @pytest.mark.parametrize("remove", [lambda: cleanUp(cap=0), removeClean], ids=["cleanup", "button"])
 def test_a_store_folder_swapped_for_a_link_is_never_reached(remove, tmp_path, store_root, notes, monkeypatch):  # noqa: F811
+    """Swapped once the store is read: the removal lands in the folder that
+    was read, and nothing at the folder's path now is touched."""
     _, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
     outside = tmp_path / "outside"
     names = _same_names_outside(db, outside)
     _swap_folder_after_the_read(monkeypatch, store_root, outside)
-    report = remove()
-    assert report.removed == []
-    assert report.kept == [(os.path.basename(db), local_stores.UNREADABLE)]
-    assert sorted(os.listdir(outside)) == names
-    assert os.path.isfile(os.path.join(str(store_root) + ".moved", os.path.basename(db)))
-
-
-@pytest.mark.skipif(os.name == "nt", reason="links need rights on Windows")
-def test_a_removal_lands_in_the_folder_held_open(tmp_path, store_root, notes, monkeypatch):  # noqa: F811
-    """Even past the check that the folder is still at its path, a removal
-    reaches only the folder that was read."""
-    _, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
-    outside = tmp_path / "outside"
-    names = _same_names_outside(db, outside)
-    _swap_folder_after_the_read(monkeypatch, store_root, outside)
-    monkeypatch.setattr(local_stores._Folder, "same", lambda self: True)
-    assert cleanUp(cap=0).removed == [os.path.basename(db)]
+    assert remove().removed == [os.path.basename(db)]
     assert sorted(os.listdir(outside)) == names
     moved = str(store_root) + ".moved"
     assert not os.path.exists(os.path.join(moved, os.path.basename(db)))
+
+
+def _clean_copy_then_work(db, tmp_path):
+    """A clean copy of the store's folder (its files, by the same names), and
+    then work in the store: what another program could put at the folder's
+    path while cleanup reads."""
+    clean = tmp_path / "clean"
+    _same_names_outside(db, clean)
+    _dirty(db)
+    return clean
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows removes nothing; it will not move a folder in use")
+@pytest.mark.parametrize("remove", [lambda: cleanUp(cap=0), removeClean], ids=["cleanup", "button"])
+def test_a_folder_swapped_away_and_back_inside_the_read_keeps_its_work(remove, tmp_path, store_root, notes, monkeypatch):  # noqa: F811
+    """The clean copy is at the folder's path while SQLite opens and reads,
+    and the folder is back before anything after: the store's work is read,
+    so it is kept."""
+    _, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
+    clean = _clean_copy_then_work(db, tmp_path)
+    clean_files = {n: (clean / n).read_bytes() for n in os.listdir(clean)}
+    away = str(store_root) + ".away"
+    connect = local_stores.sqlite3.connect
+    swaps = []
+
+    def swapped(*a, **k):
+        os.rename(store_root, away)
+        os.rename(clean, store_root)
+        try:
+            con = connect(*a, **k)
+            con.execute("SELECT count(*) FROM sqlite_master").fetchone()
+        finally:
+            os.rename(store_root, clean)
+            os.rename(away, store_root)
+            swaps.append(1)
+        return con
+
+    monkeypatch.setattr(local_stores.sqlite3, "connect", swapped)
+    report = remove()
+    monkeypatch.undo()
+    assert swaps
+    assert report.removed == []
+    assert report.kept == [(os.path.basename(db), local_stores.WORK)]
+    assert local_stores.readState(*os.path.split(db)).work
+    assert {n: (clean / n).read_bytes() for n in os.listdir(clean)} == clean_files
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows removes nothing")
+@pytest.mark.parametrize("remove", [lambda: cleanUp(cap=0), removeClean], ids=["cleanup", "button"])
+def test_a_read_that_reaches_another_file_removes_nothing(remove, tmp_path, store_root, notes, monkeypatch):  # noqa: F811
+    """SQLite opens the clean copy instead of the store file opened for it
+    (on Linux it follows /dev/fd/N as a link, by path): nothing is removed."""
+    _, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
+    clean = _clean_copy_then_work(db, tmp_path)
+    other = Path(clean / os.path.basename(db)).as_uri() + "?mode=ro&immutable=1"
+    connect = local_stores.sqlite3.connect
+    monkeypatch.setattr(local_stores.sqlite3, "connect", lambda *a, **k: connect(other, uri=True))
+    report = remove()
+    monkeypatch.undo()
+    assert report.removed == []
+    assert report.kept == [(os.path.basename(db), local_stores.UNREADABLE)]
+    assert local_stores.readState(*os.path.split(db)).work
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows removes nothing")
+def test_a_store_file_replaced_since_the_read_is_left(tmp_path, store_root, notes, monkeypatch):  # noqa: F811
+    _, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
+    read = local_stores._readState
+
+    def read_then_replace(folder, name):
+        state = read(folder, name)
+        shutil.copyfile(db, db + ".copy")
+        os.replace(db + ".copy", db)
+        return state
+
+    monkeypatch.setattr(local_stores, "_readState", read_then_replace)
+    report = cleanUp(cap=0)
+    assert report.removed == []
+    assert report.kept == [(os.path.basename(db), local_stores.UNREADABLE)]
+    assert os.path.isfile(db)
+
+
+def test_without_dir_fd_as_on_windows_nothing_is_removed(tmp_path, store_root, settings, dev, no_switch, notes, monkeypatch):  # noqa: F811
+    """Windows cannot hold the folder or open the store file for SQLite:
+    the store is read (the notice at open works) and never removed."""
+    fp, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
+    monkeypatch.setattr(local_stores, "_DIR_FD", False)
+    before = files_of(db)
+    for report in (cleanUp(cap=0), removeClean()):
+        assert report.removed == []
+        assert report.kept == [(os.path.basename(db), local_stores.WINDOWS)]
+    assert files_of(db) == before
+    assert local_stores.readState(*os.path.split(db)).clean
+    _dirty(db)
+    assert local_stores.noteWorkAtOpen(str(fp), _Told())
 
 
 def test_a_store_opened_since_the_scan_is_not_removed(tmp_path, store_root, monkeypatch):  # noqa: F811
@@ -495,9 +594,12 @@ def test_with_the_store_off_an_open_names_a_store_with_work(tmp_path, store_root
     assert local_stores.readState(*os.path.split(db)).work
 
 
-def test_with_the_store_off_and_the_store_folder_set_relative_the_series_opens(tmp_path, store_root, settings, dev, no_switch, notes, monkeypatch):  # noqa: F811
+@pytest.mark.parametrize("dir_fd", [True, False], ids=["dir-fd", "no-dir-fd-as-on-windows"])
+def test_with_the_store_off_and_the_store_folder_set_relative_the_series_opens(dir_fd, tmp_path, store_root, settings, dev, no_switch, notes, monkeypatch):  # noqa: F811
     fp, db = make_store(tmp_path / "s", monkeypatch)
     _pending(db)
+    if not dir_fd:
+        monkeypatch.setattr(local_stores, "_DIR_FD", False)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv(hybrid_store.ENV_DIR, "stores")
     told = _Told()

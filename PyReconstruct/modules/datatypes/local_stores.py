@@ -19,8 +19,9 @@ A store is clean when what it records says it holds nothing its .jser lacks:
   * it is a store of this schema at the name `storePaths` gives it
     (<16 hex>.v1.pyrstore), a plain file, and no process holds its lock;
   * it holds no work: no working rows (pending_section, pending_series), it
-    was not saved past its .jser (meta dirty is not 1), and its working
-    folder (.work) holds no file;
+    was not saved past its .jser (meta dirty is not 1), its working folder
+    (.work) holds no file, and its WAL and journal are empty (a crash can
+    leave writes there that the store file lacks);
   * once imported, its .jser is still at the path it records. A .jser that
     cannot be found now (a share not mounted, a disk not plugged in, a file
     moved or deleted) keeps its store.
@@ -33,16 +34,27 @@ Cleanup removes a clean store not opened for MAX_AGE_DAYS, then, while the
 folder is over SIZE_CAP, clean stores oldest first. Every removal takes the
 store's own lock and reads the store again under it first, and removes it
 only when it is still clean and still due (an open since the scan makes it
-recent). A file is removed only by a name of the store's own shape (no
-separator, so no other folder), only when it is a plain file when looked at
-(removing a name never touches what a link points at), and the working folder
-only when it is empty (os.rmdir). Off Windows the store folder is held open
-and every lock and removal goes through it (dir_fd), so a folder moved or
-swapped for a link meanwhile is never reached through its path; on Windows a
-folder with an open file in it cannot be moved. The lock file is never
-removed: an opener that had opened it before the removal would lock the
-removed file while the next opener locks a new one, and both would hold the
-store.
+recent), and only the files that read was of.
+
+What is read is what is removed. The store folder is held open, and every
+lock, look and removal goes through it (dir_fd), so a folder moved or swapped
+meanwhile, even away and back, is never read or reached through its path.
+SQLite reads the store file through a descriptor opened in that folder
+(/dev/fd, immutable, so no side file is read or made). The store is removed
+only when a second descriptor of that same file (st_dev, st_ino) appeared
+while SQLite read it: SQLite's, since nothing else opens a store without its
+lock. That holds on macOS, where /dev/fd/N is the open file, and on Linux,
+where SQLite follows it as a link and could reach another file put at that
+path. Each file is unlinked only while its name still gives the file that
+was read. Windows has neither dir_fd nor /dev/fd, so there cleanup removes
+nothing: keeping a store is always safe.
+
+A file is removed only by a name of the store's own shape (no separator, so
+no other folder), only when it is a plain file when looked at (removing a
+name never touches what a link points at), and the working folder only when
+it is empty (os.rmdir). The lock file is never removed: an opener that had
+opened it before the removal would lock the removed file while the next
+opener locks a new one, and both would hold the store.
 """
 
 import os
@@ -83,12 +95,16 @@ _WORK_DIR = re.compile(rf"[0-9a-f]{{16}}\.v{SCHEMA_VERSION}\.work")
 ## cut short leaves a whole store or none (a WAL with no store beside it
 ## would make `HybridStore._create` refuse that series for good)
 _SIDE_FILES = ("-wal", "-shm", "-journal", ".new-journal", ".new")
+## writes a crash can leave that the store file lacks; SQLite reads the store
+## file alone (immutable), so a store with one of these not empty holds work
+_REPLAYED = ("-wal", "-journal")
 
 ## why a store is kept, as the Options button reports it
 WORK = "holds work its .jser lacks"
 IN_USE = "is open in PyReconstruct"
 NO_JSER = "its .jser was not found"
 UNREADABLE = "could not be read"
+WINDOWS = "is not removed on Windows"
 
 
 def log_note(message : str):
@@ -173,6 +189,10 @@ class StoreState:
     why : str = ""            # why it is kept, when it is not clean
     last_used : float = 0.0   # POSIX time
     size : int = 0            # bytes, every file of the store
+    ## store file name -> (st_dev, st_ino) as read, for the files removed
+    files : dict = field(default_factory=dict, repr=False)
+    ## SQLite read the store file opened in the held folder (see the top)
+    proven : bool = False
 
 
 @dataclass
@@ -185,6 +205,7 @@ class CleanupReport:
 ## os.open, os.stat (and so os.lstat), os.unlink and os.rmdir take dir_fd
 ## (not on Windows)
 _DIR_FD = {os.open, os.stat, os.unlink, os.rmdir} <= os.supports_dir_fd
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 
 class _Folder:
@@ -203,17 +224,6 @@ class _Folder:
 
     def path(self, name : str) -> str:
         return name if self.fd is not None else os.path.join(self.root, name)
-
-    def same(self) -> bool:
-        """True while the folder's path still names the folder held open."""
-        if self.fd is None:
-            return True
-        try:
-            at_path = os.lstat(self.root)
-        except OSError:
-            return False
-        held = os.fstat(self.fd)
-        return (at_path.st_dev, at_path.st_ino) == (held.st_dev, held.st_ino)
 
     def close(self):
         if self.fd is not None:
@@ -257,54 +267,104 @@ def _text(value):
     return value
 
 
-def _storeSize(root : str, name : str) -> int:
-    total = 0
-    for suffix in ("", *_SIDE_FILES, ".lock"):
-        try:
-            st = os.lstat(os.path.join(root, name + suffix))
-        except OSError:
+def _ident(st) -> tuple:
+    return (st.st_dev, st.st_ino)
+
+
+def _openedElsewhere(ident : tuple, own : int) -> bool:
+    """True when a descriptor of this process other than own is of the file ident."""
+    for entry in os.listdir("/dev/fd"):
+        fd = int(entry)
+        if fd == own:
             continue
-        if stat.S_ISREG(st.st_mode):
-            total += st.st_size
-    return total
-
-
-def _readState(root : str, name : str) -> StoreState:
-    """Read one store's record. The caller holds its lock."""
-    state = StoreState(name)
-    db_fp = os.path.join(root, name)
-    work_dir = os.path.join(root, name[:-len(".pyrstore")] + ".work")
-    try:
-        st = os.lstat(db_fp)
-        if not stat.S_ISREG(st.st_mode):
-            state.why = UNREADABLE
-            return state
-        state.size = _storeSize(root, name)
-        state.last_used = st.st_mtime
-        with open(db_fp, "rb") as f:
-            header = f.read(100)
-        if (
-            len(header) < 100 or not header.startswith(SQLITE_MAGIC)
-            or int.from_bytes(header[68:72], "big") != APPLICATION_ID
-            or int.from_bytes(header[60:64], "big") != SCHEMA_VERSION
-        ):
-            state.why = UNREADABLE
-            return state
-        # mode=rw: a store that is gone is not made again by reading it.
-        # A file URI needs a full path (the folder may be set relative).
-        con = sqlite3.connect(Path(os.path.abspath(db_fp)).as_uri() + "?mode=rw", uri=True, timeout=1)
         try:
-            tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            if not REQUIRED_TABLES <= tables:
+            if _ident(os.fstat(fd)) == ident:
+                return True
+        except OSError:  # closed since the list was made
+            continue
+    return False
+
+
+def _workFiles(folder : _Folder, name : str) -> bool:
+    """True when the store's working folder holds anything; it need not exist."""
+    fp = folder.path(name)
+    try:
+        st = os.lstat(fp, dir_fd=folder.fd)
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISDIR(st.st_mode):
+        raise NotADirectoryError(f"{name} is not a folder")
+    if folder.fd is None:
+        with os.scandir(fp) as entries:
+            return any(True for _ in entries)
+    fd = os.open(fp, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=folder.fd)
+    try:
+        with os.scandir(fd) as entries:
+            return any(True for _ in entries)
+    finally:
+        os.close(fd)
+
+
+def _readState(folder : _Folder, name : str) -> StoreState:
+    """Read one store's record. The caller holds its lock.
+
+    Every file is looked at through the held folder, and SQLite reads the
+    store file opened here (see the top). `files` records what was read.
+    """
+    state = StoreState(name)
+    try:
+        for suffix in ("", *_SIDE_FILES, ".lock"):
+            try:
+                st = os.lstat(folder.path(name + suffix), dir_fd=folder.fd)
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISREG(st.st_mode):
                 state.why = UNREADABLE
                 return state
-            meta = {k: _text(v) for k, v in con.execute("SELECT key, value FROM meta")}
-            pending = bool(
-                con.execute("SELECT 1 FROM pending_section LIMIT 1").fetchone()
-                or con.execute("SELECT 1 FROM pending_series LIMIT 1").fetchone()
-            )
+            state.size += st.st_size
+            if suffix != ".lock":
+                state.files[name + suffix] = _ident(st)
+            if suffix in _REPLAYED and st.st_size:
+                state.work = True
+        fd = os.open(folder.path(name), os.O_RDONLY | _NOFOLLOW | getattr(os, "O_BINARY", 0), dir_fd=folder.fd)
+        try:
+            st = os.fstat(fd)
+            if _ident(st) != state.files.get(name):
+                state.why = UNREADABLE  # not the file looked at: changed meanwhile
+                return state
+            state.last_used = st.st_mtime
+            header = os.read(fd, 100)
+            if (
+                len(header) < 100 or not header.startswith(SQLITE_MAGIC)
+                or int.from_bytes(header[68:72], "big") != APPLICATION_ID
+                or int.from_bytes(header[60:64], "big") != SCHEMA_VERSION
+            ):
+                state.why = UNREADABLE
+                return state
+            # immutable: the store file alone, no lock, no side file read or
+            # made. A file URI needs a full path (the folder may be set relative).
+            if folder.fd is not None:
+                uri = f"file:/dev/fd/{fd}"
+            else:
+                uri = Path(os.path.abspath(folder.path(name))).as_uri()
+            proof = folder.fd is not None and not _openedElsewhere(_ident(st), fd)
+            con = sqlite3.connect(uri + "?mode=ro&immutable=1", uri=True, timeout=1)
+            try:
+                tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                if not REQUIRED_TABLES <= tables:
+                    state.why = UNREADABLE
+                    return state
+                meta = {k: _text(v) for k, v in con.execute("SELECT key, value FROM meta")}
+                pending = bool(
+                    con.execute("SELECT 1 FROM pending_section LIMIT 1").fetchone()
+                    or con.execute("SELECT 1 FROM pending_series LIMIT 1").fetchone()
+                )
+                # SQLite's descriptor, open now, is of the file opened here
+                state.proven = proof and _openedElsewhere(_ident(st), fd)
+            finally:
+                con.close()
         finally:
-            con.close()
+            os.close(fd)
         # the last open; a store from before opens were recorded: when it was
         # filled, else made; else the file's own time
         for key in (META_OPENED, "imported_utc", "created_utc"):
@@ -312,15 +372,8 @@ def _readState(root : str, name : str) -> StoreState:
             if when is not None:
                 state.last_used = when
                 break
-        work_files = False
-        if os.path.lexists(work_dir):
-            wst = os.lstat(work_dir)
-            if not stat.S_ISDIR(wst.st_mode):
-                state.why = UNREADABLE
-                return state
-            with os.scandir(work_dir) as entries:
-                work_files = any(True for _ in entries)
-        state.work = pending or meta.get("dirty") == "1" or work_files
+        work_files = _workFiles(folder, name[:-len(".pyrstore")] + ".work")
+        state.work = state.work or pending or meta.get("dirty") == "1" or work_files
         if state.work:
             state.why = WORK
             return state
@@ -347,7 +400,7 @@ def readState(root : str, name : str, folder : _Folder | None = None) -> StoreSt
         if fd is None:
             return StoreState(name, why=IN_USE)
         try:
-            return _readState(root, name)
+            return _readState(folder, name)
         finally:
             os.close(fd)
 
@@ -356,12 +409,14 @@ def readState(root : str, name : str, folder : _Folder | None = None) -> StoreSt
 ## removing a store
 ## ---------------------------------------------------------------------------
 
-def _removeFile(folder : _Folder, name : str):
+def _removeFile(folder : _Folder, name : str, read=None):
     """Remove a plain file of a store from the folder; nothing else.
 
     name must be a store file's own name, which holds no separator, so no
     other folder can be reached. A link is never followed: removing a name
-    removes that name only. A file that is not there is fine.
+    removes that name only. read is the file's (st_dev, st_ino) when the
+    store was read, None when it was not there: any other file at the name
+    is left. A file that is not there is fine.
     """
     if not _STORE_FILE.fullmatch(name):
         raise ValueError(f"not a local store file: {name!r}")
@@ -372,6 +427,8 @@ def _removeFile(folder : _Folder, name : str):
         return
     if not stat.S_ISREG(st.st_mode):
         raise OSError(f"{name} is not a plain file; it was left as it is")
+    if _ident(st) != read:
+        raise OSError(f"{name} is not the file that was read; it was left as it is")
     os.unlink(fp, dir_fd=folder.fd)
 
 
@@ -407,21 +464,25 @@ def removeIfClean(root : str, name : str, folder : _Folder | None = None, due=No
         if fd is None:
             return StoreState(name, why=IN_USE)
         try:
-            # what is read is what is removed: the folder at root is still
-            # the one held open, before the read and after it
-            state = _readState(root, name) if folder.same() else None
-            if state is None or (state.clean and not folder.same()):
-                log_note(f"Local copy {name} was kept: the store folder moved while it was read")
-                return StoreState(name, why=UNREADABLE)
+            state = _readState(folder, name)
             if not state.clean:
+                return state
+            if not state.proven:
+                # what was read is not shown to be what would be removed
+                state.clean = False
+                if folder.fd is None:
+                    state.why = WINDOWS
+                else:
+                    state.why = UNREADABLE
+                    log_note(f"Local copy {name} was kept: SQLite did not read the file it would remove")
                 return state
             if due is not None and not due(state):
                 state.clean = False
                 return state
             try:
-                for suffix in _SIDE_FILES:
-                    _removeFile(folder, name + suffix)
-                _removeFile(folder, name)
+                for n in (name + suffix for suffix in _SIDE_FILES):
+                    _removeFile(folder, n, state.files.get(n))
+                _removeFile(folder, name, state.files.get(name))
                 _removeWorkDir(folder, name[:-len(".pyrstore")] + ".work")
             except OSError as e:
                 log_note(f"Local copy {name} was not fully removed: {e}")
