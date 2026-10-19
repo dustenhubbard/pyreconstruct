@@ -37,7 +37,7 @@ from PyReconstruct.modules.datatypes.series import Series
 from PyReconstruct.modules.datatypes.series_data import SeriesData
 
 from test_hybrid_store import (
-    PARITY, SERIES_FILES, full_field_series, legacy_series,
+    _EDGE_CASES, PARITY, SERIES_FILES, _edge_series, full_field_series, legacy_series,
     store_root,  # noqa: F401  (fixture)
 )
 
@@ -129,10 +129,10 @@ def _getters(data : SeriesData) -> dict:
         out[name] = repr((
             data.getStart(name), data.getEnd(name), data.getCount(name),
             data.getFlatArea(name), data.getVolume(name), data.getConfiguration(name),
-            sorted(data.getTags(name)), sorted(data.getColorCounts(name).items(), key=repr),
+            sorted(data.getTags(name), key=repr), sorted(data.getColorCounts(name).items(), key=repr),
             data.getAvgRadius(name),
         ))
-    out[None] = repr(sorted(data.usedTags()))
+    out[None] = repr(sorted(data.usedTags(), key=repr))
     return out
 
 
@@ -143,7 +143,7 @@ def _traces(data : SeriesData) -> dict:
         out[name] = repr([
             (snum, [
                 (td.index, td.closed, td.hidden, td.negative, type(td.tags).__name__,
-                 sorted(td.tags), td.color, td.length, td.area, td.centroid,
+                 sorted(td.tags, key=repr), td.color, td.length, td.area, td.centroid,
                  td.radius, td._tform.getList(), td._feret)
                 for td in tds
             ])
@@ -276,6 +276,27 @@ def test_the_first_open_is_today_s_and_the_next_comes_from_the_store_and_equals_
         assert _snapshot(second) == expected
     finally:
         second.close()
+    assert notes == []
+
+
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")  # today's open, on an infinite coordinate
+@pytest.mark.parametrize("place, name, surrogate", _EDGE_CASES,
+                         ids=[f"{p}-{n}" + ("-with-a-surrogate" if s else "") for p, n, s in _EDGE_CASES])
+def test_an_edge_value_opens_from_the_store_as_today(place, name, surrogate, tmp_path, switch_on, notes, monkeypatch):
+    """A section the store keeps with the stdlib writer opens from it as today."""
+    folder = tmp_path / "src"
+    folder.mkdir()
+    src = _edge_series(folder, place, name, surrogate)
+    expected = _today(src, tmp_path, monkeypatch)
+    _open(src).close()
+    built = _built_sections(monkeypatch)
+    _reads_no_jser(monkeypatch)
+    series = _open(src, notifier=_NoDialog())
+    try:
+        assert built == []
+        assert _snapshot(series) == expected
+    finally:
+        series.close()
     assert notes == []
 
 

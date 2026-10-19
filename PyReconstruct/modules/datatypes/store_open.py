@@ -23,6 +23,7 @@ raises.
 """
 
 import gc
+import json
 import os
 import sqlite3
 from contextlib import contextmanager
@@ -30,6 +31,7 @@ from contextlib import contextmanager
 import numpy as np
 
 from PyReconstruct.modules.constants import fast_loads, fast_dumps
+from PyReconstruct.modules.constants.fast_json import stdlib_dumps
 from PyReconstruct.modules.constants.jser_splice import SpliceIndex, _stat_key
 
 from .hybrid_store import HybridStore, storePaths
@@ -38,8 +40,9 @@ from .network_folder import networkFileSystem
 ENV_SWITCH = "PYRECON_HYBRID_STORE"
 
 ## The object-list numbers of one section, a blob per field. tags and colors:
-## the section's distinct values (JSON); the rest one entry per trace, in
-## contour then trace order.
+## the section's distinct values (stdlib JSON, which reads back any value a
+## section holds: an integer past 64 bits, NaN, a lone surrogate); the rest
+## one entry per trace, in contour then trace order.
 STATS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS section_stats(
     snum INTEGER PRIMARY KEY,
@@ -260,7 +263,7 @@ class StoreForOpen():
             source = _WorkingFolderSource(series)
             # the alignments as the open found them, before it measured
             alignments = _Alignments(source.series["alignment"], source.series["obj_attrs"])
-            store.importJser(self.jser_fp, source, {}, reporter)
+            store.importJser(self.jser_fp, source, {}, reporter, migrated=True)
             stats = [
                 (snum, *_statsRow(series.data.objects, alignments, snum, header))
                 for snum, header in _headers(store)
@@ -323,8 +326,9 @@ class _StoreSource():
 class _WorkingFolderSource():
     """An opened series' working folder, as `HybridStore.importJser` reads a .jser.
 
-    Its files are what today's open wrote, already migrated; the import's own
-    migration leaves them as they are (Section.__init__ runs it on every load).
+    Its files are what today's open wrote, already migrated, so the import
+    stores them as they are (`migrated=True`). They are read as
+    Section.__init__ reads them.
     """
 
     def __init__(self, series):
@@ -387,9 +391,15 @@ def _gcPaused():
 
 
 def _headers(store : HybridStore):
-    """(section number, header) for every saved section, in order."""
-    for snum, header in store.con.execute("SELECT snum, header FROM section ORDER BY snum"):
-        yield snum, fast_loads(header)
+    """(section number, header) for every saved section, in order.
+
+    Read with the JSON reader the store wrote it with (hybrid_store.py,
+    `section.exact`): fast_loads would read an integer past 64 bits as a float.
+    """
+    for snum, header, exact in store.con.execute(
+        "SELECT snum, header, exact FROM section ORDER BY snum"
+    ):
+        yield snum, (json.loads if exact else fast_loads)(header)
 
 
 class _Alignments():
@@ -440,8 +450,8 @@ def _statsRow(objects : dict, alignments : _Alignments, snum : int, header : dic
                 f"section {snum}, {name}: measured in another alignment than {key}"
             )
         for td in tds:
-            tags = fast_dumps(sorted(td.tags, key=str))
-            color = None if td.color is None else fast_dumps(list(td.color))
+            tags = stdlib_dumps(sorted(td.tags, key=repr))
+            color = None if td.color is None else stdlib_dumps(list(td.color))
             cols["cpos"].append(cpos)
             cols["idx"].append(td.index)
             cols["flags"].append(
@@ -545,14 +555,14 @@ def _fillSeriesData(store : HybridStore, series):
             tform_of[p] = section_tforms[key]
         # the section's distinct tags and colors -> the series-wide ones
         tag_of = []
-        for value in fast_loads(stats[0]):
+        for value in json.loads(stats[0]):
             stored = tuple(value)
             if stored not in tag_ids:
                 tag_ids[stored] = len(tag_values)
                 tag_values.append(frozenset(value))
             tag_of.append(tag_ids[stored])
         color_of = []
-        for value in fast_loads(stats[1]):
+        for value in json.loads(stats[1]):
             stored = tuple(value)
             if stored not in color_ids:
                 color_ids[stored] = len(color_values)
