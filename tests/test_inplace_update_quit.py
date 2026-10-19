@@ -8,7 +8,9 @@ and the helper's start recorded instead of run.
 
 * A committed quit starts the staged helper with the plan's folder, this
   process's ID, and the series that was open, then quits.
-* A cancelled quit keeps the update staged and starts nothing.
+* A canceled quit keeps the update staged and starts nothing.
+* A series saved for the first time during the quit is the one reopened.
+* A quit with nothing staged finishes a run a helper left part way.
 * Nothing starts for a plan this window did not stage, even a valid one on
   disk, or on an in-app restart.
 * The dialog says the update installs at quit, and Restart Now closes the
@@ -31,9 +33,11 @@ def quit_calls(monkeypatch, dev):  # noqa: F811
     """Start the helper through a recorder, and record QApplication.quit instead of quitting."""
     from PySide6.QtWidgets import QApplication
 
-    real = I.start_helper
+    real, recover = I.start_helper, I.start_recovery
     monkeypatch.setattr(I, "start_helper",
                         lambda pending, pid, open_path=None: real(pending, pid, open_path, popen=dev.popen))
+    monkeypatch.setattr(I, "start_recovery",
+                        lambda pid: recover(pid, install=dev.install, popen=dev.popen))
     calls = []
     monkeypatch.setattr(QApplication, "quit", lambda *a: calls.append("quit"))
     return calls
@@ -53,7 +57,7 @@ def test_a_committed_quit_starts_the_helper_and_quits(main_window, dev, quit_cal
     assert main_window._pending_inplace is None
 
 
-def test_a_cancelled_quit_keeps_the_staged_update(main_window, main_window_dialogs, dev, quit_calls):  # noqa: F811
+def test_a_canceled_quit_keeps_the_staged_update(main_window, main_window_dialogs, dev, quit_calls):  # noqa: F811
     pending = dev.stage()
     main_window._pending_inplace = pending
     main_window.series.modified = True
@@ -65,6 +69,37 @@ def test_a_cancelled_quit_keeps_the_staged_update(main_window, main_window_dialo
     assert dev.started == [] and quit_calls == []
     main_window.series.modified = False
     main_window._pending_inplace = None  # the fixture's own close starts nothing
+
+
+def test_a_series_first_saved_during_the_quit_is_reopened(main_window, main_window_dialogs, dev,  # noqa: F811
+                                                           quit_calls, tmp_path):
+    main_window._pending_inplace = dev.stage()
+    main_window.series.jser_fp = ""  # a new series, never saved
+    main_window.seriesModified(True)
+    target = str(tmp_path / "saved at quit.jser")
+    main_window_dialogs.save_response = "yes"
+    main_window_dialogs.file_responses = [target]
+
+    assert main_window.close() is True
+
+    (argv, kw), = dev.started
+    assert os.path.isfile(target) and argv[-2:] == ["--open", target]
+    assert quit_calls == ["quit"]
+
+
+def test_a_quit_finishes_a_run_a_helper_left_part_way(main_window, dev, quit_calls):  # noqa: F811
+    from PyReconstruct.modules.backend.updater import apply as A
+    pending = dev.stage()
+    A.atomic_write_json(os.path.join(pending.staging, A.STATE),
+                        {"format": A.FORMAT, "status": "running", "step": "health", "phase": "begin",
+                         "plan": dict(pending.plan)})
+
+    assert main_window._pending_inplace is None
+    assert main_window.close() is True
+
+    (argv, kw), = dev.started
+    assert argv == [I.helper_path(pending), pending.staging, "--pid", str(os.getpid()), "--recover"]
+    assert quit_calls == ["quit"]
 
 
 def test_a_plan_on_disk_that_this_window_did_not_stage_starts_nothing(main_window, dev, quit_calls):  # noqa: F811
@@ -181,10 +216,10 @@ def test_a_cancel_during_staging_is_a_cancel_not_a_fallback(qapp, dev, monkeypat
     dlg = _dialog(None, dev)
     monkeypatch.setattr(I, "running_install", lambda: dev.install)
 
-    def cancelled(*a, **k):
+    def canceled(*a, **k):
         raise UpdateCancelled()
 
-    monkeypatch.setattr(I, "stage_for_quit", cancelled)
+    monkeypatch.setattr(I, "stage_for_quit", canceled)
     with pytest.raises(UpdateCancelled):
         dlg._try_inplace(dev.rel.release(), NEW_V, lambda p: None)
 

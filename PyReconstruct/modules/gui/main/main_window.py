@@ -5969,10 +5969,6 @@ class MainWindow(QMainWindow):
         # did not survive a relaunch. A canceled close leaves the early capture
         # behind, which is merely current.
         self._captureListLayout()
-        # the series to reopen after an in-place update, read before the save closes it
-        reopen = None
-        if self.series is not None and not self.series.isWelcomeSeries():
-            reopen = self.series.jser_fp
         response = self.saveToJser(notify=True, close=True)
         if response == "cancel":
             event.ignore()
@@ -5987,6 +5983,11 @@ class MainWindow(QMainWindow):
             # app instead of exiting (found 2026-08-28)
             self.restart_mainwindow = False
             return
+        # the series to reopen after an in-place update, read after the save,
+        # which gives a series saved for the first time here its path
+        reopen = None
+        if self.series is not None and not self.series.isWelcomeSeries():
+            reopen = self.series.jser_fp
         # the startup timers serve no window once the close is committed.
         # Left running, they fired on this window after a restart had built
         # the next one, or in the next test of a suite that closes windows
@@ -6006,15 +6007,20 @@ class MainWindow(QMainWindow):
                 QApplication.quit()
             except Exception as e:
                 notify(f"Could not launch the installer:\n{e}\n\nFind it at: {self._pending_installer}")
-        # or start the helper that swaps in an update staged in place. Not on
-        # an in-app restart: this process lives on, and the helper waits on it.
-        elif self._pending_inplace and not self.restart_mainwindow:
-            from PyReconstruct.modules.backend.updater.inplace import start_helper
+        # or start the helper that swaps in an update staged in place, or with
+        # nothing staged, one that finishes an update a helper left part way.
+        # Not on an in-app restart: this process lives on, and the helper waits on it.
+        elif not self.restart_mainwindow:
+            from PyReconstruct.modules.backend.updater import inplace
             try:
-                if start_helper(self._pending_inplace, os.getpid(), reopen):
-                    QApplication.quit()
+                if self._pending_inplace:
+                    started = inplace.start_helper(self._pending_inplace, os.getpid(), reopen)
+                    if not started:
+                        print("Update not installed: the staged update changed after it was staged.")
                 else:
-                    print("Update not installed: the staged update changed after it was staged.")
+                    started = inplace.start_recovery(os.getpid())
+                if started:
+                    QApplication.quit()
             except Exception:
                 print("Update not installed: the update helper did not start.")
                 traceback.print_exc()

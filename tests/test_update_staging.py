@@ -510,3 +510,82 @@ def test_the_series_is_passed_only_when_it_is_a_file(dev, tmp_path):
     assert "--open" not in I.helper_argv(pending, 1, str(tmp_path / "gone.jser"))
     assert "--open" not in I.helper_argv(pending, 1, "relative.jser")
     assert "--open" not in I.helper_argv(pending, 1, None)
+
+
+# --- A run a helper left part way is finished at the next quit ------------------------
+
+def _left_part_way(dev, **changes):
+    """Stage, then leave the journal a helper killed part way through its run would leave."""
+    pending = dev.stage()
+    state = {"format": A.FORMAT, "status": "running", "step": "health", "phase": "begin",
+             "plan": dict(pending.plan), "launched_pid": 999999}
+    state.update(changes)
+    A.atomic_write_json(os.path.join(dev.rel.staging, A.STATE), state)
+    return pending
+
+
+def test_a_quit_starts_the_helper_to_finish_a_run_left_part_way(dev):
+    """The next quit finishes or undoes it, so the journal never blocks later updates."""
+    pending = _left_part_way(dev)
+    with pytest.raises(S.StageError, match="not finished"):
+        dev.stage()
+
+    argv = I.start_recovery(4321, install=dev.install, popen=dev.popen)
+
+    assert argv == [I.helper_path(pending), dev.rel.staging, "--pid", "4321", "--recover"]
+    (started, kw), = dev.started
+    assert started == argv and kw["cwd"] == dev.rel.staging
+    # the app that quits ran from the install: what it reports decides whether the update stays
+    report = A.read_json(os.path.join(dev.rel.staging, A.HEALTH))
+    assert report["version"] == OLD_V and report["pid"] == os.getpid()
+
+
+def _finished(dev):
+    pending = dev.stage()
+    A.atomic_write_json(os.path.join(dev.rel.staging, A.STATE),
+                        {"format": A.FORMAT, "status": "done", "plan": dict(pending.plan)})
+
+
+def _another_version(dev):
+    _left_part_way(dev)
+    dev.install.version = "1.25.0"  # the installer put another version in since
+
+
+def _another_install(dev):
+    pending = _left_part_way(dev)
+    plan = dict(pending.plan, install=os.path.join(os.path.dirname(dev.rel.install), "Other"))
+    A.atomic_write_json(os.path.join(dev.rel.staging, A.STATE),
+                        {"format": A.FORMAT, "status": "running", "plan": plan})
+
+
+def _stable_flavor(dev):
+    _left_part_way(dev)
+    dev.install.flavor = "stable"
+
+
+def _no_staged_helper(dev):
+    pending = _left_part_way(dev)
+    os.remove(I.helper_path(pending))
+
+
+@pytest.mark.parametrize("make_it", [
+    lambda dev: dev.stage(), _finished, _another_version, _another_install, _stable_flavor,
+    _no_staged_helper,
+], ids=["staged-only", "finished", "another-version", "another-install", "stable", "no-helper"])
+def test_a_quit_with_nothing_left_part_way_starts_no_helper(dev, make_it):
+    make_it(dev)
+
+    assert I.start_recovery(4321, install=dev.install, popen=dev.popen) is None
+    assert dev.started == []
+    assert not os.path.exists(os.path.join(dev.rel.staging, A.HEALTH))
+
+
+def test_a_quit_while_a_helper_runs_leaves_it_alone(dev):
+    _left_part_way(dev)
+    held = A.take_lock(dev.rel.staging)
+    try:
+        assert I.start_recovery(4321, install=dev.install, popen=dev.popen) is None
+    finally:
+        A.release_lock(held)
+    assert dev.started == []
+    assert not os.path.exists(os.path.join(dev.rel.staging, A.HEALTH))

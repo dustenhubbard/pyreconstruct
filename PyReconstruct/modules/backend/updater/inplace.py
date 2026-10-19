@@ -6,7 +6,9 @@ install may update in place, stages the release next to the install
 the user quits. Anything that stops it raises :class:`NotEligible` or
 ``StageError``, and the dialog downloads the installer as before. At the
 committed quit, :func:`start_helper` starts the staged helper on the plan,
-with the app's process ID and the open series, and the app quits.
+with the app's process ID and the open series, and the app quits. A quit
+with nothing staged calls :func:`start_recovery` instead, which finishes a
+run a helper left part way.
 
 Eligibility: a frozen Windows x86_64 build of a flavor turned on here; the
 release's ``update-manifest.json``, checked against its signed
@@ -236,11 +238,54 @@ def start_helper(pending, pid, open_path=None, popen=None):
     if not still_staged(pending):
         return None
     argv = helper_argv(pending, pid, open_path)
+    _start(argv, pending.staging, popen)
+    return argv
+
+
+def start_recovery(pid, install=None, popen=None):
+    """At a quit with nothing staged, start the staged helper on a run a helper left part way.
+
+    A helper killed part way (a shutdown, a crash) leaves its journal open,
+    and staging refuses to start another update over it. A running app holds
+    its own install folder, so the next quit is the first moment a helper can
+    finish or undo that run: it waits for ``pid`` to exit, then does, and
+    starts nothing (``--recover``). This app ran from the install and is
+    quitting cleanly, so it writes the health report first; it counts only if
+    the journal expects this version. Returns the helper's argv, or None when
+    nothing was left part way, a helper is still running, or the journal is
+    not this install's or this version's.
+    """
+    install = install or running_install()
+    if install is None or install.flavor not in FLAVORS:
+        return None
+    staging = S.staging_dir(install.folder, install.app_name)
+    state = A.read_json(os.path.join(staging, A.STATE))
+    plan = state.get("plan") if isinstance(state, dict) else None
+    if not isinstance(plan, dict) or state.get("status") != "running":
+        return None
+    if not isinstance(plan.get("install"), str) or A._norm_win(plan["install"]) != A._norm_win(install.folder):
+        return None
+    if install.version not in (plan.get("from_version"), plan.get("to_version")):
+        return None  # the installer put another version in since; this journal is not about it
+    helper = os.path.join(staging, S.HELPER, S.HELPER_EXE)
+    if not os.path.isfile(helper):
+        return None
+    lock = A.take_lock(staging)
+    if lock is None:
+        return None  # a helper is still at work, and may be waiting on a report of its own
+    A.release_lock(lock)
+    A.write_health(staging, install.version)
+    argv = [helper, staging, "--pid", str(int(pid)), "--recover"]
+    _start(argv, staging, popen)
+    return argv
+
+
+def _start(argv, cwd, popen=None):
+    """Start the helper detached, from the staging folder, never inside the install."""
     flags = 0
     if os.name == "nt":
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
     (popen or subprocess.Popen)(
-        argv, cwd=pending.staging, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags, env=A.child_env(),
     )
-    return argv
