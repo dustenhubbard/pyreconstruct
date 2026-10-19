@@ -442,6 +442,10 @@ class MainWindow(QMainWindow):
         self.update_notice.hide()
         self.statusbar.addPermanentWidget(self.update_notice, 0)
 
+        ## Take B off Toggle ROI mode if an older Dev build stored it there,
+        ## before opening a series builds the shortcuts
+        self.settleLegacyRoiShortcutStartup()
+
         ## Open series if requested thru CLI
         if filename and Path(filename).exists():
             
@@ -1249,6 +1253,18 @@ class MainWindow(QMainWindow):
             apply_update_check_on_startup_default,
         )
         apply_update_check_on_startup_default()
+
+    def settleLegacyRoiShortcutStartup(self):
+        """Keep B on one action for a machine that ran an older Dev build.
+
+        Those builds stored B on Toggle ROI mode; B now picks the ROI mode
+        tool, and two actions on one key fire neither. See
+        `settings_migrations.settle_legacy_roi_shortcut`.
+        """
+        from PyReconstruct.modules.backend.settings_migrations import (
+            settle_legacy_roi_shortcut,
+        )
+        settle_legacy_roi_shortcut()
 
     def showWhatsNewStartup(self):
         """Show the 'What's new' dialog once per version (fresh install/upgrade).
