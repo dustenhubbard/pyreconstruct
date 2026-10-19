@@ -53,14 +53,14 @@ platforms).
 
 ### One-click installers (Windows, macOS, and Linux)
 
-Download the build for your platform from the current stable release, **v1.24.0**.
+Download the build for your platform from the current stable release, **v1.25.0**.
 Windows, macOS, and the Linux AppImage include Python. Each link below downloads
 that platform's installer directly; every build, its SHA-256 checksum, and past
 versions are on the
 **[Releases page](https://github.com/dustenhubbard/PyReconstruct/releases/latest)**.
 
 - **Windows**:
-  [`PyReconstruct-1.24.0-Windows-x86_64-Setup.exe`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-Windows-x86_64-Setup.exe).
+  [`PyReconstruct-1.25.0-Windows-x86_64-Setup.exe`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.25.0/PyReconstruct-1.25.0-Windows-x86_64-Setup.exe).
   This is a per-user installer (no administrator rights required). Builds are
   unsigned for now, so Windows SmartScreen may warn that the publisher is
   unknown; choose **More info ▸ Run anyway**. Re-running a newer installer
@@ -79,9 +79,9 @@ versions are on the
 > 📸 *Screenshot: the macOS `.dmg` window showing the app and the Applications drop target.*
 
 Both macOS builds are native:
-[`PyReconstruct-1.24.0-macOS-arm64.dmg`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-macOS-arm64.dmg) for
+[`PyReconstruct-1.25.0-macOS-arm64.dmg`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.25.0/PyReconstruct-1.25.0-macOS-arm64.dmg) for
 Apple Silicon and
-[`PyReconstruct-1.24.0-macOS-x86_64.dmg`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-macOS-x86_64.dmg) for an
+[`PyReconstruct-1.25.0-macOS-x86_64.dmg`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.25.0/PyReconstruct-1.25.0-macOS-x86_64.dmg) for an
 Intel Mac. The in-app updater serves each Mac its matching architecture.
 
 - **Linux**: install the AppImage with one command:
@@ -94,7 +94,7 @@ Intel Mac. The in-app updater serves each Mac its matching architecture.
   entry. Re-run it to update. For PyReconstruct Dev, end the command with
   `bash -s -- --dev`. To uninstall, end it with `bash -s -- --uninstall`. You can
   also download
-  [`PyReconstruct-1.24.0-linux-x86_64.AppImage`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-linux-x86_64.AppImage)
+  [`PyReconstruct-1.25.0-linux-x86_64.AppImage`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.25.0/PyReconstruct-1.25.0-linux-x86_64.AppImage)
   and run it directly, or install from source with a system
   **Python 3.11, 3.12 or 3.13**:
 
