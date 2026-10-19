@@ -8,8 +8,8 @@ locked. None of them looks at the name being assigned.
 That leaves the destination unguarded. Selecting an unlocked object's trace and
 renaming it to a locked object's name passes every existing check (the source is
 unlocked, which is all anyone asked) and lands a new trace in the locked object.
-Adding a trace to an object is a quantitative change to it, so the lock rule in
-`specs/lock-semantics.md` covers it: "locking an object prevents mutations that
+Adding a trace to an object is a quantitative change to it, so the lock rule
+covers it: "locking an object prevents mutations that
 would change quantitative data".
 
 The rule is narrow on purpose and this file is careful to stay inside it. The

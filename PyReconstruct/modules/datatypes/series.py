@@ -3320,7 +3320,7 @@ class Series():
                 # saw it and the store still carries the unsmoothed points.
                 # Without this rebuild the drifted rows survive until
                 # something notices: the `section.save()` on the next line
-                # rebuilds the store and writes the drift to the log (D11), and
+                # rebuilds the store and writes the drift to the log, and
                 # the user's next edit to one of these traces raises
                 # `ColumnarDualWriteMismatch` in their face. Once per section
                 # rather than once per contour: `resyncColumnarStore` rebuilds
@@ -4545,7 +4545,7 @@ class Series():
                 # so no dual-write hook saw it and the columnar store still
                 # holds the old flag. Rebuild from the result. Not optional --
                 # `Section.save()` would rebuild the store anyway and log the
-                # drift (D11), but the user's next edit to one of these traces
+                # drift, but the user's next edit to one of these traces
                 # raises `ColumnarDualWriteMismatch` in their face first.
                 section.resyncColumnarStore()
             return modified

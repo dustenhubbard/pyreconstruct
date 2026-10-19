@@ -52,10 +52,11 @@ StoredTraceID = namedtuple("StoredTraceID", ("trace_id", "fill_mode_key"))
 
 ## --- the columnar dual-write ------------------------------------------------
 ##
-## Slice 3 of the Phase 1 rewiring. Every `Section` carries a `SectionColumns`
-## beside its own `self.contours` and mirrors every mutation into it, so that
-## the columnar store is driven by real code on real data -- and checked against
-## the object model -- before any call site is flipped to *read* from it.
+## Every `Section` carries a `SectionColumns` beside its own `self.contours`
+## and mirrors every mutation into it, so that the columnar store is driven by
+## real code on real data and checked against the object model. A few readers
+## (`export_svg`, the trace layer's culling, `SeriesData`) now read from the
+## store; the object model still owns every value, as below.
 ##
 ## THE GATE IS GONE, DELIBERATELY, AND WHAT REPLACED IT
 ## ----------------------------------------------------
@@ -63,8 +64,8 @@ StoredTraceID = namedtuple("StoredTraceID", ("trace_id", "fill_mode_key"))
 ## whole premise was that a real launch could not reach it. That premise was
 ## reversed on 2026-08-05: with the store built only under the gate,
 ## `self._columns` was `None` forever in a real session, so there was nothing for
-## a production consumer to read from and the consumer-rewiring track could not
-## start at all. The store is now built in every session, for every section, and
+## a production consumer to read from and no consumer could be moved onto the
+## store at all. The store is now built in every session, for every section, and
 ## the variable is gone rather than defaulted -- `tests/test_section_columnar_
 ## dual_write.py` scans the whole repository for its name so that a half-removed
 ## gate, which would give one machine a store and another none, cannot survive.
@@ -76,12 +77,12 @@ StoredTraceID = namedtuple("StoredTraceID", ("trace_id", "fill_mode_key"))
 ##     `getDict`/`save` serialize the object model, never the columns. The store
 ##     is a shadow copy that is written and checked, not consulted.
 ##   * **The store is still never the source of a user-visible value.** A
-##     consumer that reads it (Track C) is reading a copy that this class has
+##     consumer that reads it is reading a copy that this class has
 ##     just checked against the thing that owns the value.
 ##   * **Divergence at a mutation is still loud.** Every dual-write hook still
 ##     raises `ColumnarDualWriteMismatch`, never logged and never swallowed.
 ##     What is no longer a raise is the WHOLE-SECTION check at `save()`; see
-##     "REBUILD AT SAVE, NOT COMPARE" below, which is D11.
+##     "REBUILD AT SAVE, NOT COMPARE" below.
 ##
 ## WHAT THE CHECK COSTS, AND WHY ITS SCOPE NARROWED
 ## ------------------------------------------------
@@ -168,11 +169,11 @@ StoredTraceID = namedtuple("StoredTraceID", ("trace_id", "fill_mode_key"))
 ## DERIVED from `Trace` by AST rather than hand-written, it knows four write
 ## routes instead of two, and three reach routes instead of one. But the honest
 ## summary is that four consecutive "complete" sets have been wrong, the third
-## of them after the enumeration had been mechanised specifically to prevent
+## of them after the enumeration had been mechanized specifically to prevent
 ## that. Nothing about "twelve" is more trustworthy than "eight" was.
 ##
-## REBUILD AT SAVE, NOT COMPARE -- D11, DECIDED, AND EXACTLY WHAT IT BUYS
-## ----------------------------------------------------------------------
+## REBUILD AT SAVE, NOT COMPARE, AND EXACTLY WHAT IT BUYS
+## ------------------------------------------------------
 ## Because the count kept being wrong, `save()` stopped asking whether the store
 ## already agrees with the object model and now simply REBUILDS it from the
 ## object model instead (`_rebuildColumnarStoreForSave`, called where the
@@ -193,9 +194,9 @@ StoredTraceID = namedtuple("StoredTraceID", ("trace_id", "fill_mode_key"))
 ## `trace.name` (`SectionColumns.fromSection`) and reads them back by contour
 ## key, so an out-of-class RENAME -- which leaves `Section.contours`'s key and
 ## `trace.name` disagreeing -- made the build fail its own arity check before
-## any drift was computed. `save()` raised, exactly as before D11; and because
-## the build assigns `self._columns` before filling `self._column_rows`, the
-## failed save left the section with an empty row map, so every later hooked
+## any drift was computed. `save()` raised, exactly as when it compared; and
+## because the build assigns `self._columns` before filling `self._column_rows`,
+## the failed save left the section with an empty row map, so every later hooked
 ## edit raised "holds no row for" as well. The save-time rebuild now restores
 ## the outgoing store and map on any failure and REPORTS rather than raises, so
 ## the claim above holds for that shape too. What it is NOT is a repair of the
@@ -256,9 +257,9 @@ class ColumnarDualWriteMismatch(AssertionError):
     """The columnar store and the object model disagree after a mutation.
 
     Raised, never logged and never swallowed. Catching store/object divergence
-    is the entire purpose of the dual-write slice: a mismatch a test run
-    survives is a mismatch that teaches nothing, and every later slice of the
-    rewiring rests on the claim that the two representations agree.
+    is the entire purpose of the dual-write: a mismatch a test run survives is
+    a mismatch that teaches nothing, and every later move onto the store rests
+    on the claim that the two representations agree.
     """
 
 
@@ -421,8 +422,8 @@ def _storeDrift(before, before_map, after, after_map) -> list:
     Reported, never raised. The rebuild has already made the store correct by
     the time this runs, so there is nothing left to refuse; what is left is the
     discipline signal that the edit happened at all, which is how five of the
-    twelve known out-of-class sites were found and is the one thing D11
-    knowingly put at risk.
+    twelve known out-of-class sites were found and is the one thing rebuilding
+    at `save()` knowingly put at risk.
 
         Params:
             before: the store the section held before the rebuild
@@ -674,7 +675,7 @@ class Section():
         self.thickness = section_data["thickness"]
         self.contours : dict[str, Contour] = {}
 
-        ## S1: every trace loaded from a file gets an id, DERIVED from its own
+        ## Every trace loaded from a file gets an id, DERIVED from its own
         ## stored content (`tid-v1`) so that two independent opens of one file
         ## agree on every id with no save between -- a random id minted at
         ## load is the failure `Flag.deriveID`'s docstring records. The
@@ -685,7 +686,7 @@ class Section():
         ## the session are not here and fall through to `issue()` in
         ## `appendRow`, as before. In memory only; nothing here writes a byte.
         ##
-        ## S3 puts one step in front of that: a row whose file ASSERTED an id
+        ## One step comes in front of that: a row whose file ASSERTED an id
         ## does not get one invented for it. `adoptForSection` runs first and
         ## takes the file at its word, subject to the module's collision policy
         ## -- a second claim on one id is recorded by name in
@@ -1119,8 +1120,8 @@ class Section():
                     #    content, so it is deterministic) rather than
                     #    id-PRESERVING of whatever a colleague's build actually
                     #    stored. Adopting the stored id, and reporting a
-                    #    collision instead of silently re-deriving one, is S3's
-                    #    slice -- this is it.
+                    #    collision instead of silently re-deriving one, is the
+                    #    point of adopting here.
                     fill_mode_key = fill_mode_row_key(trace)
                     stored_id = trace.get(TRACE_ID_ROW_KEY)
                     trace = keyed_trace_row_to_positional(trace)
@@ -1544,12 +1545,12 @@ class Section():
         # that moved (see `_assertRowMatchesTrace`), which cannot see drift
         # caused by something replacing contours from outside this class.
         #
-        # REBUILT, NOT COMPARED -- D11
-        # -----------------------------
+        # REBUILT, NOT COMPARED
+        # ---------------------
         # This used to be `_assertColumnsMatchObjectModel("save")`, which asked
         # whether the store already agreed with the object model and raised at
         # the user when it did not. The enumeration of edit sites that check
-        # existed to police was wrong four review rounds running, so the
+        # existed to police was wrong four times running, so the
         # question is no longer asked: the store is rebuilt from the object
         # model, which owns every value, and cannot then be stale whenever a
         # store can be built from the section at all. The module header sets
@@ -1724,13 +1725,14 @@ class Section():
     # carries two -- and the last eight rows are in-place writes.
     #
     # That is a real limit on this design, not a fixed bug: a thirteenth such site
-    # added later fails the same way. What it costs is smaller since D11, and
-    # the smaller amount is the honest number rather than zero. It used to make
-    # the section UNSAVEABLE for the rest of the session, because `save()`
-    # compared and raised and nothing on that path repaired anything. `save()`
-    # now rebuilds, so it does not raise -- not for drift, and not for a
-    # rebuild that cannot be built at all -- and reports in the log instead.
-    # (The second half of that is the review fix: an out-of-class RENAME makes
+    # added later fails the same way. What it costs is smaller now that `save()`
+    # rebuilds the store, and the smaller amount is the honest number rather
+    # than zero. It used to make the section UNSAVEABLE for the rest of the
+    # session, because `save()` compared and raised and nothing on that path
+    # repaired anything. `save()` now rebuilds, so it does not raise -- not for
+    # drift, and not for a rebuild that cannot be built at all -- and reports in
+    # the log instead.
+    # (The second half of that matters: an out-of-class RENAME makes
     # the build fail its own arity check, and the first version of this change
     # both raised and emptied the row map on that path. See the module header.)
     # But the window BETWEEN the out-of-class edit and that save is
@@ -1772,11 +1774,11 @@ class Section():
         twelve out-of-class edit sites call it after they are done.
 
         The work itself is `_rebuildColumnarStore`, which this delegates to and
-        which `save()` reaches independently since D11. The split is not
-        decoration: this name means "an out-of-class edit happened and is being
-        repaired", and `save()`'s rebuild does not mean that. Anything that
-        intercepts the repair -- the tests that revert one call site to show it
-        is load-bearing -- must not silently disable `save()` as well.
+        which `save()` reaches independently through its own rebuild. The split
+        is not decoration: this name means "an out-of-class edit happened and is
+        being repaired", and `save()`'s rebuild does not mean that. Anything
+        that intercepts the repair -- the tests that revert one call site to
+        show it is load-bearing -- must not silently disable `save()` as well.
 
         THE GENERATION COUNTER IS CARRIED FORWARD, NOT RESET
         ----------------------------------------------------
@@ -1789,8 +1791,8 @@ class Section():
         bug class the counter exists to prevent, reintroduced by the repair.
         Under the gate this could not bite, because nothing outside a test ever
         rebuilt a store and nothing at all read the counter; always-on plus a
-        Track C consumer makes it live, so the new store resumes above the old
-        one's count.
+        consumer that reads the store makes it live, so the new store resumes
+        above the old one's count.
 
         The row map is keyed on the `Trace` object itself. `Trace` defines
         neither `__eq__` nor `__hash__`, so that dict is an identity map -- the
@@ -1808,13 +1810,13 @@ class Section():
         """Throw the store away and build a new one from the object model.
 
         The work behind `resyncColumnarStore` (the public repair) and behind
-        `_rebuildColumnarStoreForSave` (D11's save-time rebuild). Read
+        `_rebuildColumnarStoreForSave` (the rebuild every `save()` runs). Read
         `resyncColumnarStore`'s docstring for the generation-counter and
         identity-map reasoning, which belongs to this method and is documented
         there because that is the name callers use.
 
-        THE REBUILD CARRIES THE IDS AND THE ISSUER. D10.
-        -------------------------------------------------
+        THE REBUILD CARRIES THE IDS AND THE ISSUER
+        ------------------------------------------
         This method used to call `SectionColumns.fromSection(self, ...)` with
         neither, and both halves of that were lossy. Dropping the ISSUER meant
         the replacement store had none, so every row's id came back `None` and
@@ -1823,7 +1825,7 @@ class Section():
         an issuer WAS passed -- meant every trace on the section was
         re-identified. Either way a birth certificate was reissued for a trace
         that had not changed, and this method is reached from all fourteen
-        `resyncColumnarStore()` call sites plus, since D11, every `save()`.
+        `resyncColumnarStore()` call sites plus every `save()`.
 
         The correlation is the outgoing row map, and it has to be, because
         `Trace` carries no id attribute of any kind: there is no id to read off
@@ -1833,19 +1835,20 @@ class Section():
 
         A trace the outgoing map does not hold is a trace this store has never
         seen -- genuinely new, or arrived through an import -- and it falls
-        through to the issuer, which is the pre-D10 behavior and stays right.
+        through to the issuer, which is what every trace did before ids were
+        carried, and stays right for these.
 
         THE FIRST BUILD TAKES THE ISSUER FROM THE SERIES, AND CARRIES THE
-        DERIVED IDS. S1.
+        LOADED IDS
         ------------------------------------------------------------------
-        Until S1 the issuer came only from the outgoing store, and the first
+        The issuer used to come only from the outgoing store, and the first
         build has no outgoing store -- so the chain was never seeded, and
         every trace in every shipped session carried no id at all (the state
         `_rebuildColumnarStoreForSave`'s docstring used to describe as
         current). Now `Series` owns one issuer for the whole series, the first
         build takes it from `self.series`, and the ids it carries are the ones
-        `Section.__init__` just DERIVED from the section file's own rows
-        (`self._loaded_trace_ids`). A rebuild with an outgoing store still
+        `Section.__init__` just adopted from, or DERIVED for, the section
+        file's own rows (`self._loaded_trace_ids`). A rebuild with an outgoing store still
         prefers the outgoing store's issuer -- in production that is the same
         object as the series', and a store a test installed by hand keeps the
         index it was built with rather than having it silently swapped.
@@ -1873,7 +1876,7 @@ class Section():
         ## it and the entry is simply dropped with the map.
         issuer = outgoing.id_issuer if outgoing is not None else None
         if issuer is None:
-            ## S1: the first build (no outgoing store), and any store that was
+            ## The first build (no outgoing store), and any store that was
             ## built without an issuer, take the series' own. `getattr` twice
             ## because a Section built through `__new__` has no `series` and a
             ## test's stand-in series may have no issuer; both mean "no ids",
@@ -1890,10 +1893,11 @@ class Section():
                     if trace_id is not None:
                         carried_ids[trace] = trace_id
             else:
-                ## The first build: carry the ids `Section.__init__` derived
-                ## from the section file's rows. `None` for a section that was
-                ## not built from a file (a test's hand-assembled section),
-                ## and then every row falls through to `issue()`.
+                ## The first build: carry the ids `Section.__init__` adopted
+                ## or derived for the section file's rows. `None` for a
+                ## section that was not built from a file (a test's
+                ## hand-assembled section), and then every row falls through
+                ## to `issue()`.
                 carried_ids = self._loaded_trace_ids
 
         ## The first build also takes the coordinates `__init__` read from
@@ -1954,15 +1958,15 @@ class Section():
         ## construction order ever stops matching the object model's, which would
         ## silently mis-map every trace on the section.
         ##
-        ## `save()` no longer compares in full either, since D11: it calls this
-        ## method and then checks the result against the store it replaced,
-        ## store to store, which is the same set of columns without a `Trace`
-        ## rebuilt per row. `_storeDrift` is that comparison.
+        ## `save()` no longer compares in full either, since it rebuilds: it
+        ## calls this method and then checks the result against the store it
+        ## replaced, store to store, which is the same set of columns without a
+        ## `Trace` rebuilt per row. `_storeDrift` is that comparison.
 
     def _rebuildColumnarStoreForSave(self):
         """Make the store correct at `save()` by rebuilding it, and report drift.
 
-        D11. This replaced `_assertColumnsMatchObjectModel("save")`, and the
+        This replaced `_assertColumnsMatchObjectModel("save")`, and the
         difference is the whole point: the old call asked whether the store
         already agreed with the object model and raised at the user when it did
         not, which made a missed out-of-class edit site into an unsaveable
@@ -1994,28 +1998,26 @@ class Section():
         and row numbers untouched. The cost is the build, which is paid either
         way; what is saved is the churn.
 
-        It has a third consequence, worth naming because it is load-bearing:
-        `SectionColumns` carries an `id` column, and until D10 `fromSection`
-        issued rather than carried ids. Since S1 the issuer IS wired -- every
-        `Section` built from a file carries an id per trace, derived at load
-        from the series' issuer -- so a save that adopted a rebuild
-        unconditionally would re-identify every trace on the section. Keeping
-        the existing store when nothing drifted means an ordinary save does
-        not, and `test_a_save_does_not_re_identify_the_traces_it_saves` pins
-        that.
+        Trace ids are not what keeps a clean save safe. `SectionColumns`
+        carries an `id` column, and every `Section` built from a file holds an
+        id per trace, adopted from the file or derived at load by the series'
+        issuer. `_rebuildColumnarStore` passes those ids into the replacement
+        as `carried_ids`, so every rebuild already keeps each id it can
+        correlate, before the save decides whether to adopt it. Keeping the
+        existing store on a clean save spares its generation, tracking and row
+        map, and `test_a_save_does_not_re_identify_the_traces_it_saves` pins
+        that an ordinary save keeps the ids.
 
         **The residue this paragraph used to record is closed.** A save that
         DOES find drift adopts the rebuild, and that used to lose the ids with
-        it -- exactly as the fourteen `resyncColumnarStore()` call sites did --
-        which was left as the rebuild-carries-ids scope call in
-        `specs/phase1-foreign-trace-id-acquisition-2026-08-05.md` §5. D10 made
-        that call: `_rebuildColumnarStore` now carries both the issuer and the
-        outgoing ids into the replacement, so a drifted save keeps every id it
-        can correlate through the outgoing row map. The two mechanisms are
+        it -- exactly as the fourteen `resyncColumnarStore()` call sites did.
+        `_rebuildColumnarStore` now carries both the issuer and the outgoing
+        ids into the replacement, so a drifted save keeps every id it can
+        correlate through the outgoing row map. The two mechanisms are
         complementary rather than redundant, and both are still wanted: this
-        one avoids the rebuild entirely when nothing drifted, which also
-        spares the generation counter, while D10's carry is what makes the
-        rebuild non-destructive on the occasions it IS adopted.
+        one avoids adopting the rebuild when nothing drifted, which spares the
+        generation counter, while carrying the ids is what makes the rebuild
+        non-destructive on the occasions it IS adopted.
 
         Drift is PRINTED, never raised. See `_storeDrift`. So is a rebuild that
         cannot be built at all: see the `except` below, which is the reason
@@ -2057,8 +2059,9 @@ class Section():
         ## goes through `_rowFor` and raises "holds no row for", which turns a
         ## save that could not rebuild into a section nobody can edit for the
         ## rest of the session. That is strictly worse than what this method
-        ## replaced, and it lands on the one path D11 exists to make safe, so
-        ## the outgoing store and map are put back whatever happens.
+        ## replaced, and it lands on the one path rebuilding at `save()` exists
+        ## to make safe, so the outgoing store and map are put back whatever
+        ## happens.
         try:
             self._rebuildColumnarStore()
         except ColumnarDualWriteMismatch as unbuildable:
@@ -2292,16 +2295,16 @@ class Section():
         single mutation that went wrong usually goes wrong in more than one
         column and the second one is the informative one.
 
-        **THIS NO LONGER RUNS ON THE PRODUCTION PATH AT ALL. D11.** It is
+        **THIS NO LONGER RUNS ON THE PRODUCTION PATH AT ALL.** It is
         O(section) with a large constant: it rebuilds every trace on the
         section and compares every field. Under the test-only gate it ran after
         every single mutation, which was the right trade for a harness; when
         the store went always-on it was narrowed to `save()` alone, at a
         measured **2.42x on the busiest section of `autoseg745` (90.6 ms ->
-        219.6 ms)** and 2.29x on the median (60.9 -> 139.6). D11 then removed
-        it from `save()` as well, in favor of rebuilding the store there --
+        219.6 ms)** and 2.29x on the median (60.9 -> 139.6). It was then removed
+        from `save()` as well, in favor of rebuilding the store there --
         because the point of comparing was to catch out-of-class edit sites,
-        the enumeration of those was wrong four review rounds running, and a
+        the enumeration of those was wrong four times running, and a
         rebuild does not need the enumeration to be right.
 
         What survives is this method, unchanged in scope and still exact, kept

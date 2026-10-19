@@ -343,8 +343,8 @@ def deriveTraceID(section_number: int, contour_name: str, row: list,
     ## A `set` SUBCLASS whose `__contains__` contradicts what it iterates is the
     ## one input the two arms answer differently -- it is not a container of ids
     ## under this parameter's documented contract, no producer of one exists in
-    ## this codebase, and the boundary is recorded in review-247 F06 rather than
-    ## guarded against here.
+    ## this codebase, and the boundary is documented here rather than guarded
+    ## against.
     ##
     ## The copy is kept for every other iterable rather than dropped, because
     ## `taken` is documented as an *iterable* and a one-shot one must not be

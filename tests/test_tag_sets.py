@@ -197,7 +197,7 @@ def test_resolve_add_tags_adds_instead_of_replacing():
 
 
 def test_resolve_keeps_an_undisplayed_pick_one_value_through_a_replacement():
-    """The pin from the plan: a pick-one row the selection disagreed on (None)
+    """Pinned on purpose: a pick-one row the selection disagreed on (None)
     must not lose its value on a trace just because the free rows were edited.
     The dialog never showed that value, so the user could not have kept it."""
     ts = _sets()

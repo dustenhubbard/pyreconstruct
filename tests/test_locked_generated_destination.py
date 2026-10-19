@@ -10,8 +10,8 @@ copy of the same object, which is a two-step user recipe: copy `star`, lock
 `star_copy`, copy `star` again. `<name>_NN` collides on any series that already
 numbers objects that way, which is the ordinary manual convention. When the
 object sitting on that name is locked, the operation adds traces to it, and
-adding traces is exactly what lock exists to prevent (`specs/lock-semantics.md`:
-locking prevents mutations that would change quantitative data).
+adding traces is exactly what lock exists to prevent (the lock rule: locking
+prevents mutations that would change quantitative data).
 
 Nothing caught this. The field's `object_function` decorator does check for
 locked objects, but it checks the objects the *user selected*, which are the
