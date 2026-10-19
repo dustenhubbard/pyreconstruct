@@ -355,6 +355,46 @@ Under **Series ▸ Images**:
   (`.zarr`) store for faster loading of large images.
 - **Update image scales** adds or refreshes scale levels on an existing Zarr.
 
+### When a Zarr names its images differently
+
+A Zarr made from a series' images may name them differently from the series,
+for example `IMG_000.tif` in the series and `000_IMG_grid000.tif` in the Zarr.
+The series then shows no images, even with the right Zarr chosen.
+
+Choose the Zarr in **Series ▸ Images ▸ Find/change image directory**. If none of
+the series' image names is in the Zarr, PyReconstruct tries to pair each section
+with one Zarr image by the number in its image name:
+
+- It uses the first or the last number in each name. Zero padding does not
+  count, so `001` and `1` are the same number.
+- Each number must appear once on each side, and both sides must have the same
+  numbers. An extra image, a missing image or an offset (for example images
+  numbered 1 to 100 against 0 to 99) is refused.
+- If the first and the last number both fit but pair the images differently,
+  the match is refused, since which one is meant is not clear.
+- The pairing uses the number in the series' own image name, not the section
+  number. After you insert, remove or reorder sections, the two can differ.
+
+If the names cannot be paired, a message says why and no names change. If even
+one series image name is already in the Zarr, PyReconstruct treats the rest as
+missing images and offers no pairing.
+
+If the names pair, a **Match Image Names** window lists each section with its
+current image name and the Zarr name it would get. It draws a few sections'
+traces over the proposed images so you can check the fit by eye. Sections whose
+image number is not their section number are flagged and drawn first.
+
+- **Use these names** gives each section its Zarr image name. The series file
+  changes when you save.
+- **Cancel** changes no names. The series still points at the chosen Zarr, so
+  its images still do not show.
+
+Matching the names only reads the Zarr. Nothing in it is renamed, moved or
+written, so other series that use the same Zarr are not affected. If the Zarr
+has no scale levels yet, PyReconstruct may then ask whether to add them. That
+is a separate step: **Yes** writes the new scale levels into the Zarr, and
+**No** leaves it as it is.
+
 ---
 
 ## 5. The main window and navigation
