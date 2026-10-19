@@ -389,8 +389,11 @@ image number is not their section number are flagged and drawn first.
 - **Cancel** changes no names. The series still points at the chosen Zarr, so
   its images still do not show.
 
-The Zarr itself is only read. Nothing in it is renamed, moved or written, so
-other series that use the same Zarr are not affected.
+Matching the names only reads the Zarr. Nothing in it is renamed, moved or
+written, so other series that use the same Zarr are not affected. If the Zarr
+has no scale levels yet, PyReconstruct may then ask whether to add them. That
+is a separate step: **Yes** writes the new scale levels into the Zarr, and
+**No** leaves it as it is.
 
 ---
 
