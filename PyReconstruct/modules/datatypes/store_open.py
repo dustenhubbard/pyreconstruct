@@ -4,11 +4,11 @@ Turned on by ``PYRECON_HYBRID_STORE=1`` and by nothing else; off, no code here
 runs and no store is made. With it on, `Series.openJser` does this when there
 is no working folder to resume:
 
-  * The store holds this .jser (same size and modification time as when it
-    was imported) and the object-list numbers of its last import: the open
+  * The store holds this .jser (the same bytes, by sha256, as when it was
+    imported) and the object-list numbers of its last import: the open
     writes the working folder from the store, the same files today's open
     writes, and fills the object list from the stored numbers. No section is
-    loaded, and the .jser is not read.
+    loaded, and the .jser is read only to hash it.
   * Otherwise: today's open, unchanged, and then the working folder it wrote
     and the numbers it measured go into the store for the next open.
 
@@ -19,14 +19,18 @@ When the store cannot be used (its folder is on a network file system,
 another process holds it, it is not a store this version reads, or reading it
 fails), the open is today's open, with one line in the log and no dialog.
 Only `StoreUnavailable` is caught for that, so a fault in this code still
-raises.
+raises: an OSError, or an SQLite error a store's file or disk causes
+(`_raiseIfBug`), is turned into one; an SQLite error that only code can cause
+is not.
 """
 
 import gc
+import hashlib
 import json
 import os
 import sqlite3
 from contextlib import contextmanager
+from typing import Optional
 
 import numpy as np
 
@@ -63,6 +67,9 @@ CLOSED, HIDDEN, NEGATIVE = 1, 2, 4
 META_STATS = "open_stats"
 ## meta: where the .jser's sections sit in it, for the first Save's splice
 META_SPLICE = "open_splice"
+## meta: the sha256 of the .jser the store holds
+META_SHA = "jser_sha256"
+HASH_CHUNK = 8 << 20
 
 
 class StoreUnavailable(Exception):
@@ -79,6 +86,37 @@ def log_note(message : str):
     # backend.func's package imports this one's, so not at the top
     from PyReconstruct.modules.backend.func.logging_setup import log_note as note
     note(message)
+
+
+def _raiseIfBug(err : Exception):
+    """Raise err again unless a store's file or disk can cause it.
+
+    sqlite3.ProgrammingError and its siblings come from the code that calls
+    SQLite (a wrong number of bindings, a closed connection), never from a
+    store, so they are not turned into a quiet fallback. OperationalError
+    (locked, I/O, disk full) and a bare DatabaseError (not a database, a
+    damaged file) are.
+    """
+    if isinstance(err, sqlite3.Error) and not (
+        isinstance(err, sqlite3.OperationalError) or type(err) is sqlite3.DatabaseError
+    ):
+        raise err
+
+
+def jserDigest(fp : str) -> str:
+    """The sha256 of a file's bytes, as hex, read in large chunks."""
+    h = hashlib.sha256()
+    buf = bytearray(HASH_CHUNK)
+    view = memoryview(buf)
+    with open(fp, "rb", buffering=0) as f:
+        while n := f.readinto(buf):
+            h.update(view[:n])
+    return h.hexdigest()
+
+
+def _identity(st) -> tuple:
+    """What any write to a file changes: size, both times, and which file it is."""
+    return (st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_ino, st.st_dev)
 
 
 def _unavailable(jser_fp : str, err : Exception):
@@ -107,6 +145,14 @@ def openJser(fp : str, progress=None, notifier=None):
             held.close()
             held = None
             return Series._unpackJser(fp, progress, notifier)[0]
+        try:
+            # hashed before today's open reads the file, to be kept with it
+            held.digest()
+        except StoreUnavailable as e:
+            _unavailable(fp, e)
+            held.close()
+            held = None
+            return Series._unpackJser(fp, progress, notifier)[0]
         series, collisions = Series._unpackJser(fp, progress, notifier)
         if series is not None:
             factory = progress if progress is not None else _default_progress_reporter_factory()
@@ -131,6 +177,17 @@ class StoreForOpen():
         self.store = store
         self.jser_fp = jser_fp
         self.stat = os.stat(jser_fp)
+        self._digest : Optional[str] = None
+
+    def digest(self) -> str:
+        """The sha256 of the .jser, read once, after `stat` was taken."""
+        digest = self._digest
+        if digest is None:
+            try:
+                digest = self._digest = jserDigest(self.jser_fp)
+            except OSError as e:
+                raise StoreUnavailable(str(e)) from e
+        return digest
 
     @staticmethod
     def attempt(jser_fp : str):
@@ -153,6 +210,7 @@ class StoreForOpen():
                 )
             store = HybridStore(db_fp, work_dir)
         except (OSError, sqlite3.Error) as e:
+            _raiseIfBug(e)
             # busy (StoreBusyError), another schema (StoreSchemaError), a
             # network folder (Linux), or the folder cannot be made
             raise StoreUnavailable(str(e)) from e
@@ -160,6 +218,7 @@ class StoreForOpen():
             store.con.execute(STATS_SCHEMA)
             return StoreForOpen(store, jser_fp)
         except (OSError, sqlite3.Error) as e:
+            _raiseIfBug(e)
             store.close()
             raise StoreUnavailable(str(e)) from e
         except BaseException:
@@ -175,20 +234,27 @@ class StoreForOpen():
         """True when an open can come from the store: it holds this .jser as
         imported, every section's numbers, and nothing else.
 
+        The .jser is the one imported only when its bytes hash the same. Its
+        size and modification time decide nothing: a copy that keeps times
+        keeps them, and a network folder that stores whole seconds repeats
+        them. (The open hashes the file either way: an import keeps the hash.)
         A store with work in its working layer or saved past its .jser (later
         steps write those) is not read here.
         """
         store = self.store
         try:
-            if not store.isImported() or not store.matchesJser(self.jser_fp):
+            if not store.isImported():
                 return False
             if store.hasPending() or store.meta("dirty") != "0":
                 return False
             if store.meta(META_STATS) != store.meta("imported_utc"):
                 return False
             stored = {r[0] for r in store.con.execute("SELECT snum FROM section_stats")}
-            return stored == set(store.sectionNumbers())
+            if stored != set(store.sectionNumbers()):
+                return False
+            return store.meta(META_SHA) == self.digest()
         except (OSError, sqlite3.Error) as e:
+            _raiseIfBug(e)
             raise StoreUnavailable(str(e)) from e
 
     def source(self) -> "_StoreSource":
@@ -200,6 +266,7 @@ class StoreForOpen():
         try:
             raw = self.store.meta(META_SPLICE)
         except sqlite3.Error as e:
+            _raiseIfBug(e)
             raise StoreUnavailable(str(e)) from e
         if not raw:
             return None
@@ -227,6 +294,7 @@ class StoreForOpen():
         try:
             _fillSeriesData(self.store, series)
         except (OSError, sqlite3.Error) as e:
+            _raiseIfBug(e)
             raise StoreUnavailable(str(e)) from e
 
     ## writing -----------------------------------------------------------------
@@ -252,6 +320,11 @@ class StoreForOpen():
             return
         store = self.store
         try:
+            if self._digest is None or _identity(os.stat(self.jser_fp)) != _identity(self.stat):
+                # written to while it was hashed or opened: what was read
+                # may not be what was hashed
+                log_note(f"Local store not kept for {name}: the file changed while it was opened")
+                return
             if store.hasPending() or store.meta("dirty") == "1":
                 # work a later version left in the store is never replaced
                 log_note(f"Local store not kept for {name}: it holds work the .jser lacks")
@@ -260,6 +333,7 @@ class StoreForOpen():
                 store.con.execute("DELETE FROM section_stats")
                 store.setMeta(META_STATS, None)
                 store.setMeta(META_SPLICE, None)
+                store.setMeta(META_SHA, None)
             source = _WorkingFolderSource(series)
             # the alignments as the open found them, before it measured
             alignments = _Alignments(source.series["alignment"], source.series["obj_attrs"])
@@ -278,11 +352,13 @@ class StoreForOpen():
                 # next open imports it again
                 store.setMeta("jser_size", self.stat.st_size)
                 store.setMeta("jser_mtime_ns", self.stat.st_mtime_ns)
+                store.setMeta(META_SHA, self._digest)
                 store.setMeta(META_SPLICE, _spliceMeta(getattr(series, "_jser_splice_index", None)))
                 store.setMeta(META_STATS, store.meta("imported_utc"))
         except _NotMeasuredAlike as e:
             log_note(f"Local store not kept for {os.path.basename(self.jser_fp)}: {e}")
         except (OSError, sqlite3.Error) as e:
+            _raiseIfBug(e)
             _unavailable(self.jser_fp, e)
 
 
@@ -303,6 +379,7 @@ class _StoreSource():
             self.series = store.seriesData()
             self.log = store.logText()
         except (OSError, sqlite3.Error) as e:
+            _raiseIfBug(e)
             raise StoreUnavailable(str(e)) from e
 
     def sectionCount(self) -> int:
@@ -313,6 +390,7 @@ class _StoreSource():
             try:
                 section_data = self.store.readSection(snum)
             except (OSError, sqlite3.Error) as e:
+                _raiseIfBug(e)
                 raise StoreUnavailable(str(e)) from e
             yield snum, section_data, None
 
@@ -617,4 +695,3 @@ def _fillSeriesData(store : HybridStore, series):
         objects[name] = ObjectData(columns, start, stop)
         by_name.append((name, pair_snums[a:b]))
     data.object_ids.placeAll(by_name)
-

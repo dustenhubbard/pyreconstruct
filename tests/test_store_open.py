@@ -20,6 +20,7 @@ What these pin:
 * network folders are told apart on macOS, Windows and Linux.
 """
 import copy
+import hashlib
 import json
 import os
 import shutil
@@ -180,7 +181,7 @@ def _snapshot(series) -> dict:
         "getters": getters,
         "section_data": _sections(data),
         "traces": _traces(data),
-        "placed": sorted(ids.placed),
+        "placed": sorted(ids.placed.items()),
         "one_id_per_name": all(len(ids.live(n)) == 1 for n in data.objects),
         "splice": None if index is None else sorted(index.ranges.items()),
     }
@@ -419,6 +420,88 @@ def test_a_changed_jser_is_opened_as_today_and_kept_again(tmp_path, switch_on, m
         series.close()
 
 
+def _same_size_other_content(fp) -> bytes:
+    """fp's bytes with one object renamed to a name of the same length."""
+    data = fp.read_bytes()
+    assert data.count(b"dendrite01") and not data.count(b"dendrite02")
+    return data.replace(b"dendrite01", b"dendrite02")
+
+
+@pytest.mark.parametrize("how", ["rewritten-in-place", "copied-over"])
+def test_other_bytes_with_the_same_size_and_time_are_not_read_from_the_store(how, tmp_path, switch_on, notes, monkeypatch):
+    fp = _copy(PARITY, tmp_path / "s")
+    _open(fp).close()
+    st = os.stat(fp)
+    other = _same_size_other_content(fp)
+    if how == "rewritten-in-place":
+        fp.write_bytes(other)
+        os.utime(fp, ns=(st.st_atime_ns, st.st_mtime_ns))
+    else:
+        # a copy that keeps the times, as cp -p and sync tools do
+        elsewhere = tmp_path / "elsewhere" / fp.name
+        elsewhere.parent.mkdir()
+        elsewhere.write_bytes(other)
+        os.utime(elsewhere, ns=(st.st_atime_ns, st.st_mtime_ns))
+        shutil.copy2(elsewhere, fp)
+    after = os.stat(fp)
+    assert (after.st_size, after.st_mtime_ns) == (st.st_size, st.st_mtime_ns)
+    expected = _today(fp, tmp_path, monkeypatch)
+    opens = _store_opens(monkeypatch)
+    series = _open(fp)
+    try:
+        assert opens == []
+        assert "dendrite02" in series.data.objects and "dendrite01" not in series.data.objects
+        assert _snapshot(series) == expected
+    finally:
+        series.close()
+
+
+def test_the_same_bytes_with_a_new_time_open_from_the_store(tmp_path, switch_on, monkeypatch):
+    fp = _copy(PARITY, tmp_path / "s")
+    _open(fp).close()
+    os.utime(fp, ns=(os.stat(fp).st_atime_ns, os.stat(fp).st_mtime_ns + 10**9))
+    expected = _today(fp, tmp_path, monkeypatch)
+    opens = _store_opens(monkeypatch)
+    series = _open(fp)
+    try:
+        assert opens == [series.name]
+        expected["splice"] = None  # the index names the file's old time, so Save writes in full
+        assert _snapshot(series) == expected
+    finally:
+        series.close()
+
+
+def test_the_store_records_the_sha256_of_the_file_it_holds(tmp_path, switch_on):
+    fp = _copy(PARITY, tmp_path / "s")
+    _open(fp).close()
+    store = HybridStore.forJser(str(fp))
+    try:
+        assert store.meta(store_open.META_SHA) == hashlib.sha256(fp.read_bytes()).hexdigest()
+    finally:
+        store.close()
+
+
+def test_a_file_written_while_it_is_opened_is_not_kept(tmp_path, switch_on, notes, monkeypatch):
+    fp = _copy(PARITY, tmp_path / "s")
+    real = Series._unpackJser
+
+    def written_during(*a, **k):
+        result = real(*a, **k)
+        # the same bytes and times written again: only the change time moves
+        st = os.stat(fp)
+        fp.write_bytes(fp.read_bytes())
+        os.utime(fp, ns=(st.st_atime_ns, st.st_mtime_ns))
+        return result
+
+    monkeypatch.setattr(Series, "_unpackJser", staticmethod(written_during))
+    _open(fp).close()
+    monkeypatch.setattr(Series, "_unpackJser", staticmethod(real))
+    assert notes == ["Local store not kept for parity_series.jser: the file changed while it was opened"]
+    opens = _store_opens(monkeypatch)
+    _open(fp).close()
+    assert opens == []
+
+
 @pytest.mark.parametrize("work", ["pending", "dirty"])
 def test_a_store_with_work_the_jser_lacks_is_not_read_or_replaced(work, tmp_path, switch_on, notes, monkeypatch):
     fp = _copy(PARITY, tmp_path / "s")
@@ -523,7 +606,11 @@ def test_a_file_that_is_not_a_store_opens_as_today_and_is_left_as_it_was(tmp_pat
     assert Path(db_fp).read_bytes() == before
 
 
-def test_a_store_read_that_fails_partway_opens_as_today(tmp_path, switch_on, notes, monkeypatch):
+@pytest.mark.parametrize("error", [
+    sqlite3.OperationalError("disk I/O error"),
+    sqlite3.DatabaseError("database disk image is malformed"),
+], ids=["operational", "damaged"])
+def test_a_store_read_that_fails_partway_opens_as_today(error, tmp_path, switch_on, notes, monkeypatch):
     fp = _copy(SERIES_FILES[1], tmp_path / "s")
     _open(fp).close()
     real = HybridStore.readSection
@@ -532,11 +619,11 @@ def test_a_store_read_that_fails_partway_opens_as_today(tmp_path, switch_on, not
     def fails_second(self, snum, *a, **k):
         calls.append(snum)
         if len(calls) == 2:
-            raise sqlite3.OperationalError("disk I/O error")
+            raise error
         return real(self, snum, *a, **k)
 
     monkeypatch.setattr(HybridStore, "readSection", fails_second)
-    _assert_falls_back(fp, tmp_path, monkeypatch, notes, "disk I/O error")
+    _assert_falls_back(fp, tmp_path, monkeypatch, notes, str(error))
     assert len(calls) == 2
     # nothing of the failed open is left beside the file
     assert sorted(os.listdir(fp.parent)) == [fp.name]
@@ -556,6 +643,21 @@ def test_a_fault_in_the_store_code_is_raised_not_hidden(tmp_path, switch_on, not
     assert sorted(os.listdir(fp.parent)) == [fp.name]
     # and the store was let go of
     HybridStore.forJser(str(fp)).close()
+
+
+@pytest.mark.parametrize("error", [sqlite3.ProgrammingError, sqlite3.IntegrityError, sqlite3.InterfaceError])
+def test_an_sqlite_error_only_code_can_cause_is_raised_not_hidden(error, tmp_path, switch_on, notes, monkeypatch):
+    fp = _copy(PARITY, tmp_path / "s")
+    _open(fp).close()
+
+    def bug(self, snum, *a, **k):
+        raise error("Incorrect number of bindings supplied")
+
+    monkeypatch.setattr(HybridStore, "readSection", bug)
+    with pytest.raises(error):
+        _open(fp)
+    assert notes == []
+    assert sorted(os.listdir(fp.parent)) == [fp.name]
 
 
 def test_a_store_that_cannot_be_written_leaves_the_open_as_today(tmp_path, switch_on, notes, monkeypatch):
