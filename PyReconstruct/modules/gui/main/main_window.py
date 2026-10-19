@@ -13,6 +13,7 @@ from .main_imports import *
 
 from PyReconstruct.modules.datatypes.section import Section, zarrHasScaleLevels
 from PyReconstruct.modules.datatypes import store_save
+from PyReconstruct.modules.datatypes.series import SeriesSaveError
 from PyReconstruct.modules.backend.image_name_match import (
     matchByNumber, zarrImageNames,
 )
@@ -2056,6 +2057,10 @@ class MainWindow(QMainWindow):
         # to protect (found 2026-08-27).
         if self.saveToJser(notify=True, close=False) == "cancel":
             return
+        # openSeries closes this series without asking, so a Save the local
+        # store holds goes to the .jser now, with its backup
+        if not self._writeStoreSave():
+            return
 
         ## Query user for images
         if not image_locations:
@@ -3171,7 +3176,8 @@ class MainWindow(QMainWindow):
             save = saveNotify()
             if save == "no":
                 if close:
-                    self._writeStoreSave()
+                    if not self._writeStoreSave():
+                        return "cancel"
                     self.series.close()
                 return
             elif save == "cancel":
@@ -3179,7 +3185,8 @@ class MainWindow(QMainWindow):
         
         # User closing and series not modified
         if close and not self.series.modified:
-            self._writeStoreSave()
+            if not self._writeStoreSave():
+                return "cancel"
             self.series.close()
             return
 
@@ -3206,15 +3213,25 @@ class MainWindow(QMainWindow):
         # mark series as unmodified
         self.seriesModified(False)
     
-    def _writeStoreSave(self):
+    def _writeStoreSave(self) -> bool:
         """Write the .jser from the local store if it holds a Save the .jser lacks.
 
         With Save writing the store only (store_save.py), the .jser is written
         when the series closes, so that is when the automatic backup is made.
+
+            Returns:
+                (bool): False if the .jser could not be written. The user was
+                    told, and the series keeps its store and working folder,
+                    so the caller must not close it.
         """
-        if store_save.ahead(self.series):
+        if not store_save.ahead(self.series):
+            return True
+        try:
             store_save.writeJser(self.series)
-            self.backup(check_auto=True, from_saved=True)
+        except (OSError, SeriesSaveError):
+            return False
+        self.backup(check_auto=True, from_saved=True)
+        return True
 
     def exportJserNow(self):
         """Save, and write the .jser now (File > Export series), with Save writing the store only."""

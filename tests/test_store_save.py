@@ -128,9 +128,9 @@ def test_with_the_switch_off_save_writes_today_s_bytes(tmp_path, store_root, mon
 
 
 @pytest.mark.parametrize("value, expected", [
-    (None, "jser"), ("jser", "jser"), ("store", "store"), ("STORE", "jser"), ("", "jser"),
+    (None, "store"), ("store", "store"), ("jser", "jser"), ("JSER", "store"), ("", "store"),
 ])
-def test_the_save_mode_is_jser_unless_it_says_store(value, expected, monkeypatch):
+def test_the_save_mode_is_store_unless_it_says_jser(value, expected, monkeypatch):
     if value is None:
         monkeypatch.delenv(store_save.ENV_MODE, raising=False)
     else:

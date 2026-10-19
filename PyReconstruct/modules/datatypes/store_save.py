@@ -1,20 +1,21 @@
 """Save, close and export a series through its local store, behind the switch.
 
-Runs only for a series whose open came from its store or kept one
-(store_open.py), so with PYRECON_HYBRID_STORE off none of it runs. That open
+Works only for a series whose open came from its store or kept one
+(store_open.py). With PYRECON_HYBRID_STORE off a series holds no store, so the
+checks Save, close and the File menu make here find none and return. That open
 hands the store to the series, which holds it (and its lock) until it closes,
 so no other window writes the store meanwhile.
 
 Two ways to save, picked by `saveMode` (an internal value, not a setting):
 
+  * ``store`` (the default): Save writes the store alone. The .jser is
+    written from the store when the series closes, or by File > Export
+    series > To .jser now, and only when the store is ahead of it. The
+    automatic backup is made then, not at Save.
   * ``jser``: Save writes the .jser as today. Then the store takes the
     sections whose working files changed, the series and the log, and records
     the new file's sha256 and splice index, so the next open comes from the
     store.
-  * ``store``: Save writes the store alone. The .jser is written from the
-    store when the series closes, or by File > Export series > To .jser now,
-    and only when the store is ahead of it. The automatic backup is made
-    then, not at Save.
 
 The store holds each section as an open of the .jser just saved writes it
 (an open migrates every section it reads: Section.updateJSON). For nearly
@@ -50,7 +51,7 @@ from PyReconstruct.modules.constants.jser_splice import KeyedSection, section_di
 ENV_MODE = "PYRECON_HYBRID_STORE_SAVE"
 MODE_JSER = "jser"
 MODE_STORE = "store"
-DEFAULT_MODE = MODE_JSER
+DEFAULT_MODE = MODE_STORE
 
 ## One row per saved section: the sha256 of the working file's bytes it was
 ## stored from; whether the stored section is what an open of a .jser holding
@@ -74,8 +75,8 @@ class NotKept(Exception):
 
 
 def saveMode() -> str:
-    """How Save writes with the store on: MODE_JSER unless ENV_MODE says "store"."""
-    return MODE_STORE if os.environ.get(ENV_MODE) == MODE_STORE else DEFAULT_MODE
+    """How Save writes with the store on: MODE_STORE unless ENV_MODE says "jser"."""
+    return MODE_JSER if os.environ.get(ENV_MODE) == MODE_JSER else DEFAULT_MODE
 
 
 ## ---------------------------------------------------------------------------

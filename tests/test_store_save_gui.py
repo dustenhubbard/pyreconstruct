@@ -1,12 +1,18 @@
 """Save, close and Export through the local store, in the real MainWindow.
 
-When the .jser is written and when a backup is made, in each Save mode, and
-the menu row that writes the .jser now. With the switch off, the window saves
+When the .jser is written and when a backup is made, in each Save mode, on
+every way the window lets a series go (close, Quit, open another, New series),
+what a close does when the .jser cannot be written, and the menu row that
+writes the .jser now. With the switch off, the window saves
 and closes as today, and the row is not there.
 """
+import os
+import shutil
+
 import pytest
 
 from PyReconstruct.modules.backend.progress import NullProgressReporter
+from PyReconstruct.modules.datatypes import series as series_module
 from PyReconstruct.modules.datatypes import store_open, store_save
 from PyReconstruct.modules.datatypes.series import Series
 
@@ -59,6 +65,47 @@ def kept(qapp, series_jser, store_root, qsettings_snapshot, main_window_dialogs,
 
 def _store_mode(monkeypatch):
     monkeypatch.setenv(store_save.ENV_MODE, store_save.MODE_STORE)
+
+
+def _saved_in_the_store(window):
+    """An edit, saved to the store alone: the .jser lacks it."""
+    snum, edited = _move_a_trace(window)
+    window.saveToJser()
+    assert store_save.ahead(window.series)
+    return snum, edited
+
+
+def _disk_full(window, monkeypatch):
+    """Make every .jser write fail as a full disk does; return the errors the user is shown."""
+    shown = []
+    window.series._surfaceSaveError = lambda fp, err, message=None: shown.append(err)
+
+    write = series_module._atomicWrite
+
+    def full(fp, data):
+        if str(fp) == window.series.jser_fp:
+            raise OSError(28, "No space left on device")
+        return write(fp, data)
+
+    monkeypatch.setattr(series_module, "_atomicWrite", full)
+    return shown
+
+
+def _image(folder):
+    fp = os.path.join(folder, "img0.png")
+    open(fp, "wb").close()
+    return fp
+
+
+def _new_series(window, folder):
+    window.newSeries(image_locations=[_image(folder)], series_name="other", mag=0.00254, thickness=0.05)
+
+
+def _other_jser(kept, tmp_path):
+    other = tmp_path / "other" / "other.jser"
+    other.parent.mkdir()
+    shutil.copyfile(kept, other)
+    return other
 
 
 def _opened_as_today(fp, snum, edited, monkeypatch):
@@ -185,3 +232,119 @@ def test_with_the_switch_off_the_window_saves_and_closes_as_today(
         window.close()
     assert len(backups) == 1
     assert not store_root.exists()
+
+
+def test_save_writes_the_store_alone_by_default(kept, main_window_dialogs, monkeypatch):
+    monkeypatch.delenv(store_save.ENV_MODE, raising=False)
+    before = kept.read_bytes()
+    window = _window(kept)
+    backups = _backups(window)
+    try:
+        assert hasattr(window, "exportjsernow_act")
+        _saved_in_the_store(window)
+        assert kept.read_bytes() == before
+        assert backups == []
+    finally:
+        window.close()
+    assert len(backups) == 1
+    assert kept.read_bytes() != before
+
+
+@pytest.mark.parametrize("leave", ["close", "quit", "open another", "new series"])
+def test_each_way_out_writes_the_store_save_and_one_backup(
+    leave, kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    before = kept.read_bytes()
+    window = _window(kept)
+    backups = _backups(window)
+    try:
+        snum, edited = _saved_in_the_store(window)
+        outgoing = window.series
+        if leave == "close":
+            assert window.close()
+        elif leave == "quit":
+            window.quit_act.trigger()
+        elif leave == "open another":
+            window.openSeries(jser_fp=str(_other_jser(kept, tmp_path)))
+        else:
+            _new_series(window, str(tmp_path))
+        assert outgoing.closed
+        assert window.series is not outgoing or leave in ("close", "quit")
+        assert backups == [{"check_auto": True, "from_saved": True}]
+        assert main_window_dialogs.save_prompts == 0
+    finally:
+        window.close()
+    assert kept.read_bytes() != before
+    _opened_as_today(kept, snum, edited, monkeypatch)
+
+
+def test_new_series_after_an_edit_saves_it_and_makes_one_backup(kept, tmp_path, main_window_dialogs, monkeypatch):
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    backups = _backups(window)
+    try:
+        snum, edited = _move_a_trace(window)
+        main_window_dialogs.save_response = "yes"
+        _new_series(window, str(tmp_path))
+        assert main_window_dialogs.save_prompts == 1
+        assert window.series.name == "other"
+        assert len(backups) == 1
+        main_window_dialogs.save_response = "no"
+    finally:
+        window.close()
+    _opened_as_today(kept, snum, edited, monkeypatch)
+
+
+@pytest.mark.parametrize("answer", [None, "no"])
+def test_a_close_that_cannot_write_the_jser_leaves_the_window_open(
+    answer, kept, main_window_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    before = kept.read_bytes()
+    window = _window(kept)
+    backups = _backups(window)
+    snum, edited = _saved_in_the_store(window)
+    if answer:
+        _move_a_trace(window)  # not saved
+        main_window_dialogs.save_response = answer
+    with monkeypatch.context() as m:
+        shown = _disk_full(window, m)
+        assert not window.close()
+    assert len(shown) == 1
+    assert not window.series.closed
+    assert os.path.isdir(window.series.hidden_dir)
+    assert store_save.ahead(window.series)
+    assert kept.read_bytes() == before
+    assert backups == []
+    assert window.close()
+    assert len(backups) == 1
+    _opened_as_today(kept, snum, edited, monkeypatch)
+
+
+@pytest.mark.parametrize("leave", ["open another", "new series"])
+def test_leaving_for_another_series_keeps_this_one_when_the_jser_cannot_be_written(
+    leave, kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    before = kept.read_bytes()
+    window = _window(kept)
+    backups = _backups(window)
+    try:
+        snum, edited = _saved_in_the_store(window)
+        outgoing = window.series
+        with monkeypatch.context() as m:
+            shown = _disk_full(window, m)
+            if leave == "open another":
+                window.openSeries(jser_fp=str(_other_jser(kept, tmp_path)))
+            else:
+                _new_series(window, str(tmp_path))
+        assert len(shown) == 1
+        assert window.series is outgoing and not outgoing.closed
+        assert store_save.ahead(outgoing)
+        assert kept.read_bytes() == before
+        assert backups == []
+    finally:
+        window.close()
+    assert len(backups) == 1
+    _opened_as_today(kept, snum, edited, monkeypatch)
