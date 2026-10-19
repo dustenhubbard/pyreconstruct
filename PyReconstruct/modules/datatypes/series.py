@@ -30,6 +30,7 @@ from PyReconstruct.modules.calc import traceGeometry
 
 from PyReconstruct.modules.constants import (
     createHiddenDir,
+    removeSeriesFiles,
     createNewSeriesDir,
     welcome_series_dir,
     getDateTime,
@@ -1251,7 +1252,14 @@ class Series():
                 # a cancel or a failure: remove what this open made, and put
                 # back what it set aside
                 if placed:
-                    shutil.rmtree(hidden_dir, ignore_errors=True)
+                    try:
+                        removeSeriesFiles(hidden_dir)
+                    except OSError:
+                        # its .ser stays, so it stays whole: a full copy of
+                        # the file, never a .ser offered with sections gone
+                        pass
+                    else:
+                        shutil.rmtree(hidden_dir, ignore_errors=True)
                 if aside is not None and not _putBack(aside, os.path.join(sdir, f".{sname}")):
                     kept = aside
             elif aside is not None:
@@ -1659,6 +1667,7 @@ class Series():
             # clear any stale hidden dir at the destination: shutil.move would
             # otherwise nest the old dir inside it, orphaning every filepath
             if os.path.isdir(new_hidden_dir):
+                removeSeriesFiles(new_hidden_dir)
                 shutil.rmtree(new_hidden_dir)
             shutil.move(old_hidden_dir, new_hidden_dir)
 
@@ -1700,6 +1709,18 @@ class Series():
         if b_section:
             b_section.filepath = moved(b_section.filepath)
     
+    def refuseClosedWrite(self, fp : str):
+        """Raise SeriesClosedError for a write to a working file of a closed series.
+
+        A close may leave files it could not remove in the folder, with no
+        .ser beside them, and no open offers that folder back. Anything
+        written there now would be lost.
+        """
+        raise SeriesClosedError(
+            f"Series {self.name} is closed, so {os.path.basename(fp)} was "
+            f"not written."
+        )
+
     def close(self):
         """Clear the hidden directory of the series."""
 
@@ -1711,13 +1732,29 @@ class Series():
 
         if os.path.isdir(self.hidden_dir):
 
-            for f in os.listdir(self.hidden_dir):
-                os.remove(os.path.join(self.hidden_dir, f))
+            # a .ser that cannot be removed (held open) stops the close with
+            # every file in place, and the series stays in the window, usable
+            removeSeriesFiles(self.hidden_dir)
 
-            os.rmdir(self.hidden_dir)
+            # Without its .ser the folder is never offered as unsaved work, so
+            # an edit saved in it now would be lost. The close finishes
+            # instead: a file that cannot be removed is left for the next open,
+            # which replaces the folder from the .jser.
+            self.closed = True
+            try:
+                names = os.listdir(self.hidden_dir)
+            except OSError:
+                names = []
+            for f in names:
+                try:
+                    os.remove(os.path.join(self.hidden_dir, f))
+                except OSError:
+                    pass
+            try:
+                os.rmdir(self.hidden_dir)
+            except OSError:
+                pass
 
-        # only once its files are gone: a close that raised part-way (a
-        # locked working file) leaves the series in the window, still usable
         self.closed = True
     
     @staticmethod
@@ -2216,6 +2253,8 @@ class Series():
         """Save file into json."""
         if self.isWelcomeSeries():
             return
+        if self.closed:
+            self.refuseClosedWrite(self.filepath)
 
         d = self.getDict()
         try:

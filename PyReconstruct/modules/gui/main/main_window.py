@@ -28,6 +28,7 @@ from PyReconstruct.modules.backend.func.window_geometry import (
 from .status_readout import FieldStatusReadout, StatusSegment
 from PyReconstruct.modules.gui.table.history import setAsideText
 from .wheel_steps import WheelSteps, zoom_factor
+from PyReconstruct.modules.constants import removeSeriesFiles
 from PyReconstruct.modules.constants.settings_domain import (
     domain_for, fold_series_settings_once,
 )
@@ -1544,7 +1545,15 @@ class MainWindow(QMainWindow):
             prev_jser_fp = None
 
         if not series_obj:  # if series is not provided
-            new_series = self._acquireSeries(jser_fp)
+            try:
+                new_series = self._acquireSeries(jser_fp)
+            except Exception:
+                # The same holds for an open that fails (a working file held
+                # open): the closed series must not stay in the window, where
+                # its edits would go to a folder no open offers back.
+                if not first_open and self.series.closed:
+                    self._restoreAfterAbortedOpen(prev_jser_fp)
+                raise
             if new_series is _OPEN_ABORTED:
                 # The outgoing series was closed above, so its hidden dir is
                 # gone. Returning here left the window holding a series whose
@@ -1685,7 +1694,7 @@ class MainWindow(QMainWindow):
         if prev_jser_fp and os.path.isfile(prev_jser_fp):
             try:
                 recovered = Series.openJser(prev_jser_fp)
-            except SeriesOpenError:
+            except (SeriesOpenError, OSError):
                 recovered = None
 
         if recovered is None:
@@ -1894,6 +1903,7 @@ class MainWindow(QMainWindow):
             Params:
                 hidden_series_dir (str): the hidden dir to remove
         """
+        removeSeriesFiles(hidden_series_dir)
         for f in os.listdir(hidden_series_dir):
             os.remove(os.path.join(hidden_series_dir, f))
         os.rmdir(hidden_series_dir)

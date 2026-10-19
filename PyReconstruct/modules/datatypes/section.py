@@ -1496,6 +1496,8 @@ class Section():
         """
         if self.series.isWelcomeSeries():
             return
+        if getattr(self.series, "closed", False) is True:
+            self.series.refuseClosedWrite(self.filepath)
 
         # A section the series no longer has is not written back. self.filepath
         # was resolved from series.sections at construction, so a Section object
