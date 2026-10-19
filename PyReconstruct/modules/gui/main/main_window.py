@@ -5328,7 +5328,8 @@ class MainWindow(QMainWindow):
         if shortcuts_dict is None:
             shortcuts_dict = {}
             for k in Series.qsettings_defaults:
-                if k.endswith("_act") and getattr(self, k):
+                # a held-back act (roibox_act) keeps its key but has no action
+                if k.endswith("_act") and getattr(self, k, None):
                     shortcuts_dict[k] = self.series.getOption(k)
         
         for act_name, kbd in shortcuts_dict.items():
