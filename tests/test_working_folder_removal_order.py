@@ -182,6 +182,37 @@ def test_failed_open_takes_its_series_file_first(series_jser, monkeypatch):
     assert not os.path.exists(hidden)
 
 
+def test_failed_open_keeps_its_folder_whole_if_the_series_file_stays(
+    series_jser, monkeypatch
+):
+    """A .ser that cannot be removed (held open on Windows) keeps every file beside it."""
+    hidden = os.path.join(os.path.dirname(series_jser), ".series")
+    series = _open(series_jser)
+    sections = sorted(series.sections.values())
+    series.close()
+    real_remove, real_unlink = os.remove, os.unlink
+
+    def held(real):
+        def remove(path, *args, **kwargs):
+            if str(path).endswith(".ser"):
+                raise PermissionError(path)
+            return real(path, *args, **kwargs)
+        return remove
+
+    def broken_init(self, *args, **kwargs):
+        raise Stopped("build")
+
+    # os.unlink as well: shutil.rmtree removes files with it
+    monkeypatch.setattr(os, "remove", held(real_remove))
+    monkeypatch.setattr(os, "unlink", held(real_unlink))
+    monkeypatch.setattr(Series, "__init__", broken_init)
+    with pytest.raises(Stopped):
+        _open(series_jser)
+    names = os.listdir(hidden)
+    assert "series.ser" in names and "existing_log.csv" in names
+    assert sorted(n for n in names if n[len("series."):].isdigit()) == sections
+
+
 def test_createHiddenDir_empties_a_folder_series_file_first(
     tmp_path, ser_listed_last, stop_after_first_remove
 ):

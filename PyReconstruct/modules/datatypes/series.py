@@ -1255,8 +1255,11 @@ class Series():
                     try:
                         removeSeriesFiles(hidden_dir)
                     except OSError:
+                        # its .ser stays, so it stays whole: a full copy of
+                        # the file, never a .ser offered with sections gone
                         pass
-                    shutil.rmtree(hidden_dir, ignore_errors=True)
+                    else:
+                        shutil.rmtree(hidden_dir, ignore_errors=True)
                 if aside is not None and not _putBack(aside, os.path.join(sdir, f".{sname}")):
                     kept = aside
             elif aside is not None:
