@@ -16,12 +16,6 @@ Nightlies build new commits daily ahead of the next stable release. To run
 ## [1.25.0] - 2026-10-18
 
 ### Added
-- **An ROI box shows only the traces that touch one area of the field.**
-  Right-click the field and choose View ▸ Toggle ROI box, or press `B`. Drag
-  to draw the box, or enter a width and height in μm and click to place it; a
-  click moves it. The box keeps its place across sections and is not saved.
-  While it is on, a command that acts on every trace of an object, or on the
-  whole section or series, asks you to turn the box off first.
 - **Customize how selected traces look.** The View tab of Series ▸ Options
   offers the standard look, a black and white outline, or a glow with a solid
   line, with its own opacity slider.
