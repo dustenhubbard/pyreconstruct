@@ -10,7 +10,6 @@ full release notes on GitHub (linked from the dialog).
 
 #### New
 
-- **An ROI box shows only the traces in one area of the field.** Press `B`, or use View ▸ Toggle ROI box in the field menu.
 - **Customize how selected traces look** in Series ▸ Options ▸ View.
 - **Right-click the scale bar** to set its length for a figure or open its settings.
 - **Rename a series' images to match a zarr's image names** in Series ▸ Images ▸ Find/change image directory. The zarr itself is not changed.
