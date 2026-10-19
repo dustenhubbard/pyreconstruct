@@ -29,7 +29,6 @@ import os
 import sys
 import hashlib
 import sqlite3
-import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -141,78 +140,46 @@ def storeRoot() -> Path:
     return Path(base) / "PyReconstruct" / "stores"
 
 
-## pathconf name for case sensitivity on macOS (<sys/unistd.h>); Python's
-## table does not list it
-_PC_CASE_SENSITIVE = 11
+def canonicalPath(fp : str) -> str:
+    """The path of an existing file as its disks store it, links resolved.
 
+    On macOS the path is read back from the open file (F_GETPATH), so every
+    spelling of one file gives the same path, whatever each disk's case rule.
+    Elsewhere, or when that cannot be read, it is `os.path.realpath`. Nothing
+    is folded: a missed alias gets a second store, never one store for two
+    files.
 
-def _diskSpelling(folder : str):
-    """An existing folder's path as each disk on it stores the names (macOS), or None."""
+        Raises:
+            FileNotFoundError: if fp does not exist (a store is a copy of one)
+    """
+    real = os.path.realpath(fp, strict=True)
+    if sys.platform != "darwin":
+        return real
     import fcntl
-    getpath = getattr(fcntl, "F_GETPATH", None)
-    if getpath is None:
-        return None
     try:
-        fd = os.open(folder, os.O_RDONLY)
+        fd = os.open(real, os.O_RDONLY)
     except OSError:
-        return None
+        return real
     try:
-        return os.fsdecode(fcntl.fcntl(fd, getpath, bytes(1024)).split(b"\0", 1)[0])
+        return os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).split(b"\0", 1)[0])
     except OSError:
-        return None
+        return real
     finally:
         os.close(fd)
 
 
-def _ignoresCase(folder : str) -> bool:
-    """True only when the disk holding folder is known to ignore case (macOS)."""
-    try:
-        return os.pathconf(folder, _PC_CASE_SENSITIVE) == 0
-    except (OSError, ValueError):
-        return False
-
-
-def canonicalPath(fp : str) -> str:
-    """One spelling of fp for every name of the same file, existing or not.
-
-    `os.path.realpath` resolves links but keeps the case it was given. On
-    macOS the nearest folder that exists is spelled as its disks store the
-    names, volume by volume, and the rest (always the file's own name, so the
-    key does not change when the file is written) is folded to one case only
-    when that folder's disk ignores case. When the disk's spelling or its case
-    rule cannot be read, nothing is folded: two spellings then get two stores,
-    which the lock cannot see, but two files never share one. Windows folds
-    the real path with `normcase`; elsewhere it is the real path.
-    """
-    real = os.path.realpath(fp)
-    if sys.platform == "win32":
-        return os.path.normcase(real)
-    if sys.platform != "darwin":
-        return real
-    folder, tail = os.path.dirname(real), [os.path.basename(real)]
-    while not os.path.isdir(folder) and os.path.dirname(folder) != folder:
-        tail.insert(0, os.path.basename(folder))
-        folder = os.path.dirname(folder)
-    spelled = _diskSpelling(folder)
-    if spelled is None:
-        return real
-    tail = [unicodedata.normalize("NFC", name) for name in tail]
-    if _ignoresCase(folder):
-        tail = [name.casefold() for name in tail]
-    return os.path.join(unicodedata.normalize("NFC", spelled), *tail)
-
-
 def storePaths(jser_fp : str) -> tuple:
-    """(store file, working folder) for a .jser, keyed by its canonical path.
+    """(store file, working folder) for an existing .jser, keyed by its path.
 
-    Two copies at two paths never share a store; a symlink and its target do,
-    and so do two spellings of one name on a disk that ignores case.
+    Two copies at two paths never share a store; a symlink and its target do.
+    The schema version is in the name, so a build of another version never
+    opens this one's stores.
     """
     real = canonicalPath(jser_fp)
     sname = os.path.splitext(os.path.basename(real))[0]
     key = hashlib.sha256(real.encode("utf-8")).hexdigest()[:16]
-    root = storeRoot()
-    return str(root / f"{sname}-{key}.pyrstore"), str(root / f"{sname}-{key}.work")
+    base = storeRoot() / f"{sname}-{key}.v{SCHEMA_VERSION}"
+    return f"{base}.pyrstore", f"{base}.work"
 
 
 def fsType(path : str):
@@ -393,17 +360,15 @@ class HybridStore():
         as a store is, and that open may finish writing its WAL into it, as
         any open of a store does. Nothing committed is lost by that, but the
         file is not promised to be left byte for byte as it was. Its version
-        is the header's alone (a schema is never changed in place).
+        is the header's alone: the header is written once, before the file is
+        moved into place and before WAL is turned on, and never changed.
         """
         tables = {r[0] for r in self.con.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         )}
         missing = REQUIRED_TABLES - tables
-        if missing or self.meta("schema_version") != str(SCHEMA_VERSION):
-            self._refuse(
-                f"missing {', '.join(sorted(missing)) or 'its schema record'}",
-                untouched=False,
-            )
+        if missing:
+            self._refuse(f"missing {', '.join(sorted(missing))}", untouched=False)
 
     @staticmethod
     def forJser(jser_fp : str) -> "HybridStore":

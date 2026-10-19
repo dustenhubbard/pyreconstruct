@@ -593,6 +593,7 @@ time.sleep(600)
 
 
 def test_a_store_held_by_a_killed_process_opens_again(tmp_path, store_root):
+    (tmp_path / "s.jser").touch()
     db_fp, work = hybrid_store.storePaths(str(tmp_path / "s.jser"))
     env = dict(os.environ, PYTHONPATH=str(REPO_ROOT))
     proc = subprocess.Popen(
@@ -746,18 +747,18 @@ def test_another_program_s_database_with_a_wal_is_never_opened(tmp_path, connect
     assert files() == before, "the file and its WAL are as they were, and no -shm was made"
 
 
-def test_a_store_whose_wal_holds_another_schema_record_is_refused_and_keeps_it(tmp_path):
+def test_a_store_whose_wal_drops_a_table_is_refused_and_keeps_the_rest(tmp_path):
     made = tmp_path / "made.pyrstore"
     HybridStore(str(made), str(tmp_path / "made.work")).close()
     con = sqlite3.connect(made, isolation_level=None)
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA wal_autocheckpoint=0")
-    con.execute("UPDATE meta SET value='999' WHERE key='schema_version'")
+    con.execute("DROP TABLE log")
     db_fp = tmp_path / "s.pyrstore"
     _crash_copy(made, db_fp)
     con.close()
     assert db_fp.read_bytes()[60:64] == hybrid_store.SCHEMA_VERSION.to_bytes(4, "big"), "the header is still a store's"
-    with pytest.raises(hybrid_store.StoreSchemaError, match="its schema record") as refused:
+    with pytest.raises(hybrid_store.StoreSchemaError, match="missing log") as refused:
         HybridStore(str(db_fp), str(tmp_path / "s.work"))
     # its header is a store's, so it was opened as one: it is not promised to
     # be byte for byte the same, but what was committed is still there
@@ -765,7 +766,8 @@ def test_a_store_whose_wal_holds_another_schema_record_is_refused_and_keeps_it(t
     assert _lock_is_free(db_fp)
     check = sqlite3.connect(db_fp)
     try:
-        assert check.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone() == ("999",)
+        tables = {r[0] for r in check.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert tables == hybrid_store.REQUIRED_TABLES - {"log"}
     finally:
         check.close()
 
@@ -823,6 +825,7 @@ def test_a_new_store_s_schema_is_written_whole(tmp_path):
 
 
 def test_a_busy_store_is_reported_as_busy_never_as_damage(tmp_path, store_root):
+    (tmp_path / "s.jser").touch()
     store = HybridStore.forJser(str(tmp_path / "s.jser"))
     try:
         store.con.execute("PRAGMA busy_timeout=50")
@@ -844,6 +847,7 @@ def test_a_busy_store_is_reported_as_busy_never_as_damage(tmp_path, store_root):
 # ---------------------------------------------------------------------------
 
 def test_a_new_store_is_in_wal_mode_with_its_schema_version(tmp_path, store_root):
+    (tmp_path / "s.jser").touch()
     store = HybridStore.forJser(str(tmp_path / "s.jser"))
     try:
         assert store.con.execute("PRAGMA journal_mode").fetchone() == ("wal",)
@@ -883,9 +887,11 @@ def test_the_store_is_keyed_by_the_real_path_and_lives_in_the_store_folder(platf
     assert hybrid_store.storePaths(str(fp)) != hybrid_store.storePaths(str(other))
     db_fp, work = hybrid_store.storePaths(str(fp))
     assert Path(db_fp).parent == store_root == Path(work).parent
-    stem, _, key = Path(db_fp).stem.rpartition("-")
+    stem, _, key = Path(db_fp).name.rpartition("-")
+    key, version = key.split(".")[:2]
     assert stem == fp.stem and len(key) == 16 and int(key, 16) >= 0
-    assert Path(db_fp).suffix == ".pyrstore" and Path(work).name == f"{stem}-{key}.work"
+    assert version == f"v{hybrid_store.SCHEMA_VERSION}", "a build of another version never opens it"
+    assert Path(db_fp).name == f"{stem}-{key}.{version}.pyrstore" and Path(work).name == f"{stem}-{key}.{version}.work"
 
 
 def _ignores_case(folder) -> bool:
@@ -912,64 +918,45 @@ def test_two_spellings_of_one_file_share_a_store(tmp_path, store_root):
         first.close()
 
 
-def test_two_spellings_of_a_file_not_written_yet_share_a_store(tmp_path, store_root):
-    folder = tmp_path / "Data"
-    folder.mkdir()
-    if not _ignores_case(folder):
-        pytest.skip("this disk tells names apart by case")
-    a = folder / "New Series.jser"
-    b = tmp_path / "DATA" / "new series.JSER"
-    assert not a.exists() and not b.exists()
-    before = hybrid_store.storePaths(str(a))
-    assert hybrid_store.storePaths(str(b)) == before
-    # and the store stays the same one once the file exists, in either spelling
-    b.write_bytes(PARITY.read_bytes())
-    assert hybrid_store.storePaths(str(a)) == before
-    assert hybrid_store.storePaths(str(b)) == before
+def test_a_file_that_does_not_exist_has_no_store(tmp_path, store_root):
+    with pytest.raises(FileNotFoundError):
+        hybrid_store.storePaths(str(tmp_path / "not-written.jser"))
+    assert not store_root.exists()
 
 
-def _mixed_mount() -> bool:
-    """macOS with its case-sensitive /dev under a root that ignores case."""
-    if sys.platform != "darwin":
-        return False
-    try:
-        return os.pathconf("/", 11) == 0 and os.pathconf("/dev", 11) == 1
-    except (OSError, ValueError):
-        return False
+@pytest.mark.skipif(sys.platform != "darwin", reason="needs macOS's /dev: a case-sensitive mount under a root that ignores case")
+def test_one_file_spelled_across_two_disks_shares_a_store(store_root):
+    if os.pathconf("/", 11) != 0 or os.pathconf("/dev", 11) != 1:
+        pytest.skip("needs a root that ignores case and a /dev that does not")
+    # /DEV is /dev through the root disk, and /dev is its own disk that tells case apart
+    assert os.path.samefile("/DEV/null", "/dev/null")
+    assert hybrid_store.storePaths("/DEV/null") == hybrid_store.storePaths("/dev/null")
 
 
-@pytest.mark.skipif(not _mixed_mount(), reason="needs macOS's /dev: a case-sensitive mount under a root that ignores case")
-def test_each_disk_s_own_case_rule_holds_across_a_mount(store_root):
-    # /DEV is /dev on the root disk, which ignores case ...
-    assert os.path.samefile("/DEV", "/dev")
-    assert hybrid_store.storePaths("/DEV/not-written.jser") == hybrid_store.storePaths("/dev/not-written.jser")
-    # ... but inside /dev case is told apart, so two names stay two stores
-    assert hybrid_store.storePaths("/dev/not-written.jser") != hybrid_store.storePaths("/dev/NOT-WRITTEN.jser")
-
-
-@pytest.mark.skipif(sys.platform != "darwin", reason="names are folded on macOS only")
-@pytest.mark.parametrize("unread", ["case-rule", "disk-spelling"])
-def test_nothing_is_folded_when_the_disk_cannot_be_read(unread, tmp_path, store_root, monkeypatch):
-    folder = tmp_path / "data"
-    folder.mkdir()
-    if not _ignores_case(folder):
-        pytest.skip("this disk tells names apart by case")
-    if unread == "case-rule":
-        def pathconf(path, name):
-            raise OSError(22, "Invalid argument")
-        monkeypatch.setattr(hybrid_store.os, "pathconf", pathconf)
-    else:
-        monkeypatch.setattr(hybrid_store, "_diskSpelling", lambda folder: None)
-    # two spellings get two stores (the lock cannot see they are one file),
-    # never one store for two files
-    assert hybrid_store.storePaths(str(folder / "x.jser")) != hybrid_store.storePaths(str(folder / "X.jser"))
-
-
-def test_a_disk_that_tells_case_apart_keeps_two_spellings_apart(tmp_path, store_root, monkeypatch):
-    monkeypatch.setattr(hybrid_store, "_ignoresCase", lambda path: False)
+def test_a_disk_that_tells_case_apart_keeps_two_files_apart(tmp_path, store_root):
     a = tmp_path / "series.jser"
     b = tmp_path / "SERIES.jser"
+    a.write_text("a")
+    b.write_text("b")
+    if a.read_text() == "b":
+        pytest.skip("this disk ignores case")
     assert hybrid_store.storePaths(str(a)) != hybrid_store.storePaths(str(b))
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="the path is read back from the file on macOS only")
+def test_a_path_that_cannot_be_read_back_is_used_as_it_is(tmp_path, store_root, monkeypatch):
+    fp = _copy(PARITY, tmp_path, "data")
+    if not _ignores_case(fp.parent):
+        pytest.skip("this disk tells names apart by case")
+    import fcntl
+
+    def fails(*a):
+        raise OSError(22, "Invalid argument")
+    monkeypatch.setattr(fcntl, "fcntl", fails)
+    alias = fp.parent / fp.name.upper()
+    # two spellings of one file then get two stores, never one store for two files
+    assert hybrid_store.storePaths(str(alias)) != hybrid_store.storePaths(str(fp))
+    assert hybrid_store.storePaths(str(fp)) == hybrid_store.storePaths(str(fp))
 
 
 @pytest.mark.parametrize("platform, env, expected", [
