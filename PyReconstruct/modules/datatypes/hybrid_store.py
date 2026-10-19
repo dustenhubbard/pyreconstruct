@@ -40,6 +40,9 @@ from PyReconstruct.modules.constants import fast_loads, fast_dumps
 ## Moves the folder that holds every store (tests and benchmarks)
 ENV_DIR = "PYRECON_HYBRID_STORE_DIR"
 BUSY_TIMEOUT_MS = 5000
+## A store's schema is never changed in place: a new schema is a new store
+## file, built from the .jser. So a store's version is in its file header
+## from the day it is made, and the header alone says whose and which it is.
 SCHEMA_VERSION = 1
 ## Marks a SQLite file as a store (PRAGMA application_id; "PyRS")
 APPLICATION_ID = 0x50795253
@@ -143,52 +146,60 @@ def storeRoot() -> Path:
 _PC_CASE_SENSITIVE = 11
 
 
-def _existingAncestor(path : str) -> str:
-    """path, or the nearest folder above it that exists."""
-    while not os.path.exists(path):
-        parent = os.path.dirname(path)
-        if parent == path:
-            break
-        path = parent
-    return path
+def _diskSpelling(folder : str):
+    """An existing folder's path as each disk on it stores the names (macOS), or None."""
+    import fcntl
+    getpath = getattr(fcntl, "F_GETPATH", None)
+    if getpath is None:
+        return None
+    try:
+        fd = os.open(folder, os.O_RDONLY)
+    except OSError:
+        return None
+    try:
+        return os.fsdecode(fcntl.fcntl(fd, getpath, bytes(1024)).split(b"\0", 1)[0])
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
 
 
-def _ignoresCase(path : str) -> bool:
-    """True when names on the disk holding path ignore letter case."""
-    if sys.platform == "win32":
-        return True
-    if sys.platform != "darwin":
-        return False
-    folder = _existingAncestor(path)
+def _ignoresCase(folder : str) -> bool:
+    """True only when the disk holding folder is known to ignore case (macOS)."""
     try:
         return os.pathconf(folder, _PC_CASE_SENSITIVE) == 0
     except (OSError, ValueError):
-        swapped = folder.swapcase()
-        if swapped == folder:
-            return True  # nothing to compare; macOS disks ignore case by default
-        try:
-            return os.path.samefile(folder, swapped)
-        except OSError:
-            return False
+        return False
 
 
 def canonicalPath(fp : str) -> str:
     """One spelling of fp for every name of the same file, existing or not.
 
-    `os.path.realpath` resolves links but keeps the case it was given. On a
-    disk that ignores case (the usual macOS and Windows disks) the real path
-    is also folded to one case, and on macOS to one Unicode form, so the key
-    does not depend on how the name was typed or on whether the file exists
-    yet. A disk that tells names apart by case keeps them apart.
+    `os.path.realpath` resolves links but keeps the case it was given. On
+    macOS the nearest folder that exists is spelled as its disks store the
+    names, volume by volume, and the rest (always the file's own name, so the
+    key does not change when the file is written) is folded to one case only
+    when that folder's disk ignores case. When the disk's spelling or its case
+    rule cannot be read, nothing is folded: two spellings then get two stores,
+    which the lock cannot see, but two files never share one. Windows folds
+    the real path with `normcase`; elsewhere it is the real path.
     """
     real = os.path.realpath(fp)
     if sys.platform == "win32":
         return os.path.normcase(real)
-    if sys.platform == "darwin":
-        real = unicodedata.normalize("NFC", real)
-        if _ignoresCase(real):
-            real = real.casefold()
-    return real
+    if sys.platform != "darwin":
+        return real
+    folder, tail = os.path.dirname(real), [os.path.basename(real)]
+    while not os.path.isdir(folder) and os.path.dirname(folder) != folder:
+        tail.insert(0, os.path.basename(folder))
+        folder = os.path.dirname(folder)
+    spelled = _diskSpelling(folder)
+    if spelled is None:
+        return real
+    tail = [unicodedata.normalize("NFC", name) for name in tail]
+    if _ignoresCase(folder):
+        tail = [name.casefold() for name in tail]
+    return os.path.join(unicodedata.normalize("NFC", spelled), *tail)
 
 
 def storePaths(jser_fp : str) -> tuple:
@@ -289,8 +300,9 @@ class HybridStore():
                 OSError: if the store folder is on a network file system
                 StoreBusyError: if another process holds the store
                 StoreSchemaError: if the file is not a store of this schema
-                    version (another version, or not a store at all); it is
-                    left as it was
+                    version. A file whose header is not a store's of this
+                    version (another program's, or another version's) is
+                    never opened and is left as it was
         """
         self.db_fp = db_fp
         self.work_dir = work_dir
@@ -318,10 +330,10 @@ class HybridStore():
                 raise StoreBusyError(IN_USE) from e
             raise
 
-    def _refuse(self, why : str):
+    def _refuse(self, why : str, untouched : bool = True):
         raise StoreSchemaError(
             f"{self.db_fp} is not a local store this version of PyReconstruct "
-            f"can read ({why}). It was left as it was."
+            f"can read ({why})." + (" It was left as it was." if untouched else "")
         )
 
     def _create(self):
@@ -375,13 +387,25 @@ class HybridStore():
             self._refuse(f"schema version {version}")
 
     def _checkTables(self):
-        """Refuse a file marked as a store that lacks the store's tables."""
+        """Refuse a file with a store's header but not a store's contents.
+
+        Only a file that passed the header check gets here, so it is opened
+        as a store is, and that open may finish writing its WAL into it, as
+        any open of a store does. Nothing committed is lost by that, but the
+        file is not promised to be left byte for byte as it was.
+        """
+        version = self.con.execute("PRAGMA user_version").fetchone()[0]
         tables = {r[0] for r in self.con.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         )}
         missing = REQUIRED_TABLES - tables
+        if version != SCHEMA_VERSION:
+            self._refuse(f"schema version {version}", untouched=False)
         if missing or self.meta("schema_version") != str(SCHEMA_VERSION):
-            self._refuse(f"missing {', '.join(sorted(missing)) or 'its schema record'}")
+            self._refuse(
+                f"missing {', '.join(sorted(missing)) or 'its schema record'}",
+                untouched=False,
+            )
 
     @staticmethod
     def forJser(jser_fp : str) -> "HybridStore":

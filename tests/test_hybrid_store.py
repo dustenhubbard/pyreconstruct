@@ -671,34 +671,114 @@ STORE_TABLES = [
 ]
 
 
-@pytest.mark.parametrize("version, app_id, tables, why", [
-    (hybrid_store.SCHEMA_VERSION, 0, ["unrelated(x)"], "another program's database"),
-    (0, 0, ["something_else(x)"], "another program's database"),
-    (hybrid_store.SCHEMA_VERSION + 998, hybrid_store.APPLICATION_ID, STORE_TABLES, "schema version 999"),
-    (hybrid_store.SCHEMA_VERSION, hybrid_store.APPLICATION_ID, ["unrelated(x)"], "missing"),
-], ids=["another-program-at-this-version", "another-program-at-version-0",
-        "a-newer-store", "marked-but-not-a-store"])
-def test_a_file_that_is_not_a_store_of_this_schema_is_refused_and_left_as_it_was(
-        version, app_id, tables, why, tmp_path):
+def _whole(db_fp, version, app_id):
+    """A file with every store table and the schema record: only its header can be wrong."""
+    _foreign(db_fp, version, app_id, STORE_TABLES)
+    con = sqlite3.connect(db_fp)
+    con.execute("INSERT INTO meta VALUES ('schema_version', ?)", (str(hybrid_store.SCHEMA_VERSION),))
+    con.commit()
+    con.close()
+
+
+@pytest.fixture
+def connects(monkeypatch):
+    """Every path SQLite is asked to open, while the store opens."""
+    opened = []
+    real = sqlite3.connect
+
+    def connect(path, *a, **k):
+        opened.append(str(path))
+        return real(path, *a, **k)
+    monkeypatch.setattr(hybrid_store.sqlite3, "connect", connect)
+    return opened
+
+
+@pytest.mark.parametrize("make, why", [
+    (lambda fp: _whole(fp, hybrid_store.SCHEMA_VERSION, 0), "another program's database"),
+    (lambda fp: _whole(fp, hybrid_store.SCHEMA_VERSION + 998, hybrid_store.APPLICATION_ID), "schema version 999"),
+    (lambda fp: _foreign(fp, hybrid_store.SCHEMA_VERSION, 0, ["unrelated(x)"]), "another program's database"),
+    (lambda fp: _foreign(fp, 0, 0, ["something_else(x)"]), "another program's database"),
+    (lambda fp: fp.write_bytes(b"this is not a SQLite file " * 200), "not a SQLite file"),
+], ids=["a-whole-store-of-another-program", "a-whole-store-of-a-newer-version",
+        "another-program-at-this-version", "another-program-at-version-0", "not-sqlite"])
+def test_a_file_whose_header_is_not_this_store_s_is_never_opened(make, why, tmp_path, connects):
     db_fp = tmp_path / "s.pyrstore"
-    _foreign(db_fp, version, app_id, tables)
+    make(db_fp)
     before = db_fp.read_bytes()
-    with pytest.raises(hybrid_store.StoreSchemaError, match=why):
+    connects.clear()
+    with pytest.raises(hybrid_store.StoreSchemaError, match=why) as refused:
         HybridStore(str(db_fp), str(tmp_path / "s.work"))
+    assert "left as it was" in str(refused.value)
+    assert connects == [], "SQLite was never asked to open it"
     assert _lock_is_free(db_fp)
     assert db_fp.read_bytes() == before
-    assert _side_files(db_fp) == [], "no WAL, shared-memory or journal file was made"
+    assert _side_files(db_fp) == []
 
 
-def test_a_file_that_is_not_sqlite_is_refused_and_left_as_it_was(tmp_path):
+def _crash_copy(db_fp, dest):
+    """Copy a database with its WAL as a crash leaves them: the writer never closed."""
+    for ext in ("", "-wal"):
+        shutil.copyfile(str(db_fp) + ext, str(dest) + ext)
+
+
+def test_another_program_s_database_with_a_wal_is_never_opened(tmp_path, connects):
+    live = tmp_path / "live.db"
+    con = sqlite3.connect(live, isolation_level=None)
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("PRAGMA wal_autocheckpoint=0")
+    con.execute("CREATE TABLE unrelated(x)")
+    con.execute("INSERT INTO unrelated VALUES (1)")
     db_fp = tmp_path / "s.pyrstore"
-    junk = b"this is not a SQLite file " * 200
-    db_fp.write_bytes(junk)
-    with pytest.raises(hybrid_store.StoreSchemaError, match="not a SQLite file"):
+    _crash_copy(live, db_fp)
+    con.close()
+
+    def files():
+        return {p.name: p.read_bytes() for p in tmp_path.iterdir()
+                if p.name.startswith("s.pyrstore") and not p.name.endswith(".lock")}
+    before = files()
+    assert "s.pyrstore-wal" in before
+    connects.clear()
+    with pytest.raises(hybrid_store.StoreSchemaError, match="another program's database"):
+        HybridStore(str(db_fp), str(tmp_path / "s.work"))
+    assert connects == []
+    assert files() == before, "the file and its WAL are as they were, and no -shm was made"
+
+
+@pytest.mark.parametrize("change, why, kept", [
+    ("UPDATE meta SET value='999' WHERE key='schema_version'", "its schema record",
+     ("SELECT value FROM meta WHERE key='schema_version'", ("999",))),
+    ("PRAGMA user_version=999", "schema version 999", ("PRAGMA user_version", (999,))),
+], ids=["schema-record", "user-version"])
+def test_a_store_whose_wal_holds_another_schema_is_refused_and_keeps_it(change, why, kept, tmp_path):
+    made = tmp_path / "made.pyrstore"
+    HybridStore(str(made), str(tmp_path / "made.work")).close()
+    con = sqlite3.connect(made, isolation_level=None)
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("PRAGMA wal_autocheckpoint=0")
+    con.execute(change)
+    db_fp = tmp_path / "s.pyrstore"
+    _crash_copy(made, db_fp)
+    con.close()
+    assert db_fp.read_bytes()[60:64] == hybrid_store.SCHEMA_VERSION.to_bytes(4, "big"), "the header is still a store's"
+    with pytest.raises(hybrid_store.StoreSchemaError, match=why) as refused:
+        HybridStore(str(db_fp), str(tmp_path / "s.work"))
+    # its header is a store's, so it was opened as one: it is not promised to
+    # be byte for byte the same, but what was committed is still there
+    assert "left as it was" not in str(refused.value)
+    assert _lock_is_free(db_fp)
+    check = sqlite3.connect(db_fp)
+    try:
+        assert check.execute(kept[0]).fetchone() == kept[1]
+    finally:
+        check.close()
+
+
+def test_a_file_with_a_store_s_header_but_not_its_tables_is_refused(tmp_path):
+    db_fp = tmp_path / "s.pyrstore"
+    _foreign(db_fp, hybrid_store.SCHEMA_VERSION, hybrid_store.APPLICATION_ID, ["unrelated(x)"])
+    with pytest.raises(hybrid_store.StoreSchemaError, match="missing"):
         HybridStore(str(db_fp), str(tmp_path / "s.work"))
     assert _lock_is_free(db_fp)
-    assert db_fp.read_bytes() == junk
-    assert _side_files(db_fp) == []
 
 
 @pytest.mark.parametrize("ext", ["-wal", "-journal"])
@@ -849,6 +929,43 @@ def test_two_spellings_of_a_file_not_written_yet_share_a_store(tmp_path, store_r
     b.write_bytes(PARITY.read_bytes())
     assert hybrid_store.storePaths(str(a)) == before
     assert hybrid_store.storePaths(str(b)) == before
+
+
+def _mixed_mount() -> bool:
+    """macOS with its case-sensitive /dev under a root that ignores case."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        return os.pathconf("/", 11) == 0 and os.pathconf("/dev", 11) == 1
+    except (OSError, ValueError):
+        return False
+
+
+@pytest.mark.skipif(not _mixed_mount(), reason="needs macOS's /dev: a case-sensitive mount under a root that ignores case")
+def test_each_disk_s_own_case_rule_holds_across_a_mount(store_root):
+    # /DEV is /dev on the root disk, which ignores case ...
+    assert os.path.samefile("/DEV", "/dev")
+    assert hybrid_store.storePaths("/DEV/not-written.jser") == hybrid_store.storePaths("/dev/not-written.jser")
+    # ... but inside /dev case is told apart, so two names stay two stores
+    assert hybrid_store.storePaths("/dev/not-written.jser") != hybrid_store.storePaths("/dev/NOT-WRITTEN.jser")
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="names are folded on macOS only")
+@pytest.mark.parametrize("unread", ["case-rule", "disk-spelling"])
+def test_nothing_is_folded_when_the_disk_cannot_be_read(unread, tmp_path, store_root, monkeypatch):
+    folder = tmp_path / "data"
+    folder.mkdir()
+    if not _ignores_case(folder):
+        pytest.skip("this disk tells names apart by case")
+    if unread == "case-rule":
+        def pathconf(path, name):
+            raise OSError(22, "Invalid argument")
+        monkeypatch.setattr(hybrid_store.os, "pathconf", pathconf)
+    else:
+        monkeypatch.setattr(hybrid_store, "_diskSpelling", lambda folder: None)
+    # two spellings get two stores (the lock cannot see they are one file),
+    # never one store for two files
+    assert hybrid_store.storePaths(str(folder / "x.jser")) != hybrid_store.storePaths(str(folder / "X.jser"))
 
 
 def test_a_disk_that_tells_case_apart_keeps_two_spellings_apart(tmp_path, store_root, monkeypatch):
