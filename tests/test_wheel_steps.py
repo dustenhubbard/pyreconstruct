@@ -545,8 +545,12 @@ def test_momentum_after_a_finished_zoom_starts_no_zoom(window):
     lift = last_finger(events) + 1
     scroll(window, events[:lift], Qt.ControlModifier)
     assert window.is_zooming
-    # moving the mouse finishes the zoom
-    QTest.mouseMove(window.field, window.field.rect().center() + QPoint(5, 5))
+    # moving the mouse finishes the zoom. Two points, because a move to where
+    # the pointer already is reaches no widget, and an earlier test in the same
+    # process can leave it at either one.
+    center = window.field.rect().center()
+    QTest.mouseMove(window.field, center)
+    QTest.mouseMove(window.field, center + QPoint(5, 5))
     assert not window.is_zooming
     width = window.series.window[2]
     scroll(window, events[lift:], Qt.ControlModifier)
