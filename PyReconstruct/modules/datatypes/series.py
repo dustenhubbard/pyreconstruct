@@ -1709,6 +1709,18 @@ class Series():
         if b_section:
             b_section.filepath = moved(b_section.filepath)
     
+    def refuseClosedWrite(self, fp : str):
+        """Raise SeriesClosedError for a write to a working file of a closed series.
+
+        A close may leave files it could not remove in the folder, with no
+        .ser beside them, and no open offers that folder back. Anything
+        written there now would be lost.
+        """
+        raise SeriesClosedError(
+            f"Series {self.name} is closed, so {os.path.basename(fp)} was "
+            f"not written."
+        )
+
     def close(self):
         """Clear the hidden directory of the series."""
 
@@ -1729,7 +1741,11 @@ class Series():
             # instead: a file that cannot be removed is left for the next open,
             # which replaces the folder from the .jser.
             self.closed = True
-            for f in os.listdir(self.hidden_dir):
+            try:
+                names = os.listdir(self.hidden_dir)
+            except OSError:
+                names = []
+            for f in names:
                 try:
                     os.remove(os.path.join(self.hidden_dir, f))
                 except OSError:
@@ -2237,6 +2253,8 @@ class Series():
         """Save file into json."""
         if self.isWelcomeSeries():
             return
+        if self.closed:
+            self.refuseClosedWrite(self.filepath)
 
         d = self.getDict()
         try:

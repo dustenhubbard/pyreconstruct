@@ -36,6 +36,8 @@ class FieldWidgetData(FieldWidgetObject):
     """
     def markTime(self):
         """Keep track of the time on the series file."""
+        if getattr(self.series, "closed", False) is True:
+            return  # its folder is no longer its own (Series.close)
         try:
             for f in os.listdir(self.series.getwdir()):
                 if "." not in f and f.isnumeric():

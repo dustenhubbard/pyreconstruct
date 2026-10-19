@@ -281,3 +281,58 @@ def test_opening_another_series_with_a_held_file_moves_the_window_on(
     assert main_window.series is not old
     assert main_window.series.jser_fp == str(other)
     assert old.closed and not _ser_files(old.hidden_dir)
+
+
+def test_a_closed_series_refuses_to_write(series_jser, log_held):
+    """What a close leaves behind is never written to: no open offers it back."""
+    from PyReconstruct.modules.datatypes.series import SeriesClosedError
+
+    series = _open(series_jser)
+    section = series.loadSection(min(series.sections))
+    series.close()
+    with pytest.raises(SeriesClosedError):
+        section.save()
+    with pytest.raises(SeriesClosedError):
+        series.save()
+    with pytest.raises(SeriesClosedError):
+        series.saveJser()
+    assert os.listdir(series.hidden_dir) == ["existing_log.csv"]
+
+
+@pytest.mark.gui
+def test_reopening_the_series_with_a_held_file_puts_a_whole_series_back(
+    main_window, main_window_dialogs, series_jser, log_held
+):
+    """The open fails on the held file; the window gets the series back from its .jser."""
+    old = main_window.series
+    snum = main_window.field.section.n
+    main_window.field.section.thickness = 0.123
+    main_window.seriesModified(True)
+    main_window_dialogs.save_response = "yes"
+
+    with pytest.raises(PermissionError):
+        main_window.openSeries(jser_fp=str(series_jser))
+
+    series = main_window.series
+    assert series is not old and old.closed
+    assert not series.closed and not series.isWelcomeSeries()
+    names = set(os.listdir(series.hidden_dir))
+    assert f"{series.name}.ser" in names and "existing_log.csv" in names
+    assert {series.sections[n] for n in series.sections} <= names
+    assert series.loadSection(snum).thickness == 0.123
+    main_window.field.section.thickness = 0.2
+    main_window.seriesModified(True)
+    main_window.saveAllData()  # the series in the window takes edits again
+
+
+@pytest.mark.gui
+def test_a_closed_series_gets_no_heartbeat(main_window, log_held):
+    """The open-elsewhere marker is not written beside what a close left."""
+    series = main_window.series
+    hidden = series.hidden_dir
+    series.close()
+    before = sorted(os.listdir(hidden))
+    main_window.field.markTime()
+    assert sorted(os.listdir(hidden)) == before == ["existing_log.csv"]
+    series.closed = False  # for the window's own close at teardown
+    series.leave_open = True
