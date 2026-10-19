@@ -117,8 +117,9 @@ def strict_loads(raw):
 class _Reader:
     """A forward-only view of a file with a bounded buffer and absolute offsets."""
 
-    def __init__(self, f):
+    def __init__(self, f, hasher=None):
         self.f = f
+        self.hasher = hasher  # sees every byte the scan reads, in order
         self.buf = bytearray()
         self.pos = 0     # next unread byte in buf
         self.base = 0    # file offset of buf[0]
@@ -156,6 +157,8 @@ class _Reader:
         if not block:
             self.eof = True
             return False
+        if self.hasher is not None:
+            self.hasher.update(block)
         self.buf += block
         return True
 
@@ -432,18 +435,24 @@ def check_unchanged(f, index : JserIndex):
         raise FileChanged("the file's size or modification time changed")
 
 
-def scan_jser(f) -> JserIndex:
+def scan_jser(f, hasher=None) -> JserIndex:
     """Index the .jser open in `f` (binary, at its start), or raise NotStreamable.
 
     See the module docstring for the one shape it reads. Holds a bounded
     buffer, the contour names and the series and log values; never a section.
     The caller reads the section ranges from the same `f`, so a file replaced
     on disk between the scan and the reads cannot mix two files.
+
+        Params:
+            hasher: an optional hashlib object, updated with every byte the
+                scan reads. A scan that returns has read the whole file, and
+                every range the caller reads is checked against these bytes,
+                so the digest describes what the open decodes.
     """
     index = JserIndex()
     index.stamp = _stamp(f)
     spans = {}
-    r = _Reader(f)
+    r = _Reader(f, hasher)
     for key in r.members():
         if key == "sections":
             if r.peek() != _LBRACKET:

@@ -665,7 +665,7 @@ class HybridStore():
 
     ## import -----------------------------------------------------------------
 
-    def importJser(self, jser_fp : str, source, collisions : dict, reporter=None):
+    def importJser(self, jser_fp : str, source, collisions : dict, reporter=None, migrated=False):
         """Write a .jser into the store, migrated exactly as openJser migrates it.
 
         One transaction: a failure partway leaves the store as it was.
@@ -678,6 +678,11 @@ class HybridStore():
                     the log, as openJser does
                 collisions (dict): the contour-name collisions it returns
                 reporter: an optional ProgressReporter
+                migrated (bool): True when the source is what openJser wrote
+                    into the hidden folder (store_open.py): its sections and
+                    series are stored as they are. Migrating them a second
+                    time is not a no-op (a tag the writer turned from NaN
+                    into null sorts again)
         """
         from .section import Section
         from .series import Series, applyContourRenames
@@ -692,12 +697,13 @@ class HybridStore():
                     self.con.execute(f"DELETE FROM {table}")
                 renames = {}
                 for snum, section_data, _ in source.sections():
-                    stored_ids : dict = {}
-                    renames.update(Section.updateJSON(section_data, snum, stored_ids=stored_ids))
-                    if stored_ids:
-                        Section.reattachTraceIDs(section_data, stored_ids)
-                    # every section locks on open (see Series.openJser)
-                    section_data["align_locked"] = True
+                    if not migrated:
+                        stored_ids : dict = {}
+                        renames.update(Section.updateJSON(section_data, snum, stored_ids=stored_ids))
+                        if stored_ids:
+                            Section.reattachTraceIDs(section_data, stored_ids)
+                        # every section locks on open (see Series.openJser)
+                        section_data["align_locked"] = True
                     self._replaceSection(snum, section_data)
                     section_data = None  # free it before the next is decoded
                     done += 1
@@ -707,9 +713,10 @@ class HybridStore():
                     "INSERT INTO log(id, text) VALUES (1, ?)", (source.log,)
                 )
                 series_data = source.series
-                series_data["log_set"] = []
-                Series.updateJSON(series_data)
-                applyContourRenames(series_data, renames, collisions)
+                if not migrated:
+                    series_data["log_set"] = []
+                    Series.updateJSON(series_data)
+                    applyContourRenames(series_data, renames, collisions)
                 self.con.execute(
                     "INSERT INTO series(id, data) VALUES (1, ?)", (fast_dumps(series_data),)
                 )

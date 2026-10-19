@@ -1,5 +1,6 @@
 import os
 import errno
+import hashlib
 import uuid
 import re
 import json
@@ -25,6 +26,7 @@ from .objects import Objects
 from .default_settings import default_settings, default_series_settings
 from .host_tree import HostTree
 from .filters import passesFilters
+from . import store_open
 
 from PyReconstruct.modules.calc import traceGeometry
 
@@ -370,6 +372,9 @@ class _WholeJser:
     alive through the series build that follows the unpack.
     """
 
+    ## the sha256 of the bytes read, when the read was asked to hash them
+    sha256 : Optional[str] = None
+
     def __init__(self, jser_data : dict):
         self._jser_data = jser_data
         self._sections = jser_data["sections"]
@@ -427,6 +432,9 @@ class _StreamedJser:
     orjson refuses, in different sections, can unpack that integer differently.
     """
 
+    ## the sha256 of the bytes the scan read, when the open was asked to hash them
+    sha256 : Optional[str] = None
+
     def __init__(self, f, index):
         self._f = f
         self._index = index
@@ -434,11 +442,18 @@ class _StreamedJser:
         self.log = index.log if index.has_log else _EMPTY_LOG
 
     @classmethod
-    def open(cls, fp : str):
-        """Index the file at `fp`; raises NotStreamable if scan_jser cannot."""
+    def open(cls, fp : str, hasher=None):
+        """Index the file at `fp`; raises NotStreamable if scan_jser cannot.
+
+        `hasher` (a hashlib object) is passed to scan_jser and `sha256` set
+        from it: the digest of the bytes every section is checked against.
+        """
         f = open(fp, "rb")
         try:
-            return cls(f, scan_jser(f))
+            source = cls(f, scan_jser(f, hasher))
+            if hasher is not None:
+                source.sha256 = hasher.hexdigest()
+            return source
         except FileChanged as e:
             f.close()
             raise _changed(fp) from e
@@ -911,7 +926,7 @@ class Series():
     
     ## OPENING, LOADING, AND MOVING THE JSER FILE
     @staticmethod
-    def _readJserForOpen(fp : str, notifier):
+    def _readJserForOpen(fp : str, notifier, hashed : bool = False):
         """Read, migrate and validate a .jser for openJser.
 
         Everything openJser does before the hidden directory exists, so the
@@ -919,13 +934,20 @@ class Series():
         contour-name collisions), or (None, None) when the user declined the
         contour-name merge. The source hands openJser the series, the log and
         the sections one at a time (see `_StreamedJser`); the caller closes it.
+        With `hashed`, the source's `sha256` is the digest of the bytes it
+        decodes (the local store keeps it, store_open.py).
         """
         try:
-            source = _StreamedJser.open(fp)
+            source = _StreamedJser.open(fp, hashlib.sha256()) if hashed else _StreamedJser.open(fp)
         except NotStreamable:
             # Not the shape the scan reads: a legacy layout, an unknown key, or
             # a file that is not JSON. Read it whole, as every open used to.
-            source = _WholeJser(Series._readWholeJser(fp))
+            if hashed:
+                hasher = hashlib.sha256()
+                source = _WholeJser(Series._readWholeJser(fp, hasher))
+                source.sha256 = hasher.hexdigest()
+            else:
+                source = _WholeJser(Series._readWholeJser(fp))
 
         # Distinct objects about to become one object. Asked BEFORE the hidden
         # directory exists, so declining leaves the file exactly as it was.
@@ -943,7 +965,7 @@ class Series():
         return source, collisions
 
     @staticmethod
-    def _readWholeJser(fp : str) -> dict:
+    def _readWholeJser(fp : str, hasher=None) -> dict:
         """Parse a whole .jser into one document, updating old layouts.
 
         The open's fallback for any file `scan_jser` does not read; every shape
@@ -952,7 +974,11 @@ class Series():
         # load json
         try:
             with open(fp, "rb") as f:
-                jser_data = fast_loads(f.read())
+                raw = f.read()
+            if hasher is not None:
+                hasher.update(raw)  # the bytes decoded below, nothing else
+            jser_data = fast_loads(raw)
+            del raw
         except ValueError as e:
             raise SeriesOpenError(
                 f"{os.path.basename(fp)} is not a valid series file "
@@ -1051,6 +1077,32 @@ class Series():
             series.leave_open = True
             return series
 
+        # with the store switch on, through the local store (store_open.py)
+        if store_open.enabled():
+            return store_open.openJser(fp, progress, notifier)
+        return Series._unpackJser(fp, progress, notifier)[0]
+
+    @staticmethod
+    def _unpackJser(fp : str, progress=None, notifier=None, store=None, hashed=False):
+        """openJser with no working folder to resume: write one, and build the series.
+
+            Params:
+                fp, progress, notifier: as openJser
+                store (StoreForOpen): read the sections, the series, the log
+                    and the object list's numbers from this store instead of
+                    from the .jser (store_open.py); None reads the .jser
+                hashed (bool): hash the bytes read from the .jser
+            Returns:
+                (Series, dict, str): the series, or None if the user declined
+                    the object merge or cancelled; the contour-name collisions
+                    the open merged; and with `hashed`, the sha256 of the bytes
+                    the open decoded, else None
+        """
+        sdir = os.path.dirname(fp)
+        sname = os.path.basename(fp)
+        sname = sname[:sname.rfind(".")]
+        hidden_dir = os.path.join(sdir, f".{sname}")
+
         # The progress dialog exists BEFORE the file is read. Reading and
         # parsing a large series off a lab file server took seconds with
         # nothing on screen (the 249 MB, 99,207-trace report of September
@@ -1059,17 +1111,24 @@ class Series():
         factory = progress if progress is not None else _default_progress_reporter_factory()
         reporter = factory(text=_openingText(sname))
         try:
-            source, collisions = Series._readJserForOpen(fp, notifier)
+            if store is not None:
+                source, collisions = store.source(), {}
+            else:
+                source, collisions = (
+                    Series._readJserForOpen(fp, notifier, hashed) if hashed
+                    else Series._readJserForOpen(fp, notifier)
+                )
         except BaseException:
             reporter.finish()
             raise
         if source is None:
             reporter.finish()
-            return None
+            return None, None, None
 
         progress = 0
         final_value = source.sectionCount()
-        final_value *= 2  # for loading section data
+        if store is None:
+            final_value *= 2  # for loading section data
         final_value += 2  # unpacking series and log
 
         # Unpack into a new folder of our own beside the file, and touch the
@@ -1130,9 +1189,10 @@ class Series():
                 # Empty, and therefore a no-op, for every positional file --
                 # which is every file any shipped build has ever written.
                 stored_ids = {}
-                renames.update(Section.updateJSON(
-                    section_data, snum, stored_ids=stored_ids
-                ))
+                if store is None:  # a store holds its sections migrated already
+                    renames.update(Section.updateJSON(
+                        section_data, snum, stored_ids=stored_ids
+                    ))
                 if stored_ids:
                     Section.reattachTraceIDs(section_data, stored_ids)
 
@@ -1159,11 +1219,14 @@ class Series():
                 section_data = found = None
 
                 if reporter.was_canceled():
-                    return None
+                    return None, None, None
                 progress += 1
                 reporter.set_progress(progress/final_value * 100)
             # every section is out: let go of the file before the long build
-            splice_index = opened_index.finish(source.unchangedStat())
+            if store is not None:
+                splice_index = store.spliceIndex()
+            else:
+                splice_index = opened_index.finish(source.unchangedStat())
             source.close()
 
             # Extract the existing log. Copied through byte for byte: the
@@ -1174,7 +1237,7 @@ class Series():
             with open(existing_log_fp, "w", encoding="utf-8") as f:
                 f.write(log_str)
             if reporter.was_canceled():
-                return None
+                return None, None, None
             progress += 1
             reporter.set_progress(progress/final_value * 100)
 
@@ -1192,7 +1255,7 @@ class Series():
             with open(os.path.join(work_dir, series_name), "wb") as f:
                 f.write(fast_dumps(series_data))
             if reporter.was_canceled():
-                return None
+                return None, None, None
 
             # Everything is read and written: now the hidden directory. A .ser
             # in it that is not this file's (the fast path above takes this
@@ -1229,12 +1292,15 @@ class Series():
             series._jser_splice_index = splice_index
 
             # gather the series data
-            for snum, section in series.enumerateSections(show_progress=False):
-                series.data.updateSection(section, update_traces=True, log_events=False, read_store=True)
-                if reporter.was_canceled():
-                    return None
-                progress += 1
-                reporter.set_progress(progress/final_value * 100)
+            if store is not None:
+                store.fillSeriesData(series)
+            else:
+                for snum, section in series.enumerateSections(show_progress=False):
+                    series.data.updateSection(section, update_traces=True, log_events=False, read_store=True)
+                    if reporter.was_canceled():
+                        return None, None, None
+                    progress += 1
+                    reporter.set_progress(progress/final_value * 100)
             # the series data is complete here, as after the refresh in
             # __init__: a displayed profile no section has is repointed now
             series._repointBCProfile()
@@ -1278,7 +1344,7 @@ class Series():
                 raise _notPutBack(fp, os.path.join(sdir, f".{sname}"), kept, failure)
 
         _sweepStaleSaveTemps(sdir, hidden_dir)
-        return series
+        return series, collisions, (source.sha256 if store is None else None)
 
     def saveJser(self, save_fp : str = None, close : bool = False):
         """Save the jser file, refusing a second save while one is running.
