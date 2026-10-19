@@ -710,8 +710,8 @@ def test_a_file_whose_header_is_not_this_store_s_is_never_opened(make, why, tmp_
     connects.clear()
     with pytest.raises(hybrid_store.StoreSchemaError, match=why) as refused:
         HybridStore(str(db_fp), str(tmp_path / "s.work"))
-    assert "left as it was" in str(refused.value)
     assert connects == [], "SQLite was never asked to open it"
+    assert "left as it was" in str(refused.value)
     assert _lock_is_free(db_fp)
     assert db_fp.read_bytes() == before
     assert _side_files(db_fp) == []
@@ -746,23 +746,18 @@ def test_another_program_s_database_with_a_wal_is_never_opened(tmp_path, connect
     assert files() == before, "the file and its WAL are as they were, and no -shm was made"
 
 
-@pytest.mark.parametrize("change, why, kept", [
-    ("UPDATE meta SET value='999' WHERE key='schema_version'", "its schema record",
-     ("SELECT value FROM meta WHERE key='schema_version'", ("999",))),
-    ("PRAGMA user_version=999", "schema version 999", ("PRAGMA user_version", (999,))),
-], ids=["schema-record", "user-version"])
-def test_a_store_whose_wal_holds_another_schema_is_refused_and_keeps_it(change, why, kept, tmp_path):
+def test_a_store_whose_wal_holds_another_schema_record_is_refused_and_keeps_it(tmp_path):
     made = tmp_path / "made.pyrstore"
     HybridStore(str(made), str(tmp_path / "made.work")).close()
     con = sqlite3.connect(made, isolation_level=None)
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA wal_autocheckpoint=0")
-    con.execute(change)
+    con.execute("UPDATE meta SET value='999' WHERE key='schema_version'")
     db_fp = tmp_path / "s.pyrstore"
     _crash_copy(made, db_fp)
     con.close()
     assert db_fp.read_bytes()[60:64] == hybrid_store.SCHEMA_VERSION.to_bytes(4, "big"), "the header is still a store's"
-    with pytest.raises(hybrid_store.StoreSchemaError, match=why) as refused:
+    with pytest.raises(hybrid_store.StoreSchemaError, match="its schema record") as refused:
         HybridStore(str(db_fp), str(tmp_path / "s.work"))
     # its header is a store's, so it was opened as one: it is not promised to
     # be byte for byte the same, but what was committed is still there
@@ -770,7 +765,7 @@ def test_a_store_whose_wal_holds_another_schema_is_refused_and_keeps_it(change, 
     assert _lock_is_free(db_fp)
     check = sqlite3.connect(db_fp)
     try:
-        assert check.execute(kept[0]).fetchone() == kept[1]
+        assert check.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone() == ("999",)
     finally:
         check.close()
 

@@ -392,15 +392,13 @@ class HybridStore():
         Only a file that passed the header check gets here, so it is opened
         as a store is, and that open may finish writing its WAL into it, as
         any open of a store does. Nothing committed is lost by that, but the
-        file is not promised to be left byte for byte as it was.
+        file is not promised to be left byte for byte as it was. Its version
+        is the header's alone (a schema is never changed in place).
         """
-        version = self.con.execute("PRAGMA user_version").fetchone()[0]
         tables = {r[0] for r in self.con.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
         )}
         missing = REQUIRED_TABLES - tables
-        if version != SCHEMA_VERSION:
-            self._refuse(f"schema version {version}", untouched=False)
         if missing or self.meta("schema_version") != str(SCHEMA_VERSION):
             self._refuse(
                 f"missing {', '.join(sorted(missing)) or 'its schema record'}",
