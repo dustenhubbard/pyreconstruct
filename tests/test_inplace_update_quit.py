@@ -14,16 +14,19 @@ and the helper's start recorded instead of run.
 * Nothing starts for a plan this window did not stage, even a valid one on
   disk, or on an in-app restart.
 * The dialog says the update installs at quit, and Restart Now closes the
-  window; any other build falls back to the installer as before.
+  window; any other build, or a copy an earlier update left, falls back to
+  the installer as before.
 """
 import os
 
 import pytest
 
+from PyReconstruct.modules.backend.updater import apply as A
 from PyReconstruct.modules.backend.updater import inplace as I
+from PyReconstruct.modules.backend.updater import staging as S
 from PyReconstruct.modules.backend.updater.updater import UpdateCancelled
 
-from test_update_staging import NEW_V, OLD_V, dev  # noqa: F401  (fixture)
+from test_update_staging import NEW_V, OLD_V, _locked, _run_helper, dev, snapshot  # noqa: F401  (fixture)
 
 pytestmark = pytest.mark.gui
 
@@ -235,6 +238,33 @@ def test_the_dialog_stages_through_the_real_checks(qapp, dev, monkeypatch):  # n
     pending = dlg._try_inplace(dev.rel.release(), NEW_V, lambda p: None)
 
     assert pending is not None and pending.version == NEW_V and I.still_staged(pending)
+
+
+def test_a_copy_a_finished_update_left_downloads_the_installer(qapp, dev, monkeypatch):  # noqa: F811
+    """Staging refuses while that copy is there; the dialog takes the installer and keeps it."""
+    dev.stage()
+    old = os.path.join(dev.rel.staging, A.OLD)
+    unlock = _locked(monkeypatch, old)
+    assert _run_helper(dev)["status"] == "updated"
+    unlock()
+    kept, installed = snapshot(old), snapshot(dev.rel.install)
+    dlg = _dialog(None, dev)
+    monkeypatch.setattr(I, "running_install", lambda: dev.install)
+    real, raised = I.stage_for_quit, []
+
+    def stage(release, offered, **kw):
+        try:
+            return real(release, offered, platform=dev.registry, trusted_keys=dev_keys(), **kw)
+        except Exception as e:
+            raised.append(e)
+            raise
+
+    monkeypatch.setattr(I, "stage_for_quit", stage)
+    assert dlg._try_inplace(dev.rel.release(), NEW_V, lambda p: None) is None  # the installer next
+
+    (e,), = [raised]
+    assert isinstance(e, S.StageError) and "earlier update has not finished" in str(e)
+    assert snapshot(old) == kept and snapshot(dev.rel.install) == installed
 
 
 def dev_keys():

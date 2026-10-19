@@ -593,6 +593,9 @@ def test_a_quit_while_a_helper_runs_leaves_it_alone(dev):
 
 
 # --- A copy a finished run could not delete ----------------------------------------
+# Windows can hold a file for a moment at cleanup, so a run that ended well can
+# leave old/ or rejected/ behind. Staging never deletes either: it refuses, and
+# the dialog downloads the installer.
 
 def _locked(monkeypatch, *names):
     """Make ``_remove`` fail on these staging entries, as Windows does while a scanner holds a file."""
@@ -625,95 +628,27 @@ def _journal(dev):
     ("updated", A.OLD, True),
     ("rolled_back", A.REJECTED, False),
 ], ids=["backup-after-update", "rejected-after-rollback"])
-def test_a_copy_a_finished_run_could_not_delete_is_cleared_at_the_next_staging(
+def test_a_copy_a_finished_run_left_keeps_later_updates_on_the_installer(
         dev, monkeypatch, result, leftover, healthy):
-    """A file held for a moment at cleanup must not keep every later update off in-place."""
+    """The install may be damaged since, and that copy may be the good one: staging keeps it."""
     dev.stage()
-    unlock = _locked(monkeypatch, os.path.join(dev.rel.staging, leftover))
+    copy = os.path.join(dev.rel.staging, leftover)
+    unlock = _locked(monkeypatch, copy)
     assert _run_helper(dev, healthy)["status"] == result
-    assert os.path.isdir(os.path.join(dev.rel.staging, leftover))
-    assert _journal(dev)["status"] == "done" and _journal(dev)["result"] == result
-    installed = snapshot(dev.rel.install)
     unlock()
+    assert _journal(dev)["status"] == "done" and _journal(dev)["result"] == result
+    os.remove(os.path.join(dev.rel.install, "_internal", "base_library.zip"))
+    journal, kept, installed = _journal(dev), snapshot(copy), snapshot(dev.rel.install)
+    dev.rel.fetched.clear()
 
     # staged straight, as for a later release: a rollback keeps this version off in-place
-    plan = dev.rel.stage()
-
-    assert not os.path.lexists(os.path.join(dev.rel.staging, leftover))
-    assert A.load_plan(os.path.join(dev.rel.staging, A.PLAN)) == plan
-    assert snapshot(dev.rel.install) == installed
-    assert dev.started == []  # staging starts nothing
-
-
-def test_a_copy_still_locked_falls_back_to_the_installer_and_is_kept(dev, monkeypatch):
-    dev.stage()
-    old = os.path.join(dev.rel.staging, A.OLD)
-    unlock = _locked(monkeypatch, old)
-    assert _run_helper(dev)["status"] == "updated"
-    journal, kept, installed = _journal(dev), snapshot(old), snapshot(dev.rel.install)
-
-    for _ in range(A.MAX_DEFERRALS + 1):
-        with pytest.raises(S.StageError, match="could not remove"):
-            dev.stage()  # the dialog downloads the installer instead
-        assert snapshot(old) == kept and snapshot(dev.rel.install) == installed
-        assert _journal(dev) == journal  # still says what the copy is, for the next try
-        assert not os.path.lexists(os.path.join(dev.rel.staging, A.PLAN))
-
-    unlock()
-    assert I.still_staged(dev.stage())
-    assert not os.path.lexists(old)
-
-
-def _no_payload_for_this_build(rel):
-    del rel.files[rel.archive_name]
-    return rel.stage()
-
-
-def _a_bad_signature(rel):
-    rel.files["SHA256SUMS"] = rel.files["SHA256SUMS"].replace(b"  ", b" *", 1)
-    return rel.stage()
-
-
-def _canceled(rel):
-    return S.stage_update(rel.release(), install=rel.install, app_name=rel.app_name,
-                          flavor=rel.flavor, from_version=OLD_V, trusted_keys=[TEST_PUB],
-                          cancel_cb=lambda: True)
-
-
-def _a_damaged_payload(rel):
-    data = bytearray(rel.files[rel.archive_name])
-    data[len(data) // 2] ^= 0xFF
-    rel.files[rel.archive_name] = bytes(data)
-    return rel.stage()
-
-
-def _a_plan_the_helper_refuses(rel, monkeypatch):
-    def refuse(path):
-        raise A.Refused("the plan is refused")
-    monkeypatch.setattr(A, "load_plan", refuse)
-    return rel.stage()
-
-
-@pytest.mark.parametrize("fail", [
-    _no_payload_for_this_build, _a_bad_signature, _canceled, _a_damaged_payload,
-    _a_plan_the_helper_refuses,
-], ids=["no-payload", "bad-signature", "canceled", "damaged-payload", "plan-refused"])
-def test_a_staging_that_fails_keeps_the_copy_a_finished_run_left(dev, monkeypatch, fail):
-    """The install may be damaged since; with no update staged, that copy may be the good one."""
-    dev.stage()
-    old = os.path.join(dev.rel.staging, A.OLD)
-    unlock = _locked(monkeypatch, old)
-    assert _run_helper(dev)["status"] == "updated"
-    unlock()
-    journal, kept = _journal(dev), snapshot(old)
-    os.remove(os.path.join(dev.rel.install, "_internal", "base_library.zip"))
-
-    args = (dev.rel, monkeypatch) if fail is _a_plan_the_helper_refuses else (dev.rel,)
-    with pytest.raises((S.StageError, U.UpdateCancelled)):
-        fail(*args)  # the dialog downloads the installer instead
-    assert os.path.isdir(old) and snapshot(old) == kept
-    assert _journal(dev) == journal
-    assert not os.path.lexists(os.path.join(dev.rel.staging, A.PLAN))
+    for _ in range(2):
+        with pytest.raises(S.StageError, match="earlier update has not finished"):
+            dev.rel.stage()  # the dialog downloads the installer instead
+        assert snapshot(copy) == kept and snapshot(dev.rel.install) == installed
+        assert _journal(dev) == journal
+        assert dev.rel.fetched == []
+    assert dev.started == []
 
 
 def _done(dev, result, installed, **plan):
@@ -756,13 +691,25 @@ def _backup_with_no_journal(dev):
     _write(os.path.join(dev.rel.staging, A.OLD), "PyReconstruct Dev.exe", "the only copy")
 
 
+def _backup_after_an_update(dev):
+    _done(dev, "updated", "new")
+    _write(os.path.join(dev.rel.staging, A.OLD), "PyReconstruct Dev.exe", "the version before")
+
+
+def _rejected_after_a_rollback(dev):
+    _done(dev, "rolled_back", "old")
+    _write(os.path.join(dev.rel.staging, A.REJECTED), "PyReconstruct Dev.exe", "the version that failed")
+    return A.REJECTED
+
+
 @pytest.mark.parametrize("make_it", [
     _backup_is_a_link_to_the_install, _backup_after_a_stuck_run, _backup_after_a_rollback,
-    _backup_for_another_install, _backup_with_no_journal,
-], ids=["link-to-install", "stuck", "old-after-rollback", "another-install", "no-journal"])
+    _backup_for_another_install, _backup_with_no_journal, _backup_after_an_update,
+    _rejected_after_a_rollback,
+], ids=["link-to-install", "stuck", "old-after-rollback", "another-install", "no-journal",
+        "old-after-update", "rejected-after-rollback"])
 def test_staging_never_clears_a_copy_that_may_be_the_only_one(dev, make_it):
-    make_it(dev)
-    old = os.path.join(dev.rel.staging, A.OLD)
+    old = os.path.join(dev.rel.staging, make_it(dev) or A.OLD)
     kept = snapshot(old)
     try:
         with pytest.raises(S.StageError, match="earlier update"):
