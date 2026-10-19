@@ -468,11 +468,19 @@ jobs:
   # that file and rebuild the environment on 3.11 before running anything.
   #
   # Tags are fetched for the same reason as in `test`.
+  #
+  # One more leg runs 3.11 with fonts-noto-core installed. fontconfig then
+  # picks Noto Sans for sans-serif, as on Ubuntu 26.04, instead of the DejaVu
+  # Sans every other leg gets, so the status-bar and What's New text tests are
+  # measured against both. The leg checks which font it got before the suite.
   test-python:
     strategy:
       fail-fast: false
       matrix:
         python: ["3.12", "3.13"]
+        include:
+          - python: "3.11"
+            fonts: fonts-noto-core
     runs-on: ubuntu-latest
     timeout-minutes: 40   # the suite's run time plus an apt retry, as in `test`
     env:
@@ -501,7 +509,7 @@ jobs:
               apt-get -o Acquire::Retries=3 update &&
               apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
                 libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 \
-                fonts-dejavu-core'
+                fonts-dejavu-core ${{ matrix.fonts }}'
           }
           attempt || { echo '::warning::apt failed or hung (exit 124 is the 4-minute limit); trying once more'; sleep 10; attempt; }
 
@@ -510,6 +518,18 @@ jobs:
 
       - name: Python in use
         run: uv run --frozen --no-default-groups --extra test python -VV
+
+      - name: Qt's default font is Noto Sans
+        if: matrix.fonts == 'fonts-noto-core'
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          uv run --frozen --no-default-groups --extra test python -c '
+          from PySide6.QtGui import QFontInfo
+          from PySide6.QtWidgets import QApplication
+          family = QFontInfo(QApplication([]).font()).family()
+          print(family)
+          assert family == "Noto Sans", family'
 
       - name: Run test suite (headless / offscreen)
         env:
