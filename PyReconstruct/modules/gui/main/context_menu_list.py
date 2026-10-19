@@ -112,12 +112,8 @@ def get_field_menu_list(self):
                 ("hideall_act", "Toggle hide all", self.series, self.field.toggleHideAllTraces),
                 ("showall_act", "Toggle show all", self.series, self.field.toggleShowAllTraces),
                 None,
-                # view-only: shows just the traces inside a box you click to
-                # place; nothing is saved and nothing is undone
-                ("roibox_act", "Toggle ROI box", self.series, self.field.toggleRoiBox),
-                ("moveroibox_act", "Move ROI box", "", self.field.moveRoiBox),
-                ("roiboxsize_act", "ROI box size...", "", self.field.setRoiBoxSize),
-                None,
+                # the ROI box (field.toggleRoiBox) has no entry point here: it
+                # is held back until it returns as ROI mode, a palette tool
                 ("hideimage_act", "Toggle hide image", self.series, self.field.toggleHideImage),
                 ("blend_act", "Toggle section blend", self.series, self.field.toggleBlend),
             ]

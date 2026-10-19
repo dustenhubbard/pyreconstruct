@@ -13,7 +13,7 @@ same three a little shifted. The default box below covers part of d03 only.
 """
 import pytest
 from PySide6.QtCore import QEvent, QPoint, QPointF, QSettings, Qt
-from PySide6.QtGui import QColor, QMouseEvent
+from PySide6.QtGui import QAction, QColor, QMouseEvent
 from PySide6.QtWidgets import QApplication, QWidget
 from PySide6.QtTest import QTest
 
@@ -56,9 +56,9 @@ def _click(field, qapp, x, y):
 
 
 def _turn_on(main_window, qapp, size=SIZE, center=CENTER):
-    """Turn the box on through its menu action and place it with a click."""
+    """Turn the box on through the field and place it with a click."""
     main_window.main_window_dialogs.responses.append((list(size), True))
-    main_window.roibox_act.trigger()
+    main_window.field.toggleRoiBox()
     qapp.processEvents()
     if center is not None:
         _click(main_window.field, qapp, *center)
@@ -102,8 +102,8 @@ def test_box_writes_nothing_and_saves_no_undo_state(mw, qapp):
     _turn_on(mw, qapp)
     _click(field, qapp, 13.6, 23.8)  # move it
     mw.main_window_dialogs.responses.append(([0.5, 0.3], True))
-    mw.roiboxsize_act.trigger()
-    mw.roibox_act.trigger()  # off
+    mw.field.setRoiBoxSize()
+    mw.field.toggleRoiBox()  # off
     qapp.processEvents()
 
     assert mw.series.modified is False
@@ -205,7 +205,7 @@ def test_turning_off_restores_every_trace(mw, qapp):
     _turn_on(mw, qapp)
     assert len(field.section_layer.traces_in_view) == 1
 
-    mw.roibox_act.trigger()
+    mw.field.toggleRoiBox()
     qapp.processEvents()
 
     assert not field.roi_box_on and field.roiBox() is None
@@ -373,7 +373,7 @@ def test_turn_on_then_click_sets_center_and_later_clicks_move_it(mw, qapp):
     assert abs(field.roi_box_center[0] - 14.4) <= one_pixel
 
     # Move ROI box goes back to the box's mode
-    mw.moveroibox_act.trigger()
+    mw.field.moveRoiBox()
     assert field.mouse_mode == ROI_BOX
 
 
@@ -384,22 +384,26 @@ def test_size_defaults_to_5_by_5_and_is_kept_for_the_session(mw, qapp):
     _turn_on(mw, qapp, size=(2.5, 1.0))
     assert field.roiBox() == (*field.roi_box_center, 2.5, 1.0)
 
-    mw.roibox_act.trigger()  # off
+    mw.field.toggleRoiBox()  # off
     assert field.roi_box_size == (2.5, 1.0)
 
     # a cancelled size dialog leaves the box off
-    mw.roibox_act.trigger()
+    mw.field.toggleRoiBox()
     assert not field.roi_box_on
 
 
-def test_shortcut_is_b_and_used_nowhere_else(mw):
-    assert default_settings["roibox_act"] == "B"
-    others = [
-        k for k, v in default_settings.items()
-        if k.endswith("_act") and k != "roibox_act" and v == "B"
+def test_no_menu_or_key_reaches_the_box(mw):
+    # held back until it returns as ROI mode, a palette tool: the field
+    # methods stay, but no action, menu item or default key reaches them
+    assert default_settings["roibox_act"] == ""
+    for name in ("roibox_act", "moveroibox_act", "roiboxsize_act"):
+        assert not hasattr(mw, name)
+    texts = [a.text() for a in mw.findChildren(QAction)]
+    assert not [t for t in texts if "ROI" in t]
+    assert not [
+        a for a in mw.findChildren(QAction)
+        if "B" in [s.toString() for s in a.shortcuts()]
     ]
-    assert others == []
-    assert mw.roibox_act.shortcut().toString() == "B"
 
 
 def test_status_bar_says_the_box_is_on_and_its_size(mw, qapp):
@@ -413,7 +417,7 @@ def test_status_bar_says_the_box_is_on_and_its_size(mw, qapp):
     text = mw.status_readout.text()
     assert "ROI box 5 x 5 μm" in text and "to place" not in text
 
-    mw.roibox_act.trigger()
+    mw.field.toggleRoiBox()
     field.updateStatusBar()
     assert "ROI box" not in mw.status_readout.text()
 
@@ -829,7 +833,7 @@ def test_field_series_wide_visibility_rows_are_off_while_the_box_is_on(mw, qapp)
     assert not mw.restorevisibility_act.isEnabled()
 
     assert field.section.selected_traces  # d03 is inside
-    mw.roibox_act.trigger()  # off
+    mw.field.toggleRoiBox()  # off
     mw.checkActions()
     assert mw.hideallobj_act.isEnabled() and mw.showallobj_act.isEnabled()
 
