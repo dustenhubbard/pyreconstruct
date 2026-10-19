@@ -26,7 +26,9 @@ SQLite is not safe on a network share, where lab series often live.
 """
 
 import os
+import re
 import sys
+import json
 import hashlib
 import sqlite3
 from datetime import datetime, timezone
@@ -238,12 +240,29 @@ def packRow(row) -> tuple:
     return (1, 0, None, fast_dumps(row), None, None, None, None)
 
 
+## an integer orjson would read as a float: past 64 bits, so 19 digits or more
+_LONG_NUMBER = re.compile(rb"[0-9]{19}")
+
+
+def _loadPart(data : bytes):
+    """Read back a part of a section the store wrote, as it was written.
+
+    orjson reads an integer past 64 bits as a float, and the stdlib reader
+    keeps it. A section holding one may have been read whole by the stdlib
+    reader (a lone surrogate sends it there), so a part with a long number is
+    read by the stdlib reader too, and the integer comes back as it went in.
+    """
+    if _LONG_NUMBER.search(data):
+        return json.loads(data)
+    return fast_loads(data)
+
+
 def unpackRow(shape, npts, xy, rest) -> list:
     """The stored trace row, as the section file held it."""
     if shape == 0:
         a = np.frombuffer(xy, dtype="<f8")
-        return [a[:npts].tolist(), a[npts:].tolist(), *fast_loads(rest)]
-    return fast_loads(rest)
+        return [a[:npts].tolist(), a[npts:].tolist(), *_loadPart(rest)]
+    return _loadPart(rest)
 
 
 def packSection(snum : int, section_data : dict) -> tuple:
@@ -491,7 +510,7 @@ class HybridStore():
                 with open(fallback_fp, "rb") as f:
                     return fast_loads(f.read())
             raise FileNotFoundError(f"section {snum} is not in the store {self.db_fp}")
-        return self._assemble(snum, fast_loads(row[0]))
+        return self._assemble(snum, _loadPart(row[0]))
 
     def _assemble(self, snum : int, header : dict) -> dict:
         names = header["contours"]
@@ -539,7 +558,7 @@ class HybridStore():
 
     def _savedSection(self, snum : int) -> dict:
         row = self.con.execute("SELECT header FROM section WHERE snum=?", (snum,)).fetchone()
-        return self._assemble(snum, fast_loads(row[0]))
+        return self._assemble(snum, _loadPart(row[0]))
 
     def _dropSection(self, snum : int):
         for table in ("trace", "section"):

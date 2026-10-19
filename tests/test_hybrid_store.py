@@ -229,6 +229,32 @@ def test_the_fields_july_left_untested_import_as_they_open_today(tmp_path, store
         store.close()
 
 
+@pytest.mark.parametrize("where, lone_surrogate", [
+    ("trace", True), ("header", True), ("trace", False),
+], ids=["in-a-trace", "in-the-header", "read-by-orjson"])
+def test_an_integer_past_64_bits_imports_as_it_opens_today(where, lone_surrogate, tmp_path, store_root):
+    # A lone surrogate sends today's reader to the stdlib parser, which keeps an
+    # integer past 64 bits exactly; without one orjson reads it as a float. The
+    # store holds whichever today's open writes, though it reads a section in parts.
+    big = 2**65 + 1
+    doc = json.loads(PARITY.read_bytes())
+    section = next(s for s in doc["sections"] if s and any(s["contours"].values()))
+    row = next(rows for rows in section["contours"].values() if rows)[0]
+    if where == "trace":
+        row[0][0] = big
+        if lone_surrogate:
+            section["src"] = "\ud800"
+    else:
+        section["mag"] = big
+        row[7] = ["\ud800"]
+    src = tmp_path / "src" / "big.jser"
+    src.parent.mkdir()
+    src.write_text(json.dumps(doc))
+    expected = _today(src, tmp_path)
+    assert (str(big).encode() in b"".join(expected[0].values())) is lone_surrogate
+    _assert_holds_what_today_writes(src, tmp_path)
+
+
 def _keyed(row, trace_id, fill_mode_key):
     keyed = dict(zip(("x", "y", "color", "closed", "negative", "hidden"), row[:6]))
     keyed[fill_mode_key] = row[6]
@@ -374,7 +400,9 @@ def test_a_second_import_replaces_everything_and_drops_unsaved_work(tmp_path, st
     [[1, 2.0, 3.0], [4.0, 5.0, 6.0], [0, 0, 0], True, False, False, ["none", "none"], []],
     [[], [], [0, 0, 0], False, False, False, ["none", "none"], []],
     {"x": [1.0, 2.0], "y": [3.0, 4.0], "color": [1, 2, 3]},
-], ids=["floats", "an-int-coordinate", "empty", "keyed"])
+    [[2**64, 2.0], [3.0, 4.0], [0, 0, 0], True, False, False, ["none", "none"], []],
+    [[-(2**63) - 1, 2.0], [3.0, 4.0], [0, 0, 0], True, False, False, ["none", "none"], []],
+], ids=["floats", "an-int-coordinate", "empty", "keyed", "an-int-past-64-bits", "a-negative-int-past-64-bits"])
 def test_a_trace_row_comes_back_exactly(row):
     shape, npts, xy, rest, *_ = packRow(row)
     back = unpackRow(shape, npts, xy, rest)
