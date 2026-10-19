@@ -6,8 +6,9 @@ and unpacks the new version into a staging folder next to the install, writes
 app to exit, checks the staged tree once more, runs its self-test, renames the
 install to a backup and the new tree into its place, and launches the new
 version. If the new version does not report a healthy start in time, the
-helper kills it, renames the backup back, relaunches the old version, and
-records the failed version so it is not tried in place again.
+helper stops the copy it launched, waits for any copy the user started to
+quit, renames the backup back, relaunches the old version, and records the
+failed version so it is not tried in place again.
 
 Stdlib only, on purpose. On Windows this file is frozen on its own as
 ``pyreconstruct-updater.exe`` and run from the staging folder, because the
@@ -18,7 +19,8 @@ installed app runs it through the ``__apply_update__`` check at the top of
 Crash safety comes from ``state.json``, a journal written atomically before
 and after every step. A helper that dies part way (power loss, a kill, a
 crash) leaves the journal behind, and the next run finishes or undoes the
-swap from wherever it stopped. Every step is safe to repeat, and the steps
+swap from wherever it stopped. The app starts that run at its next quit
+(``--recover``). Every step is safe to repeat, and the steps
 that move folders look at what is actually on disk rather than trusting the
 journal alone, because a process can die between a rename and the journal
 write that records it. The one window this cannot close is the moment between
@@ -111,7 +113,7 @@ FORWARD = (
 
 # The rollback steps, run when the new version fails after the swap.
 ROLLBACK = (
-    "rb_kill",      # the new version's processes are stopped
+    "rb_kill",      # the copy launched is stopped; a copy the user started is waited for
     "rb_aside",     # install -> rejected/
     "rb_restore",   # old/ -> install
     "rb_registry",  # DisplayVersion back to the old version
@@ -292,7 +294,8 @@ def report_started(install, app_name, version):
     file), ``app_name`` names its staging folder, and ``version`` is its public
     version, with no ``+local`` part, as the release and plan.json spell it.
     The helper's journal decides: it must be running, at the launch or health
-    step, with a plan for this install and this version. Anything else writes
+    step, with a plan for this install and this version, and once it records
+    the process it launched, this must be that process. Anything else writes
     nothing, so an ordinary launch, a copy the user started, or the old version
     started again by a rollback never reports in. True if it wrote the report.
     """
@@ -310,6 +313,9 @@ def report_started(install, app_name, version):
     if (not isinstance(target, str)
             or os.path.normcase(os.path.realpath(target)) != os.path.normcase(install)):
         return False
+    launched = state.get("launched_pid")
+    if launched is not None and launched != os.getpid():
+        return False  # it would replace the launched copy's report, and the helper would roll back
     write_health(staging, version)
     return True
 
@@ -983,13 +989,18 @@ def release_lock(fd):
 class Applier:
     """One helper run over one staging folder: apply the plan, or recover an unfinished one."""
 
-    def __init__(self, staging, platform, timings=None, *, host=None, pid=None, open_path=None):
+    def __init__(self, staging, platform, timings=None, *, host=None, pid=None, open_path=None,
+                 recover_only=False):
         self.staging = os.path.abspath(staging)
         self.platform = platform
         self.timings = timings or default_timings(host)
         self.host = host or os_key()
         self.pid_override = pid
         self.open_path = open_path
+        # Started by the app at quit to finish a run a helper left part way.
+        # ``pid`` is that app, which ran from the install: it never applies a
+        # plan, and starts nothing, since the user quit.
+        self.recover_only = recover_only
         self.state = None
         self.plan = None
         self.state_path = os.path.join(self.staging, STATE)
@@ -1094,6 +1105,9 @@ class Applier:
             previous = read_json(self.state_path)
             if isinstance(previous, dict) and previous.get("status") == "running":
                 return self.recover(previous)
+            if self.recover_only:
+                return {"status": "nothing_to_recover", "installed": None,
+                        "reason": "no run was left part way"}
             return self.apply(previous)
         finally:
             release_lock(lock)
@@ -1505,13 +1519,16 @@ class Applier:
         health = os.path.join(self.staging, HEALTH)
         if self._healthy():
             return None  # a recovered run whose new version already reported in
+        if self.recover_only:
+            return None  # the user quit; the health step reads what the app reported
         if self.recovering:
             running = self.platform.processes_under(self.install)
             if running:
-                # The dead run started it but did not live to record it.
-                # Watch that one rather than start a second copy.
+                # The dead run may have started it without living to record
+                # it, so watch that one rather than start a second copy. The
+                # user may have started it too, so a rollback never stops it.
                 self._log(f"adopting {running[0]}, already running from the install")
-                self.state["launched_pid"] = running[0]
+                self.state.update(launched_pid=running[0], launched_start=None, adopted=True)
                 return None
         _remove(health)
         cwd = os.path.dirname(self.install)
@@ -1519,8 +1536,18 @@ class Applier:
             pid = self.platform.launch(self._launch_argv(), cwd)
         except Exception as e:
             return self._rollback(f"the new version did not start: {e}")
-        self.state["launched_pid"] = pid
+        self.state.update(launched_pid=pid, launched_start=self.platform.start_time(pid), adopted=False)
         return None
+
+    def _launched_here(self, pid):
+        """True only for the copy this run launched, still the same process. Only that one is ever stopped."""
+        state = self.state or {}
+        started = state.get("launched_start")
+        return (pid == state.get("launched_pid") and not state.get("adopted")
+                and started is not None and self.platform.start_time(pid) == started)
+
+    def _stop_launched(self):
+        self._stop([p for p in self.platform.processes_under(self.install) if self._launched_here(p)])
 
     def _healthy(self):
         """health.json names the new version and, once the launch is recorded, the process launched.
@@ -1566,19 +1593,25 @@ class Applier:
         return self._steps(ROLLBACK, 0)
 
     def _do_rb_kill(self):
-        # Only processes running from the install, which is the new version
-        # while old/ holds the backup. A saved pid is never killed on its own
-        # say-so: it may belong to someone else by now.
+        # Only the copy this run launched is stopped, and only while it still
+        # runs from the install. Any other copy there is the user's, or one a
+        # dead run started that looks the same: it may hold unsaved work, so
+        # the rollback waits for it to quit. Still open at ``lock_wait``, the
+        # journal stays open here, and the next run (the app's next quit)
+        # finishes the rollback.
         if os.path.lexists(self.old) and os.path.lexists(self.install):
-            self._stop(self.platform.processes_under(self.install))
+            self._stop_launched()
+            if not self._wait_until_unused():
+                return {"status": "busy", "installed": "new",
+                        "reason": "a copy the user started is still open; the rollback finishes after it quits"}
         return None
 
     def _do_rb_aside(self):
         if os.path.lexists(self.install) and os.path.lexists(self.old):
-            # Whatever still holds the new version's folder is stopped before each try.
+            # The copy this run launched is stopped before each try, if it is back.
             moved = self._rename_until_done(
                 self.install, self.rejected, "moving the new version aside",
-                before_try=lambda: self._stop(self.platform.processes_under(self.install)))
+                before_try=self._stop_launched)
             if not moved:
                 return {"status": "error", "installed": "new",
                         "reason": "a rejected copy is already in staging; the next run finishes the rollback"}
@@ -1602,6 +1635,8 @@ class Applier:
 
     def _do_rb_launch(self):
         _remove(os.path.join(self.staging, HEALTH))
+        if self.recover_only:
+            return None  # the user quit; the old version is back for the next start
         try:
             self.platform.launch(self._launch_argv(), os.path.dirname(self.install))
         except Exception as e:
@@ -1637,6 +1672,11 @@ class Applier:
         if self.pid_override and not self.platform.wait_pid(
                 self.pid_override, self.timings.pid_exit, self.timings.poll):
             return {"status": "busy", "installed": None, "reason": "PyReconstruct did not exit"}
+        if self.recover_only and self.pid_override:
+            # The app that started this run ran from the install and has quit.
+            # Its own report is what counts as the new version starting, and
+            # it is never a process to stop.
+            state.update(launched_pid=self.pid_override, launched_start=None, adopted=True)
         state["helper_pid"] = os.getpid()
         state["helper_start"] = self.platform.start_time(os.getpid())
         state["recoveries"] = state.get("recoveries", 0) + 1
@@ -1686,7 +1726,7 @@ class Applier:
 
 
 def main(argv=None):
-    """``__apply_update__ <staging> [--pid N] [--open SERIES]``: apply or recover, exit 0 when the new version is in."""
+    """``__apply_update__ <staging> [--pid N] [--open SERIES] [--recover]``: apply or recover, exit 0 when the new version is in."""
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == APPLY_ARG:
         argv = argv[1:]
@@ -1695,13 +1735,16 @@ def main(argv=None):
     parser.add_argument("--pid", type=int, default=None, help="wait for this process to exit first")
     parser.add_argument("--open", dest="open_path", default=None,
                         help="the series to open in the version this run starts (an absolute path)")
+    parser.add_argument("--recover", dest="recover_only", action="store_true",
+                        help="only finish or undo a run left part way; --pid is the app that ran and quit")
     args = parser.parse_args(argv)
     open_path = args.open_path if args.open_path and os.path.isabs(args.open_path) else None
     # A working folder inside the install would lock it on Windows, and the
     # helper may have been started from there. Staging is never moved.
     staging = os.path.abspath(args.staging)
     os.chdir(staging)
-    applier = Applier(staging, default_platform(), pid=args.pid, open_path=open_path)
+    applier = Applier(staging, default_platform(), pid=args.pid, open_path=open_path,
+                      recover_only=args.recover_only)
     result = applier.run()
     return 0 if result.get("installed") == "new" else 1
 
