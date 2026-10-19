@@ -13,7 +13,7 @@ from copy import copy, deepcopy
 from pathlib import Path
 from typing import Optional, Union
 
-from .log import LogSet, LogSetPair
+from .log import LogSet, LogSetPair, LOG_READ_ERRORS, LOG_WRITE_ERRORS
 from .ztrace import Ztrace
 from .section import Section
 from .trace import Trace, normalizeObjectName, copyObjDefaults
@@ -1234,7 +1234,7 @@ class Series():
             # field, deliberately -- see `applyContourRenames` for why.
             log_str = source.log
             existing_log_fp = os.path.join(work_dir, "existing_log.csv")
-            with open(existing_log_fp, "w", encoding="utf-8") as f:
+            with open(existing_log_fp, "w", encoding="utf-8", errors=LOG_WRITE_ERRORS) as f:
                 f.write(log_str)
             if reporter.was_canceled():
                 return None, None, None
@@ -1757,7 +1757,7 @@ class Series():
         # See measurements/log_string_growth.py in the notes repo.
         existing_log_fp = os.path.join(self.hidden_dir, "existing_log.csv")
         if os.path.isfile(existing_log_fp):
-            with open(existing_log_fp, "r", encoding="utf-8", errors="replace") as f:
+            with open(existing_log_fp, "r", encoding="utf-8", errors=LOG_READ_ERRORS) as f:
                 existing_log = ""
                 for line in f.readlines():
                     if line.strip():
@@ -5462,7 +5462,7 @@ class Series():
                 (LogSet): the object containing the full history
         """
         csv_fp = os.path.join(self.hidden_dir, "existing_log.csv")
-        with open(csv_fp, "r", encoding="utf-8", errors="replace") as f:
+        with open(csv_fp, "r", encoding="utf-8", errors=LOG_READ_ERRORS) as f:
             log_list = f.readlines()[1:]
         full_hist = LogSet.fromList(log_list, skip_corrupt=skip_corrupt)
         for log in self.log_set.all_logs:
