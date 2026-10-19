@@ -135,3 +135,50 @@ def apply_update_check_on_startup_default(
         return wrote
     except Exception:
         return False
+
+
+#: View > Toggle ROI mode. Dev builds from 2026-10-16 to 2026-10-18 shipped it
+#: with B, and `Series.getOption` stored that B on every machine that ran one.
+ROI_TOGGLE_KEY = "roibox_act"
+
+#: The ROI mode tool on the mouse palette, which now owns B by default.
+ROI_TOOL_KEY = "useroi_act"
+
+
+def settle_legacy_roi_shortcut(store: Optional[SettingsStore] = None) -> bool:
+    """Take B off Toggle ROI mode when an older Dev build stored it there.
+
+    B moved from ``roibox_act`` to the new ``useroi_act``. A machine that ran
+    one of those Dev builds keeps ``roibox_act = "B"``, and the new default
+    then puts B on two actions: Qt calls that ambiguous and fires neither. No
+    stable release stored B there.
+
+    No marker is needed. ``useroi_act`` is stored the first time this build
+    builds its shortcuts, so once it is present this does nothing, and a B
+    the user later sets on the toggle is theirs to keep:
+
+    * **``useroi_act`` stored** -- return; this build has run here already.
+    * **``roibox_act`` stored as B** -- write ``""``. The only case that
+      changes anything.
+    * **anything else** (empty, another key, nothing stored) -- write nothing.
+
+    Call before the shortcuts are built. Never raises, for the same reason as
+    the migration above.
+
+        Returns:
+            (bool) True if ``roibox_act`` was written, False otherwise.
+    """
+    try:
+        if store is None:
+            store = default_settings_store()
+        if store.contains(None, ROI_TOOL_KEY):
+            return False
+        if not store.contains(None, ROI_TOGGLE_KEY):
+            return False
+        stored = store.value(None, ROI_TOGGLE_KEY, str)
+        if not isinstance(stored, str) or stored.strip().upper() != "B":
+            return False
+        store.set_value(None, ROI_TOGGLE_KEY, "")
+        return True
+    except Exception:
+        return False

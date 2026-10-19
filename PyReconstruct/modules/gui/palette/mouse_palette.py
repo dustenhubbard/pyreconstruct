@@ -158,6 +158,7 @@ class MousePalette():
         self.createModeButton("Flag", 8)
         self.createModeButton("Host", 9)
         self.createModeButton("Ztool", 10)
+        self.createModeButton("ROI mode", 11)
         # Placed only now, once every button exists, the z-trace tool's
         # included. The column's bounds shrink by one button height per
         # button already made (getBounds), so placing
@@ -274,6 +275,13 @@ class MousePalette():
             f.setPointSize(25)
             b.setFont(f)
             b.setText("⎋")
+        elif name == "ROI mode":
+            # right-click sets the box's width and height
+            b.setRightClickEvent(lambda: self.mainwindow.field.setRoiBoxSize())
+            f = b.font()
+            f.setBold(True)
+            b.setFont(f)
+            b.setText("ROI")
 
         b.show()
     

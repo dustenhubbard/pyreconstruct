@@ -1,7 +1,8 @@
-"""The ROI box: a view-only box in field coordinates.
+"""ROI mode: a view-only box in field coordinates.
 
-A click sets the box's center; its width and height are set in a dialog, or a
-drag sets the center and the size together. Only
+ROI mode is a tool on the mouse palette (B). With it, a click sets the box's
+center and a drag sets the center and the size together; a right-click on the
+tool's button sets the width and height in a dialog. Only
 the traces whose bounds in field coordinates touch the box are drawn and can be
 picked; turning the box off brings every trace back. Nothing is written to the
 traces, the sections or the series, and no undo state is made.
@@ -56,9 +57,9 @@ def _click(field, qapp, x, y):
 
 
 def _turn_on(main_window, qapp, size=SIZE, center=CENTER):
-    """Turn the box on through the field and place it with a click."""
-    main_window.main_window_dialogs.responses.append((list(size), True))
-    main_window.field.toggleRoiBox()
+    """Pick the ROI mode tool and place the box with a click."""
+    main_window.field.roi_box_size = tuple(size)
+    main_window.mouse_palette.activateModeButton("ROI mode")
     qapp.processEvents()
     if center is not None:
         _click(main_window.field, qapp, *center)
@@ -355,10 +356,12 @@ def test_turn_on_then_click_sets_center_and_later_clicks_move_it(mw, qapp):
     _turn_on(mw, qapp, center=None)
 
     assert field.mouse_mode == ROI_BOX
-    assert field.roi_box_on and field.roiBox() is None
+    # picking the tool changes nothing until the box is placed
+    assert not field.roi_box_on and field.roiBox() is None
     assert len(field.section_layer.traces_in_view) == 3  # nothing hidden yet
 
     _click(field, qapp, *CENTER)
+    assert field.roi_box_on
     cx, cy = field.roi_box_center
     one_pixel = field.series.window[2] / field.pixmap_dim[0]  # field units
     assert abs(cx - CENTER[0]) <= one_pixel and abs(cy - CENTER[1]) <= one_pixel
@@ -372,9 +375,11 @@ def test_turn_on_then_click_sets_center_and_later_clicks_move_it(mw, qapp):
     _click(field, qapp, *CENTER)
     assert abs(field.roi_box_center[0] - 14.4) <= one_pixel
 
-    # Move ROI box goes back to the box's mode
-    mw.field.moveRoiBox()
+    # picking the tool again goes back to moving the box
+    mw.mouse_palette.activateModeButton("ROI mode")
     assert field.mouse_mode == ROI_BOX
+    _click(field, qapp, *CENTER)
+    assert abs(field.roi_box_center[0] - CENTER[0]) <= one_pixel
 
 
 def test_size_defaults_to_5_by_5_and_is_kept_for_the_session(mw, qapp):
@@ -387,39 +392,155 @@ def test_size_defaults_to_5_by_5_and_is_kept_for_the_session(mw, qapp):
     mw.field.toggleRoiBox()  # off
     assert field.roi_box_size == (2.5, 1.0)
 
-    # a cancelled size dialog leaves the box off
-    mw.field.toggleRoiBox()
-    assert not field.roi_box_on
+
+# --- the palette tool -----------------------------------------------------------
+
+def _roi_button(mw):
+    button, mode, _ = mw.mouse_palette.mode_buttons["ROI mode"]
+    return button, mode
 
 
-def test_no_menu_or_key_reaches_the_box(mw):
-    # held back until it returns as ROI mode, a palette tool: the field
-    # methods stay, but no action, menu item or default key reaches them
-    assert default_settings["roibox_act"] == ""
-    for name in ("roibox_act", "moveroibox_act", "roiboxsize_act"):
-        assert not hasattr(mw, name)
-    texts = [a.text() for a in mw.findChildren(QAction)]
-    assert not [t for t in texts if "ROI" in t]
-    assert not [
+def _right_click(button, qapp):
+    QTest.mousePress(button, Qt.RightButton)
+    QTest.mouseRelease(button, Qt.RightButton)
+    qapp.processEvents()
+
+
+def test_roi_mode_is_a_tool_on_the_mouse_palette(mw, qapp):
+    field = mw.field
+    button, mode = _roi_button(mw)
+    assert mode == ROI_BOX
+    assert button.isVisible() and button.toolTip() == "ROI mode"
+
+    QTest.mouseClick(button, Qt.LeftButton)
+    qapp.processEvents()
+
+    assert field.mouse_mode == ROI_BOX
+    assert button.isChecked()
+    others = [
+        name for name, (b, _, __) in mw.mouse_palette.mode_buttons.items()
+        if b.isChecked() and name != "ROI mode"
+    ]
+    assert others == []
+
+
+def test_b_picks_the_roi_mode_tool_and_is_used_nowhere_else(mw, qapp):
+    assert default_settings["useroi_act"] == "B"
+    others = [
+        k for k, v in default_settings.items()
+        if k.endswith("_act") and k != "useroi_act" and v == "B"
+    ]
+    assert others == []
+    with_b = [
         a for a in mw.findChildren(QAction)
         if "B" in [s.toString() for s in a.shortcuts()]
     ]
+    assert with_b == [mw.useroi_act]
+
+    mw.useroi_act.trigger()
+    qapp.processEvents()
+
+    assert mw.field.mouse_mode == ROI_BOX
+    assert _roi_button(mw)[0].isChecked()
+
+
+def test_picking_the_tool_and_dragging_draws_the_box_with_no_dialog(mw, qapp):
+    field = mw.field
+    mw.useroi_act.trigger()
+    qapp.processEvents()
+
+    _drag(field, qapp, _pix(field, 13.3, 23.5), _pix(field, 13.7, 23.9))
+
+    assert mw.main_window_dialogs.dialogs == []
+    assert field.roi_box_on
+    cx, cy = field.roi_box_center
+    w, h = field.roi_box_size
+    one_pixel = _one_pixel(field)
+    assert abs(cx - 13.5) <= one_pixel and abs(cy - 23.7) <= one_pixel
+    assert abs(w - 0.4) <= 2 * one_pixel and abs(h - 0.4) <= 2 * one_pixel
+    assert [t.name for t in field.section_layer.traces_in_view] == ["d03"]
+
+
+def test_a_click_with_the_tool_places_the_box_at_the_kept_size(mw, qapp):
+    field = mw.field
+    field.roi_box_size = SIZE
+    mw.useroi_act.trigger()
+    qapp.processEvents()
+
+    _click(field, qapp, *CENTER)
+
+    assert mw.main_window_dialogs.dialogs == []
+    assert field.roi_box_on and field.roi_box_size == SIZE
+    assert abs(field.roi_box_center[0] - CENTER[0]) <= _one_pixel(field)
+
+
+def test_right_click_on_the_tool_sets_width_and_height(mw, qapp):
+    field = mw.field
+    button, _ = _roi_button(mw)
+    mw.main_window_dialogs.responses.append(([2.5, 1.0], True))
+
+    _right_click(button, qapp)
+
+    assert mw.main_window_dialogs.dialogs == ["ROI mode"]
+    assert field.roi_box_size == (2.5, 1.0)
+    # setting the size alone does not turn the box on or change the tool
+    assert not field.roi_box_on
+    assert field.mouse_mode == POINTER
+
+    # with the box placed, a new size applies at once
+    _turn_on(mw, qapp, size=SIZE)
+    mw.main_window_dialogs.responses.append(([0.2, 0.3], True))
+    _right_click(button, qapp)
+    assert field.roiBox() == (*field.roi_box_center, 0.2, 0.3)
+
+    # a cancelled dialog keeps the size
+    _right_click(button, qapp)
+    assert field.roi_box_size == (0.2, 0.3)
+
+
+def test_view_menu_toggle_picks_the_tool_then_turns_roi_mode_off(mw, qapp):
+    field = mw.field
+    texts = [a.text() for a in mw.findChildren(QAction) if "ROI" in a.text()]
+    assert texts == ["Toggle ROI mode"]
+    assert mw.roibox_act.shortcut().toString() == ""
+
+    mw.roibox_act.trigger()  # off: picks the tool, with no dialog
+    qapp.processEvents()
+    assert field.mouse_mode == ROI_BOX and not field.roi_box_on
+    assert mw.main_window_dialogs.dialogs == []
+
+    _click(field, qapp, *CENTER)
+    assert field.roi_box_on
+
+    mw.roibox_act.trigger()  # on: off, every trace back
+    qapp.processEvents()
+    assert not field.roi_box_on and field.mouse_mode == POINTER
+    assert len(field.section_layer.traces_in_view) == 3
+
+
+def test_box_stays_on_with_another_tool(mw, qapp):
+    """The box filters what is drawn while you trace with any other tool."""
+    field = mw.field
+    _turn_on(mw, qapp)
+    mw.mouse_palette.activateModeButton("Closed Trace")
+    assert field.roi_box_on
+    assert [t.name for t in field.section_layer.traces_in_view] == ["d03"]
 
 
 def test_status_bar_says_the_box_is_on_and_its_size(mw, qapp):
     field = mw.field
     _turn_on(mw, qapp, size=(5, 5), center=None)
     field.updateStatusBar()
-    assert "ROI box 5 x 5 μm: click or drag to place" in mw.status_readout.text()
+    assert "ROI mode 5 x 5 μm: click or drag to place" in mw.status_readout.text()
 
     _click(field, qapp, *CENTER)
     field.updateStatusBar()
     text = mw.status_readout.text()
-    assert "ROI box 5 x 5 μm" in text and "to place" not in text
+    assert "ROI mode 5 x 5 μm" in text and "to place" not in text
 
     mw.field.toggleRoiBox()
     field.updateStatusBar()
-    assert "ROI box" not in mw.status_readout.text()
+    assert "ROI" not in mw.status_readout.text()
 
 
 # --- round 2: one selection rule ----------------------------------------------
@@ -488,7 +609,7 @@ def test_new_trace_outside_the_box_is_kept_not_selected_and_named(mw, qapp):
     )
     (new,) = [t for t in field.section.tracesAsList() if t.name == "roi_out"]
     assert new not in field.section.selected_traces
-    assert "outside the ROI box" in mw.statusBar().currentMessage()
+    assert "outside the ROI mode box" in mw.statusBar().currentMessage()
 
     field.copy()
     assert all(t.name != "roi_out" for t in (field.clipboard or []))
@@ -622,7 +743,7 @@ def test_delete_from_sections_refuses_while_the_box_is_on(mw, qapp, notices, mon
 
     field.deleteTracesFromSections()
 
-    assert notices == ["Turn off the ROI box first."]
+    assert notices == ["Turn off ROI mode first."]
     assert asked == []
     assert [t.name for t in field.section.tracesAsList()].count("d03") == 2
 
@@ -643,7 +764,7 @@ def test_create_copy_of_object_refuses_while_the_box_is_on(mw, qapp, notices):
 
     field.copyObjects()
 
-    assert notices == ["Turn off the ROI box first."]
+    assert notices == ["Turn off ROI mode first."]
     assert set(mw.series.data["objects"]) == objects_before
 
 
@@ -672,7 +793,7 @@ def test_every_field_object_command_refuses_but_3d(mw, qapp, notices, monkeypatc
     ):
         notices.clear()
         fn()
-        assert notices == ["Turn off the ROI box first."], fn
+        assert notices == ["Turn off ROI mode first."], fn
 
     notices.clear()
     field.addTo3D()
@@ -698,7 +819,7 @@ def test_calibrate_pixel_size_refuses_while_the_box_is_on(mw, qapp, notices, mon
 
     mw.calibrate_act.trigger()
 
-    assert notices == ["Turn off the ROI box first."]
+    assert notices == ["Turn off ROI mode first."]
     assert asked == []
     assert field.section.mag == mag
 
@@ -713,7 +834,7 @@ def test_host_gesture_refuses_and_drops_its_pending_trace(mw, qapp, notices):
     d03 = _trace(field.section, "d03")
 
     _click(field, qapp, *_on_trace(d03, tform))
-    assert notices == ["Turn off the ROI box first."]
+    assert notices == ["Turn off ROI mode first."]
     assert field.hosted_trace is None
 
     # a gesture begun before the box came on
@@ -721,7 +842,7 @@ def test_host_gesture_refuses_and_drops_its_pending_trace(mw, qapp, notices):
     field.hosted_trace = _trace(field.section, "d03sp14")
     field.current_trace = [(0, 0)]
     _click(field, qapp, *_on_trace(d03, tform))
-    assert notices == ["Turn off the ROI box first."]
+    assert notices == ["Turn off ROI mode first."]
     assert field.hosted_trace is None and field.current_trace == []
     assert mw.series.getObjHosts("d03sp14") == []
 
@@ -761,7 +882,7 @@ def test_series_wide_menu_commands_refuse_while_the_box_is_on(mw, qapp, notices,
     action.trigger()
     qapp.processEvents()
 
-    assert notices == ["Turn off the ROI box first."]
+    assert notices == ["Turn off ROI mode first."]
     assert recorder.dialogs == dialogs_before and recorder.notices == []
     assert field.section.mag == mag
     assert [
@@ -815,7 +936,7 @@ def test_section_wide_field_commands_refuse_while_the_box_is_on(mw, qapp, notice
     assert outside.hidden
     field.hideOtherTraces()
     assert not _trace(field.section, "d03p14").hidden
-    assert notices == ["Turn off the ROI box first."] * 2
+    assert notices == ["Turn off ROI mode first."] * 2
 
 
 def test_field_series_wide_visibility_rows_are_off_while_the_box_is_on(mw, qapp):

@@ -50,28 +50,25 @@ class FieldWidgetView(FieldWidgetPaint):
         self.generateView()
     
     def toggleRoiBox(self):
-        """Turn the ROI box on or off.
+        """Turn ROI mode on or off.
 
-        On asks for the size, then the next click in the field sets the
-        center. Off shows every trace again. Neither saves an undo state or
-        marks the series modified: the box only changes what is drawn.
+        On picks the ROI mode tool, whose next click or drag in the field
+        places the box. Off shows every trace again. Neither saves an undo
+        state or marks the series modified: the box only changes what is drawn.
         """
-        if self.roi_box_on:
-            self.roi_box_on = False
-            self.roi_box_center = None
-            if self.mouse_mode == ROI_BOX:
-                self.mainwindow.mouse_palette.activateModeButton("Pointer")
-            self.generateView()
+        if not self.roi_box_on:
+            self.mainwindow.mouse_palette.activateModeButton("ROI mode")
             return
 
-        if not self.setRoiBoxSize():
-            return
-        self.roi_box_on = True
+        self.roi_box_on = False
         self.roi_box_center = None
-        self.moveRoiBox()
+        if self.mouse_mode == ROI_BOX:
+            self.mainwindow.mouse_palette.activateModeButton("Pointer")
+        self.generateView()
 
     def setRoiBoxSize(self) -> bool:
-        """Ask for the ROI box's width and height (kept for the session).
+        """Ask for the ROI mode box's width and height (kept for the session).
+        Opened by a right-click on the ROI mode tool.
 
             Returns:
                 (bool): True if the user confirmed a size
@@ -81,34 +78,26 @@ class FieldWidgetView(FieldWidgetPaint):
             ["Width (μm):", (True, "float", w, (1e-6, 1e6))],
             ["Height (μm):", (True, "float", h, (1e-6, 1e6))],
         ]
-        response, confirmed = QuickDialog.get(self, structure, "ROI box size")
+        response, confirmed = QuickDialog.get(self, structure, "ROI mode")
         if not confirmed:
             return False
         self.roi_box_size = (float(response[0]), float(response[1]))
         if self.roiBox() is not None:
             self.generateView()
+        else:
+            self.update()
         return True
 
-    def moveRoiBox(self):
-        """Switch to the ROI box mouse mode: each click sets the center, and
-        each drag sets the center and the size."""
-        if not self.roi_box_on:
-            return
-        self.setMouseMode(ROI_BOX)
-        # no palette button owns this mode
-        for button, _, __ in self.mainwindow.mouse_palette.mode_buttons.values():
-            button.setChecked(False)
-        self.update()
-
     def roiBoxStatus(self) -> str:
-        """The status-bar text for the ROI box, or None while it is off."""
-        if not self.roi_box_on:
-            return None
+        """The status-bar text for ROI mode, or None while it is off and its
+        tool is not in use."""
         w, h = self.roi_box_size
         size = f"{w:g} x {h:g} μm"
-        if self.roi_box_center is None:
-            return f"ROI box {size}: click or drag to place"
-        return f"ROI box {size}"
+        if self.roi_box_on:
+            return f"ROI mode {size}"
+        if self.mouse_mode == ROI_BOX:
+            return f"ROI mode {size}: click or drag to place"
+        return None
 
     def setViewMagnification(self, new_mag : float = None):
         """Set the scaling for the section view.

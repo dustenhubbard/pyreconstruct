@@ -466,7 +466,7 @@ class FieldWidgetTrace(FieldWidgetBase):
         """
         if not self.roi_box_on:
             return False
-        notify("Turn off the ROI box first.")
+        notify("Turn off ROI mode first.")
         return True
 
     ############################################################################
@@ -666,7 +666,7 @@ class FieldWidgetTrace(FieldWidgetBase):
         # selected either; say where it went
         if new_trace in self.dropSelectedOutsideRoiBox():
             self.mainwindow.statusBar().showMessage(
-                "The new trace is outside the ROI box, so it is not shown or selected.",
+                "The new trace is outside the ROI mode box, so it is not shown or selected.",
                 8000
             )
 
