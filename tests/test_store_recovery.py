@@ -490,6 +490,11 @@ def test_a_save_whose_jser_moved_is_named_at_every_open_until_written_out(
     fp = _saved_then_crashed(tmp_path)
     _decline(fp)
     db_fp, _ = hybrid_store.storePaths(str(fp))
+    # with its .jser in place, the store is its own open's to offer, no other's
+    other = _copy(SERIES_FILES[1], tmp_path / "other")
+    asker = _Asked()
+    _open(other, notifier=asker).close()
+    assert asker.told == []
     moved = fp.with_name("renamed.jser")
     fp.rename(moved)
     # the moved .jser opens as it is, and the open names the store with the Save
@@ -499,7 +504,6 @@ def test_a_save_whose_jser_moved_is_named_at_every_open_until_written_out(
     assert fp.name in asker.told[0] and db_fp in asker.told[0]
     assert "--export-local-copy" in asker.told[0]
     # so does the open of another series
-    other = _copy(SERIES_FILES[1], tmp_path / "other")
     asker = _Asked()
     _open(other, notifier=asker).close()
     assert len(asker.told) == 1 and db_fp in asker.told[0]
