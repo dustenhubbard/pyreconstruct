@@ -13,6 +13,173 @@ Nightlies build new commits daily ahead of the next stable release. To run
 
 ## [Unreleased]
 
+## [1.25.0] - 2026-10-18
+
+### Added
+- **An ROI box shows only the traces that touch one area of the field.**
+  Right-click the field and choose View ▸ Toggle ROI box, or press `B`. Drag
+  to draw the box, or enter a width and height in μm and click to place it; a
+  click moves it. The box keeps its place across sections and is not saved.
+  While it is on, a command that acts on every trace of an object, or on the
+  whole section or series, asks you to turn the box off first.
+- **Customize how selected traces look.** The View tab of Series ▸ Options
+  offers the standard look, a black and white outline, or a glow with a solid
+  line, with its own opacity slider.
+- **Right-click the scale bar to set it up for a figure.** Set the scale bar
+  length sets a length that lasts until you choose Size the scale bar
+  automatically or open another series, and it is never saved. Scale bar
+  settings opens the same page as Series ▸ Options ▸ View, and the bar previews
+  each change until you press OK.
+- **Rename a series' images to match a zarr's image names.** In Series ▸
+  Images ▸ Find/change image directory, sections are paired with zarr images
+  by the number in their image names. Nothing changes until you confirm, and
+  the zarr itself is not changed.
+- **The icon takes on a holiday theme in the weeks around seven holidays.** New
+  Year's Day, Valentine's Day, St. Patrick's Day, Easter, Independence Day,
+  Halloween and Christmas each have their own colors and details, from two
+  weeks before until a week after the day. On macOS the dock icon changes too
+  while PyReconstruct is open, and PyReconstruct Dev keeps its DEV badge. The
+  icon is chosen at launch and is unchanged on every other day.
+- **On macOS, PyReconstruct ejects its installer disk image.** When you open
+  the copy in Applications, it ejects the installer image of the same version
+  if that image is still mounted.
+
+### Changed
+- **PyReconstruct has a new icon.** A stack of three glass sections (raw EM at
+  the bottom, a few traced cells in the middle and fully segmented cells on
+  top) replaces the Python-snakes mark in the window, taskbar, dock, installers
+  and the macOS disk image. The small sizes use simpler artwork so they stay
+  clear in a title bar or in Finder's list view. PyReconstruct Dev adds an
+  amber DEV badge, which becomes an amber dot at the smallest sizes.
+- **The scale bar resizes as you zoom.** Its automatic length steps 1, 2, 5
+  inside Scale bar size, and it resizes live during a zoom. It is thinner,
+  15 pixels by default, with a thickness setting in Series ▸ Options ▸ View; a
+  thickness you already saved is kept. The tick labels sit below the bar and
+  read on light and dark images, and a long bar near the right edge moves left
+  until it fits.
+- **Backup Settings has a checkbox for a backup folder per series.** Check it
+  under My Defaults in File ▸ Backup ▸ Settings instead of typing `{series}`.
+  The dialog is also shorter and scrolls.
+- **Help ▸ Turn off What's new pop-up is now Help ▸ Show What's new after each
+  update.** It is ticked while the pop-up is on, like the box at the bottom of
+  What's new, and your choice is kept.
+- **Opening a large series takes far less memory.** A 1.4 GB series now peaks
+  at about 2.5 GB while it opens instead of 10.3 GB. The file format is
+  unchanged.
+- **Saving a large series is faster, the first save after opening it included.**
+  A section that did not change is copied from the file on disk, and the result
+  is byte for byte what a full save writes.
+- **The field redraws faster on a dense section.** The gain is largest when
+  you are zoomed in. What you see does not change.
+- **Changing sections on a dense series is faster.** What is drawn and saved
+  does not change.
+- **Convert to scaled images is faster.** With 5 workers, forty 24576 by 24576
+  sections now take 29 seconds instead of 133.
+
+### Fixed
+- **Opening or browsing a zarr series no longer moves or deletes the zarr
+  scales on disk.**
+  Going to a section with no image could delete the full-resolution images and
+  move the other scales inside scale_1, and opening a section of an older zarr
+  with each image at its root moved every image into a new scale_1 folder.
+  PyReconstruct now reads zarr images where they are and never moves them.
+  Update image scales needs scale_N folders, so for the older layout it says
+  why instead of starting.
+- **An object action keeps what it did when the series is saved before it
+  ends.** Opening another series during the action, or an error that stopped
+  it, could let a save bring a deleted object back.
+- **Opening another series just as an action ends now reports that the action
+  stopped.** This covers object copy, split and import, series-wide edits and
+  new z-traces. They ended as a success, so the saved series could miss the
+  copied traces' groups, hosts and alignment, or the history entry or z-trace,
+  and a calibration or image source change could write to the series that
+  opened.
+- **A save is skipped, with a notice, while an undo, redo,
+  brightness/contrast profile change or alignment change is still rewriting
+  sections.** Save again when it ends. A save at
+  that moment could write a series that named a missing profile and failed to
+  open. A series saved that way now opens on the default profile.
+- **Host links stay with the objects they join.** A new object that takes a
+  deleted object's name no longer gets the old object's links.
+- **Undo and redo on one section keep host links and object attributes.**
+  Redoing an import, rename, copy or split on one section brings back the host
+  links it made, including hosts from the Attributes tab and hosts with no
+  traces, and an object the import emptied keeps its comment and groups. An
+  undo no longer brings back a link that a later redo removed, and copying an
+  object whose host has no traces no longer stops with an error.
+- **Renaming an object keeps its alignment.** It no longer resets to the series
+  alignment.
+- **Undo fully reverses an alignment rename.** The old name comes back on every
+  section, with the alignment set on each object and z-trace, and the next
+  alignment undo no longer brings the old name back.
+- **Opening a series keeps every host link of an object whose name has a space
+  or a comma.** PyReconstruct renames such objects when the series opens, and
+  host links saved by older versions now follow the new name.
+- **Surface meshes of thin contours have far fewer holes at the default XY
+  resolution.** Each trace now fills every voxel it reaches, so gaps narrower
+  than a voxel close. Exported surface area and volume change, and thin
+  objects mostly gain volume.
+- **An island inside a hole drawn as several negative traces fills again in 3D
+  surfaces and label exports.** A negative drawn inside or across the island
+  still cuts it.
+- **Host groups in the 3D scene keep an undo after you open another series.**
+- **The 3D scene opens on a Linux Wayland desktop instead of closing
+  PyReconstruct.** You no longer need to start PyReconstruct with
+  `QT_QPA_PLATFORM=xcb`.
+- **The Zarr label overlay draws labels where label import puts their
+  traces.** Cropped labels, y offsets and gaps in the raw sections no longer
+  move the overlay away from the imported traces.
+- **Imported labels no longer make traces that cross themselves, or specks.** A
+  label that touches itself at a corner comes in as simple traces, and outlines
+  of 10 px² or less are skipped, as Series ▸ Clean up removes them.
+- **New series ▸ From neuroglancer zarr opens a zarr whose raw images are saved
+  as (1, z, y, x).** Raw with more than one channel gets a message that says
+  how to save it.
+- **Canceling the save prompt during New from NG Zarr leaves the open series
+  alone.** Its view stays where it was, and no Save As appears.
+- **Zarr image names with a backslash work on macOS and Linux.** An image such
+  as `a\b.png` shows instead of showing as missing, exports read its size, and
+  Update image scales no longer fails for every image.
+- **Clean-up lists act on the trace you picked after identical copies of it
+  are added or deleted.**
+- **Clean-up actions and scans stop quietly when you open another series while
+  they run.** Combine, Delete and Repair no longer show notices about the old
+  series over the new one, and the self-crossing and empty-trace scans no
+  longer show an error.
+- **A series whose saved view misses its image offers to set the view to the
+  image.** The offer comes only when the view shows neither the image nor any
+  shown trace, so a view parked on a trace opens where you left it. Keep the
+  saved view and it stays as it was.
+- **A two-finger swipe on a Mac trackpad moves a few sections, not dozens.**
+  Sections follow how far your fingers move, and a mouse wheel still moves one
+  section per notch.
+- **A lasso ends when you change tools or pinch to zoom.** Its outline no
+  longer stays on screen while the view pans near an edge.
+- **The trace hover box no longer covers the scale bar or the selected trace
+  names.** Without room for all of it, the box gets shorter and scrolls.
+- **Edit image source and Edit all image sources save the name the image is
+  found by.** A typed folder no longer stays in the section list and the saved
+  series.
+- **Save As follows the case rule of the folder you save into.** A Linux folder
+  that ignores case no longer lets `b.jser` replace a deleted `B.jser` that is
+  still in the 3D scene, and a case-sensitive Windows folder no longer refuses
+  `b.jser` while the 3D scene holds `B.jser`.
+- **Series ▸ Options ▸ Lists shows new columns in a series saved by an older
+  version.** The 3D column is there before the object list opens, and your
+  saved column order and choices stay as they were.
+- **A history entry that an older version split across lines now loads, even
+  when a name in it holds a comma.** An entry that still cannot be read is left
+  out of the history, counted in a notice, and kept in the file.
+- **Old flags keep the same ID on every open, even with over 1,000 identical
+  ones in one section.**
+- **A series saved with a zero-height view opens with a height of one.**
+- **Closing PyReconstruct in its first seconds no longer leaves the What's new
+  pop-up and the update check to run later.**
+- **What's new sets every menu name in the same font as the menu paths around
+  it.** A long command no longer splits onto a line that starts with a blank.
+- **Buttons in dark theme dialogs have room around their words.** Close in
+  Help ▸ View log file now matches its size in the light theme.
+
 ## [1.24.0] - 2026-10-08
 
 ### Added
