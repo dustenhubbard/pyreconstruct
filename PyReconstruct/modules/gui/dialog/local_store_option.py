@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 from .helper import BorderedWidget
 
 from PyReconstruct.modules.datatypes import local_stores
+from PyReconstruct.modules.gui.utils import notify
 
 EXPLAIN = (
     "Keeps a copy of each series on this computer so it opens in seconds. "
@@ -47,7 +48,9 @@ class LocalStoreOptionWidget(BorderedWidget):
     and a button that removes the local copies cleanup may remove, with the
     folder's size beside it. The setting waits for OK like every other
     option; the button acts at once, since it only removes copies that hold
-    nothing their .jser lacks.
+    nothing their .jser lacks. Turning the setting off writes out what the
+    series' local copy holds that its .jser lacks, with the main window's
+    automatic backup, and says which files it wrote (local_stores.turnOff).
     """
 
     def __init__(self, parent, series, use_defaults=False):
@@ -115,4 +118,16 @@ class LocalStoreOptionWidget(BorderedWidget):
         return True
 
     def set(self):
-        local_stores.setSetting(self.series, self.check.isChecked())
+        # the main window, the dialog's parent, writes the .jser as its
+        # close does: with the automatic backup
+        owner = self.window().parentWidget()
+        write_out = getattr(owner, "_writeStoreSave", None)
+        if write_out is not None and getattr(owner, "series", None) is self.series:
+            def write(series, write_out=write_out):
+                return write_out()
+        else:
+            write = None
+        report = local_stores.setSetting(self.series, self.check.isChecked(), write)
+        text = local_stores.turnOffText(report) if report is not None else ""
+        if text:
+            notify(text)

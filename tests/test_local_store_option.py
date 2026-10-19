@@ -3,6 +3,9 @@
 A Dev build has a Files tab holding the row; a stable build has neither the
 tab nor the row, and writes no setting. The check box waits for OK. The
 Remove button removes clean local copies only, and shows the folder's size.
+Unticking it in a window whose series saved to its local copy writes that
+Save to the .jser with the window's automatic backup, and says which files
+it wrote; a write that fails keeps the copy, and the close writes it.
 """
 import os
 
@@ -11,16 +14,22 @@ import pytest
 from PyReconstruct.modules.backend import settings_store
 from PyReconstruct.modules.backend.settings_store import DictSettingsStore
 from PyReconstruct.modules.constants import build_flavor
-from PyReconstruct.modules.datatypes import local_stores
+from PyReconstruct.modules.datatypes import local_stores, store_save
+from PyReconstruct.modules.datatypes import series as series_module
 from PyReconstruct.modules.datatypes.local_stores import ENV_SWITCH, SETTING
 from PyReconstruct.modules.datatypes.series import Series
 from PyReconstruct.modules.gui.dialog.all_options import AllOptionsDialog
+from PyReconstruct.modules.gui.dialog import local_store_option
 from PyReconstruct.modules.gui.dialog.local_store_option import (
     EXPLAIN, LocalStoreOptionWidget, sizeText,
 )
 
 from test_hybrid_store import store_root  # noqa: F401  (fixture)
 from test_local_stores import _pending, make_store
+from test_store_save_gui import (
+    _disk_full, _saved_in_the_store, _store_mode, _window,
+    kept,  # noqa: F401  (fixture)
+)
 
 pytestmark = pytest.mark.gui
 
@@ -146,3 +155,91 @@ def test_remove_takes_clean_copies_only_and_shows_the_size(qapp, series, tmp_pat
 ])
 def test_size_text(n, text):
     assert sizeText(n) == text
+
+
+# ---------------------------------------------------------------------------
+# unticking it in the window
+# ---------------------------------------------------------------------------
+
+def _setting_on_and_saved(window, tmp_path, monkeypatch):
+    """The window's series, saved to its store alone, with the setting deciding.
+
+    Its backup goes to a folder of its own, on every save.
+    """
+    monkeypatch.setattr(build_flavor, "is_dev_build", lambda: True)
+    assert store_save.heldStore(window.series) is not None
+    snum, edited = _saved_in_the_store(window)
+    settings = DictSettingsStore()
+    settings.set_value(None, SETTING, True)
+    window.series.setSettingsStore(settings)
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    window.series.setBackupUsesDefaults(False)
+    window.series.setOption("backup_dir", str(backups))
+    window.series.setOption("autobackup", True)
+    monkeypatch.delenv(ENV_SWITCH)
+    return snum, edited, backups
+
+
+def _untick(window, monkeypatch):
+    told = []
+    monkeypatch.setattr(local_store_option, "notify", told.append)
+    dlg = AllOptionsDialog(window, window.series)
+    dlg.all_widgets["local_store"].check.setChecked(False)
+    assert dlg.accept() is True
+    return told
+
+
+def _section_in_the_jser(fp, snum):
+    plain = Series.openJser(str(fp))
+    try:
+        return plain.loadSection(snum).getDict()
+    finally:
+        plain.close()
+
+
+def test_unticking_it_writes_the_save_to_the_jser_with_its_backup(kept, tmp_path, main_window_dialogs, monkeypatch):  # noqa: F811
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    try:
+        snum, edited, backups = _setting_on_and_saved(window, tmp_path, monkeypatch)
+        before = kept.read_bytes()
+        told = _untick(window, monkeypatch)
+        assert kept.read_bytes() != before
+        written = sorted(backups.iterdir())
+        assert len(written) == 1
+        assert written[0].read_bytes() == kept.read_bytes()
+        assert told == [
+            "Fast local copy is off. The last Save in the local copy was written to:\n"
+            f"{kept}\n{written[0]}"
+        ]
+        assert store_save.heldStore(window.series) is None
+        saved = kept.read_bytes()
+    finally:
+        window.close()
+    # the close had nothing more to write
+    assert kept.read_bytes() == saved
+    assert _section_in_the_jser(kept, snum) == edited
+
+
+def test_unticking_it_when_the_write_fails_keeps_the_copy_and_the_close_writes_it(kept, tmp_path, main_window_dialogs, monkeypatch):  # noqa: F811
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    try:
+        snum, edited, backups = _setting_on_and_saved(window, tmp_path, monkeypatch)
+        before = kept.read_bytes()
+        write = series_module._atomicWrite
+        shown = _disk_full(window, monkeypatch)
+        told = _untick(window, monkeypatch)
+        assert len(shown) == 1
+        assert kept.read_bytes() == before
+        assert list(backups.iterdir()) == []
+        assert len(told) == 1
+        assert told[0].startswith(f"The local copy could not be written to:\n{kept}\n")
+        assert store_save.heldStore(window.series) is not None
+        assert store_save.ahead(window.series)
+        monkeypatch.setattr(series_module, "_atomicWrite", write)
+    finally:
+        window.close()
+    assert kept.read_bytes() != before
+    assert _section_in_the_jser(kept, snum) == edited
