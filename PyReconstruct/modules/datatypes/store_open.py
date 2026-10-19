@@ -29,8 +29,8 @@ import hashlib
 import json
 import os
 import sqlite3
+import sys
 from contextlib import contextmanager
-from typing import Optional
 
 import numpy as np
 
@@ -103,20 +103,98 @@ def _raiseIfBug(err : Exception):
         raise err
 
 
+_WINDOWS = sys.platform == "win32"
+## msvcrt.locking takes a C long: lock a large file in parts this size
+_LOCK_PART = 1 << 30
+
+
+class FileChangedWhileHashed(StoreUnavailable):
+    """The .jser was written to while it was hashed: open it as today."""
+
+
+def _readChunk(f, buf) -> int:
+    """One read for the hash (a seam for the tests that write mid-hash)."""
+    return f.readinto(buf)
+
+
+def _fileIdentity(st) -> tuple:
+    """What a write to a file changes, as far as stat can tell.
+
+    Size, modification time, and which file it is (on Windows st_ino is the
+    file index). The change time too, except on Windows, where st_ctime is
+    when the file was made; there `_noWritesWhileHashed` keeps writers out.
+    """
+    key : tuple = (st.st_size, st.st_mtime_ns, st.st_ino, st.st_dev)
+    if not _WINDOWS:
+        key += (st.st_ctime_ns,)
+    return key
+
+
+@contextmanager
+def _noWritesWhileHashed(f, size : int):
+    """On Windows, lock the whole file so no other program writes it meanwhile.
+
+    A Windows byte-range lock is enforced: a write into a locked range fails.
+    A lock that cannot be had (another program holds one) is a refusal.
+    Elsewhere nothing is locked, and the change time shows any write.
+    """
+    if not _WINDOWS:
+        yield
+        return
+    import msvcrt
+    locked = []
+    try:
+        for start in range(0, size, _LOCK_PART):
+            n = min(_LOCK_PART, size - start)
+            f.seek(start)
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBRLCK, n)  # type: ignore[attr-defined]
+            locked.append((start, n))
+    except OSError as e:
+        _unlock(f, locked)
+        raise StoreUnavailable(f"the file could not be locked while it was hashed ({e})") from e
+    try:
+        f.seek(0)
+        yield
+    finally:
+        _unlock(f, locked)
+
+
+def _unlock(f, locked):
+    import msvcrt
+    for start, n in locked:
+        try:
+            f.seek(start)
+            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, n)  # type: ignore[attr-defined]
+        except OSError:
+            pass
+
+
 def jserDigest(fp : str) -> str:
-    """The sha256 of a file's bytes, as hex, read in large chunks."""
+    """The sha256 of the file at fp, as hex, or FileChangedWhileHashed.
+
+    The open's own check that a file did not change while it was read
+    (jser_scan.check_unchanged: its size and modification time) is taken
+    further here, since nothing else is read: which file it is, and its
+    change time, before and after, both from the open file and from its path
+    (a file renamed over it meanwhile). On Windows the file is locked while it
+    is hashed instead of reading the change time.
+    """
     h = hashlib.sha256()
     buf = bytearray(HASH_CHUNK)
     view = memoryview(buf)
-    with open(fp, "rb", buffering=0) as f:
-        while n := f.readinto(buf):
-            h.update(view[:n])
+    try:
+        with open(fp, "rb", buffering=0) as f:
+            before = os.fstat(f.fileno())
+            with _noWritesWhileHashed(f, before.st_size):
+                while n := _readChunk(f, buf):
+                    h.update(view[:n])
+                after = os.fstat(f.fileno())
+        now = os.stat(fp)
+    except OSError as e:
+        raise StoreUnavailable(str(e)) from e
+    if not (_fileIdentity(before) == _fileIdentity(after) == _fileIdentity(now)):
+        raise FileChangedWhileHashed(f"{os.path.basename(fp)} changed while it was being hashed")
     return h.hexdigest()
-
-
-def _identity(st) -> tuple:
-    """What any write to a file changes: size, both times, and which file it is."""
-    return (st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_ino, st.st_dev)
 
 
 def _unavailable(jser_fp : str, err : Exception):
@@ -145,20 +223,14 @@ def openJser(fp : str, progress=None, notifier=None):
             held.close()
             held = None
             return Series._unpackJser(fp, progress, notifier)[0]
-        try:
-            # hashed before today's open reads the file, to be kept with it
-            held.digest()
-        except StoreUnavailable as e:
-            _unavailable(fp, e)
-            held.close()
-            held = None
-            return Series._unpackJser(fp, progress, notifier)[0]
-        series, collisions = Series._unpackJser(fp, progress, notifier)
+        # the open hashes the bytes it decodes, so the store keeps the hash of
+        # what went into it, whatever happens to the file meanwhile
+        series, collisions, digest = Series._unpackJser(fp, progress, notifier, hashed=True)
         if series is not None:
             factory = progress if progress is not None else _default_progress_reporter_factory()
             reporter = factory(text=f"Keeping a local copy of {series.name} for faster opening...")
             try:
-                held.importOpened(series, collisions, reporter)
+                held.importOpened(series, collisions, digest, reporter)
             finally:
                 reporter.finish()
         return series
@@ -176,18 +248,6 @@ class StoreForOpen():
         """
         self.store = store
         self.jser_fp = jser_fp
-        self.stat = os.stat(jser_fp)
-        self._digest : Optional[str] = None
-
-    def digest(self) -> str:
-        """The sha256 of the .jser, read once, after `stat` was taken."""
-        digest = self._digest
-        if digest is None:
-            try:
-                digest = self._digest = jserDigest(self.jser_fp)
-            except OSError as e:
-                raise StoreUnavailable(str(e)) from e
-        return digest
 
     @staticmethod
     def attempt(jser_fp : str):
@@ -234,12 +294,13 @@ class StoreForOpen():
         """True when an open can come from the store: it holds this .jser as
         imported, every section's numbers, and nothing else.
 
-        The .jser is the one imported only when its bytes hash the same. Its
+        The .jser is the one imported only when its bytes hash the same
+        (`jserDigest`, which refuses a file written to while it is hashed). Its
         size and modification time decide nothing: a copy that keeps times
         keeps them, and a network folder that stores whole seconds repeats
-        them. (The open hashes the file either way: an import keeps the hash.)
-        A store with work in its working layer or saved past its .jser (later
-        steps write those) is not read here.
+        them. The file is hashed last, once the store could be read. A store
+        with work in its working layer or saved past its .jser (later steps
+        write those) is not read here.
         """
         store = self.store
         try:
@@ -252,7 +313,7 @@ class StoreForOpen():
             stored = {r[0] for r in store.con.execute("SELECT snum FROM section_stats")}
             if stored != set(store.sectionNumbers()):
                 return False
-            return store.meta(META_SHA) == self.digest()
+            return store.meta(META_SHA) == jserDigest(self.jser_fp)
         except (OSError, sqlite3.Error) as e:
             _raiseIfBug(e)
             raise StoreUnavailable(str(e)) from e
@@ -299,7 +360,7 @@ class StoreForOpen():
 
     ## writing -----------------------------------------------------------------
 
-    def importOpened(self, series, collisions, reporter=None):
+    def importOpened(self, series, collisions, digest, reporter=None):
         """Keep what today's open just wrote and measured, for the next open.
 
         The working folder's files go into the store through its own import
@@ -311,20 +372,19 @@ class StoreForOpen():
             Params:
                 series (Series): the series today's open returned
                 collisions (dict): the contour-name collisions that open merged
+                digest (str): the sha256 of the bytes that open decoded
                 reporter: an optional ProgressReporter
         """
         name = os.path.basename(self.jser_fp)
+        if digest is None:
+            log_note(f"Local store not kept for {name}: the file's bytes were not hashed")
+            return
         if collisions:
             # the merge was asked about; a later open must ask again
             log_note(f"Local store not kept for {name}: its objects were merged on open")
             return
         store = self.store
         try:
-            if self._digest is None or _identity(os.stat(self.jser_fp)) != _identity(self.stat):
-                # written to while it was hashed or opened: what was read
-                # may not be what was hashed
-                log_note(f"Local store not kept for {name}: the file changed while it was opened")
-                return
             if store.hasPending() or store.meta("dirty") == "1":
                 # work a later version left in the store is never replaced
                 log_note(f"Local store not kept for {name}: it holds work the .jser lacks")
@@ -348,11 +408,9 @@ class StoreForOpen():
                     " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     stats,
                 )
-                # the .jser as this open read it: if it changed since, the
-                # next open imports it again
-                store.setMeta("jser_size", self.stat.st_size)
-                store.setMeta("jser_mtime_ns", self.stat.st_mtime_ns)
-                store.setMeta(META_SHA, self._digest)
+                # the bytes this open decoded: the next open reads the store
+                # only for a file with these bytes
+                store.setMeta(META_SHA, digest)
                 store.setMeta(META_SPLICE, _spliceMeta(getattr(series, "_jser_splice_index", None)))
                 store.setMeta(META_STATS, store.meta("imported_utc"))
         except _NotMeasuredAlike as e:

@@ -481,22 +481,225 @@ def test_the_store_records_the_sha256_of_the_file_it_holds(tmp_path, switch_on):
         store.close()
 
 
-def test_a_file_written_while_it_is_opened_is_not_kept(tmp_path, switch_on, notes, monkeypatch):
-    fp = _copy(PARITY, tmp_path / "s")
-    real = Series._unpackJser
-
-    def written_during(*a, **k):
-        result = real(*a, **k)
-        # the same bytes and times written again: only the change time moves
-        st = os.stat(fp)
-        fp.write_bytes(fp.read_bytes())
+def _write_in_place(fp, data, keep_time=True):
+    """Overwrite fp's bytes in place (same file), keeping its modification time."""
+    st = os.stat(fp)
+    with open(fp, "r+b") as f:
+        f.write(data)
+    if keep_time:
         os.utime(fp, ns=(st.st_atime_ns, st.st_mtime_ns))
-        return result
 
-    monkeypatch.setattr(Series, "_unpackJser", staticmethod(written_during))
+
+def _write_during_the_hash(monkeypatch, fp, data, keep_time=True):
+    """Make the reopen's hash read the file in small parts, and write `data`
+    into it after the first part (bytes the hash has already read)."""
+    monkeypatch.setattr(store_open, "HASH_CHUNK", 1024)
+    real = store_open._readChunk
+    calls = []
+
+    def reads(f, buf):
+        n = real(f, buf)
+        calls.append(n)
+        if len(calls) == 1:
+            _write_in_place(fp, data, keep_time)
+        return n
+
+    monkeypatch.setattr(store_open, "_readChunk", reads)
+    return calls
+
+
+def test_a_write_into_the_file_while_it_is_hashed_opens_as_today(tmp_path, switch_on, notes, monkeypatch):
+    fp = _copy(PARITY, tmp_path / "s")
     _open(fp).close()
-    monkeypatch.setattr(Series, "_unpackJser", staticmethod(real))
-    assert notes == ["Local store not kept for parity_series.jser: the file changed while it was opened"]
+    other = _same_size_other_content(fp)
+    calls = _write_during_the_hash(monkeypatch, fp, other)
+    opens = _store_opens(monkeypatch)
+    series = _open(fp)
+    try:
+        assert len(calls) > 1 and opens == []
+        assert "dendrite02" in series.data.objects and "dendrite01" not in series.data.objects
+    finally:
+        series.close()
+    assert notes == ["Local store not used for parity_series.jser: parity_series.jser changed while it was being hashed"]
+
+
+@pytest.mark.parametrize("rules", ["this-system", "windows"])
+def test_a_file_renamed_over_it_while_it_is_hashed_opens_as_today(rules, tmp_path, switch_on, notes, monkeypatch):
+    if rules == "windows":
+        # no change time: only the path, read again, shows the new file
+        monkeypatch.setattr(store_open, "_WINDOWS", True)
+        monkeypatch.setitem(sys.modules, "msvcrt", _FakeMsvcrt())
+    fp = _copy(PARITY, tmp_path / "s")
+    _open(fp).close()
+    other = _same_size_other_content(fp)
+    st = os.stat(fp)
+    monkeypatch.setattr(store_open, "HASH_CHUNK", 1024)
+    real = store_open._readChunk
+    calls = []
+
+    def reads(f, buf):
+        n = real(f, buf)
+        calls.append(n)
+        if len(calls) == 1:
+            # a save that writes a new file and renames it over this one
+            new = fp.with_name("saving.tmp")
+            new.write_bytes(other)
+            os.utime(new, ns=(st.st_atime_ns, st.st_mtime_ns))
+            os.replace(new, fp)
+        return n
+
+    monkeypatch.setattr(store_open, "_readChunk", reads)
+    opens = _store_opens(monkeypatch)
+    series = _open(fp)
+    try:
+        assert opens == []
+        assert "dendrite02" in series.data.objects
+    finally:
+        series.close()
+    assert notes == ["Local store not used for parity_series.jser: parity_series.jser changed while it was being hashed"]
+
+
+class _FakeMsvcrt:
+    """msvcrt.locking, recorded; `fail` makes the lock refused."""
+    LK_NBRLCK, LK_UNLCK = 3, 0
+
+    def __init__(self, fail=False):
+        self.calls, self.fail = [], fail
+
+    def locking(self, fd, mode, n):
+        if mode == self.LK_NBRLCK and self.fail:
+            raise PermissionError(13, "Permission denied")
+        self.calls.append((mode, os.lseek(fd, 0, os.SEEK_CUR), n))
+
+
+@pytest.fixture
+def windows(monkeypatch):
+    """Windows' rules for the hash: no change time, and the file locked meanwhile."""
+    fake = _FakeMsvcrt()
+    monkeypatch.setattr(store_open, "_WINDOWS", True)
+    monkeypatch.setitem(sys.modules, "msvcrt", fake)
+    return fake
+
+
+def test_on_windows_the_whole_file_is_locked_while_it_is_hashed(tmp_path, switch_on, windows, monkeypatch):
+    fp = _copy(PARITY, tmp_path / "s")
+    _open(fp).close()
+    monkeypatch.setattr(store_open, "_LOCK_PART", 100_000)
+    opens = _store_opens(monkeypatch)
+    _open(fp).close()
+    assert opens == ["parity_series"]
+    size = os.path.getsize(fp)
+    parts = [(start, min(100_000, size - start)) for start in range(0, size, 100_000)]
+    assert windows.calls == [(windows.LK_NBRLCK, s, n) for s, n in parts] + [(windows.LK_UNLCK, s, n) for s, n in parts]
+
+
+def test_on_windows_a_file_that_cannot_be_locked_opens_as_today(tmp_path, switch_on, windows, notes, monkeypatch):
+    fp = _copy(PARITY, tmp_path / "s")
+    _open(fp).close()
+    windows.fail = True
+    opens = _store_opens(monkeypatch)
+    _open(fp).close()
+    assert opens == []
+    assert len(notes) == 1 and "could not be locked while it was hashed" in notes[0]
+
+
+def test_on_windows_a_write_while_it_is_hashed_that_moves_the_time_opens_as_today(tmp_path, switch_on, windows, notes, monkeypatch):
+    fp = _copy(PARITY, tmp_path / "s")
+    _open(fp).close()
+    _write_during_the_hash(monkeypatch, fp, _same_size_other_content(fp), keep_time=False)
+    opens = _store_opens(monkeypatch)
+    _open(fp).close()
+    assert opens == []
+    assert notes == ["Local store not used for parity_series.jser: parity_series.jser changed while it was being hashed"]
+
+
+@pytest.mark.parametrize("when", ["while-it-is-scanned", "after-it-is-scanned"])
+def test_a_write_during_the_first_open_never_keeps_one_file_under_another_s_hash(when, tmp_path, switch_on, windows, monkeypatch):
+    """Windows' rules, a same-size write that keeps the time, during the first open.
+
+    The open hashes the bytes it decodes, so whatever it keeps carries their
+    hash: neither the old file nor the new one opens from it later.
+    """
+    from PyReconstruct.modules.constants import jser_scan
+    from PyReconstruct.modules.datatypes.series import SeriesOpenError
+
+    fp = _copy(PARITY, tmp_path / "s")
+    old = fp.read_bytes()
+    other = _same_size_other_content(fp)
+    monkeypatch.setattr(jser_scan, "_CHUNK", 4096)
+    if when == "while-it-is-scanned":
+        real = jser_scan._Reader._fill
+        fills = []
+
+        def fill(self):
+            more = real(self)
+            fills.append(more)
+            if len(fills) == 1:
+                _write_in_place(fp, other)
+            return more
+
+        monkeypatch.setattr(jser_scan._Reader, "_fill", fill)
+    else:
+        import PyReconstruct.modules.datatypes.series as series_module
+        real_scan = series_module.scan_jser
+
+        def scan(f, hasher=None):
+            index = real_scan(f, hasher)
+            _write_in_place(fp, other)
+            return index
+
+        monkeypatch.setattr(series_module, "scan_jser", scan)
+    try:
+        _open(fp).close()
+    except SeriesOpenError as e:
+        # the open's own check: a section's bytes differ from the scan's
+        assert "changed while it was being opened" in str(e)
+    monkeypatch.undo()
+    monkeypatch.setenv(store_open.ENV_SWITCH, "1")
+    monkeypatch.setenv(hybrid_store.ENV_DIR, str(switch_on))
+    # whatever was kept, each version of the file opens as today opens it
+    for data in (old, other):
+        fp.write_bytes(data)
+        expected = _today(fp, tmp_path, monkeypatch)
+        series = _open(fp)
+        try:
+            assert _snapshot(series) == expected
+        finally:
+            series.close()
+
+
+def test_the_kept_hash_is_of_the_bytes_the_open_decoded_not_of_the_file_after(tmp_path, switch_on, windows, monkeypatch):
+    """The open reads the file once: a same-size write that keeps the time,
+    made after that read, is not what the store holds, so A stays under A's
+    hash and B never opens from it."""
+    import PyReconstruct.modules.datatypes.series as series_module
+
+    fp = _copy(PARITY, tmp_path / "s")
+    old = fp.read_bytes()
+    other = _same_size_other_content(fp)
+    real_scan = series_module.scan_jser
+
+    def scan(f, hasher=None):
+        index = real_scan(f, hasher)
+        _write_in_place(fp, other)
+        return index
+
+    monkeypatch.setattr(series_module, "scan_jser", scan)
+    try:
+        _open(fp).close()
+    except series_module.SeriesOpenError:
+        pass
+    monkeypatch.setattr(series_module, "scan_jser", real_scan)
+    store = HybridStore.forJser(str(fp))
+    try:
+        kept = store.meta(store_open.META_SHA)
+        held = store.readSection(min(store.sectionNumbers())) if kept else None
+    finally:
+        store.close()
+    if kept is not None:
+        assert kept == hashlib.sha256(old).hexdigest()
+        assert "dendrite01" in held["contours"] and "dendrite02" not in held["contours"]
+    assert fp.read_bytes() == other
     opens = _store_opens(monkeypatch)
     _open(fp).close()
     assert opens == []
