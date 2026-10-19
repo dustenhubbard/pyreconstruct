@@ -1998,15 +1998,15 @@ class Section():
         and row numbers untouched. The cost is the build, which is paid either
         way; what is saved is the churn.
 
-        It has a third consequence, worth naming because it is load-bearing:
-        `SectionColumns` carries an `id` column, and `fromSection` once issued
-        rather than carried ids. The issuer IS wired -- every `Section` built
-        from a file carries an id per trace, adopted from the file or derived
-        at load by the series' issuer -- so a save that adopted a rebuild
-        unconditionally would re-identify every trace on the section. Keeping
-        the existing store when nothing drifted means an ordinary save does
-        not, and `test_a_save_does_not_re_identify_the_traces_it_saves` pins
-        that.
+        Trace ids are not what keeps a clean save safe. `SectionColumns`
+        carries an `id` column, and every `Section` built from a file holds an
+        id per trace, adopted from the file or derived at load by the series'
+        issuer. `_rebuildColumnarStore` passes those ids into the replacement
+        as `carried_ids`, so every rebuild already keeps each id it can
+        correlate, before the save decides whether to adopt it. Keeping the
+        existing store on a clean save spares its generation, tracking and row
+        map, and `test_a_save_does_not_re_identify_the_traces_it_saves` pins
+        that an ordinary save keeps the ids.
 
         **The residue this paragraph used to record is closed.** A save that
         DOES find drift adopts the rebuild, and that used to lose the ids with
@@ -2015,9 +2015,9 @@ class Section():
         ids into the replacement, so a drifted save keeps every id it can
         correlate through the outgoing row map. The two mechanisms are
         complementary rather than redundant, and both are still wanted: this
-        one avoids the rebuild entirely when nothing drifted, which also
-        spares the generation counter, while carrying the ids is what makes
-        the rebuild non-destructive on the occasions it IS adopted.
+        one avoids adopting the rebuild when nothing drifted, which spares the
+        generation counter, while carrying the ids is what makes the rebuild
+        non-destructive on the occasions it IS adopted.
 
         Drift is PRINTED, never raised. See `_storeDrift`. So is a rebuild that
         cannot be built at all: see the `except` below, which is the reason
