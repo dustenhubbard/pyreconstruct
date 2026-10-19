@@ -71,8 +71,12 @@ META_DIRTY = "dirty"
 ## meta: when the store last took a Save the .jser lacks (UTC)
 META_SAVED = "saved_utc"
 ## meta: the sha256 of the .jser `writeJser` is writing, kept from just before
-## the file is put in place until the store records it (store_recovery.py)
+## the file is put in place until the store records it (store_recovery.py).
+## A failed write and every later Save drop it: it names one Save's .jser
 META_WRITING = "writing_sha256"
+## meta: the .jser a store with no .jser of its own was written out to
+## (store_recovery.py); a later Save drops it
+META_WRITTEN_OUT = "written_out"
 
 
 class NotKept(Exception):
@@ -329,6 +333,8 @@ def _commit(series, held, keys : dict, tail : dict, written):
         raise NotKept(f"the log holds text the store cannot keep ({e.reason})") from e
 
     with store_open._transaction(store):
+        # a .jser a close was writing holds an earlier Save than this one
+        store.setMeta(META_WRITING, None)
         old_series = _opened(store.seriesData())
         new_series = _opened(fast_loads(series_bytes))
         content_changed = bool(changed or dropped) or fast_dumps(old_series) != fast_dumps(new_series)
@@ -376,6 +382,7 @@ def _commit(series, held, keys : dict, tail : dict, written):
         elif content_changed:
             store.setMeta(META_DIRTY, 1)
             store.setMeta(META_SAVED, _now())
+            store.setMeta(META_WRITTEN_OUT, None)
 
 
 def _asOpened(index, store):
@@ -649,12 +656,17 @@ def writeJser(series):
             write_jser(hasher.wrap(f), sections, tail, splice=splice)
             # before the file is put in place: a crash after that, before the
             # record below, leaves a .jser the next open knows as this one
-            _noteWriting(store, hasher.digest())
+            digest = hasher.digest()
+            if digest is not None:
+                _noteWriting(store, digest)
 
         try:
             _atomicWrite(jser_fp, write)
-        except OSError as e:
-            series._surfaceSaveError(jser_fp, e)
+        except BaseException as e:
+            # no .jser was put in place: nothing may be known as this one
+            _noteWriting(store, None)
+            if isinstance(e, OSError):
+                series._surfaceSaveError(jser_fp, e)
             raise
         series._jser_splice_index = new_index = splice.indexFor(jser_fp)
         digest = hasher.digest()
@@ -677,7 +689,8 @@ def writeJser(series):
 
 
 def _noteWriting(store, digest):
-    """Keep the sha256 of the .jser about to be put in place (META_WRITING).
+    """Keep the sha256 of the .jser about to be put in place (META_WRITING),
+    or drop it (None).
 
     Only crash recovery reads it, so a store that cannot take it is noted in
     the log and the write goes on: without it, a crash in that gap sets the
@@ -685,8 +698,6 @@ def _noteWriting(store, digest):
     """
     from . import store_open
 
-    if digest is None:
-        return
     try:
         with store_open._transaction(store):
             store.setMeta(META_WRITING, digest)

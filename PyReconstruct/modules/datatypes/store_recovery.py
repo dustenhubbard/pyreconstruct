@@ -22,9 +22,16 @@ states against the .jser on disk (`standing`):
     or key, so its Save cannot be opened as it is. The store is set aside.
 
 A set-aside store is the whole store file, renamed to
-``<store>.conflict-<UTC>.pyrstore`` in the same folder. It is never deleted.
-The open says where it is, and so does every later open of the .jser until
-``PyReconstruct --export-local-copy <file>`` writes it out (`exportStore`).
+``<store>.conflict-<UTC>.pyrstore`` in the same folder in one rename. It is
+never deleted. The open says where it is, and so does every later open of the
+.jser until ``PyReconstruct --export-local-copy <file>`` writes it out
+(`exportStore`). A store that cannot be made one file first (another program
+has it open) is not moved: it stays where it is, whole, the open says so, and
+the next open tries again.
+
+A store keyed by a .jser that is gone (moved, renamed or deleted) is never
+opened again by that .jser. Every open names each such store with work no
+.jser has (`strandedStores`), until it is written out.
 
 When the window resumes a working folder after a crash (`resumed`), the
 series takes its store if the store holds its .jser or a Save the .jser
@@ -36,13 +43,15 @@ section with them.
 import errno
 import glob
 import os
+import shutil
 import sqlite3
 import sys
 import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 
 from . import store_open, store_save
-from .hybrid_store import HybridStore, _fsyncFolder, storePaths
+from .hybrid_store import SCHEMA_VERSION, HybridStore, _fsyncFolder, storePaths, storeRoot
 
 CLEAN = "clean"
 AHEAD = "ahead"
@@ -53,8 +62,10 @@ UNREADABLE = "unreadable"
 ## the name a set-aside store takes: <store>.conflict-<UTC>.pyrstore
 SET_ASIDE = ".conflict-"
 STORE_EXT = ".pyrstore"
-## meta of a set-aside store: the .jser it was written out to
-META_WRITTEN_OUT = "written_out"
+## meta of a set-aside store, or of one whose .jser is gone: the .jser it was written out to
+META_WRITTEN_OUT = store_save.META_WRITTEN_OUT
+## the files SQLite keeps beside a store
+SIDECARS = ("-wal", "-shm", "-journal")
 ## what to run to write a set-aside store out (cli.py)
 EXPORT_OPTION = "--export-local-copy"
 
@@ -119,14 +130,15 @@ def finishWrite(held, digest : str):
 def setAside(held) -> str:
     """Rename the held store to a set-aside name and let go of it.
 
-    The WAL is folded into the file first, so the set-aside file is whole on
-    its own; if that cannot be done, its WAL and index files move with it.
-    The path is left free for a new store.
+    The WAL is folded into the file first, so the store is one file, and it
+    moves in one rename: a crash leaves it whole at one name or the other.
+    If it cannot be made one file (another program has it open), nothing
+    moves. The path is left free for a new store.
 
         Returns:
             (str): the set-aside store file
         Raises:
-            StoreUnavailable: it could not be renamed
+            StoreUnavailable: it was not moved; it is whole where it was
     """
     store = held.store
     db_fp = store.db_fp
@@ -138,19 +150,22 @@ def setAside(held) -> str:
         kept = f"{base}{SET_ASIDE}{stamp}-{n}{STORE_EXT}"
         n += 1
     try:
-        store.con.execute("PRAGMA journal_mode=DELETE")
+        row = store.con.execute("PRAGMA journal_mode=DELETE").fetchone()
+        folded = row is not None and str(row[0]).lower() == "delete"
     except sqlite3.Error as e:
         store_open._raiseIfBug(e)
-    store.con.close()
-    store.con = None
+        folded = False
     try:
+        store.con.close()
+        store.con = None
+        left = [db_fp + ext for ext in SIDECARS if os.path.lexists(db_fp + ext)]
+        if not folded or left:
+            raise store_open.StoreUnavailable(
+                "the store could not be set aside: its WAL could not be folded into it"
+            )
         os.rename(db_fp, kept)
-        for ext in ("-wal", "-shm", "-journal"):
-            if os.path.exists(db_fp + ext):
-                os.rename(db_fp + ext, kept + ext)
         _fsyncFolder(os.path.dirname(db_fp))
     except OSError as e:
-        # whatever did not move stays where it was, whole: the next open tries again
         raise store_open.StoreUnavailable(f"the store could not be set aside ({e})") from e
     finally:
         # the lock last: no other window takes the store while it moves
@@ -159,26 +174,76 @@ def setAside(held) -> str:
     return kept
 
 
+def _keepAside(held) -> tuple:
+    """(set-aside file, None), or (None, store file) if the store stayed where it was."""
+    db_fp = held.store.db_fp
+    try:
+        return setAside(held), None
+    except store_open.StoreUnavailable as e:
+        store_open._unavailable(held.jser_fp, e)
+        return None, db_fp
+
+
 def setAsideStores(jser_fp : str) -> list:
     """The set-aside stores of a .jser not yet written out, oldest first."""
     db_fp, _ = storePaths(jser_fp)
     pattern = glob.escape(db_fp[:-len(STORE_EXT)]) + SET_ASIDE + "*" + STORE_EXT
-    return [fp for fp in sorted(glob.glob(pattern)) if not _readMeta(fp).get(META_WRITTEN_OUT)]
+    out = []
+    for fp in sorted(glob.glob(pattern)):
+        read = _readStore(fp)
+        if read is None or not read[0].get(META_WRITTEN_OUT):
+            out.append(fp)
+    return out
 
 
-def _readMeta(db_fp : str) -> dict:
-    """A store file's meta, read without its lock; {} if it cannot be read."""
+def strandedStores(skip=()) -> list:
+    """Stores with work no .jser has whose .jser is gone: [(store file, its .jser)].
+
+    Read at every open, without a lock, and nothing is changed. The .jser was
+    moved, renamed or deleted, or is on a drive not connected: the store is
+    keyed by its path, so no open of a .jser ever takes it. A store written
+    out (`exportStore`) is not listed again until it takes another Save.
+    """
+    skip = {os.path.normcase(os.path.abspath(fp)) for fp in skip if fp}
+    root = storeRoot()
+    tag = f".v{SCHEMA_VERSION}."
+    out = []
+    for fp in sorted(glob.glob(os.path.join(glob.escape(str(root)), "*" + STORE_EXT))):
+        if tag not in os.path.basename(fp) or os.path.normcase(os.path.abspath(fp)) in skip:
+            continue
+        read = _readStore(fp)
+        if read is None:
+            continue
+        meta, pending = read
+        if meta.get(META_WRITTEN_OUT):
+            continue
+        if meta.get(store_save.META_DIRTY) != "1" and not pending:
+            continue
+        jser = meta.get("jser_path")
+        if jser and not os.path.isfile(jser):
+            out.append((fp, jser))
+    return out
+
+
+def _readStore(db_fp : str) -> "tuple[dict, bool] | None":
+    """(meta, holds working rows) of a store file, read without its lock;
+    None if it cannot be read. A missing file is not made."""
     try:
-        con = sqlite3.connect(db_fp, timeout=1)
+        con = sqlite3.connect(Path(db_fp).as_uri() + "?mode=rw", uri=True, timeout=1)
         try:
-            return {
+            meta = {
                 k: (v.decode("utf-8", "surrogatepass") if isinstance(v, bytes) else v)
                 for k, v in con.execute("SELECT key, value FROM meta")
             }
+            pending = bool(
+                con.execute("SELECT 1 FROM pending_section LIMIT 1").fetchone()
+                or con.execute("SELECT 1 FROM pending_series LIMIT 1").fetchone()
+            )
         finally:
             con.close()
     except sqlite3.Error:
-        return {}
+        return None
+    return meta, pending
 
 
 ## ---------------------------------------------------------------------------
@@ -202,19 +267,22 @@ def atOpen(held, notifier=None):
     """
     jser_fp = held.jser_fp
     state, digest = standing(held)
-    kept = None
+    kept = in_place = None
     if state == WRITTEN:
         finishWrite(held, digest)
     elif state == AHEAD:
         if _asker(notifier).confirm(offerText(held), title="Unsaved Series") is False:
-            kept = setAside(held)
+            kept, in_place = _keepAside(held)
         else:
             held.opens_save = True
     elif state in (CHANGED, UNREADABLE):
-        kept = setAside(held)
-    if kept is not None:
+        kept, in_place = _keepAside(held)
+    if in_place is not None:
+        # the store stays as it is, unused: the .jser opens as it is
+        held = None
+    elif kept is not None:
         held = store_open.StoreForOpen.attempt(jser_fp)
-    _tellSetAside(notifier, jser_fp, kept, state)
+    _tellSetAside(notifier, jser_fp, kept, state, in_place)
     return held
 
 
@@ -233,14 +301,14 @@ def resumed(series, notifier=None):
     held = store_open.StoreForOpen.attempt(jser_fp)
     if held is None:
         return
-    kept = None
+    kept = in_place = None
     state = None
     try:
         state, digest = standing(held)
         if state == WRITTEN:
             finishWrite(held, digest)
         if state in (CHANGED, UNREADABLE):
-            kept = setAside(held)
+            kept, in_place = _keepAside(held)
             held = None
         elif state == AHEAD or held.holdsJser(digest):
             store_save.attach(series, held)
@@ -250,7 +318,7 @@ def resumed(series, notifier=None):
     finally:
         if held is not None:
             held.close()
-    _tellSetAside(notifier, jser_fp, kept, state)
+    _tellSetAside(notifier, jser_fp, kept, state, in_place)
 
 
 def _asker(notifier):
@@ -266,14 +334,18 @@ def tell(notifier, message : str):
     _asker(notifier).notify(message)
 
 
-def _tellSetAside(notifier, jser_fp : str, kept, state):
+def _tellSetAside(notifier, jser_fp : str, kept, state, in_place=None):
     try:
         others = [fp for fp in setAsideStores(jser_fp) if fp != kept]
     except OSError:
         others = []
-    if kept is None and not others:
+    try:
+        stranded = strandedStores(skip=[storePaths(jser_fp)[0], kept, *others])
+    except OSError:
+        stranded = []
+    if kept is None and in_place is None and not others and not stranded:
         return
-    tell(notifier, setAsideText(jser_fp, kept, state, others))
+    tell(notifier, setAsideText(jser_fp, kept, state, others, in_place, stranded))
 
 
 ## ---------------------------------------------------------------------------
@@ -308,9 +380,16 @@ def _exportLine(fp : str) -> str:
     return f'To write it to a new .jser, run:\n  PyReconstruct {EXPORT_OPTION} "{fp}"'
 
 
-def setAsideText(jser_fp : str, kept, state, others=()) -> str:
+def setAsideText(jser_fp : str, kept, state, others=(), in_place=None, stranded=()) -> str:
     name = _seriesName(jser_fp)
     parts = []
+    if in_place is not None:
+        parts.append(
+            f"Work saved on this computer that {name} does not have could not be "
+            f"set aside just now. It is kept where it is, untouched, in:\n  {in_place}\n"
+            f"{name} opens as it is on disk, and its next open tries again.\n\n"
+            + _exportLine(in_place)
+        )
     if kept is not None:
         if state == AHEAD:
             why = f"The work saved on this computer that {name} does not have"
@@ -331,6 +410,14 @@ def setAsideText(jser_fp : str, kept, state, others=()) -> str:
         parts.append(
             f"Earlier work for {name} is still kept aside in:\n{listed}\n\n"
             + _exportLine(others[0] if len(others) == 1 else "<file>")
+        )
+    if stranded:
+        listed = "\n".join(f"  {_seriesName(jser)}, kept in:\n    {fp}" for fp, jser in stranded)
+        parts.append(
+            "Work saved on this computer was never written to a .jser, and the "
+            ".jser is not where it was (moved, renamed or deleted, or on a drive "
+            f"that is not connected):\n{listed}\n\n"
+            + _exportLine(stranded[0][0] if len(stranded) == 1 else "<file>")
         )
     return "\n\n".join(parts)
 
@@ -355,8 +442,8 @@ def exportStore(path : str, out_fp=None) -> str:
     rows over it. The bytes are those a close writes from the same store
     (store_save.writeJser), since both use today's writer on the same rows.
     An existing file is never replaced, and the store is not changed, but for
-    a set-aside store, which records where it was written out so later opens
-    stop listing it.
+    a set-aside store, or one whose .jser is gone, which records where it was
+    written out so later opens stop listing it.
 
         Params:
             path (str): a .pyrstore file, or a .jser whose store is wanted
@@ -385,8 +472,9 @@ def exportStore(path : str, out_fp=None) -> str:
     )
     store = HybridStore(db_fp, work_dir)
     try:
+        recorded = store.meta("jser_path")
         if out_fp is None:
-            out_fp = _defaultOut(store.meta("jser_path"), db_fp)
+            out_fp = _defaultOut(recorded, db_fp)
         out_fp = os.path.abspath(out_fp)
         if os.path.lexists(out_fp):
             raise FileExistsError(f"{out_fp} exists; it was not replaced")
@@ -407,7 +495,7 @@ def exportStore(path : str, out_fp=None) -> str:
             return {"series": series_data, "log": log}
 
         _writeNew(out_fp, lambda f: write_jser(f, sections, tail))
-        if SET_ASIDE in base:
+        if SET_ASIDE in base or not (recorded and os.path.isfile(recorded)):
             with store_open._transaction(store):
                 store.setMeta(META_WRITTEN_OUT, out_fp)
     finally:
@@ -425,7 +513,15 @@ def _defaultOut(recorded, db_fp : str) -> str:
 
 
 def _writeNew(fp : str, write):
-    """Write a new file whole, or not at all; an existing file is never replaced."""
+    """Write a new file; an existing file is never replaced, even one made a
+    moment ago.
+
+    The file is written beside its name, then put in place whole by a step
+    that refuses a file already there: a hard link (POSIX) or a rename
+    (Windows). A file system with no hard links (FAT) gets it copied into a
+    name made only if none is there (`_copyNew`), so a crash during that copy
+    can leave part of the file; nothing records it as written out then.
+    """
     folder = os.path.dirname(fp)
     fd, tmp = tempfile.mkstemp(prefix=".export-", suffix=".tmp", dir=folder)
     try:
@@ -441,16 +537,23 @@ def _writeNew(fp : str, write):
             except OSError as e:
                 if e.errno not in (errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EXDEV):
                     raise
-                # a file system with no hard links
-                if os.path.lexists(fp):
-                    raise FileExistsError(errno.EEXIST, "exists; it was not replaced", fp) from e
-                os.rename(tmp, fp)
-            else:
-                os.remove(tmp)
+                _copyNew(tmp, fp)
         _fsyncFolder(folder)
-    except BaseException:
+    finally:
         if os.path.exists(tmp):
             os.remove(tmp)
+
+
+def _copyNew(src : str, fp : str):
+    """Copy src to fp, a file made here (O_EXCL), so never over another."""
+    fd = os.open(fp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o666)
+    try:
+        with os.fdopen(fd, "wb") as f, open(src, "rb") as s:
+            shutil.copyfileobj(s, f, 1 << 20)
+            f.flush()
+            os.fsync(f.fileno())
+    except BaseException:
+        os.remove(fp)  # made above: only this part of the file is in it
         raise
 
 

@@ -15,21 +15,28 @@ What these pin:
 * a store that holds a Save the .jser lacks is offered at the next open, and
   never passed over silently: yes, or nobody to ask, opens that Save, and the
   close writes it to the .jser as today's Save would; no keeps it aside;
-* a .jser the store's close wrote, but did not record, is recorded;
+* a .jser the store's close wrote, but did not record, is recorded; a close
+  that fails, or a later Save, drops its note of that .jser;
 * a store whose .jser was changed by someone else, or that cannot be opened
-  as it is, is set aside whole, never deleted, and the user is told where, at
-  that open and every later one until it is written out;
+  as it is, is set aside whole, as one file, never deleted, and the user is
+  told where, at that open and every later one until it is written out; a
+  store that cannot be made one file stays where it is, and the user is told;
+* a store whose .jser moved holds work no open takes: every open names it
+  until it is written out;
 * a resumed working folder takes its store, and its next Save folds every
   changed section file into the store;
 * `PyReconstruct --export-local-copy` writes a set-aside store, or a .jser's
   store, to a new .jser with the bytes a close writes, and never replaces a
-  file.
+  file, even one made after its check, with hard links or without.
 """
+import errno
 import hashlib
 import io
 import os
 import shutil
+import sqlite3
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -301,6 +308,63 @@ def test_the_close_notes_the_jser_it_writes_until_it_is_recorded(
     series.close()
 
 
+def test_a_close_that_fails_drops_its_note_of_the_jser_it_was_writing(
+    tmp_path, switch_on, store_mode, monkeypatch,  # noqa: F811
+):
+    from PyReconstruct.modules.backend.func import atomic_io
+
+    fp = _kept(PARITY, tmp_path)
+    before = fp.read_bytes()
+    series = _open(fp)
+    _edit(series)
+    series.saveToStore()
+    seen = []
+
+    def fail(src, dst, *a, **k):
+        seen.append(_meta_held(series, store_save.META_WRITING))
+        raise OSError(errno.EIO, "the disk failed")
+
+    with monkeypatch.context() as m:
+        m.setattr(atomic_io, "replace_with_retry", fail)
+        m.setattr(series, "_surfaceSaveError", lambda *a, **k: None)
+        with pytest.raises(OSError):
+            store_save.writeJser(series)
+    assert fp.read_bytes() == before
+    assert len(seen) == 1 and seen[0] is not None
+    assert _meta_held(series, store_save.META_WRITING) is None
+    assert _meta_held(series, store_save.META_DIRTY) == "1"
+    series.close()
+
+
+def test_a_later_save_drops_the_note_so_an_older_jser_is_never_taken_for_it(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    save_a = _today_saved(PARITY, tmp_path / "a", monkeypatch)
+    save_b = _today_saved(PARITY, tmp_path / "b", monkeypatch, _both_edits)
+    fp = _kept(PARITY, tmp_path)
+    series = _open(fp)
+    _edit(series)
+    assert series.saveToStore() is True
+    # a close was writing Save A's .jser, and stopped before it was in place
+    store_save._noteWriting(store_save.heldStore(series).store, hashlib.sha256(save_a).hexdigest())
+    _edit_last(series)
+    assert series.saveToStore() is True
+    assert _meta_held(series, store_save.META_WRITING) is None
+    _crash(series)
+    _decline(fp)
+    # another program puts Save A's bytes in place: not the store's Save B
+    fp.write_bytes(save_a)
+    asker = _Asked()
+    _open(fp, notifier=asker).close()
+    assert fp.read_bytes() == save_a
+    aside = store_root_glob(fp)
+    assert len(aside) == 1 and len(asker.told) == 1
+    assert "was changed on disk by another window or program" in asker.told[0]
+    out = tmp_path / "back.jser"
+    store_recovery.exportStore(aside[0], str(out))
+    assert out.read_bytes() == save_b
+
+
 def test_a_save_that_cannot_be_read_at_the_open_is_said_and_kept_for_the_next(
     tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
 ):
@@ -340,6 +404,124 @@ def test_a_store_without_its_numbers_is_set_aside_not_deleted(
     assert asker.asked == []
     aside = store_root_glob(fp)
     assert len(aside) == 1 and "could not be opened as it is" in asker.told[0]
+
+
+def test_a_set_aside_store_is_one_file_whole_on_its_own(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    fp = _saved_then_crashed(tmp_path)
+    _decline(fp)
+    _open(fp, notifier=_Asked(False)).close()
+    aside = store_root_glob(fp)
+    assert len(aside) == 1
+    # its WAL was folded in before it moved: a rollback-journal file, alone
+    assert Path(aside[0]).read_bytes()[18:20] == b"\x01\x01"
+    assert [ext for ext in store_recovery.SIDECARS if os.path.lexists(aside[0] + ext)] == []
+
+
+def test_a_store_another_program_has_open_is_kept_whole_where_it_is(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    expected_bytes = _today_saved(PARITY, tmp_path, monkeypatch)
+    fp = _saved_then_crashed(tmp_path)
+    _decline(fp)
+    shutil.copyfile(SERIES_FILES[1], fp)
+    db_fp, _ = hybrid_store.storePaths(str(fp))
+    # another program reads the store, so its WAL cannot be folded into it
+    reader = sqlite3.connect(db_fp)
+    try:
+        reader.execute("SELECT count(*) FROM meta").fetchone()
+        asker = _Asked()
+        series = _open(fp, notifier=asker)
+        try:
+            assert store_save.heldStore(series) is None
+        finally:
+            series.close()
+    finally:
+        reader.close()
+    # nothing moved: no set-aside name holds a part of it
+    assert store_root_glob(fp) == []
+    assert len(asker.told) == 1
+    assert "could not be set aside just now" in asker.told[0] and db_fp in asker.told[0]
+    assert _meta(fp, store_save.META_DIRTY) == "1"
+    out = tmp_path / "back.jser"
+    store_recovery.exportStore(db_fp, str(out))
+    assert out.read_bytes() == expected_bytes
+    # the next open, with the store let go, sets it aside
+    asker = _Asked()
+    _open(fp, notifier=asker).close()
+    assert len(store_root_glob(fp)) == 1 and len(asker.told) == 1
+
+
+def test_two_set_asides_in_one_second_keep_both(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 10, 19, 12, 0, 0, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(store_recovery, "datetime", Frozen)
+    fp = _saved_then_crashed(tmp_path)
+    _decline(fp)
+    first = store_recovery.setAside(store_open.StoreForOpen.attempt(str(fp)))
+    series = _open(fp, notifier=_Asked())
+    _edit_last(series)
+    assert series.saveToStore() is True
+    _crash(series)
+    _decline(fp)
+    second = store_recovery.setAside(store_open.StoreForOpen.attempt(str(fp)))
+    assert first != second
+    assert store_root_glob(fp) == sorted([first, second])
+    for kept_fp, change in ((first, _edit), (second, _edit_last)):
+        out = tmp_path / f"{Path(kept_fp).stem}.jser"
+        store_recovery.exportStore(kept_fp, str(out))
+        assert out.read_bytes() == _today_saved(PARITY, tmp_path / Path(kept_fp).stem, monkeypatch, change)
+
+
+# ---------------------------------------------------------------------------
+# a .jser that moved
+# ---------------------------------------------------------------------------
+
+def test_a_save_whose_jser_moved_is_named_at_every_open_until_written_out(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    expected_bytes = _today_saved(PARITY, tmp_path, monkeypatch)
+    fp = _saved_then_crashed(tmp_path)
+    _decline(fp)
+    db_fp, _ = hybrid_store.storePaths(str(fp))
+    moved = fp.with_name("renamed.jser")
+    fp.rename(moved)
+    # the moved .jser opens as it is, and the open names the store with the Save
+    asker = _Asked()
+    _open(moved, notifier=asker).close()
+    assert asker.asked == [] and len(asker.told) == 1
+    assert fp.name in asker.told[0] and db_fp in asker.told[0]
+    assert "--export-local-copy" in asker.told[0]
+    # so does the open of another series
+    other = _copy(SERIES_FILES[1], tmp_path / "other")
+    asker = _Asked()
+    _open(other, notifier=asker).close()
+    assert len(asker.told) == 1 and db_fp in asker.told[0]
+    # written out: no longer named, and never deleted
+    out = tmp_path / "back.jser"
+    code, text = _cli(monkeypatch, db_fp, str(out))
+    assert (code, text.strip()) == (0, str(out))
+    assert out.read_bytes() == expected_bytes
+    asker = _Asked()
+    _open(moved, notifier=asker).close()
+    assert asker.told == [] and os.path.isfile(db_fp)
+    # put back, it takes another Save, and moves again: named again
+    moved.rename(fp)
+    series = _open(fp, notifier=_Asked(True))
+    _edit_last(series)
+    assert series.saveToStore() is True
+    _crash(series)
+    _decline(fp)
+    fp.rename(moved)
+    asker = _Asked()
+    _open(moved, notifier=asker).close()
+    assert len(asker.told) == 1 and db_fp in asker.told[0]
 
 
 # ---------------------------------------------------------------------------
@@ -443,6 +625,50 @@ def test_the_command_line_writes_a_jser_s_store_to_a_new_file_and_replaces_none(
     code, text = _cli(monkeypatch, str(fp), str(out))
     assert code == 1 and "was not replaced" in text
     assert out.read_bytes() == b"mine"
+    assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".export-")] == []
+
+
+def _no_hard_links(monkeypatch):
+    def link(*a, **k):
+        raise OSError(errno.ENOTSUP, "no hard links")
+
+    monkeypatch.setattr(os, "link", link)
+
+
+@pytest.mark.parametrize("links", [True, False], ids=["hard links", "no hard links"])
+def test_the_export_never_replaces_a_file_made_after_its_check(
+    links, tmp_path, switch_on, store_mode, monkeypatch,  # noqa: F811
+):
+    fp = _saved_then_crashed(tmp_path)
+    out = tmp_path / "new.jser"
+    real = os.path.lexists
+
+    def lexists(path):
+        # each check finds no file, and another program makes one right after
+        if os.path.abspath(path) == str(out):
+            out.write_bytes(b"theirs")
+            return False
+        return real(path)
+
+    if not links:
+        _no_hard_links(monkeypatch)
+    monkeypatch.setattr(os.path, "lexists", lexists)
+    with pytest.raises(FileExistsError):
+        store_recovery.exportStore(str(fp), str(out))
+    monkeypatch.setattr(os.path, "lexists", real)
+    assert out.read_bytes() == b"theirs"
+    assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".export-")] == []
+
+
+def test_the_export_without_hard_links_writes_the_same_bytes(
+    tmp_path, switch_on, store_mode, monkeypatch,  # noqa: F811
+):
+    expected_bytes = _today_saved(PARITY, tmp_path, monkeypatch)
+    fp = _saved_then_crashed(tmp_path)
+    _no_hard_links(monkeypatch)
+    out = tmp_path / "new.jser"
+    assert store_recovery.exportStore(str(fp), str(out)) == str(out)
+    assert out.read_bytes() == expected_bytes
     assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".export-")] == []
 
 
