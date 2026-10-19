@@ -77,6 +77,14 @@ class StoreBusyError(OSError):
     """Another process holds the store. Never a sign of damage."""
 
 
+class StoreSchemaError(OSError):
+    """The file is not a store this build can read: another schema, or not a store."""
+
+
+class StoreSaveError(OSError):
+    """Save would leave the store naming a section it does not hold."""
+
+
 IN_USE = (
     "This series is open in another PyReconstruct window (or another program "
     "is saving it). Close it there first."
@@ -125,12 +133,42 @@ def storeRoot() -> Path:
     return Path(base) / "PyReconstruct" / "stores"
 
 
-def storePaths(jser_fp : str) -> tuple:
-    """(store file, working folder) for a .jser, keyed by its real path.
+def canonicalPath(fp : str) -> str:
+    """The real path of fp, spelled as the disk spells it.
 
-    Two copies at two paths never share a store; a symlink and its target do.
+    `os.path.realpath` resolves links but keeps the case it was given, and the
+    usual macOS and Windows disks ignore case, so one file can be named in
+    many spellings. On macOS an existing file's path is read back from the
+    open file (F_GETPATH), in the case the disk stores; on Windows the path is
+    folded with `normcase`. Elsewhere, and for a file that cannot be opened,
+    it is the real path.
     """
-    real = os.path.realpath(jser_fp)
+    real = os.path.realpath(fp)
+    if sys.platform == "win32":
+        return os.path.normcase(real)
+    if sys.platform == "darwin":
+        import fcntl
+        try:
+            fd = os.open(real, os.O_RDONLY)
+        except OSError:
+            return real
+        try:
+            buf = fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024))
+            return os.fsdecode(buf.split(b"\0", 1)[0])
+        except OSError:
+            return real
+        finally:
+            os.close(fd)
+    return real
+
+
+def storePaths(jser_fp : str) -> tuple:
+    """(store file, working folder) for a .jser, keyed by its canonical path.
+
+    Two copies at two paths never share a store; a symlink and its target do,
+    and so do two spellings of one name on a disk that ignores case.
+    """
+    real = canonicalPath(jser_fp)
     sname = os.path.splitext(os.path.basename(real))[0]
     key = hashlib.sha256(real.encode("utf-8")).hexdigest()[:16]
     root = storeRoot()
@@ -221,6 +259,8 @@ class HybridStore():
             Raises:
                 OSError: if the store folder is on a network file system
                 StoreBusyError: if another process holds the store
+                StoreSchemaError: if the file is a store of another schema
+                    version, or not a store at all; it is left as it was
         """
         self.db_fp = db_fp
         self.work_dir = work_dir
@@ -231,22 +271,46 @@ class HybridStore():
         self._lock_fd = _lockFile(db_fp + ".lock")
         if self._lock_fd is None:
             raise StoreBusyError(IN_USE)
-        os.makedirs(work_dir, exist_ok=True)
+        # from here on the lock is held: any failure lets go of it
         try:
+            os.makedirs(work_dir, exist_ok=True)
             self.con = sqlite3.connect(db_fp, isolation_level=None)
             self.con.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+            self._checkSchema()
             self.con.execute("PRAGMA journal_mode=WAL")
             self.con.execute("PRAGMA synchronous=FULL")
-            self.con.executescript(SCHEMA)
-            if self.meta("schema_version") is None:
-                self.setMeta("schema_version", SCHEMA_VERSION)
-                self.setMeta("created_utc", _now())
-                self.con.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
-        except sqlite3.OperationalError as e:
+        except BaseException as e:
             self.close()
-            if _isBusy(e):
+            if isinstance(e, sqlite3.OperationalError) and _isBusy(e):
                 raise StoreBusyError(IN_USE) from e
             raise
+
+    def _checkSchema(self):
+        """Create the schema in a new file; refuse a file of any other version.
+
+        Read before anything is written, so a store another build made, or a
+        file that is not a store, is left exactly as it was.
+        """
+        version = self.con.execute("PRAGMA user_version").fetchone()[0]
+        if version == SCHEMA_VERSION:
+            return
+        has_tables = self.con.execute(
+            "SELECT 1 FROM sqlite_master LIMIT 1"
+        ).fetchone() is not None
+        if version != 0 or has_tables:
+            raise StoreSchemaError(
+                f"{self.db_fp} is not a local store this version of PyReconstruct "
+                f"can read (schema version {version}). It was left as it was."
+            )
+        # a new file: the schema and its version in one transaction, so a
+        # crash leaves either an empty file or a whole schema
+        self.con.executescript(
+            "BEGIN IMMEDIATE;\n" + SCHEMA
+            + f"PRAGMA user_version={SCHEMA_VERSION};\n"
+            + "INSERT INTO meta(key, value) VALUES "
+            + f"('schema_version', '{SCHEMA_VERSION}'), ('created_utc', '{_now()}');\n"
+            + "COMMIT;"
+        )
 
     @staticmethod
     def forJser(jser_fp : str) -> "HybridStore":
@@ -285,7 +349,7 @@ class HybridStore():
 
     def recordJser(self, jser_fp : str):
         st = os.stat(jser_fp)
-        self.setMeta("jser_path", os.path.realpath(jser_fp))
+        self.setMeta("jser_path", canonicalPath(jser_fp))
         self.setMeta("jser_size", st.st_size)
         self.setMeta("jser_mtime_ns", st.st_mtime_ns)
 
@@ -349,14 +413,17 @@ class HybridStore():
     def readSection(self, snum : int, fallback_fp : str | None = None) -> dict:
         """A section dict, as the hidden section file holds it today.
 
-        The working copy wins over the saved one. A section the store has never
-        seen (one inserted this session, which exists only as a file in the
-        working folder) is read from `fallback_fp`.
+        The working copy wins over the saved one, and a section deleted in the
+        working layer is gone. A section the store has never seen (one
+        inserted this session, which exists only as a file in the working
+        folder) is read from `fallback_fp`.
         """
         row = self.con.execute(
             "SELECT data FROM pending_section WHERE snum=?", (snum,)
         ).fetchone()
-        if row is not None and row[0] is not None:
+        if row is not None:
+            if row[0] is None:
+                raise FileNotFoundError(f"section {snum} is deleted in the store {self.db_fp}")
             return fast_loads(row[0])
         row = self.con.execute(
             "SELECT header FROM section WHERE snum=?", (snum,)
@@ -453,6 +520,17 @@ class HybridStore():
             # a section the series no longer has
             for snum in saved - set(series.sections):
                 pending[snum] = None
+            # every section the series lists must have content to save, or the
+            # saved series would name a section the store does not hold
+            missing = sorted(
+                snum for snum in series.sections
+                if pending.get(snum) is None and (snum in pending or snum not in saved)
+            )
+            if missing:
+                raise StoreSaveError(
+                    f"Not saved: section(s) {', '.join(map(str, missing))} of the "
+                    f"series have no data in the store or the working folder."
+                )
             changed = False
             for snum, data in sorted(pending.items()):
                 if data is None or snum not in series.sections:

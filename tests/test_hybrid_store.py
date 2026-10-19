@@ -229,6 +229,40 @@ def test_the_fields_july_left_untested_import_as_they_open_today(tmp_path, store
         store.close()
 
 
+def _keyed(row, trace_id, fill_mode_key):
+    keyed = dict(zip(("x", "y", "color", "closed", "negative", "hidden"), row[:6]))
+    keyed[fill_mode_key] = row[6]
+    keyed["tags"] = row[7]
+    keyed["id"] = trace_id
+    return keyed
+
+
+def test_a_trace_s_saved_id_survives_the_import_in_both_fill_mode_spellings(tmp_path, store_root):
+    # ids no derivation would give, 11 base62 characters as the reader wants
+    planted = {("dendrite01", 0): ("zzSTORE0001", "fill_mode"),
+               ("dendrite01", 1): ("zzSTORE0002", "mode")}
+    doc = json.loads(PARITY.read_bytes())
+    snum = next(i for i, s in enumerate(doc["sections"]) if s and "dendrite01" in s["contours"])
+    rows = doc["sections"][snum]["contours"]["dendrite01"]
+    for (name, i), (trace_id, key) in planted.items():
+        rows[i] = _keyed(rows[i], trace_id, key)
+    folder = tmp_path / "src"
+    folder.mkdir()
+    src = folder / "ids.jser"
+    src.write_text(json.dumps(doc))
+
+    _assert_holds_what_today_writes(src, tmp_path)
+    store = HybridStore.forJser(str(tmp_path / "store" / src.name))
+    try:
+        stored = store.readSection(snum)["contours"]["dendrite01"]
+    finally:
+        store.close()
+    for (name, i), (trace_id, key) in planted.items():
+        assert isinstance(stored[i], dict), f"row {i} lost its id: {stored[i]!r}"
+        assert stored[i]["id"] == trace_id
+        assert key in stored[i]  # the spelling the file used
+
+
 def test_the_import_reads_the_jser_one_section_at_a_time(tmp_path, store_root, monkeypatch):
     import gc
     import weakref
@@ -474,6 +508,50 @@ def test_a_deleted_section_stays_deleted(how, opened):
         store.readSection(snum)
 
 
+@pytest.mark.parametrize("how", ["no-data-anywhere", "deleted-but-still-listed"])
+def test_save_refuses_a_listed_section_it_has_no_data_for_and_keeps_the_work(how, opened):
+    store, series = opened
+    snum = _first_with_traces(store)
+    edited = _edited(store, snum)
+    store.writePendingSection(snum, edited)
+    data = store.seriesData()
+    data["current_section"] = snum
+    store.writePendingSeries(data)
+    saved_series = store.con.execute("SELECT data FROM series").fetchone()
+    if how == "no-data-anywhere":
+        missing = max(series.sections) + 1
+        series.sections[missing] = f"{series.name}.{missing}"  # listed, no file
+    else:
+        missing = max(s for s in store.sectionNumbers() if s != snum)
+        store.deletePendingSection(missing)  # the series still lists it
+
+    with pytest.raises(hybrid_store.StoreSaveError, match=f"section\\(s\\) {missing} "):
+        store.commit(series)
+    # nothing was saved and the unsaved work is all still there
+    assert store.meta("dirty") == "0"
+    assert store.con.execute("SELECT data FROM series").fetchone() == saved_series
+    assert store.readSection(snum) == edited
+    assert store.seriesData() == data
+    assert store.con.execute("SELECT COUNT(*) FROM pending_section").fetchone()[0] >= 1
+    assert store.con.execute(
+        "SELECT 1 FROM section WHERE snum=?", (snum,)
+    ).fetchone() is not None
+
+
+def test_a_section_deleted_in_the_working_layer_is_gone_before_save(opened):
+    store, series = opened
+    snum = _first_with_traces(store)
+    hidden_file = os.path.join(series.getwdir(), series.sections[snum])
+    assert os.path.isfile(hidden_file)
+    store.deletePendingSection(snum)
+    assert snum not in store.sectionNumbers()
+    assert not store.hasSection(snum)
+    with pytest.raises(FileNotFoundError, match="deleted"):
+        store.readSection(snum)
+    with pytest.raises(FileNotFoundError, match="deleted"):
+        store.readSection(snum, hidden_file)  # nor from a file left behind
+
+
 def test_a_section_only_in_the_working_folder_is_read_and_saved(opened):
     store, series = opened
     new = max(series.sections) + 1
@@ -535,6 +613,70 @@ def test_a_store_held_by_a_killed_process_opens_again(tmp_path, store_root):
         store.close()
 
 
+def _lock_is_free(db_fp) -> bool:
+    fd = hybrid_store._lockFile(str(db_fp) + ".lock")
+    if fd is None:
+        return False
+    os.close(fd)
+    return True
+
+
+def test_a_failed_open_lets_go_of_the_lock_when_the_working_folder_fails(tmp_path, monkeypatch):
+    db_fp, work = tmp_path / "s.pyrstore", tmp_path / "s.work"
+    real = os.makedirs
+
+    def makedirs(path, *a, **k):
+        if os.fspath(path) == str(work):
+            raise PermissionError(13, "Permission denied", str(path))
+        return real(path, *a, **k)
+    monkeypatch.setattr(hybrid_store.os, "makedirs", makedirs)
+    with pytest.raises(PermissionError):
+        HybridStore(str(db_fp), str(work))
+    monkeypatch.undo()
+    assert _lock_is_free(db_fp)
+
+
+def test_a_failed_open_lets_go_of_the_lock_when_the_file_is_not_a_database(tmp_path):
+    db_fp = tmp_path / "s.pyrstore"
+    junk = b"this is not a SQLite file " * 200
+    db_fp.write_bytes(junk)
+    with pytest.raises(sqlite3.DatabaseError):
+        HybridStore(str(db_fp), str(tmp_path / "s.work"))
+    assert _lock_is_free(db_fp)
+    assert db_fp.read_bytes() == junk
+
+
+@pytest.mark.parametrize("version, table", [
+    (hybrid_store.SCHEMA_VERSION + 998, "meta(key TEXT PRIMARY KEY, value TEXT)"),
+    (0, "something_else(x)"),
+], ids=["a-newer-schema", "another-program-s-database"])
+def test_a_store_of_another_schema_is_refused_and_left_as_it_was(version, table, tmp_path):
+    db_fp = tmp_path / "s.pyrstore"
+    con = sqlite3.connect(db_fp)
+    con.execute(f"CREATE TABLE {table}")
+    con.execute(f"PRAGMA user_version={version}")
+    con.commit()
+    con.close()
+    before = db_fp.read_bytes()
+    with pytest.raises(hybrid_store.StoreSchemaError, match=f"schema version {version}"):
+        HybridStore(str(db_fp), str(tmp_path / "s.work"))
+    assert _lock_is_free(db_fp)
+    assert db_fp.read_bytes() == before
+    assert not Path(str(db_fp) + "-wal").exists()
+
+
+def test_a_new_store_s_schema_is_written_whole(tmp_path):
+    db_fp = tmp_path / "s.pyrstore"
+    HybridStore(str(db_fp), str(tmp_path / "s.work")).close()
+    store = HybridStore(str(db_fp), str(tmp_path / "s.work"))  # and it opens again
+    try:
+        tables = {r[0] for r in store.con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert {"meta", "series", "log", "section", "trace", "pending_section", "pending_series"} <= tables
+        assert store.meta("created_utc")
+    finally:
+        store.close()
+
+
 def test_a_busy_store_is_reported_as_busy_never_as_damage(tmp_path, store_root):
     store = HybridStore.forJser(str(tmp_path / "s.jser"))
     try:
@@ -582,7 +724,12 @@ def test_a_local_folder_s_file_system_is_read_and_allowed(tmp_path):
     assert fstype not in hybrid_store.NETWORK_FS
 
 
-def test_the_store_is_keyed_by_the_real_path_and_lives_in_the_store_folder(tmp_path, store_root):
+@pytest.mark.parametrize("platform", [None, "linux"], ids=["this-platform", "linux"])
+def test_the_store_is_keyed_by_the_real_path_and_lives_in_the_store_folder(platform, tmp_path, store_root, monkeypatch):
+    if platform is not None and sys.platform == "win32":
+        pytest.skip("the Linux branch needs POSIX paths")
+    if platform is not None:
+        monkeypatch.setattr(hybrid_store.sys, "platform", platform)
     fp = _copy(PARITY, tmp_path, "data")
     other = _copy(PARITY, tmp_path, "elsewhere")
     link = tmp_path / "link.jser"
@@ -594,6 +741,30 @@ def test_the_store_is_keyed_by_the_real_path_and_lives_in_the_store_folder(tmp_p
     stem, _, key = Path(db_fp).stem.rpartition("-")
     assert stem == fp.stem and len(key) == 16 and int(key, 16) >= 0
     assert Path(db_fp).suffix == ".pyrstore" and Path(work).name == f"{stem}-{key}.work"
+
+
+def _ignores_case(folder) -> bool:
+    probe = Path(folder) / "case-probe"
+    probe.write_text("")
+    try:
+        return (Path(folder) / "CASE-PROBE").exists()
+    finally:
+        probe.unlink()
+
+
+def test_two_spellings_of_one_file_share_a_store(tmp_path, store_root):
+    fp = _copy(PARITY, tmp_path, "data")
+    if not _ignores_case(fp.parent):
+        pytest.skip("this disk tells names apart by case")
+    alias = fp.parent.parent / "DATA" / fp.name.upper()
+    assert os.path.samefile(fp, alias)
+    assert hybrid_store.storePaths(str(alias)) == hybrid_store.storePaths(str(fp))
+    first = HybridStore.forJser(str(fp))
+    try:
+        with pytest.raises(hybrid_store.StoreBusyError):
+            HybridStore.forJser(str(alias))
+    finally:
+        first.close()
 
 
 @pytest.mark.parametrize("platform, env, expected", [
