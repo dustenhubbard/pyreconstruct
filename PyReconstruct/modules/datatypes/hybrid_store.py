@@ -554,6 +554,8 @@ class HybridStore():
         saved: the app writes a section "when in doubt" (MainWindow.saveAllData
         on close, after a Save), and a rewrite of the same content must not
         mark the store ahead of the .jser. So `dirty` means the content changed.
+        Content is compared as the JSON it is written as, so a change of
+        contour order, of 1 to 1.0, or of 0.0 to -0.0 is a change.
 
             Params:
                 series (Series): the open series; its `sections` say which
@@ -597,14 +599,14 @@ class HybridStore():
                         changed = True
                     continue
                 section_data = fast_loads(data)
-                if snum in saved and self._savedSection(snum) == section_data:
+                if snum in saved and fast_dumps(self._savedSection(snum)) == fast_dumps(section_data):
                     continue  # the same content written again
                 self._replaceSection(snum, section_data)
                 changed = True
             row = self.con.execute("SELECT data FROM pending_series").fetchone()
             if row is not None:
                 old = self.con.execute("SELECT data FROM series").fetchone()
-                if old is None or fast_loads(old[0]) != fast_loads(row[0]):
+                if old is None or fast_dumps(fast_loads(old[0])) != fast_dumps(fast_loads(row[0])):
                     self.con.execute("INSERT OR REPLACE INTO series(id, data) VALUES (1, ?)", row)
                     changed = True
             log_fp = os.path.join(series.getwdir(), "existing_log.csv")

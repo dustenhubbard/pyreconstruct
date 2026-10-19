@@ -480,6 +480,57 @@ def test_a_rewrite_of_the_same_content_does_not_mark_the_store_ahead(opened):
     assert store.meta("dirty") == "0"
 
 
+def _a_float_row(section_data):
+    """The first trace row whose coordinates are all floats."""
+    return next(
+        row for rows in section_data["contours"].values() for row in rows
+        if all(type(v) is float for v in row[0] + row[1])
+    )
+
+
+def _reordered(section_data):
+    names = list(section_data["contours"])
+    section_data["contours"] = {n: section_data["contours"][n] for n in reversed(names)}
+
+
+@pytest.mark.parametrize("saved_x, edited_x", [(None, None), (3.0, 3), (0.0, -0.0)],
+                         ids=["contour-order", "float-to-int", "sign-of-zero"])
+def test_a_change_python_calls_equal_is_still_saved(saved_x, edited_x, opened):
+    store, series = opened
+    snum = next(
+        n for n in store.sectionNumbers()
+        if len(store.readSection(n)["contours"]) > 1 and any(store.readSection(n)["contours"].values())
+    )
+    if saved_x is not None:
+        section_data = store.readSection(snum)
+        _a_float_row(section_data)[0][0] = saved_x
+        store.writePendingSection(snum, section_data)
+        assert store.commit(series) is True
+        store.setMeta("dirty", 0)
+    section_data = store.readSection(snum)
+    edited = copy.deepcopy(section_data)
+    if saved_x is None:
+        _reordered(edited)
+    else:
+        _a_float_row(edited)[0][0] = edited_x
+    assert edited == section_data, "Python's == cannot see this change"
+    store.writePendingSection(snum, edited)
+    assert store.commit(series) is True
+    assert store.meta("dirty") == "1"
+    assert fast_dumps(store.readSection(snum)) == fast_dumps(edited)
+
+
+def test_a_series_change_python_calls_equal_is_still_saved(opened):
+    store, series = opened
+    data = store.seriesData()
+    key = next(k for k, v in data.items() if type(v) is int and not isinstance(v, bool))
+    data[key] = float(data[key])
+    store.writePendingSeries(data)
+    assert store.commit(series) is True
+    assert store.meta("dirty") == "1"
+    assert type(store.seriesData()[key]) is float
+
+
 def test_save_folds_in_the_series_and_the_log(opened):
     store, series = opened
     data = store.seriesData()
