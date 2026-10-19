@@ -314,6 +314,30 @@ def test_a_file_named_with_a_byte_that_is_not_utf_8_gets_a_store(tmp_path, store
         store.close()
 
 
+def _name_limit(folder) -> int:
+    try:
+        return os.pathconf(folder, "PC_NAME_MAX")
+    except (AttributeError, OSError, ValueError):
+        return 255
+
+
+@pytest.mark.parametrize("extra", [0, 20], ids=["at-the-limit", "20-short-of-it"])
+def test_a_series_with_a_long_name_gets_a_store(extra, tmp_path, store_root):
+    folder = tmp_path / "src"
+    folder.mkdir()
+    src = folder / ("a" * (_name_limit(folder) - len(".jser") - extra) + ".jser")
+    shutil.copyfile(PARITY, src)
+    _assert_holds_what_today_writes(src, tmp_path)  # today's open takes it first
+    store = HybridStore.forJser(str(tmp_path / "store" / src.name))
+    try:
+        store.writePendingSeries(store.seriesData())  # and SQLite makes its side files
+        made = [p.name for p in store_root.rglob("*")]
+        assert made and max(len(os.fsencode(n)) for n in made) <= _name_limit(store_root)
+        assert len(os.fsencode(Path(store.db_fp).name + "-journal")) <= _name_limit(store_root)
+    finally:
+        store.close()
+
+
 def test_a_utf_8_name_keeps_the_key_it_had(tmp_path, store_root):
     if sys.getfilesystemencoding() != "utf-8":
         pytest.skip("the file system encoding is not UTF-8")
@@ -321,7 +345,7 @@ def test_a_utf_8_name_keeps_the_key_it_had(tmp_path, store_root):
     fp.touch()
     real = hybrid_store.canonicalPath(str(fp))
     key = hashlib.sha256(real.encode("utf-8")).hexdigest()[:16]
-    assert Path(hybrid_store.storePaths(str(fp))[0]).name == f"{fp.stem}-{key}.v{hybrid_store.SCHEMA_VERSION}.pyrstore"
+    assert Path(hybrid_store.storePaths(str(fp))[0]).name == f"{key}.v{hybrid_store.SCHEMA_VERSION}.pyrstore"
 
 
 def test_a_path_that_is_not_utf_8_is_recorded_as_it_is(tmp_path, store_root):
@@ -1059,11 +1083,10 @@ def test_the_store_is_keyed_by_the_real_path_and_lives_in_the_store_folder(platf
     assert hybrid_store.storePaths(str(fp)) != hybrid_store.storePaths(str(other))
     db_fp, work = hybrid_store.storePaths(str(fp))
     assert Path(db_fp).parent == store_root == Path(work).parent
-    stem, _, key = Path(db_fp).name.rpartition("-")
-    key, version = key.split(".")[:2]
-    assert stem == fp.stem and len(key) == 16 and int(key, 16) >= 0
+    key, version = Path(db_fp).name.split(".")[:2]
+    assert len(key) == 16 and int(key, 16) >= 0
     assert version == f"v{hybrid_store.SCHEMA_VERSION}", "a build of another version never opens it"
-    assert Path(db_fp).name == f"{stem}-{key}.{version}.pyrstore" and Path(work).name == f"{stem}-{key}.{version}.work"
+    assert Path(db_fp).name == f"{key}.{version}.pyrstore" and Path(work).name == f"{key}.{version}.work"
 
 
 def _ignores_case(folder) -> bool:

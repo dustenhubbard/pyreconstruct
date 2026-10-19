@@ -176,13 +176,14 @@ def storePaths(jser_fp : str) -> tuple:
 
     Two copies at two paths never share a store; a symlink and its target do.
     The schema version is in the name, so a build of another version never
-    opens this one's stores.
+    opens this one's stores. The name is the key alone, so any name the file
+    system takes for a .jser leaves room for SQLite's and the lock's suffixes;
+    the store's `jser_path` says which .jser it holds.
     """
     real = canonicalPath(jser_fp)
-    sname = os.path.splitext(os.path.basename(real))[0]
     # the path's own bytes: a name that is not UTF-8 (Linux) is still a key
     key = hashlib.sha256(os.fsencode(real)).hexdigest()[:16]
-    base = storeRoot() / f"{sname}-{key}.v{SCHEMA_VERSION}"
+    base = storeRoot() / f"{key}.v{SCHEMA_VERSION}"
     return f"{base}.pyrstore", f"{base}.work"
 
 
