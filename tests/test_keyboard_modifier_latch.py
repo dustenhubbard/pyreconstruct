@@ -17,12 +17,9 @@ Four things are pinned here, and they are separate claims:
              hand-built `QKeyEvent` does not. The wrong fix looks right, so the
              difference is worth a test.
 
-  GUARD      that `_no_latched_modifiers` actually runs between tests. Proven by
-             an ordered pair: one test leaves a latch deliberately, the next
-             asserts it is gone. Nothing in this suite randomizes test order
-             (no `pytest-randomly`, no `pytest-random-order`), so within a
-             module the definition order holds; the second test skips rather
-             than passing vacuously if it somehow runs alone.
+  GUARD      that `_no_latched_modifiers` runs for every test and clears a
+             latch on the way in and on the way out. One test, so it holds
+             whichever worker process runs it.
 
   DAMAGE     that a latched modifier changes what a mouse click means to a real
              list widget. This is the reason any of it matters: the tests it
@@ -35,7 +32,7 @@ from PySide6.QtGui import QKeySequence
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 
-from conftest import clear_latched_modifiers
+from conftest import clear_latched_modifiers, no_latched_modifiers
 
 pytestmark = pytest.mark.gui
 
@@ -162,34 +159,26 @@ def test_clear_latched_modifiers_is_a_no_op_when_nothing_is_latched(qapp):
 
 # --- GUARD: the autouse fixture actually runs between tests -------------------
 
-_LEFT_A_LATCH = []
+def test_the_autouse_guard_clears_a_latch_on_the_way_in_and_out(qapp, request):
+    """Every test gets the guard, and the guard clears a standing latch at
+    setup and at teardown."""
+    assert "_no_latched_modifiers" in request.fixturenames
 
-
-def test_a_latch_left_standing_at_the_end_of_a_test(qapp):
-    """Leave a `ShiftModifier` latched on purpose, and do not clean up.
-
-    Half of an ordered pair. This test asserts only that it succeeded in
-    creating the mess; the next one asserts the mess was cleaned up. Deleting
-    `_no_latched_modifiers` from `conftest.py` makes the next test fail, which is
-    the revert-and-fail proof for the guard.
-    """
     target = QWidget()
     target.show()
+    guard = no_latched_modifiers()
 
+    # left by an earlier test, then the guard's setup
     QTest.keySequence(target, QKeySequence("Ctrl+Shift+O"))
-
     assert QApplication.keyboardModifiers() == Qt.ShiftModifier
-    _LEFT_A_LATCH.append("Ctrl+Shift+O")
+    next(guard)
+    assert QApplication.keyboardModifiers() == Qt.NoModifier
 
-
-def test_the_autouse_guard_cleared_what_the_previous_test_left(qapp):
-    """The latch left by the previous test is gone before this one runs."""
-    if not _LEFT_A_LATCH:
-        pytest.skip(
-            "proves the guard only when run after "
-            "test_a_latch_left_standing_at_the_end_of_a_test"
-        )
-
+    # left by the test itself, then the guard's teardown
+    QTest.keySequence(target, QKeySequence("Ctrl+Shift+O"))
+    assert QApplication.keyboardModifiers() == Qt.ShiftModifier
+    with pytest.raises(StopIteration):
+        next(guard)
     assert QApplication.keyboardModifiers() == Qt.NoModifier
 
 

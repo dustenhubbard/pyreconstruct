@@ -106,10 +106,15 @@ PyReconstruct = "PyReconstruct.cli:main"
 # on its own. It is here so tests/test_version_after_nightly_tag.py can ask it
 # for the version of a throwaway repository with nightly tags. Without it those
 # tests skipped in CI, and nothing there checked the setting below.
+#
+# pytest-xdist lets CI run the suite on all four cores of its runner (`-n 4`
+# in .github/workflows/test.yml). It changes nothing unless `-n` is passed, so
+# `make test` and a bare `pytest` still run in one process.
 [project.optional-dependencies]
 test = [
     "pytest>=9,<10",
     "pytest-qt>=4",
+    "pytest-xdist>=3",
     "pyyaml>=6",
     "setuptools-scm>=8",
 ]

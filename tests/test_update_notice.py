@@ -39,6 +39,10 @@ def launch(main_window, monkeypatch):
     from PyReconstruct.modules.gui.dialog import update_dialog as UD
     from PyReconstruct.modules.gui.main import main_window as MW
 
+    # The window schedules its own launch check 2.5 s after it is built.
+    # Stopped here, so the check runs only when the test calls it.
+    main_window.update_check_timer.stop()
+
     def boom(*a, **k):
         raise AssertionError("no dialog may open at launch")
 

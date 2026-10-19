@@ -437,9 +437,15 @@ jobs:
           fi
 
       - name: Run test suite (headless / offscreen)
+        # Four worker processes, one per core of the runner (pytest-xdist).
+        # Each worker has its own QApplication and its own throwaway QSettings
+        # (tests/qsettings_isolation.py), and any test can land on any worker,
+        # so a test must not depend on another test having run before it. The
+        # count is fixed rather than `auto` so a larger runner does not change
+        # how the tests are split. --durations lists the slowest tests.
         env:
           QT_QPA_PLATFORM: offscreen
-        run: uv run --frozen --no-default-groups --extra test python -m pytest -ra   # -ra surfaces xfail/xpass/skip reasons if the gate goes red
+        run: uv run --frozen --no-default-groups --extra test python -m pytest -ra -n 4 --durations=25   # -ra surfaces xfail/xpass/skip reasons if the gate goes red
 
       - name: Upload the screenshots that did not match
         # tests/test_visual_regression.py writes what it rendered, the baseline
@@ -532,9 +538,10 @@ jobs:
           assert family == "Noto Sans", family'
 
       - name: Run test suite (headless / offscreen)
+        # Four workers, as in `test`.
         env:
           QT_QPA_PLATFORM: offscreen
-        run: uv run --frozen --no-default-groups --extra test python -m pytest -ra
+        run: uv run --frozen --no-default-groups --extra test python -m pytest -ra -n 4 --durations=25
 
   # The in-place update swap engine renames install folders, waits on and stops
   # processes, and launches programs, and each of those behaves differently on
