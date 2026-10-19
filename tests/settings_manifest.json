@@ -133,6 +133,7 @@
     "useotrace_act": "str",
     "usepanzoom_act": "str",
     "usepointer_act": "str",
+    "useroi_act": "str",
     "username": "str",
     "usescissors_act": "str",
     "usestamp_act": "str",

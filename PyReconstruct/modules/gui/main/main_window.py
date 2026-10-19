@@ -12,6 +12,8 @@ from PySide6.QtCore import QEvent
 from .main_imports import *
 
 from PyReconstruct.modules.datatypes.section import Section, zarrHasScaleLevels
+from PyReconstruct.modules.datatypes import store_save
+from PyReconstruct.modules.datatypes.series import SeriesSaveError
 from PyReconstruct.modules.backend.image_name_match import (
     matchByNumber, zarrImageNames,
 )
@@ -441,6 +443,10 @@ class MainWindow(QMainWindow):
         self.update_notice.clicked.connect(self.openUpdateNotice)
         self.update_notice.hide()
         self.statusbar.addPermanentWidget(self.update_notice, 0)
+
+        ## Take B off Toggle ROI mode if an older Dev build stored it there,
+        ## before opening a series builds the shortcuts
+        self.settleLegacyRoiShortcutStartup()
 
         ## Open series if requested thru CLI
         if filename and Path(filename).exists():
@@ -912,6 +918,7 @@ class MainWindow(QMainWindow):
             ("usegrid_act", lambda : self.mouse_palette.activateModeButton("Grid")),
             ("useflag_act", lambda : self.mouse_palette.activateModeButton("Flag")),
             ("usehost_act", lambda : self.mouse_palette.activateModeButton("Host")),
+            ("useroi_act", lambda : self.mouse_palette.activateModeButton("ROI mode")),
         ]
   
         for act_name, act in mode_shortcuts:
@@ -1248,6 +1255,18 @@ class MainWindow(QMainWindow):
             apply_update_check_on_startup_default,
         )
         apply_update_check_on_startup_default()
+
+    def settleLegacyRoiShortcutStartup(self):
+        """Keep B on one action for a machine that ran an older Dev build.
+
+        Those builds stored B on Toggle ROI mode; B now picks the ROI mode
+        tool, and two actions on one key fire neither. See
+        `settings_migrations.settle_legacy_roi_shortcut`.
+        """
+        from PyReconstruct.modules.backend.settings_migrations import (
+            settle_legacy_roi_shortcut,
+        )
+        settle_legacy_roi_shortcut()
 
     def showWhatsNewStartup(self):
         """Show the 'What's new' dialog once per version (fresh install/upgrade).
@@ -2054,6 +2073,10 @@ class MainWindow(QMainWindow):
         # unconditionally and deleted the very edits the user pressed Cancel
         # to protect (found 2026-08-27).
         if self.saveToJser(notify=True, close=False) == "cancel":
+            return
+        # openSeries closes this series without asking, so a Save the local
+        # store holds goes to the .jser now, with its backup
+        if not self._writeStoreSave():
             return
 
         ## Query user for images
@@ -3170,6 +3193,8 @@ class MainWindow(QMainWindow):
             save = saveNotify()
             if save == "no":
                 if close:
+                    if not self._writeStoreSave():
+                        return "cancel"
                     self.series.close()
                 return
             elif save == "cancel":
@@ -3177,6 +3202,8 @@ class MainWindow(QMainWindow):
         
         # User closing and series not modified
         if close and not self.series.modified:
+            if not self._writeStoreSave():
+                return "cancel"
             self.series.close()
             return
 
@@ -3188,6 +3215,10 @@ class MainWindow(QMainWindow):
             # the hidden dir holding the only copy of the work.
             if self.saveAsToJser(close=close) == "cancel":
                 return "cancel"
+        elif not close and self.series.saveToStore():
+            # the local store holds this Save; the .jser and its backup are
+            # written when the series closes (store_save.py)
+            pass
         else:
             # save the real jser once, then copy those bytes to the backup
             # (avoids a second full serialization of the whole series)
@@ -3199,6 +3230,43 @@ class MainWindow(QMainWindow):
         # mark series as unmodified
         self.seriesModified(False)
     
+    def _writeStoreSave(self) -> bool:
+        """Write the .jser from the local store if it holds a Save the .jser lacks.
+
+        With Save writing the store only (store_save.py), the .jser is written
+        when the series closes, so that is when the automatic backup is made.
+
+            Returns:
+                (bool): False if the .jser could not be written. The user was
+                    told, and the series keeps its store and working folder,
+                    so the caller must not close it.
+        """
+        if not store_save.ahead(self.series):
+            return True
+        try:
+            store_save.writeJser(self.series)
+        except (OSError, SeriesSaveError):
+            return False
+        self.backup(check_auto=True, from_saved=True)
+        return True
+
+    def exportJserNow(self):
+        """Save, and write the .jser now (File > Export series), with Save writing the store only."""
+        if self.series.jserSaveRunning():
+            self.series.refuseNestedSave(self.series.jser_fp)
+            return
+        if self.series.seriesStepRunning():
+            self.series.refuseSaveDuringStep(self.series.jser_fp)
+            return
+        self.saveAllData()
+        if self.series.saveToStore():
+            if store_save.ahead(self.series):
+                store_save.writeJser(self.series)
+        else:
+            self.series.saveJser()
+        self.backup(check_auto=True, from_saved=True)
+        self.seriesModified(False)
+
     def saveAsToJser(self, close=False):
         """Prompt user for save location.
 
@@ -5338,7 +5406,7 @@ class MainWindow(QMainWindow):
         if shortcuts_dict is None:
             shortcuts_dict = {}
             for k in Series.qsettings_defaults:
-                # a held-back act (roibox_act) keeps its key but has no action
+                # a settings key whose action is gone is skipped
                 if k.endswith("_act") and getattr(self, k, None):
                     shortcuts_dict[k] = self.series.getOption(k)
         

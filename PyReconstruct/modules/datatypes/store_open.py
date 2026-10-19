@@ -13,8 +13,10 @@ working folder to resume:
   * Otherwise: today's open, unchanged, and then the working folder it wrote
     and the numbers it measured go into the store for the next open.
 
-The store is a copy of the .jser and nothing else: Save, close and export are
-today's, and a store that no longer matches its .jser is imported again.
+The store is a copy of the .jser. A series whose open came from the store or
+kept it holds the store until it closes, and its Save, close and export go
+through it (store_save.py); a store that no longer matches its .jser is
+imported again.
 
 When the store cannot be used (its folder is on a network file system,
 another process holds it, it is not a store this version reads, or reading it
@@ -37,8 +39,9 @@ import numpy as np
 
 from PyReconstruct.modules.constants import fast_loads, fast_dumps
 from PyReconstruct.modules.constants.fast_json import stdlib_dumps
-from PyReconstruct.modules.constants.jser_splice import SpliceIndex, _stat_key
+from PyReconstruct.modules.constants.jser_splice import SpliceIndex, _stat_key, section_digest
 
+from . import store_save
 from .hybrid_store import HybridStore, _now, storePaths
 from .local_stores import ENV_SWITCH, META_OPENED, enabled  # noqa: F401  (Series.openJser)
 from .network_folder import networkFileSystem
@@ -211,7 +214,11 @@ def openJser(fp : str, progress=None, notifier=None):
         try:
             if held.holdsJser():
                 with _gcPaused():
-                    return Series._unpackJser(fp, progress, notifier, store=held)[0]
+                    series = Series._unpackJser(fp, progress, notifier, store=held)[0]
+                if series is not None:
+                    store_save.attach(series, held)
+                    held = None
+                return series
         except StoreUnavailable as e:
             # a read failed partway: the open put back what it changed
             _unavailable(fp, e)
@@ -225,9 +232,12 @@ def openJser(fp : str, progress=None, notifier=None):
             factory = progress if progress is not None else _default_progress_reporter_factory()
             reporter = factory(text=f"Keeping a local copy of {series.name} for faster opening...")
             try:
-                held.importOpened(series, collisions, digest, reporter)
+                kept = held.importOpened(series, collisions, digest, reporter)
             finally:
                 reporter.finish()
+            if kept:
+                store_save.attach(series, held)
+                held = None
         return series
     finally:
         if held is not None:
@@ -357,7 +367,7 @@ class StoreForOpen():
 
     ## writing -----------------------------------------------------------------
 
-    def importOpened(self, series, collisions, digest, reporter=None):
+    def importOpened(self, series, collisions, digest, reporter=None) -> bool:
         """Keep what today's open just wrote and measured, for the next open.
 
         The working folder's files go into the store through its own import
@@ -371,21 +381,23 @@ class StoreForOpen():
                 collisions (dict): the contour-name collisions that open merged
                 digest (str): the sha256 of the bytes that open decoded
                 reporter: an optional ProgressReporter
+            Returns:
+                (bool): True when the store now holds the .jser
         """
         name = os.path.basename(self.jser_fp)
         if digest is None:
             log_note(f"Local store not kept for {name}: the file's bytes were not hashed")
-            return
+            return False
         if collisions:
             # the merge was asked about; a later open must ask again
             log_note(f"Local store not kept for {name}: its objects were merged on open")
-            return
+            return False
         store = self.store
         try:
             if store.hasPending() or store.meta("dirty") == "1":
                 # work a later version left in the store is never replaced
                 log_note(f"Local store not kept for {name}: it holds work the .jser lacks")
-                return
+                return False
             with _transaction(store):
                 store.con.execute("DELETE FROM section_stats")
                 store.setMeta(META_STATS, None)
@@ -410,11 +422,15 @@ class StoreForOpen():
                 store.setMeta(META_SHA, digest)
                 store.setMeta(META_SPLICE, _spliceMeta(getattr(series, "_jser_splice_index", None)))
                 store.setMeta(META_STATS, store.meta("imported_utc"))
+                # what a Save compares its working files with (store_save.py)
+                store_save.recordKeys(store, source.keys)
+            return True
         except _NotMeasuredAlike as e:
             log_note(f"Local store not kept for {os.path.basename(self.jser_fp)}: {e}")
         except (OSError, sqlite3.Error) as e:
             _raiseIfBug(e)
             _unavailable(self.jser_fp, e)
+        return False
 
 
 ## ---------------------------------------------------------------------------
@@ -461,7 +477,8 @@ class _WorkingFolderSource():
 
     Its files are what today's open wrote, already migrated, so the import
     stores them as they are (`migrated=True`). They are read as
-    Section.__init__ reads them.
+    Section.__init__ reads them. `keys` gets each section's key for a Save
+    (store_save.py) once the import has stored it.
     """
 
     def __init__(self, series):
@@ -473,6 +490,7 @@ class _WorkingFolderSource():
             self.series = fast_loads(f.read())
         with open(os.path.join(wdir, "existing_log.csv"), "r", encoding="utf-8") as f:
             self.log = f.read()
+        self.keys : dict = {}
 
     def sectionCount(self) -> int:
         return len(self.files)
@@ -480,7 +498,11 @@ class _WorkingFolderSource():
     def sections(self):
         for snum, fp in self.files.items():
             with open(fp, "rb") as f:
-                yield snum, fast_loads(f.read()), None
+                raw = f.read()
+            section_data = fast_loads(raw)
+            yield snum, section_data, None
+            # stored by now, so the migration probe may change it
+            self.keys[snum] = (section_digest(raw), store_save.opensAlike(raw, snum, section_data))
 
 
 class _transaction():
@@ -661,7 +683,8 @@ def _fillSeriesData(store : HybridStore, series):
         data.data["sections"][snum] = {
             "thickness": h["thickness"],
             "calgrid": h["calgrid"],
-            "locked": h["align_locked"],
+            # every open locks every section (Series._unpackJser)
+            "locked": True,
             "bc_profiles": h["brightness_contrast_profiles"].copy(),
             "src": Section.imageName(h["src"]),
             "mag": h["mag"],

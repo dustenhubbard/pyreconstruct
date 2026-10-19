@@ -88,7 +88,7 @@ def return_file_menu(self):
                 [
                     ("exportxml_act", "To legacy Reconstruct (XML)...", "", self.exportToXML),
                     ("exportngzarr_act", "To Neuroglancer (Zarr)...", "", self.exportToZarr)
-                ]
+                ] + _storeExportOpts(self)
             },
             None,
             ("username_act", "Change username...", "", self.changeUsername),
@@ -569,6 +569,18 @@ def return_help_menu(self):
             },
         ]
     }
+
+
+def _storeExportOpts(self) -> list:
+    """The row that writes the .jser now, when Save writes the local store only."""
+    from PyReconstruct.modules.datatypes import store_save
+
+    if not store_save.savesToStoreOnly(self.series):
+        return []
+    return [
+        None,
+        ("exportjsernow_act", "To .jser now", "", self.exportJserNow),
+    ]
 
 
 def return_menubar(self):

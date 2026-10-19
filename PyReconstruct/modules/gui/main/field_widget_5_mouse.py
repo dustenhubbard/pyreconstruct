@@ -1198,7 +1198,7 @@ class FieldWidgetMouse(FieldWidgetData):
     def roiBoxPress(self, event):
         """Called when mouse is pressed in ROI box mode: starts a click or a
         drag, which the release finishes."""
-        if not self.lclick or not self.roi_box_on:
+        if not self.lclick:
             return
         self.roi_box_drag_start = self.roiBoxPoint(event)
         self.roi_box_drag_end = None
@@ -1219,12 +1219,13 @@ class FieldWidgetMouse(FieldWidgetData):
 
         A click is the box's new center. A drag is the box: its center is the
         middle of the dragged rectangle and its size, kept for later clicks,
-        is the rectangle's. View-only, so no undo state is saved.
+        is the rectangle's. Either one turns ROI mode on if it was off.
+        View-only, so no undo state is saved.
         """
         start = self.roi_box_drag_start
         self.roi_box_drag_start = None
         self.roi_box_drag_end = None
-        if not self.lclick or start is None or not self.roi_box_on:
+        if not self.lclick or start is None:
             self.update()
             return
 
@@ -1236,6 +1237,7 @@ class FieldWidgetMouse(FieldWidgetData):
                 center = ((x1 + x2) / 2, (y1 + y2) / 2)
                 self.roi_box_size = (abs(x2 - x1), abs(y2 - y1))
 
+        self.roi_box_on = True
         self.roi_box_center = center
         self.generateView()
 

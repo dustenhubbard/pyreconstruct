@@ -127,8 +127,8 @@ default_settings = {
     "deccon_act": "[",
     "inccon_act": "]",
     "blend_act": "Space",
-    # the ROI box has no menu entry or key until it returns as ROI mode, a
-    # palette tool; the key stays because a settings key is never removed
+    # View > Toggle ROI mode; no default key: B picks the ROI mode tool
+    # (useroi_act), which is how the box is placed
     "roibox_act": "",
     "toggleztraces_act": "",  # checkable "Show z-traces"; no default key
     "homeview_act": "Home",
@@ -237,6 +237,20 @@ default_settings = {
     "usegrid_act": "G",
     "useflag_act": "F",
     "usehost_act": "Q",
+    # The ROI mode tool: a drag in the field draws the box, a click moves it.
+    # A tool, so a bare letter like the rest of this group. B for box. Unused
+    # across this whole dict and the shortcuts written in the source.
+    #   macOS   -- a bare letter; no OS binding.
+    #   Windows -- a bare letter; no OS binding, no menu mnemonic (no Alt).
+    #   Linux   -- a bare letter; not a desktop binding.
+    # Verified by reasoning against documented OS-reserved sequences, NOT by
+    # pressing it on a Windows or Linux box.
+    #
+    # Rejected: R (for ROI) sits beside Ctrl+R, which the 2026-08-23 sweep
+    # freed from restart on purpose so an old habit lands on silence;
+    # Ctrl+Shift+B is the manual backup; Ctrl+B is pasteattributes_act's
+    # legacy alias.
+    "useroi_act": "B",
 
     # series-related
     "series_code_pattern": "[0-9A-Za-z]+",  # MFO
