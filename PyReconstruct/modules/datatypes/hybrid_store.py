@@ -180,7 +180,8 @@ def storePaths(jser_fp : str) -> tuple:
     """
     real = canonicalPath(jser_fp)
     sname = os.path.splitext(os.path.basename(real))[0]
-    key = hashlib.sha256(real.encode("utf-8")).hexdigest()[:16]
+    # the path's own bytes: a name that is not UTF-8 (Linux) is still a key
+    key = hashlib.sha256(os.fsencode(real)).hexdigest()[:16]
     base = storeRoot() / f"{sname}-{key}.v{SCHEMA_VERSION}"
     return f"{base}.pyrstore", f"{base}.work"
 

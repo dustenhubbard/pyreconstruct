@@ -17,6 +17,7 @@ What these pin:
 * where a store lives, how it is named, and that a network folder is refused.
 """
 import copy
+import hashlib
 import json
 import os
 import shutil
@@ -296,6 +297,31 @@ def test_an_edge_value_imports_as_it_opens_today(place, name, surrogate, tmp_pat
     folder = tmp_path / "src"
     folder.mkdir()
     _assert_holds_what_today_writes(_edge_series(folder, place, name, surrogate), tmp_path)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="only Linux takes a file name that is not UTF-8")
+def test_a_file_named_with_a_byte_that_is_not_utf_8_gets_a_store(tmp_path, store_root):
+    folder = tmp_path / "src"
+    folder.mkdir()
+    src = folder / os.fsdecode(b"bad\xff.jser")  # reaches Python as a lone surrogate
+    shutil.copyfile(PARITY, src)
+    _assert_holds_what_today_writes(src, tmp_path)
+    fp = tmp_path / "store" / src.name
+    store = HybridStore.forJser(str(fp))
+    try:
+        assert store.meta("jser_path") == os.path.realpath(fp)
+    finally:
+        store.close()
+
+
+def test_a_utf_8_name_keeps_the_key_it_had(tmp_path, store_root):
+    if sys.getfilesystemencoding() != "utf-8":
+        pytest.skip("the file system encoding is not UTF-8")
+    fp = tmp_path / "caf\u00e9 \U0001f9e0.jser"
+    fp.touch()
+    real = hybrid_store.canonicalPath(str(fp))
+    key = hashlib.sha256(real.encode("utf-8")).hexdigest()[:16]
+    assert Path(hybrid_store.storePaths(str(fp))[0]).name == f"{fp.stem}-{key}.v{hybrid_store.SCHEMA_VERSION}.pyrstore"
 
 
 def test_a_path_that_is_not_utf_8_is_recorded_as_it_is(tmp_path, store_root):
