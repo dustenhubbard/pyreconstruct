@@ -26,8 +26,10 @@ Two properties of the old flat label are kept deliberately:
     clickable ones untouched.
 """
 
+import math
+
 from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QFontMetrics
 from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import (
     QApplication, QHBoxLayout, QLabel, QLineEdit, QListWidget,
@@ -58,6 +60,45 @@ def status_bar_room():
     return height - spacing
 
 
+#: accented capitals, descenders and brackets: the tallest and deepest ink a
+#: readout value is likely to carry
+INK_SAMPLE = "ÁÅÇÊÑÔ gjpqy ()|"
+
+
+def text_overhang(font):
+    """How many pixels of a label's ink fall outside its own line.
+
+    A font's line height does not always hold its glyphs: DejaVu Sans at
+    10.5 pt draws the tops of accented capitals one pixel above it. Measured
+    by painting INK_SAMPLE on a throwaway label with room to spare, rather
+    than read from the metrics, which round differently from the painted ink.
+    """
+    from PySide6.QtGui import QImage, QPalette
+    room = QFontMetrics(font).height()
+    label = QLabel(INK_SAMPLE)
+    label.setFont(font)
+    label.setContentsMargins(0, room, 0, room)
+    palette = label.palette()
+    palette.setColor(QPalette.Window, QColor("white"))
+    palette.setColor(QPalette.WindowText, QColor("black"))
+    label.setPalette(palette)
+    label.setAutoFillBackground(True)
+    label.resize(label.sizeHint())
+    image = label.grab().toImage().convertToFormat(QImage.Format_Grayscale8)
+    scale = image.devicePixelRatio()
+    pixels = image.constBits()
+    stride = image.bytesPerLine()
+    width = image.width()
+    inked = [y for y in range(image.height())
+             if min(pixels[y * stride:y * stride + width]) < 255]
+    if not inked:
+        return 0
+    line = label.contentsRect()
+    above = line.top() * scale - inked[0]
+    below = inked[-1] + 1 - (line.bottom() + 1) * scale
+    return max(0, math.ceil(max(above, below) / scale))
+
+
 class StatusSegment(QLabel):
     """A readout segment that reports a left-click and looks pressable.
 
@@ -80,7 +121,8 @@ class StatusSegment(QLabel):
 
     #: inner padding so the outline does not hug the glyphs; the vertical
     #: pixel is the most it gets, less where the bar has no room for it
-    #: (see status_bar_room; test_pills_do_not_grow_the_status_bar)
+    #: (see status_bar_room; test_pills_do_not_grow_the_status_bar), and
+    #: never less than the ink that would otherwise be cut off (text_overhang)
     H_PAD = 8
     V_PAD = 1
 
@@ -96,7 +138,8 @@ class StatusSegment(QLabel):
         self.setCursor(Qt.PointingHandCursor)
         self.setAttribute(Qt.WA_Hover)
         room = status_bar_room() - self.fontMetrics().height()
-        v_pad = max(0, min(self.V_PAD, room // 2))
+        v_pad = max(text_overhang(self.font()),
+                    min(self.V_PAD, room // 2))
         self.setContentsMargins(self.H_PAD, v_pad, self.H_PAD, v_pad)
         self._outlined = outlined
         self._hovered = False

@@ -370,18 +370,68 @@ def test_pills_do_not_grow_the_status_bar(main_window):
 def test_pill_padding_gives_way_where_the_bar_has_no_room(qapp, monkeypatch):
     """One pixel above and below the text where the bar has room for it, as
     with DejaVu Sans; none where the font's line already fills the bar, as
-    with Noto Sans."""
+    with Noto Sans. Ink drawn outside the line keeps its padding either way."""
     from PyReconstruct.modules.gui.main import status_readout
     from PySide6.QtWidgets import QLabel
     line = QLabel().fontMetrics().height()
     pads = {}
-    for spare in (0, 1, 2, 10):
-        monkeypatch.setattr(status_readout, "status_bar_room",
-                            lambda: line + spare)
-        margins = status_readout.StatusSegment("Jump").contentsMargins()
-        assert margins.top() == margins.bottom()
-        pads[spare] = margins.top()
-    assert pads == {0: 0, 1: 0, 2: 1, 10: 1}
+    for overhang in (0, 2):
+        monkeypatch.setattr(status_readout, "text_overhang",
+                            lambda font: overhang)
+        for spare in (0, 1, 2, 10):
+            monkeypatch.setattr(status_readout, "status_bar_room",
+                                lambda: line + spare)
+            margins = status_readout.StatusSegment("Jump").contentsMargins()
+            assert margins.top() == margins.bottom()
+            pads[overhang, spare] = margins.top()
+    assert pads == {(0, 0): 0, (0, 1): 0, (0, 2): 1, (0, 10): 1,
+                    (2, 0): 2, (2, 1): 2, (2, 2): 2, (2, 10): 2}
+
+
+def ink_rows(widget):
+    """The rows a widget paints text on, black on white, and its dark pixels."""
+    from PySide6.QtGui import QColor, QPalette
+    palette = widget.palette()
+    palette.setColor(QPalette.Window, QColor("white"))
+    palette.setColor(QPalette.WindowText, QColor("black"))
+    widget.setPalette(palette)
+    widget.setAutoFillBackground(True)
+    widget.resize(widget.sizeHint())
+    image = widget.grab().toImage()
+    dark = [(x, y) for y in range(image.height()) for x in range(image.width())
+            if image.pixelColor(x, y).lightness() < 255]
+    rows = sorted({y for _, y in dark})
+    return (rows[-1] - rows[0] + 1 if rows else 0), len(dark)
+
+
+@pytest.mark.parametrize("family,size", [
+    ("DejaVu Sans", 10.5), ("DejaVu Sans", 24), ("Noto Sans", 9),
+    (None, 9), (None, 18),
+])
+def test_pills_keep_accents_and_descenders(qapp, family, size):
+    """No pill cuts off its text: DejaVu Sans at 10.5 pt draws the tops of
+    accented capitals above its line, so padding the bar has no room for
+    still stays where the ink needs it. None is the platform's own font."""
+    from PySide6.QtGui import QFont, QFontInfo
+    from PySide6.QtWidgets import QLabel
+    from PyReconstruct.modules.gui.main.status_readout import StatusSegment
+    previous = qapp.font()
+    font = QFont(family) if family else QFont(previous)
+    font.setPointSizeF(size)
+    if family and QFontInfo(font).family() != family:
+        pytest.skip(f"{family} is not installed")
+    qapp.setFont(font)
+    try:
+        text = "Alignment: gjpqy ÁÉÍÓÚÅÇ"
+        pill = StatusSegment("Alignment", outlined=False)
+        pill.setText(text)
+        roomy = QLabel(text)
+        line = roomy.fontMetrics().height()
+        roomy.setContentsMargins(StatusSegment.H_PAD, line,
+                                 StatusSegment.H_PAD, line)
+        assert ink_rows(pill) == ink_rows(roomy)
+    finally:
+        qapp.setFont(previous)
 
 
 def test_popup_owns_the_pressed_state(main_window, qtbot):
