@@ -3159,10 +3159,11 @@ class MainWindow(QMainWindow):
             close (bool): If true, delete hidden series files.
         Returns:
             (str): "cancel" when nothing was written because the user backed
-                out, either at the save prompt or at the Save As dialog, or
-                because another save of this series was still running. Every
-                caller that goes on to close or discard the series must treat
-                that as an abort.
+                out, either at the save prompt or at the Save As dialog,
+                because another save of this series was still running, or
+                because the .jser could not be written (the user was told).
+                Every caller that goes on to close or discard the series must
+                treat that as an abort.
         """
 
         ## If welcome series, close without saving
@@ -3224,16 +3225,35 @@ class MainWindow(QMainWindow):
             # written when the series closes (store_save.py)
             pass
         else:
-            # save the real jser once, then copy those bytes to the backup
-            # (avoids a second full serialization of the whole series)
-            self.series.saveJser()
-            self.backup(check_auto=True, from_saved=True)
+            if not self._writeJser():
+                return "cancel"
             if close:
                 self.series.close()
 
         # mark series as unmodified
         self.seriesModified(False)
-    
+
+    def _writeJser(self) -> bool:
+        """Write the series' .jser, then its automatic backup.
+
+        A failed write used to raise out of saveToJser, and closeEvent ignores
+        a close only on "cancel", so the window closed after the Save failed
+        notice and the user lost the live series to retry in.
+
+            Returns:
+                (bool): False if the .jser could not be written. The user was
+                    told, the existing file is unchanged, and the series stays
+                    open and modified, so the caller must not close it.
+        """
+        # save the real jser once, then copy those bytes to the backup
+        # (avoids a second full serialization of the whole series)
+        try:
+            self.series.saveJser()
+        except (OSError, SeriesSaveError):
+            return False
+        self.backup(check_auto=True, from_saved=True)
+        return True
+
     def _writeStoreSave(self, written=None) -> bool:
         """Write the .jser from the local store if it holds a Save the .jser lacks.
 
@@ -3286,7 +3306,8 @@ class MainWindow(QMainWindow):
                 written in that case, and saveToJser relies on hearing about
                 it; None on success (and for the welcome series, which has
                 nothing to save either way). Also "cancel" when another save
-                of this series was still running.
+                of this series was still running, and when the .jser could
+                not be written (the user was told).
         """
         # A Save As that arrives while a save is running (the progress dialog
         # lets queued events through) is refused first: before the working
@@ -3338,9 +3359,8 @@ class MainWindow(QMainWindow):
         if self.field.b_section:
             self.field.series_states[self.field.b_section]
         
-        # save file (save once, then copy those bytes to the backup)
-        self.series.saveJser()
-        self.backup(check_auto=True, from_saved=True)
+        if not self._writeJser():
+            return "cancel"
         if close:
             self.series.close()
 
