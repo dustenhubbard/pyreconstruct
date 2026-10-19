@@ -30,6 +30,7 @@ from PyReconstruct.modules.calc import traceGeometry
 
 from PyReconstruct.modules.constants import (
     createHiddenDir,
+    removeSeriesFiles,
     createNewSeriesDir,
     welcome_series_dir,
     getDateTime,
@@ -1251,6 +1252,10 @@ class Series():
                 # a cancel or a failure: remove what this open made, and put
                 # back what it set aside
                 if placed:
+                    try:
+                        removeSeriesFiles(hidden_dir)
+                    except OSError:
+                        pass
                     shutil.rmtree(hidden_dir, ignore_errors=True)
                 if aside is not None and not _putBack(aside, os.path.join(sdir, f".{sname}")):
                     kept = aside
@@ -1659,6 +1664,7 @@ class Series():
             # clear any stale hidden dir at the destination: shutil.move would
             # otherwise nest the old dir inside it, orphaning every filepath
             if os.path.isdir(new_hidden_dir):
+                removeSeriesFiles(new_hidden_dir)
                 shutil.rmtree(new_hidden_dir)
             shutil.move(old_hidden_dir, new_hidden_dir)
 
@@ -1711,6 +1717,7 @@ class Series():
 
         if os.path.isdir(self.hidden_dir):
 
+            removeSeriesFiles(self.hidden_dir)
             for f in os.listdir(self.hidden_dir):
                 os.remove(os.path.join(self.hidden_dir, f))
 

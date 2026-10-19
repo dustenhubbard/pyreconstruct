@@ -28,6 +28,7 @@ from PyReconstruct.modules.backend.func.window_geometry import (
 from .status_readout import FieldStatusReadout, StatusSegment
 from PyReconstruct.modules.gui.table.history import setAsideText
 from .wheel_steps import WheelSteps, zoom_factor
+from PyReconstruct.modules.constants import removeSeriesFiles
 from PyReconstruct.modules.constants.settings_domain import (
     domain_for, fold_series_settings_once,
 )
@@ -1894,6 +1895,7 @@ class MainWindow(QMainWindow):
             Params:
                 hidden_series_dir (str): the hidden dir to remove
         """
+        removeSeriesFiles(hidden_series_dir)
         for f in os.listdir(hidden_series_dir):
             os.remove(os.path.join(hidden_series_dir, f))
         os.rmdir(hidden_series_dir)

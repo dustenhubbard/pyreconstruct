@@ -75,21 +75,18 @@ POINTS = {
     "close-remove": ("new", "gone-or-new"),
 }
 
-CLOSE_REMOVE_ISSUE = "https://github.com/dustenhubbard/pyreconstruct/issues/962"
-
-
 class IncompleteWorkingFolder(Exception):
     """The working folder is offered as unsaved work with files already gone.
 
-    Its own class, so the close-remove xfail expects this failure and no other.
+    A close that stops partway must leave no series file to offer, so this is
+    the failure a close removing the series file late would show.
     """
 
 
 def run_child(jser_fp, point):
     """Run the child to `point` and SIGKILL it there, or to the end for a control.
 
-    Any other outcome is a plain test failure (pytest.fail), never an assertion
-    an xfail could take for the expected one.
+    Any other outcome is a plain test failure (pytest.fail).
     """
     control = point.startswith("none")
     env = dict(os.environ)
@@ -286,14 +283,7 @@ def check_working_folder(folder, expect, states, tmp_path):
     )
 
 
-@pytest.mark.parametrize("point", [
-    pytest.param(point, marks=pytest.mark.xfail(
-        strict=True,
-        raises=IncompleteWorkingFolder,
-        reason=f"Save and close killed while the working folder is removed: {CLOSE_REMOVE_ISSUE}",
-    )) if point == "close-remove" else point
-    for point in POINTS
-])
+@pytest.mark.parametrize("point", POINTS)
 def test_kill_during_save_then_reopen(tmp_path, states, point):
     jser_expect, hidden_expect = POINTS[point]
     folder, untouched = kill_at(tmp_path, point)
