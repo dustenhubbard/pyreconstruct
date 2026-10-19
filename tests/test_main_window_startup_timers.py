@@ -14,9 +14,8 @@ The first test asserts the state a fixture window is torn down in: both
 timers still pending. The second builds a window first and closes it the way
 the fixture's teardown does, then builds its own; it finds the closed window's
 timers stopped, processes events past the later deadline, and sees only its
-own window reach the two handlers. It used to rely on the first test's window
-instead, which made its check empty whenever the two ran in different
-processes. The handlers are wrapped on the class before either window is
+own window reach the two handlers. It needs no other test to have run first.
+The handlers are wrapped on the class before either window is
 built, so the timers connect to the wrappers and a run on the closed window is
 recorded whenever it happens, during the next window's construction included.
 """

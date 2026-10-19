@@ -19,9 +19,7 @@ Four things are pinned here, and they are separate claims:
 
   GUARD      that `_no_latched_modifiers` runs for every test and clears a
              latch on the way in and on the way out. One test, so it holds
-             whichever process runs it: it was an ordered pair, and with the
-             suite split across worker processes the second half could land
-             on another worker and skip.
+             whichever worker process runs it.
 
   DAMAGE     that a latched modifier changes what a mouse click means to a real
              list widget. This is the reason any of it matters: the tests it

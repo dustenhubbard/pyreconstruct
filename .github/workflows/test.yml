@@ -437,14 +437,13 @@ jobs:
           fi
 
       - name: Run test suite (headless / offscreen)
-        # Four worker processes, one per core of the runner (pytest-xdist).
-        # Run in one process, the suite took 22 to 40 minutes on October 18
-        # and 19, 2026, against the 40-minute cap above, and two jobs were
-        # canceled by it. Every test still runs on every leg; each worker has
-        # its own QApplication and its own throwaway QSettings
-        # (tests/qsettings_isolation.py). The count is fixed rather than
-        # `auto` so a larger runner does not change how the tests are split.
-        # --durations lists the slowest tests, so the log shows what grew.
+        # Four worker processes, one per core of the runner (pytest-xdist),
+        # so the job finishes well inside the limit above. Each worker has its
+        # own QApplication and its own throwaway QSettings
+        # (tests/qsettings_isolation.py), and any test can land on any worker,
+        # so a test must not depend on another test having run before it. The
+        # count is fixed rather than `auto` so a larger runner does not change
+        # how the tests are split. --durations lists the slowest tests.
         env:
           QT_QPA_PLATFORM: offscreen
         run: uv run --frozen --no-default-groups --extra test python -m pytest -ra -n 4 --durations=25   # -ra surfaces xfail/xpass/skip reasons if the gate goes red
