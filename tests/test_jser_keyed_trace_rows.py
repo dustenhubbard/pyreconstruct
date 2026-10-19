@@ -15,14 +15,17 @@ outside the suite against a `git archive` of the base commit on three datasets
 including a 50 MB, 125,218-row hand-traced series: identical sha256 on every one.
 
 **2. On is idempotent and id-stable, and the reason is subtler than it looks.**
-This build's reader does *not* adopt the id it finds on a keyed row -- lifting
-the stored id into the store is a separate change. The round trip is id-stable
-anyway, because the load **derives** each id from the row's own content, so a
-reader that throws the stored id away re-derives the same one. That is a real
-property and it is also a trap: it means an id follows the row's canonical
-content, so canonicalizing a non-canonical file changes its ids once, on the
-first save. Both halves are pinned below, the second deliberately, because it
-would otherwise be discovered as a bug.
+The reader keeps the id it finds on a keyed row: `Section.updateJSON` lifts it
+off the row and `Section.__init__` adopts it into the series' issuer
+(`adoptForSection`) before it derives ids for the rows that carry none.
+`tests/test_jser_keyed_trace_row_reader.py` pins that with planted ids no
+derivation could produce. Here the round trip is id-stable for a second reason
+as well: a row with no stored id gets one **derived** from its own content, and
+the id this build writes is that derived id, so adopting it and re-deriving it
+agree. That is a real property and it is also a trap: a derived id follows the
+row's canonical content, so canonicalizing a non-canonical positional file
+changes its ids once, on the first save. Both halves are pinned below, the
+second deliberately, because it would otherwise be discovered as a bug.
 
 **3. The shipped `v1.21.0` reader CANNOT OPEN the output, and that is the price of
 the key set.** The legacy keyed branch that has shipped unchanged since `v1.19.0`
@@ -372,14 +375,15 @@ def test_the_keyed_row_carries_the_same_values_as_the_positional_row(tmp_path):
 def test_the_full_open_save_open_save_cycle_is_byte_idempotent_and_id_stable(tmp_path):
     """The open-save round trip, in the reader that is shipping with it.
 
-    Note what makes it hold: this build's reader **drops** the stored id
-    (adopting it is a separate change) and derives a fresh one from the row's
-    content, which is the same one, because derivation is a function of content.
-    So the cycle is id-stable through a reader that never reads the ids being
-    tested. That is genuinely the design and not an accident -- but it means
-    this test would still pass if the writer wrote the ids into a black hole,
-    which is why `test_every_row_is_keyed_and_every_id_is_present` checks the
-    file itself.
+    Note what makes it hold: the reader adopts the stored id, and that id is
+    the one the load would derive from the row's content anyway, because the
+    file was settled by this build and derivation is a function of content. So
+    the cycle would be id-stable even through a reader that ignored the ids
+    being tested. That is genuinely the design and not an accident -- but it
+    means this test would still pass if the writer wrote the ids into a black
+    hole, which is why `test_every_row_is_keyed_and_every_id_is_present` checks
+    the file itself, and why adoption is pinned with planted ids in
+    `tests/test_jser_keyed_trace_row_reader.py`.
     """
     fp = tmp_path / "cycle.jser"
     shutil.copyfile(FIXTURE, fp)
@@ -429,7 +433,8 @@ def test_the_object_model_is_unchanged_by_a_round_trip_through_keyed_rows(tmp_pa
 def test_canonicalizing_a_file_changes_its_derived_ids(tmp_path):
     """A trap, pinned deliberately rather than left to be found later.
 
-    The load derives a trace's id from the trace's own stored content. The
+    A row that stores no id, as every row of this positional fixture does,
+    gets one the load derives from the row's own content. The
     fixture on disk is not canonical, so its first save through this build's
     writer changes that content -- rounding, tag order, the two-point `closed`
     repair -- and the ids move with it, once. They are stable from then on.

@@ -52,11 +52,11 @@ StoredTraceID = namedtuple("StoredTraceID", ("trace_id", "fill_mode_key"))
 
 ## --- the columnar dual-write ------------------------------------------------
 ##
-## Part of Phase 1 of the columnar-sections work. Every `Section` carries a
-## `SectionColumns` beside its own `self.contours` and mirrors every mutation
-## into it, so that the columnar store is driven by real code on real data --
-## and checked against the object model -- before any call site is flipped to
-## *read* from it.
+## Every `Section` carries a `SectionColumns` beside its own `self.contours`
+## and mirrors every mutation into it, so that the columnar store is driven by
+## real code on real data and checked against the object model. A few readers
+## (`export_svg`, the trace layer's culling, `SeriesData`) now read from the
+## store; the object model still owns every value, as below.
 ##
 ## THE GATE IS GONE, DELIBERATELY, AND WHAT REPLACED IT
 ## ----------------------------------------------------
@@ -1839,7 +1839,7 @@ class Section():
         carried, and stays right for these.
 
         THE FIRST BUILD TAKES THE ISSUER FROM THE SERIES, AND CARRIES THE
-        DERIVED IDS
+        LOADED IDS
         ------------------------------------------------------------------
         The issuer used to come only from the outgoing store, and the first
         build has no outgoing store -- so the chain was never seeded, and
@@ -1847,8 +1847,8 @@ class Section():
         `_rebuildColumnarStoreForSave`'s docstring used to describe as
         current). Now `Series` owns one issuer for the whole series, the first
         build takes it from `self.series`, and the ids it carries are the ones
-        `Section.__init__` just DERIVED from the section file's own rows
-        (`self._loaded_trace_ids`). A rebuild with an outgoing store still
+        `Section.__init__` just adopted from, or DERIVED for, the section
+        file's own rows (`self._loaded_trace_ids`). A rebuild with an outgoing store still
         prefers the outgoing store's issuer -- in production that is the same
         object as the series', and a store a test installed by hand keeps the
         index it was built with rather than having it silently swapped.
@@ -1893,10 +1893,11 @@ class Section():
                     if trace_id is not None:
                         carried_ids[trace] = trace_id
             else:
-                ## The first build: carry the ids `Section.__init__` derived
-                ## from the section file's rows. `None` for a section that was
-                ## not built from a file (a test's hand-assembled section),
-                ## and then every row falls through to `issue()`.
+                ## The first build: carry the ids `Section.__init__` adopted
+                ## or derived for the section file's rows. `None` for a
+                ## section that was not built from a file (a test's
+                ## hand-assembled section), and then every row falls through
+                ## to `issue()`.
                 carried_ids = self._loaded_trace_ids
 
         ## The first build also takes the coordinates `__init__` read from
@@ -2000,8 +2001,8 @@ class Section():
         It has a third consequence, worth naming because it is load-bearing:
         `SectionColumns` carries an `id` column, and `fromSection` once issued
         rather than carried ids. The issuer IS wired -- every `Section` built
-        from a file carries an id per trace, derived at load from the series'
-        issuer -- so a save that adopted a rebuild
+        from a file carries an id per trace, adopted from the file or derived
+        at load by the series' issuer -- so a save that adopted a rebuild
         unconditionally would re-identify every trace on the section. Keeping
         the existing store when nothing drifted means an ordinary save does
         not, and `test_a_save_does_not_re_identify_the_traces_it_saves` pins

@@ -257,9 +257,9 @@ places, and conflating any two of them is a bug that looks like working code:
 
 * **nothing is passed** -- the row is a new annotation. The injected issuer
   mints one (`issue()`), which registers it in the issuer's index on the way
-  out. No issuer means no id, which is only ever a store built outside
-  `Section` (a test's hand-assembled one): every `Section` built from a file
-  injects its series' issuer.
+  out. No issuer means no id, which happens only in tests (a hand-assembled
+  store, or a section whose stand-in series has no issuer): every `Section`
+  built from a file injects its series' issuer.
 * **`trace_id=` -- this series already owns this id.** It is carried verbatim
   and the issuer is not consulted, because consulting it would be asking
   whether an id the issuer itself handed out is free, and the answer is
@@ -301,8 +301,8 @@ complete machine-readable record, for a caller that wants to tell the user in
 its own vocabulary; and each reissue also prints to stderr, capped at
 `FOREIGN_ID_REPORT_LIMIT`. The print is not redundant with the record, and
 `issuer.collisions` is the evidence: it has been the designed by-name clash
-channel since this module first landed and has had **zero readers** for its
-entire life. A record nobody reads is the silent case the policy forbids, so the
+channel from the start and has had **zero readers** in the application for
+its entire life. A record nobody reads is the silent case the policy forbids, so the
 non-silence cannot be left to a future caller remembering to look. The cap
 follows the save-time drift report's (`section.DRIFT_REPORT_LIMIT`) and exists
 for the same reason: the report lands in
@@ -563,9 +563,8 @@ class SectionColumns():
     ## `_fill_mode_overflow` is deliberately not `dict[int, tuple[str, str]]`:
     ## the reason it exists is that the pair came out of a `.jser` unvalidated,
     ## so naming its element type would claim a check nothing performs.
-    ## `_ids` is `None` where the store has no issuer, which only ever means
-    ## a store built outside `Section`; `TraceIDIssuer.issue` returns
-    ## `str`.
+    ## `_ids` is `None` where the store has no issuer, which happens only in
+    ## tests; `TraceIDIssuer.issue` returns `str`.
     _names : list[str]
     _fill_mode_overflow : dict[int, tuple]
     _tags : list[frozenset[str]]
@@ -586,7 +585,7 @@ class SectionColumns():
                     `datatypes/trace_id.TraceIDIssuer` is the production
                     issuer, and every `Section` built from a file
                     injects its series' own. `None` means rows carry no id,
-                    which is now only a store built outside `Section`.
+                    which happens only in tests.
                     An `adopt(id, name) -> bool` is required as well, but ONLY
                     of an issuer whose store is passed a `foreign_id`; the
                     duck type widens for the callers that use the new feature

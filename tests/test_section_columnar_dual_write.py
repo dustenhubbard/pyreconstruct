@@ -3272,13 +3272,13 @@ def test_a_clean_save_keeps_the_store_it_already_had(real_section, capsys):
 
 
 def _installAStoreCarryingIDs(section):
-    """Rebuild the section's store with an id issuer wired in, and map the rows.
+    """Rebuild the section's store with a fresh id issuer, and map the rows.
 
-    Nothing in the application injects one today -- `Section.__init__` reaches
-    `resyncColumnarStore`, and a section with no outgoing store has no issuer
-    to carry into the new one, so every row's id is `None` and `Trace` carries
-    no id attribute at all. The tests below are about what a rebuild does with
-    ids once one IS wired, so they have to build that state by hand.
+    A section loaded from a file already carries ids: `_rebuildColumnarStore`
+    takes the series' issuer and passes the ids `Section.__init__` adopted or
+    derived into `fromSection` as `carried_ids`. The tests below still build
+    the store by hand, with an issuer of their own, so each one starts from an
+    issuer nothing else has touched and from ids it has checked are all set.
 
     Mirrors `resyncColumnarStore`'s own row-map construction rather than
     reimplementing it differently, so the section is in the state the
@@ -3310,23 +3310,22 @@ def _installAStoreCarryingIDs(section):
 def test_a_save_does_not_re_identify_the_traces_it_saves(real_section):
     """An ordinary save leaves every row's id alone.
 
-    `save()` rebuilds the store, and `SectionColumns.fromSection` ISSUES ids
-    rather than carrying them: it appends every row without a `trace_id`, so a
-    rebuild with an issuer wired re-identifies the whole section and leaks the
+    `save()` rebuilds the store. A rebuild that issued fresh ids instead of
+    carrying the old ones would re-identify the whole section and leak the
     outgoing ids into the issuer's taken-set. An id is meant to be a birth
-    certificate. A save that re-mints one for every trace in the section, on
+    certificate. A save that re-minted one for every trace in the section, on
     every mouse-wheel scroll, would be a severe regression hiding inside a
     safety-mechanism swap.
 
-    It does not happen, and the reason is structural rather than lucky: a save
+    It does not happen, and the reason asserted here is structural: a save
     that finds no drift keeps the store it already had and discards the rebuild
     entirely -- ids, generation, row numbers and all. That property is asserted
-    here against a store that actually carries ids, because with the production
-    default (`id_issuer=None`, every id `None`) the assertion would pass
-    vacuously.
+    against a store that actually carries ids, because against a store with no
+    issuer (every id `None`) the assertion would pass vacuously.
 
-    This holds without any id carry at all; the tests below cover the saves
-    and rebuilds that do adopt a new store, which is where the carry matters.
+    This holds without any id carry at all. A rebuild that IS adopted carries
+    the ids too (`_rebuildColumnarStore` hands `fromSection` the outgoing ids
+    as `carried_ids`); the tests below cover those saves and rebuilds.
     """
     before = _installAStoreCarryingIDs(real_section)
     store = real_section._columns
@@ -3415,15 +3414,17 @@ def test_a_no_op_rebuild_does_not_re_identify_an_unchanged_trace(real_section):
 def test_a_rebuild_carries_the_issuer_and_does_not_leak_dead_ids(real_section):
     """Two halves of the same loss, and the first was worse than it looked.
 
-    At the `fromSection` layer an issuer IS passed and every row takes the
-    `issue()` arm -- so an id changed. At the `Section` layer it was worse:
-    `_rebuildColumnarStore` passed no `id_issuer` at all, so the replacement
-    store had none and every id came back `None`. The series' id index went
-    with the store it was attached to.
+    Before ids were carried, a `fromSection` call that was passed an issuer
+    sent every row down the `issue()` arm -- so an id changed. At the `Section`
+    layer it was worse: `_rebuildColumnarStore` passed no `id_issuer` at all,
+    so the replacement store had none and every id came back `None`. The
+    series' id index went with the store it was attached to.
 
     The leak is the other half. Every rebuild that re-issued left the outgoing
     id in the issuer's taken-set with no row holding it, so a long session's
-    index filled with ids belonging to nothing.
+    index filled with ids belonging to nothing. `_rebuildColumnarStore` now
+    passes the outgoing store's issuer and its ids into the rebuild, and this
+    test pins both.
     """
     _installAStoreCarryingIDs(real_section)
     issuer = real_section._columns.id_issuer
