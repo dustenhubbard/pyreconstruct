@@ -1092,6 +1092,14 @@ def clear_latched_modifiers() -> None:
     QTest.keyClick(widgets.QWidget(), Qt.Key_Shift, Qt.NoModifier)
 
 
+def no_latched_modifiers():
+    """The body of `_no_latched_modifiers`, a plain generator so that
+    `tests/test_keyboard_modifier_latch.py` can drive it inside one test."""
+    clear_latched_modifiers()
+    yield
+    clear_latched_modifiers()
+
+
 @pytest.fixture(autouse=True)
 def _no_latched_modifiers():
     """Guarantee every test starts and ends with no keyboard modifier latched.
@@ -1104,6 +1112,4 @@ def _no_latched_modifiers():
     test's own teardown (a session-scoped finalizer, an aborted run resumed with
     `--lf`) cannot reach the next test either.
     """
-    clear_latched_modifiers()
-    yield
-    clear_latched_modifiers()
+    yield from no_latched_modifiers()

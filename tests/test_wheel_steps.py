@@ -545,8 +545,14 @@ def test_momentum_after_a_finished_zoom_starts_no_zoom(window):
     lift = last_finger(events) + 1
     scroll(window, events[:lift], Qt.ControlModifier)
     assert window.is_zooming
-    # moving the mouse finishes the zoom
-    QTest.mouseMove(window.field, window.field.rect().center() + QPoint(5, 5))
+    # moving the mouse finishes the zoom. Sent to this window, as the wheel
+    # events are: QTest.mouseMove(widget) only moves the cursor, and offscreen
+    # Qt hands that move to whichever window is under it, which can be one an
+    # earlier test left open. Two points, because a move to where the pointer
+    # already is reaches no widget.
+    center = window.field.mapTo(window, window.field.rect().center())
+    QTest.mouseMove(window.windowHandle(), center)
+    QTest.mouseMove(window.windowHandle(), center + QPoint(5, 5))
     assert not window.is_zooming
     width = window.series.window[2]
     scroll(window, events[lift:], Qt.ControlModifier)
