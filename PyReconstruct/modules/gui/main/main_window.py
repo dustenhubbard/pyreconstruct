@@ -4299,7 +4299,7 @@ class MainWindow(QMainWindow):
         self.field.generateView()
 
     def editSelectedAttributes(self):
-        """Q8 top-level field-menu shortcut: open the primary "Edit ...
+        """Top-level field-menu shortcut: open the primary "Edit ...
         attributes..." dialog for the current selection.
 
         Routes to the trace dialog when traces are selected and to the z-trace

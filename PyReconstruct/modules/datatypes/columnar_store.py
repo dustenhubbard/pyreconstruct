@@ -66,10 +66,10 @@ user-visible for anything paint- or display-order-sensitive: a consumer flipped
 onto `contourNames()` would silently repaint the section in a different order
 from the one the object model would have given it.
 
-That was measured against a real section, recorded as an open blocker on the
-first attempted consumer flip (`svg_conversion.py`), and **decided by the
-maintainer on 2026-08-06: add a second enumerator rather than change the
-first.** `contourNames()` keeps its sorted contract -- it is the file's order
+That was measured against a real section, where it blocked the first attempt
+to move a consumer (`svg_conversion.py`) onto the store, and **the answer, as
+of 2026-08-06, is a second enumerator rather than a changed first one.**
+`contourNames()` keeps its sorted contract -- it is the file's order
 and callers may depend on it -- and `contourNamesInInsertionOrder()` answers
 the other question. The two enumerate exactly the same names; only the order
 differs.
@@ -97,7 +97,7 @@ this small:
 The one path that did **not** keep them in step was `fromSection`, which walked
 `sorted(section.contours, key=str)` and therefore built every rebuilt store's
 index in sorted key order regardless of what the section's own order was. That
-mattered more than it sounds: since D11 every `save()` rebuilds, so a session's
+mattered more than it sounds: every `save()` rebuilds the store, so a session's
 insertion order was erased several times a second. `fromSection` now seeds the
 index's keys from `section.contours` before it appends anything -- see the
 method -- which fixes the key ORDER without moving a single row NUMBER.
@@ -113,21 +113,21 @@ key and an empty one identically.
 `SegmentedCoordinates` -- one `(n, 2)` float64 array per row, insert and delete
 O(1), a row's array is its own, and nothing aliases. It is the pole that
 preserves today's complexity on every path, and it is now the decided one
-rather than a default: the design's open question (one array per section
+rather than a default: the open question (one array per section
 versus one per trace) was settled after the paired undo-snapshot measurement
 found the per-section `PackedCoordinates` backing 0.32% dearer on the workload
 it was hypothesized to win (its per-row header amortization needs several rows
-per store, and ~90% of undo snapshots hold one), and after the A1 open-pass
-split (geometry 68%, construction 15.4%) came in on the side the design doc
-itself names for that shape. The losing backing was deleted rather than kept
-as an option -- carrying it was unreleased scope (review-246 F06) -- and the
+per store, and ~90% of undo snapshots hold one), and after the open-pass
+profile split (geometry 68%, construction 15.4%) came in on the per-trace
+side. The losing backing was deleted rather than kept as an option, since
+carrying it was unreleased scope, and the
 store stays layout-blind behind the same five-method backing interface
 (`append` / `get` / `set` / `release` / `freeze`), so a future whole-section
 layout, if a measurement ever earns one, arrives as a new backing rather than a
 rewrite. The interface was six methods until `totalPoints` went with the class
 that consumed it: `PackedCoordinates.deadPoints` was its only call site
 anywhere in the tree, and applying the unreleased-scope principle to one and
-not the other is the inconsistency review-248 F02 recorded.
+not the other would have been inconsistent.
 
 Coordinates are **float64**, not float32. float32 carries about 7 significant
 decimal digits in total while `getList` promises 7 decimal *places*, so a
@@ -251,12 +251,13 @@ merge cannot place and nothing detects.
 THE THREE WAYS A ROW ACQUIRES AN ID, AND WHY THEY ARE THREE
 ------------------------------------------------------------
 `appendRow` takes two mutually exclusive id parameters rather than one, and the
-distinction between them is the whole of D10. An id can arrive from three
+distinction between them is the whole of how ids survive a rebuild and an
+import. An id can arrive from three
 places, and conflating any two of them is a bug that looks like working code:
 
 * **nothing is passed** -- the row is a new annotation. The injected issuer
   mints one (`issue()`), which registers it in the issuer's index on the way
-  out. No issuer means no id, which since S1 is only a store built outside
+  out. No issuer means no id, which is only ever a store built outside
   `Section` (a test's hand-assembled one): every `Section` built from a file
   injects its series' issuer.
 * **`trace_id=` -- this series already owns this id.** It is carried verbatim
@@ -274,15 +275,16 @@ places, and conflating any two of them is a bug that looks like working code:
   shared ancestor file. This one goes through `TraceIDIssuer.adopt(id, name)`,
   which is the operation `trace_id.py` documents for exactly this ("an id that
   arrived from a file or from another series") and which had no production
-  caller before D10.
+  caller before `foreign_id=` existed.
 
 `trace_id.py`'s recorded collision policy is "at load and at merge -- detect
 and report by name, never silently adopt and never silently reissue", and
-before D10 `_resolveID` did the first of the two forbidden things: it accepted
-a carried id verbatim, unregistered, so the issuer's index could later hand the
-same id out again. `foreign_id=` closes that. What `adopt()` cannot do is
-resolve the clash it detects -- it returns `False` and stops -- so the store
-must decide, and **the rule is: issue a fresh local id for the clashing row
+until `foreign_id=` existed, `_resolveID` did the first of the two forbidden
+things: it accepted a carried id verbatim, unregistered, so the issuer's index
+could later hand the same id out again. `foreign_id=` closes that. What
+`adopt()` cannot do is resolve the clash it detects -- it returns `False` and
+stops -- so the store must decide, and **the rule is: issue a fresh local id
+for the clashing row
 only, and report it.** That is
 technically a reissue, which the policy names as forbidden; the policy forbids
 *silent* reissuing, and this one is reported through both channels below, so it
@@ -299,10 +301,11 @@ complete machine-readable record, for a caller that wants to tell the user in
 its own vocabulary; and each reissue also prints to stderr, capped at
 `FOREIGN_ID_REPORT_LIMIT`. The print is not redundant with the record, and
 `issuer.collisions` is the evidence: it has been the designed by-name clash
-channel since wave B and has had **zero readers** for its entire life. A record
-nobody reads is the silent case the policy forbids, so the non-silence cannot
-be left to a future caller remembering to look. The cap is D11's precedent
-(`section.DRIFT_REPORT_LIMIT`) and exists for its reason: the report lands in
+channel since this module first landed and has had **zero readers** for its
+entire life. A record nobody reads is the silent case the policy forbids, so the
+non-silence cannot be left to a future caller remembering to look. The cap
+follows the save-time drift report's (`section.DRIFT_REPORT_LIMIT`) and exists
+for the same reason: the report lands in
 the per-user log file through the stdout/stderr tee, that file rotates at 2 MB,
 and a common-ancestor merge clashes on every non-overlapping trace rather than
 on a rare one -- so an uncapped report would evict the history somebody opened
@@ -317,8 +320,8 @@ mutation entry points listed under MUTATION ENTRY POINTS. It adds no entry
 point of its own, so the counter, the modified-name tracking and the rename
 reindex all happen exactly once, in the store, on the path they already took.
 
-It is **not** §5(A)'s cached identity-stable shim. It has no identity map and
-no invalidation, because whether the shim should cache is still open and a view
+It is **not** a cached, identity-stable shim. It has no identity map and
+no invalidation, because whether a shim should cache is still open and a view
 that quietly cached would answer it by accident. The write path does not change
 that: a view still holds no value, so a write through one view is visible to
 every other view of the row on the next read, with nothing to invalidate.
@@ -560,8 +563,8 @@ class SectionColumns():
     ## `_fill_mode_overflow` is deliberately not `dict[int, tuple[str, str]]`:
     ## the reason it exists is that the pair came out of a `.jser` unvalidated,
     ## so naming its element type would claim a check nothing performs.
-    ## `_ids` is `None` where the store has no issuer, which since S1 means
-    ## only a store built outside `Section`; `TraceIDIssuer.issue` returns
+    ## `_ids` is `None` where the store has no issuer, which only ever means
+    ## a store built outside `Section`; `TraceIDIssuer.issue` returns
     ## `str`.
     _names : list[str]
     _fill_mode_overflow : dict[int, tuple]
@@ -581,7 +584,7 @@ class SectionColumns():
                     satisfying the same five-method interface may be injected.
                 id_issuer: anything with an `issue()` returning a fresh id.
                     `datatypes/trace_id.TraceIDIssuer` is the production
-                    issuer, and since S1 every `Section` built from a file
+                    issuer, and every `Section` built from a file
                     injects its series' own. `None` means rows carry no id,
                     which is now only a store built outside `Section`.
                     An `adopt(id, name) -> bool` is required as well, but ONLY
@@ -658,8 +661,8 @@ class SectionColumns():
 
         What does need to change is the index's KEY order, which is the only
         place between-contour order lives (module docstring). Sorting the
-        append walk sorted the keys with it, so every rebuild -- and since D11
-        that is every `save()` -- threw away the section's own contour order
+        append walk sorted the keys with it, so every rebuild -- and that
+        includes every `save()` -- threw away the section's own contour order
         and replaced it with the file's. Seeding the keys from
         `section.contours` first, in the section's order, and then appending in
         sorted order gives both: `setdefault` in `appendRow` finds every key
@@ -675,10 +678,10 @@ class SectionColumns():
 
         THIS METHOD IS EVERY REBUILD, WHICH IS WHY IT CARRIES IDS
         ---------------------------------------------------------
-        Until D10 it appended every row with no id at all, so the issuer minted
+        It used to append every row with no id at all, so the issuer minted
         a fresh one for each -- and since `Section.resyncColumnarStore` reaches
-        this from fourteen call sites and `save()` reaches it on every save
-        since D11, an id was re-minted for every trace on a section several
+        this from fourteen call sites and `save()` rebuilds the store on every
+        save, an id was re-minted for every trace on a section several
         times a second. An id is a birth certificate: re-minting one turns "the
         same trace, edited" into "a different trace" to anything that later
         merges, which is the one property `trace_id.py` says a merge cannot
@@ -892,7 +895,7 @@ class SectionColumns():
         issuer rather than reaching into a private attribute. That matters
         more than it reads: the issuer owns the series' id index, so a
         replacement store built with a fresh one -- or with none, which is
-        what `Section._rebuildColumnarStore` did before D10 -- discards every
+        what `Section._rebuildColumnarStore` once did -- discards every
         id on the section and every record of which ids are spoken for.
         """
         return self._id_issuer
@@ -970,8 +973,8 @@ class SectionColumns():
     def materializeTrace(self, row: int) -> Trace:
         """Build a real `Trace` from a row.
 
-        Not a view. Wave B builds no views: a view's identity is load-bearing in
-        the render path (three membership `set()`s of `Trace` objects and a
+        Not a view. This method builds none: a view's identity is load-bearing
+        in the render path (three membership `set()`s of `Trace` objects and a
         `trace not in contour` staleness guard, all running on CPython object
         identity because `Trace` defines neither `__eq__` nor `__hash__`), and
         deciding what identity a view has is a separate question from whether the
@@ -1027,7 +1030,7 @@ class SectionColumns():
                     recorded in `foreign_id_reissues` and printed. Requires an
                     issuer: an id cannot be registered with nothing, and
                     accepting it unregistered is exactly the silent adoption
-                    D10 exists to remove.
+                    registration exists to remove.
             Returns:
                 (int): the new row number
         """
@@ -1045,7 +1048,7 @@ class SectionColumns():
                 f"a foreign id ({foreign_id!r}) was carried into a store with "
                 "no id issuer, so there is nothing to register it with and no "
                 "way to notice it clashing with an id this series already "
-                "holds. Storing it anyway is the silent adoption D10 removed; "
+                "holds. Storing it anyway would be a silent adoption; "
                 "pass trace_id instead if the id is genuinely this series' own."
             )
         name = normalizeObjectName(name)
@@ -1161,10 +1164,10 @@ class SectionColumns():
     def reorderContour(self, name: str, rows):
         """Put one contour's rows in a new within-contour order.
 
-        The clean reorder entry point (D9). Nothing is renumbered, nothing is
-        tombstoned, no coordinate array moves and no held `TraceView` is
-        touched: this rebinds one list of row numbers in the index, which is
-        the only place within-contour order is held.
+        The store's purpose-built reorder entry point. Nothing is renumbered,
+        nothing is tombstoned, no coordinate array moves and no held
+        `TraceView` is touched: this rebinds one list of row numbers in the
+        index, which is the only place within-contour order is held.
 
             Params:
                 name (str): the contour to reorder. Normalized on the way in,
@@ -1404,7 +1407,8 @@ class SectionColumns():
         """Decide the id for a row being appended. See the module docstring.
 
         The three arms are the three ways a row acquires an id, and the middle
-        one is the one that took a maintainer decision (D10 Q1/Q2).
+        one is the one with a real choice in it: what to do when a foreign id
+        clashes (reissue locally and report, rather than raise or keep it).
         """
         ## This series' own id, carried in. Not registered again: it is in the
         ## issuer's index already, put there when it was first issued, so
@@ -1489,25 +1493,25 @@ class TraceView():
     each. Those eight are the whole surface here.
 
     `Trace`'s geometry methods (`getBounds`, `getMidpoint`, `getCentroid`,
-    `getRadius`, `getFeret`, ...) are deliberately absent. They are a separate
-    row of the rewiring plan's pattern table -- a batched whole-section pass
+    `getRadius`, `getFeret`, ...) are deliberately absent. They belong to a
+    separate piece of work -- a batched whole-section pass
     over the coordinate column, which is the thing the layout exists for -- and
     reimplementing them one trace at a time here would prejudge that work by
     shipping the per-trace shape it is meant to replace.
 
     NO CACHE, AND THAT IS THE POINT RATHER THAN AN OMISSION
     ------------------------------------------------------
-    The design's §5(A) shim is a *cached, identity-stable* view, and its own
-    cost note ("exactly the object-per-trace cost the phase is removing") is
-    still open. Nothing here presupposes an answer: this class has no identity
-    map, no weak-value table and no generation-counter invalidation, because it
-    holds no state that could go stale. Two views of one row are two objects
-    that compare unequal under `is`. `ContourView.index` and `__contains__` ask
-    a different question of them -- `row`, which is equal -- and that is exactly
-    why they could be built without settling the caching one: a row number is
-    stable whether or not any object is. Whatever the caching question is
-    decided to be, it is decided against a view that already provably reads and
-    writes the right bytes.
+    The alternative is a *cached, identity-stable* view, and its cost --
+    exactly the object-per-trace cost the store exists to remove -- is still an
+    open question. Nothing here presupposes an answer: this class has no
+    identity map, no weak-value table and no generation-counter invalidation,
+    because it holds no state that could go stale. Two views of one row are two
+    objects that compare unequal under `is`. `ContourView.index` and
+    `__contains__` ask a different question of them -- `row`, which is equal --
+    and that is exactly why they could be built without settling the caching
+    one: a row number is stable whether or not any object is. Whatever the
+    caching question is decided to be, it is decided against a view that
+    already provably reads and writes the right bytes.
 
     The write path is what makes that absence worth restating rather than
     assuming. A *cached* view would have to answer "who invalidates the other
@@ -1722,14 +1726,14 @@ class ContourView():
     normalized name.
     SVG export reads it.
 
-    WHAT IS HERE, AND THE ONE PROPERTY THAT IS LOAD-BEARING FOR A LATER SLICE
-    ------------------------------------------------------------------------
+    WHAT IS HERE, AND THE ONE PROPERTY A PORT OF `importTraces` WILL NEED
+    ---------------------------------------------------------------------
     `Contour` defines `__init__`, `__iter__`, `__getitem__`, `__len__`,
     `__add__`, and the methods `append`, `remove`, `index`, `isEmpty`,
     `getTraces`, `copy`, `getBounds`, `getMidpoint`, `importTraces`. Of those,
     six are read-only *and* buildable out of what the store and `TraceView`
     already expose: `__iter__`, `__getitem__`, `__len__`, `isEmpty`,
-    `getTraces` and `index` -- the last of which arrived in 7b' and brought
+    `getTraces` and `index` -- the last of which arrived later and brought
     `__contains__` with it, since they are one question. They are what this
     class carries, plus `name`.
 
@@ -1740,7 +1744,7 @@ class ContourView():
     takes `rem_s_traces = self[i:]` and then calls `.copy()`, `.pop(found_i)`
     and `.remove(o_trace)` on it and finally `+`-concatenates it, all of which
     require a real, mutable, independent `list`. A slice that returned another
-    view would break the slice that ports `importTraces` in a way no type
+    view would break a port of `importTraces` in a way no type
     annotation would catch, so the parity suite pins `type(...) is list`
     against a real `Contour` rather than asserting a shape.
 
@@ -1756,10 +1760,10 @@ class ContourView():
     which is CPython object identity. Every route to an element of a view builds
     a *fresh* `TraceView`, so no object a caller holds is ever `is`-equal to an
     element -- measured over all six access routes on every contour of the real
-    fixture series, zero hits. Slice 7a read that as "identity has no answer
-    here" and left both methods absent.
+    fixture series, zero hits. An earlier version read that as "identity has no
+    answer here" and left both methods absent.
 
-    That reading was too strong, and this is the correction. There is a third
+    That reading was too strong. There is a third
     route, and it is mechanical: **match on the row**. `TraceView.row` is
     already public, already read-only, and is already the row's identity. Two
     views of one row of one store name the same trace whether or not they are
@@ -1768,8 +1772,8 @@ class ContourView():
     `index` compare the store and the row. It is observationally what a cached
     view would give -- a cache handing out one object per row makes `is` mean
     exactly "same row of the same store" -- but with no live-view map, which is
-    the cost D1 exists to weigh. **So this route needs no D1 answer: there is no
-    cache for D1 to be about.**
+    the cost a cached view would have to justify. **So this route does not
+    depend on whether a cache should exist: it builds none.**
 
     The divergence from `Contour` that this does *not* erase, and that the
     parity suite pins so it stays visible: **a materialized `Trace` is still
@@ -1799,7 +1803,7 @@ class ContourView():
     load-bearing one.
 
     First, read-only is this class's shipped contract, not an accident of how
-    far the last slice got, and widening it is the write half's call.
+    far the work got, and widening it is the write half's call.
 
     Second, and independent of that: it would not be the same operation.
     `Contour.remove(trace)` *detaches* an object that stays alive and is often
@@ -1823,44 +1827,41 @@ class ContourView():
 
     *`__add__`*, because it builds a `Contour` holding both operands' trace
     lists, and a contour spanning two stores is not a thing the row index can
-    represent. *`copy()`*, because it is the pattern table's separate
-    whole-object-clone row and its callers are the undo snapshots, which are a
-    later track's question.
+    represent. *`copy()`*, because a whole-object clone is a separate question
+    and its callers are the undo snapshots, which are a separate piece of work.
 
     *`getBounds` and `getMidpoint`*, and this one is a genuine gap rather than
     a category exclusion. Both exist on `Contour` and both are called on real
     contours in production (`autoseg/conversions.py` for the bounds,
     `Series.createZtrace` for the midpoint). Both are implemented by delegating
     to `trace.getBounds(tform)` once per trace -- and `TraceView` deliberately
-    does not carry `getBounds`, because the geometry family is a separate row
-    of the rewiring plan's pattern table (a batched whole-section pass over the
-    coordinate column) and reimplementing it one trace at a time would prejudge
-    that work. Building them here would mean either adding geometry to
-    `TraceView` or writing the same per-trace loop one class further out; both
-    prejudge the same decision, so both wait for the slice that owns it.
+    does not carry `getBounds`, because the geometry family belongs to separate
+    work (a batched whole-section pass over the coordinate column) and
+    reimplementing it one trace at a time would prejudge that work. Building
+    them here would mean either adding geometry to `TraceView` or writing the
+    same per-trace loop one class further out; both prejudge the same decision,
+    so both wait for the batched pass.
 
     *The `traces` attribute itself*, because it is not a read-only surface. On a
     `Contour` it is the live list, and code that holds it can append to it --
-    the census counts three rebinds of it. Handing out a fresh list under that
+    the tree holds three rebinds of it. Handing out a fresh list under that
     name would make `contour.traces.append(...)` a silent no-op. `getTraces()`,
     which returns a copy on a `Contour` too and is what the production readers
     actually call, is here instead.
 
-    SLICE 7b WAS ATTEMPTED. HALF OF IT SHIPPED; `importTraces` DID NOT
-    -------------------------------------------------------------------
-    7b was dispatched as "`importTraces` + identity ops on `ContourView`". The
-    identity ops are above and are built. The import is not, and the reasons are
-    each measured and each pinned by a test in
+    THE IDENTITY OPS ARE BUILT; `importTraces` IS NOT
+    -------------------------------------------------
+    The identity ops are above and are built. The import is not, and the reasons
+    are each measured and each pinned by a test in
     `tests/test_columnar_store_parity.py` that fails the day its blocker lifts.
 
-    A correction is recorded here rather than quietly dropped, because the
-    earlier draft of this docstring asserted the opposite and would have been
-    read as settled architecture. It claimed identity through a view "can never
-    match", that the only two ways out were D1's cached views and the rejected
-    equality-over-id, and that there was **no third option that is merely
-    mechanical**. That was wrong: the row route above is the third option, it
-    needs neither decision, and it was built and run against all 221 contours of
-    the real fixture series before this slice took it (review-274 F1). The blocker below is what survives of that claim.
+    An earlier draft of this docstring asserted that identity through a view
+    "can never match", that the only two ways out were cached views and
+    equality over trace ids (rejected), and that there was **no third option
+    that is merely mechanical**. That was wrong: the row route above is the
+    third option, it needs neither, and it was run against all 221 contours of
+    the real fixture series. The blockers below are what survives of that
+    claim.
 
       1. *A `Trace` a caller holds is still not a member, and `remove` is still
          absent.* Identity by row answers for `TraceView`s (above) and answers
@@ -1871,63 +1872,63 @@ class ContourView():
          while `removeRow` tombstones.
 
       2. *`Contour.importTraces` calls `overlaps` and `mergeTags` on its
-         elements.* `TraceView` carries neither, each for a reason older than
-         this slice: `overlaps` is the geometry family, deferred to the batched
+         elements.* `TraceView` carries neither, each for a reason that predates
+         this class: `overlaps` is the geometry family, deferred to the batched
          coordinate pass, and `mergeTags` is outside the eight fields
          `Trace.__init__` assigns.
 
       3. ~~*The store can express the reordered list `importTraces` rebinds,
-         but not cleanly.*~~ **No longer a blocker. Answered by D9 and built:
-         `SectionColumns.reorderContour(name, rows)`.** `importTraces` ends
-         `self.traces = traces`, where `traces` is in a **different order** from
-         the contour it replaces, and the store had no purpose-built way to say
-         so: `appendRow` is "an append, never an insert" and `removeRow` retires
-         the row number for good. It could nonetheless express the reorder, by
-         an accident of `setAttribute(row, "name", ...)` appending a renamed row
-         at the **end** of its destination -- so a rename away to a scratch name
-         and back was a move-to-end primitive, and n−1 of those realized any
-         permutation, with no row renumbered, no row tombstoned and no held
-         `TraceView` invalidated. The residue was smaller and dirtier than a
-         capability gap: the scratch name **leaked into `modified_contours` and
+         but not cleanly.*~~ **No longer a blocker. Answered by a purpose-built
+         entry point: `SectionColumns.reorderContour(name, rows)`.**
+         `importTraces` ends `self.traces = traces`, where `traces` is in a
+         **different order** from the contour it replaces, and the store had no
+         purpose-built way to say so: `appendRow` is "an append, never an
+         insert" and `removeRow` retires the row number for good. It could
+         nonetheless express the reorder, by an accident of `setAttribute(row,
+         "name", ...)` appending a renamed row at the **end** of its
+         destination -- so a rename away to a scratch name and back was a
+         move-to-end primitive, and n−1 of those realized any permutation, with
+         no row renumbered, no row tombstoned and no held `TraceView`
+         invalidated. The residue was smaller and dirtier than a capability
+         gap: the scratch name **leaked into `modified_contours` and
          `getAllModifiedNames`**, which the dual write consumes as the scope of
-         an undo snapshot. D9 answered that with an entry point rather than with
-         a tolerance, and **the round trip is retired rather than kept beside
-         it**: it survives in the parity suite only as the measurement that says
-         the two routes reach the same order and only one of them stays quiet.
-         What still blocks the port is 2 and 4 below, not the rebind.
+         an undo snapshot. That is answered with an entry point rather than
+         with a tolerance, and **the round trip is retired rather than kept
+         beside it**: it survives in the parity suite only as the measurement
+         that says the two routes reach the same order and only one of them
+         stays quiet. What still blocks the port is 2 and 4 below, not the
+         rebind.
 
       4. PARTLY LIFTED. *The rebound list may hold the other contour's own
          `Trace` objects*, and in production `other` is a contour of a
          different section of a different series with a different store.
          `Section.importTraces` then calls `Contour.remove` on exactly those
-         objects, by identity. Adopting a foreign trace into this store was
-         design §10's id-carry question, and D10 has since answered it:
-         `appendRow(foreign_id=...)` registers the id with the local issuer and
-         reissues-and-reports on a clash, so there is now a defined operation
-         for a foreign row's id where there was none. What that does NOT lift
-         is the rest of this item -- a port still has to decide which store the
-         adopted trace's row belongs to and what happens to its row in the
-         other store -- and nothing in the tree threads a foreign id through
-         yet, so the mechanism is reachable only by direct call. What still
-         blocks the port is 1 and 2 above, plus that unthreaded half.
+         objects, by identity. How a foreign trace's id is carried into this
+         store now has an answer: `appendRow(foreign_id=...)` registers the id
+         with the local issuer and reissues-and-reports on a clash, so there is
+         now a defined operation for a foreign row's id where there was none.
+         What that does NOT lift is the rest of this item -- a port still has
+         to decide which store the adopted trace's row belongs to and what
+         happens to its row in the other store -- and nothing in the tree
+         threads a foreign id through yet, so the mechanism is reachable only
+         by direct call. What still blocks the port is 1 and 2 above, plus that
+         unthreaded half.
 
-    ON D1, AND ONE INCONSISTENCY WORTH FLAGGING RATHER THAN INHERITING
-    ------------------------------------------------------------------
-    The rewiring plan heads Track B with "needs D1
-    confirmed", so citing D1 as a precondition for shim work is defensible. Two
-    things temper it, and neither is settled precedent. Slices 4, 6 and 7a all
-    shipped under the identical unconfirmed D1, so treating it as *blocking* is
-    new with 7b rather than established. And D1's own recorded text asks whether
-    the cache is permanent or scaffolded -- not whether identity may be
-    expressed at all. The row route above needs no answer to either question,
-    because it builds no cache; if D1 is worth splitting when it is answered,
-    the split is "is the cache permanent" from "may the shim express identity in
-    store terms", and only the first is still open.
+    CACHING AND IDENTITY ARE TWO QUESTIONS, AND ONLY ONE IS OPEN
+    ------------------------------------------------------------
+    Whether views over the store should be cached -- and if so, whether that
+    cache is a permanent compatibility layer or scaffolding to be removed -- is
+    still open. It is not a precondition for this class. A cache is one way to
+    make two reads of one row come back as the same object, and so one way to
+    express identity; the row route above is another, and it holds nothing that
+    could go stale. So "is a cache permanent" and "may a view express identity
+    in store terms" are separate questions, and this class answers only the
+    second: yes, by row, with no cache.
 
-    What also ports is the container mechanics, and they are now pinned rather
-    than inherited from slice 7a's word: the bare `list` a slice returns, its
-    iterator type, and its `IndexError`/`TypeError` message strings, all
-    re-verified against real `Contour`s on the real series.
+    What also ports is the container mechanics, and they are pinned rather
+    than assumed: the bare `list` a slice returns, its iterator type, and its
+    `IndexError`/`TypeError` message strings, all re-verified against real
+    `Contour`s on the real series.
     """
 
     ## Same two-slot discipline as `TraceView`, and for the same reason: a

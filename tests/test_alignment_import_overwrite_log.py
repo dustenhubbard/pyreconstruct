@@ -106,7 +106,7 @@ def test_importing_a_new_alignment_logs_an_import_and_no_update(two_series):
 
 
 def test_replacing_an_existing_alignment_logs_an_update_and_no_import(two_series):
-    """The half of the card that the log did not record at all."""
+    """The half of the overwrite that the log did not record at all."""
     series, other = two_series
     written = _write_distinct_alignment(other, EXISTING)
     assert EXISTING in series.alignments, "fixture must already carry the name"
@@ -197,7 +197,7 @@ def test_renaming_onto_a_taken_name_is_an_update_of_that_name(two_series):
 
 
 # --------------------------------------------------------------------------- #
-# 3. the case the card is really about: a replacement of an alignment in use
+# 3. the case that matters most: a replacement of an alignment in use
 # --------------------------------------------------------------------------- #
 def test_replacing_an_alignment_in_use_on_some_sections_and_not_others(two_series):
     """The source covers part of the series, and objects point at the alignment.

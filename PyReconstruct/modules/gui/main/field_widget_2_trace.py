@@ -266,7 +266,7 @@ class FieldWidgetTrace(FieldWidgetBase):
             # (import traces -> conflict flags -> click one), and the next edit
             # to one of these traces raises `ColumnarDualWriteMismatch` at the
             # user. The next SAVE no longer does -- it rebuilds the store and
-            # logs the drift instead (D11) -- but the edit usually comes first.
+            # logs the drift instead -- but the edit usually comes first.
             # See `series.py`'s `hideObjects` for the same shape.
             self.section.resyncColumnarStore()
 
@@ -1531,7 +1531,7 @@ class FieldWidgetTrace(FieldWidgetBase):
             # `generateView()` and neither repairs the store, so without this
             # the drift survives to whichever later edit touches one of these
             # traces and raises `ColumnarDualWriteMismatch` on an unrelated
-            # action. A save in between now rebuilds and logs it (D11) rather
+            # action. A save in between now rebuilds and logs it rather
             # than raising, which narrows the failure without closing it.
             self.section.resyncColumnarStore()
 

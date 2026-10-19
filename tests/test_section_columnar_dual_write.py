@@ -182,7 +182,7 @@ def _anyTrace(section):
 def test_every_section_carries_a_store_whatever_the_environment_says(
     real_series, monkeypatch
 ):
-    """The decision, at the object, and the thing Track C needs to be true.
+    """Always-on dual-write, at the object: what any consumer of the store needs.
 
     Replaces `test_a_section_loaded_without_the_gate_carries_no_store`, whose
     assertion is now false by design. Every value the retired gate could have
@@ -470,8 +470,8 @@ def test_section_py_neither_reads_nor_writes_the_environment():
 ## has changed is that the scan below now derives its inputs instead of
 ## enumerating them, so the next one has fewer places to hide.
 ##
-## **D11 LANDED AND THIS LIST STAYS. WHY.** D11 replaced `save()`'s consistency
-## COMPARISON with a REBUILD, which was argued for -- correctly -- on the
+## **SAVE NOW REBUILDS AND THIS LIST STAYS. WHY.** `save()`'s consistency
+## COMPARISON became a REBUILD, which was argued for -- correctly -- on the
 ## grounds that the count above kept being wrong. It removes the consequence
 ## that made a missed site severe: a thirteenth one can no longer leave a
 ## section unsaveable, and can no longer abort a multi-section operation
@@ -1355,7 +1355,7 @@ def test_no_module_outside_section_py_edits_a_store_backed_trace_column():
         "edits a trace the section already holds, it owes a "
         "resyncColumnarStore() afterwards -- without one the user's NEXT EDIT "
         "raises ColumnarDualWriteMismatch, through _rowFor for a rebind or "
-        "_assertRowMatchesTrace for an in-place write. (Since D11 the next "
+        "_assertRowMatchesTrace for an in-place write. (The next "
         "SAVE does not: it rebuilds the store and writes the drift to the log. "
         "That closes the unsaveable-section failure mode, not this one.) If "
         "the trace is detached or is not a section's, add it to the list with "
@@ -2126,7 +2126,7 @@ def test_resyncing_repairs_a_corrupted_store(real_section):
 def _driftReports(capsys) -> str:
     """Every save-time drift report printed since the last read, as one string.
 
-    D11 replaced `save()`'s whole-section COMPARISON with a REBUILD, so an
+    `save()` now REBUILDS the store instead of COMPARING it, so an
     out-of-class edit no longer raises there -- the store is simply made
     correct again. What survives is the discipline signal: the rebuild is
     compared against the store it replaced, and any difference is printed to
@@ -2405,7 +2405,8 @@ def test_findFlag_without_the_repair_really_would_have_drifted(
     patching the bound method on this one instance reverts exactly the call
     this fixup added and nothing else.
 
-    **The assertion changed with D11 and the claim did not.** `save()` used to
+    **The assertion changed with the save-time rebuild and the claim did not.**
+    `save()` used to
     raise `ColumnarDualWriteMismatch` here; it now rebuilds and reports. The
     drift is the same drift, in the same column, caused by the same click --
     what changed is that it costs the user a line in the log rather than an
@@ -2522,9 +2523,10 @@ def test_smoothObject_without_the_repair_really_would_have_drifted(
 
     capsys.readouterr()
     ## It no longer raises INSIDE the operation, which is the user-visible half
-    ## of D11: `smoothObject` calls `section.save()` in its own loop, so the
-    ## raise used to abort a multi-section pass partway through and leave every
-    ## later section un-smoothed. The pass now completes.
+    ## of the save-time rebuild: `smoothObject` calls `section.save()` in its
+    ## own loop, so the raise used to abort a multi-section pass partway
+    ## through and leave every later section un-smoothed. The pass now
+    ## completes.
     real_series.smoothObject([name], log_event=False)
     message = _driftReports(capsys)
 
@@ -2580,7 +2582,7 @@ def test_mergeTags_on_a_held_trace_without_the_repair_really_drifts(
     """Without the repair, the same two calls drift -- naming `tags`.
 
     Reported by the save-time rebuild rather than raised by a save-time
-    comparison, since D11. Same drift, same column, same cause.
+    comparison. Same drift, same column, same cause.
     """
     name = next(
         c for c in sorted(real_section.contours, key=str)
@@ -2653,7 +2655,7 @@ def test_a_planted_duplicate_pair_is_merged_and_persisted_by_the_real_operation(
 
     The survivors are read back **off disk after a reload**, so the merged tags
     asserted here are the persisted bytes and not the in-memory objects the
-    operation happened to be holding. Since D11 the save rebuilds the store
+    operation happened to be holding. The save rebuilds the store
     rather than raising, so with the repair gone the save reports the drift
     instead, and the report is what this asserts is empty.
     """
@@ -3209,7 +3211,7 @@ def test_the_generation_advances_even_when_the_resync_empties_the_section(
 
 
 def test_the_whole_section_rebuild_runs_on_save(real_section, capsys):
-    """The coarse net's new home, and its new kind. D11.
+    """The coarse net's new home, and its new kind: a rebuild at save.
 
     Per-mutation checking is targeted at the row that moved and cannot see drift
     caused from outside the class. `save()` is the one non-per-frame path that
@@ -3275,9 +3277,8 @@ def _installAStoreCarryingIDs(section):
     Nothing in the application injects one today -- `Section.__init__` reaches
     `resyncColumnarStore`, and a section with no outgoing store has no issuer
     to carry into the new one, so every row's id is `None` and `Trace` carries
-    no id attribute at all. The tests below are about what happens on the day
-    one IS wired (D10), so they have to
-    build that state by hand.
+    no id attribute at all. The tests below are about what a rebuild does with
+    ids once one IS wired, so they have to build that state by hand.
 
     Mirrors `resyncColumnarStore`'s own row-map construction rather than
     reimplementing it differently, so the section is in the state the
@@ -3307,9 +3308,9 @@ def _installAStoreCarryingIDs(section):
 
 
 def test_a_save_does_not_re_identify_the_traces_it_saves(real_section):
-    """An ordinary save leaves every row's id alone. The D10 interaction.
+    """An ordinary save leaves every row's id alone.
 
-    D11 puts a rebuild on `save()`, and `SectionColumns.fromSection` ISSUES ids
+    `save()` rebuilds the store, and `SectionColumns.fromSection` ISSUES ids
     rather than carrying them: it appends every row without a `trace_id`, so a
     rebuild with an issuer wired re-identifies the whole section and leaks the
     outgoing ids into the issuer's taken-set. An id is meant to be a birth
@@ -3324,9 +3325,8 @@ def test_a_save_does_not_re_identify_the_traces_it_saves(real_section):
     default (`id_issuer=None`, every id `None`) the assertion would pass
     vacuously.
 
-    Carrying ids through `fromSection` is D10's scope call, not this change's;
-    see the test below for what remains uncovered and why it is pinned rather
-    than fixed here.
+    This holds without any id carry at all; the tests below cover the saves
+    and rebuilds that do adopt a new store, which is where the carry matters.
     """
     before = _installAStoreCarryingIDs(real_section)
     store = real_section._columns
@@ -3360,17 +3360,15 @@ def _idsByTrace(section):
 
 
 def test_a_drifted_save_keeps_the_ids_it_can_correlate(real_section):
-    """The residue D11 pinned as a known limitation. D10 closed it.
+    """A save that finds drift keeps the ids, because the rebuild carries them.
 
-    This test is the inversion of D11's `test_a_drifted_save_does_lose_the_ids
-    _and_that_is_D10s_to_fix`, which asserted the loss and said in its own body
-    that the day `fromSection` learned to carry ids it should be deleted. This
-    is that day, and the assertion is turned over rather than dropped, so the
-    property it was watching still has a test on it.
+    This used to be a known limitation, pinned by a test that asserted the
+    loss. That test is turned over here rather than dropped, so the property
+    it was watching still has a test on it.
 
-    A save that finds drift adopts the rebuild -- that has not changed. What
-    changed is that the rebuild now carries every id it can correlate through
-    the outgoing row map, so adopting it is no longer destructive.
+    A save that finds drift adopts the rebuild. The rebuild carries every id
+    it can correlate through the outgoing row map, so adopting it is not
+    destructive.
     """
     _installAStoreCarryingIDs(real_section)
     before = _idsByTrace(real_section)
@@ -3391,14 +3389,14 @@ def test_a_drifted_save_keeps_the_ids_it_can_correlate(real_section):
 
 
 def test_a_no_op_rebuild_does_not_re_identify_an_unchanged_trace(real_section):
-    """D10's part one, against the defect exactly as it was reproduced.
+    """A rebuild with nothing to change keeps every trace's id.
 
-    The investigation behind D10 measured this
-    directly and recorded `PRESERVED: False`: a trace that nothing touched came
-    out of a rebuild under a new id. `resyncColumnarStore()` is reached from
-    fourteen call sites -- undo, redo, six in `series.py`, autoseg, three in
-    the field widget, `Section.__init__` and `_dualWriteResync` -- and since
-    D11 from `save()` as well, so this ran several times a second.
+    It used not to: a trace that nothing touched came out of a rebuild under a
+    new id, because the rebuild issued fresh ids instead of carrying the old
+    ones. `resyncColumnarStore()` is reached from fourteen call sites -- undo,
+    redo, six in `series.py`, autoseg, three in the field widget,
+    `Section.__init__` and `_dualWriteResync` -- and `save()` rebuilds as well,
+    so that re-identification ran several times a second.
 
     An id is a birth certificate. Re-minting one makes "the same trace,
     edited" indistinguishable from "a different trace" to anything that later
@@ -3415,13 +3413,13 @@ def test_a_no_op_rebuild_does_not_re_identify_an_unchanged_trace(real_section):
 
 
 def test_a_rebuild_carries_the_issuer_and_does_not_leak_dead_ids(real_section):
-    """Two halves of the same loss, and the first was worse than §5 recorded.
+    """Two halves of the same loss, and the first was worse than it looked.
 
-    §5 measured the `fromSection` layer, where an issuer IS passed and every
-    row takes the `issue()` arm -- so an id changed. At the `Section` layer it
-    was worse: `_rebuildColumnarStore` passed no `id_issuer` at all, so the
-    replacement store had none and every id came back `None`. The series' id
-    index went with the store it was attached to.
+    At the `fromSection` layer an issuer IS passed and every row takes the
+    `issue()` arm -- so an id changed. At the `Section` layer it was worse:
+    `_rebuildColumnarStore` passed no `id_issuer` at all, so the replacement
+    store had none and every id came back `None`. The series' id index went
+    with the store it was attached to.
 
     The leak is the other half. Every rebuild that re-issued left the outgoing
     id in the issuer's taken-set with no row holding it, so a long session's
@@ -3478,7 +3476,7 @@ def test_a_rebuild_issues_only_for_a_trace_the_store_has_not_seen(real_section):
 
 
 def test_a_rebuild_reports_no_clash_against_the_sections_own_ids(real_section):
-    """The distinction D10 turns on, asserted at the layer that could break it.
+    """Own ids versus foreign ids, asserted at the layer that could break it.
 
     A rebuild re-appends traces this series ALREADY issued ids for. Those ids
     are in the issuer's taken-set precisely because this series put them there,
@@ -3537,10 +3535,10 @@ def test_the_drift_report_is_capped_rather_than_flooding_the_log(
 
 
 def test_a_thirteenth_edit_site_would_no_longer_cost_the_session(real_section):
-    """The risk class D11 was taken to remove, stated as a property.
+    """The risk class the save-time rebuild removes, stated as a property.
 
-    Every previous round of this work ended by claiming a complete list of
-    out-of-class edit sites, and four of those claims were wrong. This does not
+    Four lists of out-of-class edit sites have been called complete, and all
+    four were wrong. This does not
     depend on the list being right: whatever the drift, however it arrived,
     `save()` absorbs it and the next save is clean too. That is the difference
     between "the count is finally correct" and "the count no longer decides
@@ -3585,8 +3583,8 @@ def test_an_unrepaired_out_of_class_edit_still_raises_before_the_next_save(
     Rebuilding at `save()` fixes the store AT `save()`. It does nothing for the
     window between the out-of-class edit and the next save, and that window is
     where these sites actually bit -- a user edits, they do not save first.
-    Both shapes still raise there, through the per-mutation hooks, which D11
-    did not touch:
+    Both shapes still raise there, through the per-mutation hooks, which the
+    save-time rebuild does not touch:
 
       * an IN-PLACE write leaves one row stale, so the next hooked mutation of
         that same trace runs `_assertRowMatchesTrace` over the whole row and
@@ -3641,14 +3639,14 @@ def test_a_shadow_mismatch_no_longer_costs_the_save(real_section, capsys):
       1. the valid data DOES reach disk, and
       2. the mismatch is STILL reported, naming the divergent column.
 
-    **(2) is a printed report rather than a raise since D11**, which replaced
-    the comparison with a rebuild. The ordering it was written for survives the
-    change and is still the right one: `resyncColumnarStore` can raise on the
-    build's arity check, and even that must not withhold bytes that were
-    already correct.
+    **(2) is a printed report rather than a raise**, because `save()` now
+    rebuilds the store instead of comparing it. The ordering it was written for
+    survives the change and is still the right one: `resyncColumnarStore` can
+    raise on the build's arity check, and even that must not withhold bytes
+    that were already correct.
 
     That check was originally described here as "a genuine store-construction
-    bug". Review of D11 showed the attribution was wrong, and the correction
+    bug". That attribution was wrong, and the correction
     matters because it is the whole reason the save path had to be made
     tolerant of it rather than left to raise: the check also fires on a
     perfectly healthy store when the OBJECT MODEL is self-contradictory, which
@@ -3720,17 +3718,17 @@ def test_a_rebuild_that_cannot_be_built_leaves_the_section_usable(
 
     WHAT THIS PINS
     --------------
-    The first version of D11 raised out of that path, and because
+    A save-time rebuild that raised out of that path would be worse, because
     `_rebuildColumnarStore` assigns `self._columns` before it fills
-    `self._column_rows`, the raise left the section holding a new store and an
-    EMPTY row map. Every subsequent hooked mutation -- of any trace on the
-    section, not only the renamed one -- then went through `_rowFor` and
-    raised "holds no row for". So a single save turned a section that was
-    merely unsaveable into one nobody could edit for the rest of the session,
-    on the exact path D11 exists to make safe. Reported in review of the
-    change; this is its pin.
+    `self._column_rows`, the raise would leave the section holding a new store
+    and an EMPTY row map. Every subsequent hooked mutation -- of any trace on
+    the section, not only the renamed one -- would then go through `_rowFor`
+    and raise "holds no row for". So a single save would turn a section that
+    was merely unsaveable into one nobody could edit for the rest of the
+    session, on the exact path the rebuild exists to make safe. This is the
+    pin against that.
 
-    Four things, and the fourth is the one the original defect broke:
+    Four things, and the fourth is the one that hazard breaks:
 
       1. `save()` does not raise,
       2. the failure is REPORTED, where a user can retrieve it,
@@ -3791,8 +3789,8 @@ def test_a_rebuild_that_cannot_be_built_leaves_the_section_usable(
 
     ## And the limits, stated rather than assumed. The renamed trace's own row
     ## is still named by the per-mutation check, which is the discipline
-    ## signal D11 is not supposed to give up: the save absorbed the cost, not
-    ## the evidence.
+    ## signal the save-time rebuild is not supposed to give up: the save
+    ## absorbed the cost, not the evidence.
     with pytest.raises(ColumnarDualWriteMismatch) as caught:
         real_section.closeTraces([victim], closed=not victim.closed)
     assert "name:" in str(caught.value), (
@@ -3853,7 +3851,7 @@ def test_a_rebuild_that_fails_for_any_other_reason_still_restores_the_map(
 
 
 # =============================================================================
-# Track C: a normal consumer can reach the store
+# A normal consumer can reach the store
 # =============================================================================
 
 def test_a_normal_consumer_reaches_a_live_store_on_every_section(real_series):
@@ -3862,7 +3860,7 @@ def test_a_normal_consumer_reaches_a_live_store_on_every_section(real_series):
     No environment set, no gate, nothing test-only: load the series the way any
     code in the application does and every section answers with a store that
     agrees with its contours. This is the precondition the first consumer flip
-    (`svg_conversion.py`) found missing, and the whole reason D2 was reopened.
+    (`svg_conversion.py`) found missing, and the reason dual-write is always on.
 
     Deliberately NOT flipping a consumer here -- that is separate work. This
     docstring used to name a second blocker on it as live: `contourNames()`
@@ -3885,10 +3883,11 @@ def test_a_normal_consumer_reaches_a_live_store_on_every_section(real_series):
 
             ## Actually READ through the view, not only measure it. Taking the
             ## view's length proves the store is arity-consistent; it does not
-            ## prove a consumer can get a value out, which is the thing Track C
-            ## needs and the thing the `svg_conversion.py` flip attempt found
-            ## missing. So read a row's name and its coordinates back through
-            ## the view and require them to agree with the object model.
+            ## prove a consumer can get a value out, which is what moving
+            ## consumers onto the store needs and the thing the
+            ## `svg_conversion.py` flip attempt found missing. So read a row's
+            ## name and its coordinates back through the view and require them
+            ## to agree with the object model.
             for index, trace in enumerate(section.contours[name]):
                 row = view[index]
                 assert row.name == trace.name
@@ -3985,7 +3984,7 @@ def test_insertion_order_survives_a_rebuild_and_a_save(real_section):
     """The path that used to erase it, and the reason the fix is in
     `fromSection`.
 
-    A rebuild re-derives the store from the object model, and since D11 every
+    A rebuild re-derives the store from the object model, and every
     `save()` rebuilds -- so an insertion order that were only correct at first
     construction would be correct for about as long as it took the user to hit
     save. `fromSection` appends rows in sorted order and seeds the index's keys

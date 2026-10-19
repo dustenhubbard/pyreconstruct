@@ -60,7 +60,7 @@ def _idsBySectionContour(series):
 
 
 def test_every_loaded_trace_has_a_derived_id(real_series):
-    """Done criterion 1: every trace of every section, non-None, 11 chars."""
+    """Every trace of every section has an id, non-None, 11 chars."""
     ids = _idsBySectionContour(real_series)
     assert ids, "the fixture series produced no traces, so this proves nothing"
     missing = {key for key, value in ids.items() if value is None}
@@ -76,7 +76,7 @@ def test_every_loaded_trace_has_a_derived_id(real_series):
 
 
 def test_ids_are_unique_across_the_whole_series(real_series):
-    """Done criterion 3: series-global uniqueness, not per section.
+    """Series-global uniqueness, not per section.
 
     The issuer's `taken` set is the series', so a derived id on section 2
     cannot collide with one on section 0 -- `deriveForSection` salt-bumps past

@@ -303,8 +303,8 @@ def keyed_trace_row_from_positional(
     file that used ``mode`` is rewritten with ``mode`` and a file that used
     ``fill_mode`` is rewritten with ``fill_mode``. The row is therefore readable
     by exactly the same set of builds after the migration as before it, which is
-    the only property a *reader* slice is entitled to guarantee. Choosing a
-    spelling to emit is Q1 and belongs to the writer.
+    the only property a *reader* is entitled to guarantee. Choosing a spelling
+    to emit belongs to the writer.
 
     ``history`` and any other unknown key the source row carried are dropped,
     which is what the positional conversion has always done to them.
