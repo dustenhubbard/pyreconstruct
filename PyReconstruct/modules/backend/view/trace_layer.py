@@ -1185,11 +1185,12 @@ def labelIds(names) -> dict:
 def flatPoints(traces : list, count : int) -> np.ndarray:
     """Every point of the traces, in order, as one (count, 2) float array.
 
-    The values are the ones np.array gives for the joined point lists, read
-    as one flat run of numbers: about three times faster on a dense section,
-    because np.array works out the shape of every point tuple first. A point
-    that is not an (x, y) pair leaves the run the wrong length, and the
-    joined lists then go through np.array, as before.
+    The values are the ones np.array gives for the joined point lists when
+    every point is an (x, y) pair, read as one flat run of numbers: about
+    three times faster on a dense section, because np.array works out the
+    shape of every point tuple first. A run of the wrong length goes through
+    np.array, as before. The check is on the total, so points of mixed
+    lengths that add up to two per point are not caught.
 
         Params:
             traces (list): the traces
