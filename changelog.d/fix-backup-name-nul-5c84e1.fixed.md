@@ -1,3 +1,3 @@
-- **A NUL character in the backup file name no longer stops a Save or a close.**
-  PyReconstruct says no backup was made, and File ▸ Backup ▸ Settings refuses
-  the character.
+- **A NUL character in the series code or a backup name now gives a clear notice.**
+  Save and close still finish, and Series ▸ Series code ▸ Set series code and
+  File ▸ Backup ▸ Settings refuse the character.

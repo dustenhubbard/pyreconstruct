@@ -30,6 +30,7 @@ from PyReconstruct.modules.datatypes.default_settings import (
     MAX_SELECTION_GLOW_OPACITY,
 )
 from PyReconstruct.modules.backend.view.trace_layer import SELECTED_TRACE_STYLES
+from PyReconstruct.modules.gui.utils import notify
 from .scale_bar_settings import (
     scaleBarStructure,
     storeScaleBarResponse,
@@ -57,6 +58,9 @@ def cpuSliderReadout(percent : int) -> str:
 # clamps it. Wide enough for the lists tab's columns, tall enough for the
 # colors page's embedded picker.
 DEFAULT_SIZE = (1100, 850)
+
+# a NUL in the series code would stop every backup into a {series} folder
+SERIES_CODE_NUL = "The series code holds a NUL character. Remove it to save the code."
 
 
 class AllOptionsDialog(QDialog):
@@ -504,7 +508,10 @@ class AllOptionsDialog(QDialog):
         def setOption(response):
             self.series.code = response[0]
             self.series.setOption("series_code_pattern", response[1])
-        self.addOptionWidget("series_code", structure, setOption)
+        self.addOptionWidget(
+            "series_code",
+            SeriesCodeWidget(self, "Series Code", structure, self.series, setOption),
+        )
 
         # left_handed
         structure = [
@@ -780,3 +787,18 @@ class OptionWidget(QuickDialog):
         painter = QPainter(self)
         painter.setPen(QApplication.palette().color(QPalette.WindowText))  # Set border color
         painter.drawRect(self.rect().adjusted(0, 0, -1, -1))  # Draw rectangle inside border
+
+
+class SeriesCodeWidget(OptionWidget):
+    """The series code option, which refuses a newly typed NUL character."""
+
+    def accept(self, close=True):
+        if not super().accept(close):
+            return False
+        # a code that already held one passes, so a series opened with it
+        # can still save its other options
+        code = self.responses[0]
+        if "\0" in code and code != self.series.code:
+            notify(SERIES_CODE_NUL)
+            return False
+        return True
