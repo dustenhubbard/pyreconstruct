@@ -562,9 +562,9 @@ class HybridStore():
         """Store the log. A log naming a lone surrogate (log.py) goes in as its
         UTF-8 bytes, as names do: SQLite text cannot take one. Any other log
         stays text, as every store before this one holds it."""
+        value : "str | bytes" = text
         try:
             text.encode("utf-8")
-            value = text
         except UnicodeEncodeError:
             value = _utf8(text)
         self.con.execute("INSERT OR REPLACE INTO log(id, text) VALUES (1, ?)", (value,))
