@@ -12,7 +12,10 @@ import hashlib
 import io
 import json
 import os
+import plistlib
+import shutil
 import subprocess
+import sys
 import tarfile
 from dataclasses import replace
 
@@ -248,6 +251,26 @@ def test_a_plan_that_cannot_be_deleted_is_left_unusable(rel, monkeypatch):
     result = A.Applier(rel.staging, FakePlatform(world), FAST, host="windows").run()
     assert result["status"] == "refused", result
     assert snapshot(rel.install) == rel.before
+
+
+def test_a_staged_file_that_vanishes_while_staging_clears_does_not_stop_staging(rel, monkeypatch):
+    # A virus scanner can delete an earlier run's staged file while the next run clears it.
+    rel.stage()
+    new = os.path.join(rel.staging, A.NEW)
+    vanishing = next(os.path.join(top, files[0]) for top, _, files in os.walk(new) if files)
+    unlink, gone = os.unlink, []
+
+    def scanner_first(path, *a, **kw):
+        if os.path.basename(os.fspath(path)) == os.path.basename(vanishing) and not gone:
+            gone.append(path)
+            unlink(path, *a, **kw)
+        return unlink(path, *a, **kw)
+
+    monkeypatch.setattr(os, "unlink", scanner_first)
+    plan = rel.stage()
+    monkeypatch.undo()
+    assert gone
+    assert plan["to_version"] == NEW_V
 
 
 def test_an_unfinished_swap_is_left_for_the_helper(rel):
@@ -803,3 +826,400 @@ def test_staging_never_clears_a_copy_that_may_be_the_only_one(dev, make_it):
     finally:
         if os.name == "nt" and make_it is _backup_is_a_link_to_the_install:
             os.rmdir(old)  # the junction only, never what it leads to
+
+
+# --- macOS: the notarized dmg is the payload, and the installed app is the helper ----
+
+MAC = "macos-arm64"
+DEV_ID = I.BUNDLE_IDS["dev"]
+MAC_APP = "PyReconstruct Dev"
+
+
+def _tar_folder(root):
+    """An xz tar of ``root``'s contents: the stand-in for a dmg off macOS."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:xz") as tar:
+        for name in os.listdir(root):
+            tar.add(os.path.join(root, name), arcname=name)
+    return buf.getvalue()
+
+
+def _mac_manifest(enabled=True):
+    return {"schema": 1, "tag": f"v{NEW_V}", "version": NEW_V, "flavor": "dev",
+            "platforms": {S.PLATFORM: {"inplace": {"enabled": False}},
+                          MAC: {"inplace": {"enabled": enabled}, "min_client": OLD_V}}}
+
+
+class MacDev:
+    """A Dev bundle in a fake Applications folder, a release whose dmg holds a newer one, and recorders.
+
+    Off macOS the dmg is a tar the fake attach unpacks; ``codesign`` is a
+    recorder unless ``real`` is set, when the dmg, hdiutil, ditto, and
+    codesign are all real (macOS only). ``link_out`` puts a link to that
+    path beside the app in a real dmg.
+    """
+
+    def __init__(self, tmp_path, monkeypatch, parent=None, real=False, link_out=None):
+        from test_updater_apply import macos_tree
+        self.tmp_path = tmp_path
+        self.folder = str(parent or tmp_path / "Applications")
+        self.install = os.path.join(self.folder, f"{MAC_APP}.app")
+        macos_tree(self.install, OLD_V, links=os.name != "nt", app_name=MAC_APP, bundle_id=DEV_ID)
+        self.staging = S.staging_dir(self.install, MAC_APP)
+        self.dmg_name, self.tree_name = S.payload_names(NEW_V, "dev", MAC)
+        build = tmp_path / "build"
+        self.build = str(build / f"{MAC_APP}.app")
+        macos_tree(self.build, NEW_V, links=os.name != "nt", app_name=MAC_APP, bundle_id=DEV_ID)
+        if real:
+            _sign_ad_hoc(self.build)
+            # what the release dmg carries: Finder flags on the bundle, which codesign's
+            # strict check refuses, and quarantine, as a downloaded dmg passes it on
+            subprocess.run(["xattr", "-wx", "com.apple.FinderInfo", "00" * 8 + "0400" + "00" * 22,
+                            self.build], check=True, timeout=60)
+            subprocess.run(["xattr", "-w", "com.apple.quarantine", "0081;00000000;Safari;",
+                            os.path.join(self.build, "Contents", "Info.plist")], check=True, timeout=60)
+            if link_out:  # beside the app, as the release dmg's Applications link
+                os.symlink(link_out, build / "Applications")
+            dmg = tmp_path / "release.dmg"
+            subprocess.run(["hdiutil", "create", "-quiet", "-srcfolder", str(build), "-volname", "Update",
+                            "-fs", "HFS+", "-format", "UDZO", str(dmg)], check=True, timeout=300)
+            payload = dmg.read_bytes()
+        else:
+            payload = _tar_folder(build)
+        self.tree = A.build_tree(self.build, version=NEW_V, flavor="dev", app_name=MAC_APP,
+                                 bundle_id=DEV_ID, platform=MAC)
+        self.manifest = _mac_manifest()
+        self.files = {self.dmg_name: payload}
+        self.publish()
+        self.before = snapshot(self.install)
+        self.fetched, self.attached, self.signatures = [], [], []
+        self.signature_error = {}
+        self.started = []
+        self.install_info = I.Install(folder=self.install, app_name=MAC_APP, flavor="dev",
+                                      version=OLD_V, platform=MAC, bundle_id=DEV_ID)
+        monkeypatch.setattr(U, "_open_download", self._open)
+        if not real:
+            monkeypatch.setattr(S, "_copy_from_dmg", self._copy_from_dmg)
+            monkeypatch.setattr(S, "check_code_signature", self._codesign)
+
+    def publish(self, tree=None):
+        self.files[self.tree_name] = json.dumps(tree or self.tree).encode()
+        self.files[I.MANIFEST] = json.dumps(self.manifest).encode()
+        sums = "".join(f"{hashlib.sha256(self.files[n]).hexdigest()}  {n}\n" for n in sorted(self.files)
+                       if n not in ("SHA256SUMS", "SHA256SUMS.minisig")).encode()
+        self.files["SHA256SUMS"] = sums
+        self.files["SHA256SUMS.minisig"] = make_sig(sums, comment=f"tag:v{NEW_V} file:SHA256SUMS")
+
+    def _open(self, url, timeout):
+        U._check_download_url(url)
+        name = url.rsplit("/", 1)[1]
+        self.fetched.append(name)
+        resp = io.BytesIO(self.files[name])
+        resp.headers = {"Content-Length": str(len(self.files[name]))}
+        return resp
+
+    def release(self):
+        return {"tag_name": f"v{NEW_V}", "assets": [
+            {"name": n, "size": len(d), "browser_download_url": f"https://github.com/o/r/releases/download/v{NEW_V}/{n}"}
+            for n, d in self.files.items()]}
+
+    def _copy_from_dmg(self, dmg, mount, bundle, dest):
+        self.attached.append((dmg, mount, bundle))
+        with tarfile.open(dmg, "r:xz") as tar:
+            tar.extractall(self.tmp_path / "attached", filter="fully_trusted")
+        shutil.copytree(self.tmp_path / "attached" / bundle, dest, symlinks=True)
+
+    def _codesign(self, path, requirement, deep=True):
+        self.signatures.append((path, requirement, deep))
+        if path in self.signature_error:
+            raise S.StageError(self.signature_error[path])
+
+    def stage(self, **kw):
+        return I.stage_for_quit(self.release(), NEW_V, install=self.install_info,
+                                trusted_keys=[TEST_PUB], **kw)
+
+    def popen(self, argv, **kw):
+        self.started.append((argv, kw))
+
+    def nothing_staged(self):
+        assert self.dmg_name not in self.fetched
+        assert not os.path.lexists(os.path.join(self.staging, A.PLAN))
+        assert snapshot(self.install) == self.before
+
+    def nothing_left(self):
+        assert snapshot(self.install) == self.before
+        for name in (A.PLAN, A.TREE, A.NEW, A.NEW_APP, S.DOWNLOAD):
+            assert not os.path.lexists(os.path.join(self.staging, name)), name
+
+
+def _sign_ad_hoc(bundle):
+    """Give a fake bundle a real program and an ad-hoc signature with the Dev bundle id.
+
+    The fake framework goes first: codesign signs a framework only in a real one's layout.
+    """
+    shutil.rmtree(os.path.join(bundle, "Contents", "Frameworks"))
+    exe = os.path.join(bundle, "Contents", "MacOS", MAC_APP)
+    shutil.copyfile("/usr/bin/true", exe)  # not copy2: the system file's flags do not copy
+    os.chmod(exe, 0o755)
+    subprocess.run(["codesign", "--force", "--sign", "-", "--identifier", DEV_ID, bundle],
+                   check=True, capture_output=True, timeout=120)
+
+
+@pytest.fixture
+def mac(tmp_path, monkeypatch):
+    return MacDev(tmp_path, monkeypatch)
+
+
+def test_a_macos_dev_bundle_is_staged_as_new_app_and_the_app_is_its_own_helper(mac, tmp_path):
+    pending = mac.stage()
+
+    plan = A.load_plan(os.path.join(mac.staging, A.PLAN))
+    assert (plan["platform"], plan["install"], plan["bundle_id"], plan["exe"]) == (
+        "macos", mac.install, DEV_ID, f"Contents/MacOS/{MAC_APP}")
+    assert plan["carry"] == [] and plan["registry_key"] is None and plan["pid"] == os.getpid()
+    new = os.path.join(mac.staging, A.NEW_APP)
+    assert snapshot(new) == snapshot(mac.build)
+    assert not os.path.lexists(os.path.join(mac.staging, S.DOWNLOAD))
+    assert not os.path.lexists(os.path.join(mac.staging, S.HELPER))  # nothing is copied for it
+    requirement = S.code_requirement(DEV_ID)
+    assert 'leaf[subject.OU] = "57Z336NM5P"' in requirement and f'identifier "{DEV_ID}"' in requirement
+    assert mac.signatures == [(mac.install, requirement, False), (new, requirement, True)]
+    assert I.still_staged(pending)
+
+    series = tmp_path / "work.jser"
+    series.write_text("{}")
+    argv = I.start_helper(pending, 4321, str(series), popen=mac.popen)
+
+    program = os.path.join(mac.install, "Contents", "MacOS", MAC_APP)
+    assert argv == [program, A.APPLY_ARG, mac.staging, "--pid", "4321", "--expect", NEW_V,
+                    "--open", str(series)]
+    (started, kw), = mac.started
+    assert started == argv and kw["cwd"] == mac.staging
+    assert kw["start_new_session"] is (os.name != "nt")  # the helper outlives the app's session
+    assert kw["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+
+    w = World()
+    w.install, w.staging = mac.install, mac.staging
+    assert A.Applier(mac.staging, FakePlatform(w), FAST, host="macos").run()["status"] == "updated"
+    assert snapshot(mac.install) == snapshot(mac.build)
+
+
+def _translocated(mac, monkeypatch, tmp_path):
+    return MacDev(tmp_path / "t", monkeypatch,
+                  parent=tmp_path / "t" / "private" / "var" / "folders" / "AppTranslocation" / "1A2B" / "d")
+
+
+def _on_a_volume(mac, monkeypatch, tmp_path):
+    real = os.path.realpath
+    monkeypatch.setattr(os.path, "realpath",
+                        lambda p, **kw: "/Volumes/PyReconstruct Dev/" + os.path.basename(p)
+                        if p == mac.install else real(p, **kw))
+
+
+def _not_ours(mac, monkeypatch, tmp_path):
+    mac.signature_error[mac.install] = "the app's signature is not ours: test-requirement failed"
+
+
+def _other_bundle_id(mac, monkeypatch, tmp_path):
+    with open(os.path.join(mac.install, "Contents", "Info.plist"), "wb") as f:
+        plistlib.dump({"CFBundleIdentifier": I.BUNDLE_IDS["stable"], "CFBundleExecutable": MAC_APP}, f)
+    mac.before = snapshot(mac.install)
+
+
+def _a_link(mac, monkeypatch, tmp_path):
+    elsewhere = os.path.join(str(tmp_path), "Elsewhere.app")
+    os.rename(mac.install, elsewhere)
+    os.symlink(elsewhere, mac.install)
+    mac.before = snapshot(mac.install)
+
+
+def _read_only_folder(mac, monkeypatch, tmp_path):
+    os.chmod(mac.folder, 0o555)
+
+
+def _stable(mac, monkeypatch, tmp_path):
+    mac.install_info.flavor = "stable"
+
+
+def _switched_off(mac, monkeypatch, tmp_path):
+    mac.manifest = _mac_manifest(enabled=False)
+    mac.publish()
+
+
+@pytest.mark.parametrize("make_it", [
+    _translocated, _on_a_volume, _not_ours, _other_bundle_id, _a_link, _read_only_folder, _stable,
+    _switched_off,
+], ids=["translocated", "on-a-volume", "not-our-team", "other-bundle-id", "link", "read-only-folder",
+        "stable", "switched-off"])
+def test_an_ineligible_macos_app_downloads_the_installer_instead(mac, monkeypatch, tmp_path, make_it):
+    if make_it in (_a_link, _read_only_folder, _translocated) and os.name == "nt":
+        pytest.skip("POSIX links, modes, and paths")
+    if make_it is _read_only_folder and hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root writes anywhere")
+    mac = make_it(mac, monkeypatch, tmp_path) or mac
+    try:
+        with pytest.raises(I.NotEligible):
+            mac.stage()
+        mac.nothing_staged()
+    finally:
+        os.chmod(mac.folder, 0o755)
+
+
+@pytest.mark.parametrize("problem", ["codesign", "tree"])
+def test_a_staged_bundle_that_fails_a_check_leaves_nothing(mac, problem):
+    if problem == "codesign":
+        mac.signature_error[os.path.join(mac.staging, A.NEW_APP)] = "the app's signature is not ours: x"
+    else:
+        files = [dict(e, sha256="0" * 64) if e["path"] == "Contents/Info.plist" else e
+                 for e in mac.tree["files"]]
+        mac.publish(dict(mac.tree, files=files))
+    with pytest.raises(S.StageError, match="not ours" if problem == "codesign" else "does not match tree.json"):
+        mac.stage()
+    mac.nothing_left()
+
+
+def test_a_tree_for_another_bundle_id_is_not_staged(mac):
+    mac.publish(dict(mac.tree, bundle_id=I.BUNDLE_IDS["stable"]))
+    with pytest.raises(S.StageError, match="another build"):
+        mac.stage()
+    assert mac.dmg_name not in mac.fetched
+    mac.nothing_left()
+
+
+def test_a_macos_quit_with_nothing_staged_recovers_with_the_installed_app(mac):
+    pending = mac.stage()
+    A.atomic_write_json(os.path.join(mac.staging, A.STATE),
+                        {"format": A.FORMAT, "status": "running", "step": "health", "phase": "begin",
+                         "plan": dict(pending.plan)})
+
+    argv = I.start_recovery(4321, install=mac.install_info, popen=mac.popen)
+
+    assert argv == [os.path.join(mac.install, "Contents", "MacOS", MAC_APP), A.APPLY_ARG, mac.staging,
+                    "--pid", "4321", "--recover"]
+    assert A.read_json(os.path.join(mac.staging, A.HEALTH))["version"] == OLD_V
+
+
+def test_a_macos_plan_whose_bundle_is_gone_starts_nothing(mac):
+    pending = mac.stage()
+    shutil.rmtree(os.path.join(mac.staging, A.NEW_APP))
+
+    assert I.still_staged(pending) is False
+    assert I.start_helper(pending, 4321, popen=mac.popen) is None and mac.started == []
+
+
+@pytest.mark.parametrize("exe, expected", [
+    ("Applications/PyReconstruct Dev.app/Contents/MacOS/PyReconstruct Dev", "Applications/PyReconstruct Dev.app"),
+    ("Applications/PyReconstruct Dev/PyReconstruct Dev", None),
+    ("Applications/Other.app/Contents/MacOS/PyReconstruct Dev", None),
+])
+def test_the_running_macos_install_is_the_bundle_that_holds_the_program(tmp_path, monkeypatch, exe, expected):
+    from PyReconstruct.modules.backend.updater import install_info
+    monkeypatch.setattr(install_info, "install_kind", lambda: "frozen")
+    monkeypatch.setattr(install_info, "os_key", lambda: "macos")
+    monkeypatch.setattr(install_info, "arch_key", lambda: "arm64")
+    monkeypatch.setattr(install_info, "current_version_str", lambda: OLD_V + "+g1a2b3c4")
+    monkeypatch.setattr(sys, "executable", str(tmp_path / exe))
+    monkeypatch.setenv("PYRECON_APP_NAME", MAC_APP)
+
+    found = I.running_install()
+
+    if expected is None:
+        assert found is None
+    else:
+        assert found == I.Install(folder=str(tmp_path / expected), app_name=MAC_APP, flavor="dev",
+                                  version=OLD_V, platform=MAC, bundle_id=DEV_ID)
+
+
+needs_macos = pytest.mark.skipif(sys.platform != "darwin", reason="hdiutil, ditto, and codesign")
+
+
+@needs_macos
+def test_a_real_dmg_is_attached_copied_checked_and_detached(tmp_path, monkeypatch):
+    mac = MacDev(tmp_path, monkeypatch, real=True)
+    plan = S.stage_update(mac.release(), install=mac.install, app_name=MAC_APP, flavor="dev",
+                          from_version=OLD_V, trusted_keys=[TEST_PUB], platform=MAC, bundle_id=DEV_ID,
+                          requirement=f'identifier "{DEV_ID}"')
+
+    new = os.path.join(mac.staging, A.NEW_APP)
+    A.verify_tree(new, mac.tree)
+    assert plan["exe"] == f"Contents/MacOS/{MAC_APP}"
+    assert not os.path.lexists(os.path.join(mac.staging, S.DOWNLOAD))
+    assert not os.path.ismount(os.path.join(mac.staging, S.DOWNLOAD, S.MOUNT))
+    xattrs = subprocess.run(["xattr", "-r", new], capture_output=True, text=True).stdout
+    assert "com.apple.FinderInfo" not in xattrs and "com.apple.quarantine" not in xattrs
+
+
+@needs_macos
+def test_a_real_bundle_not_signed_by_our_team_is_refused(tmp_path, monkeypatch):
+    mac = MacDev(tmp_path, monkeypatch, real=True)
+    with pytest.raises(S.StageError, match="not ours"):
+        S.stage_update(mac.release(), install=mac.install, app_name=MAC_APP, flavor="dev",
+                       from_version=OLD_V, trusted_keys=[TEST_PUB], platform=MAC, bundle_id=DEV_ID)
+    mac.nothing_left()
+    mounts = subprocess.run(["mount"], capture_output=True, text=True).stdout
+    assert mac.staging not in mounts
+
+
+@needs_macos
+@pytest.mark.parametrize("when", ["left-by-a-killed-run", "after-the-copy"])
+def test_a_disk_image_that_will_not_detach_is_never_deleted_through(tmp_path, monkeypatch, when):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    before = os.stat(outside).st_mode
+    mac = MacDev(tmp_path, monkeypatch, real=True, link_out=str(outside))
+    mount = os.path.join(mac.staging, S.DOWNLOAD, S.MOUNT)
+    run = subprocess.run
+    if when == "left-by-a-killed-run":
+        os.makedirs(mount)
+        run(["hdiutil", "attach", "-readonly", "-nobrowse", "-noautoopen", "-mountpoint", mount,
+             str(tmp_path / "release.dmg")], check=True, capture_output=True, timeout=120)
+    # both detaches fail, as for an image something still holds open
+    monkeypatch.setattr(subprocess, "run", lambda argv, *a, **kw: (
+        subprocess.CompletedProcess(argv, 1) if argv[:2] == ["/usr/bin/hdiutil", "detach"]
+        else run(argv, *a, **kw)))
+    try:
+        with pytest.raises(S.StageError, match="could not be detached"):
+            S.stage_update(mac.release(), install=mac.install, app_name=MAC_APP, flavor="dev",
+                           from_version=OLD_V, trusted_keys=[TEST_PUB], platform=MAC, bundle_id=DEV_ID,
+                           requirement=f'identifier "{DEV_ID}"')
+        assert os.path.ismount(mount) and os.path.islink(os.path.join(mount, "Applications"))
+        assert os.stat(outside).st_mode == before
+        assert not os.path.lexists(os.path.join(mac.staging, A.PLAN))
+        assert not os.path.lexists(os.path.join(mac.staging, A.NEW_APP))
+        assert snapshot(mac.install) == mac.before
+    finally:
+        monkeypatch.setattr(subprocess, "run", run)
+        run(["hdiutil", "detach", mount, "-force"], capture_output=True, timeout=120)
+
+
+@needs_macos
+def test_a_disk_image_mounted_elsewhere_in_staging_is_never_deleted_through(tmp_path, monkeypatch):
+    # another program's image, not the one staging attaches at download/mnt
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    before = os.stat(outside).st_mode
+    mac = MacDev(tmp_path, monkeypatch, real=True)
+    image = tmp_path / "other.dmg"
+    subprocess.run(["hdiutil", "create", "-quiet", "-size", "2m", "-fs", "HFS+", "-volname", "Other",
+                    "-layout", "NONE", str(image)], check=True, timeout=120)
+    mount = os.path.join(mac.staging, S.DOWNLOAD, "inspection")
+    os.makedirs(mount)
+    subprocess.run(["hdiutil", "attach", "-nobrowse", "-noautoopen", "-mountpoint", mount, str(image)],
+                   check=True, capture_output=True, timeout=120)
+    try:
+        _write(mount, "kept.txt", "on the other disk")
+        os.symlink(outside, os.path.join(mount, "Applications"))
+        with pytest.raises(S.StageError, match="mounted"):
+            S.stage_update(mac.release(), install=mac.install, app_name=MAC_APP, flavor="dev",
+                           from_version=OLD_V, trusted_keys=[TEST_PUB], platform=MAC, bundle_id=DEV_ID,
+                           requirement=f'identifier "{DEV_ID}"')
+        assert os.path.ismount(mount)
+        with open(os.path.join(mount, "kept.txt")) as f:
+            assert f.read() == "on the other disk"
+        assert os.path.islink(os.path.join(mount, "Applications"))
+        assert os.stat(outside).st_mode == before
+        assert not os.path.lexists(os.path.join(mac.staging, A.PLAN))
+        assert not os.path.lexists(os.path.join(mac.staging, A.NEW_APP))
+        assert snapshot(mac.install) == mac.before
+    finally:
+        subprocess.run(["hdiutil", "detach", mount, "-force"], capture_output=True, timeout=120)

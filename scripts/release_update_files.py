@@ -20,6 +20,12 @@ entry also names the archive and its tree.json with their sizes, and gives
 the installed size and file count, which the app needs for its free space
 check. The hashes are in ``SHA256SUMS``, not repeated here.
 
+A macOS entry is filled the same way when DIST holds that platform's
+tree.json (``build_update_payload.py --macos-tree``) beside its dmg: the dmg
+is the payload, and the tree.json is the app inside it. A macOS tree.json
+that is not this release's, or has no dmg beside it, is deleted with its
+``.sha256``; the dmg never is, since it is the installer.
+
 A payload never costs the release its installers. Anything in DIST named
 like a Windows payload that is not this release's pair, both halves present
 and the tree.json for this release's version, flavor, and platform, is
@@ -47,7 +53,7 @@ from pathlib import Path
 
 from packaging.version import Version
 
-from build_update_payload import app_name, payload_names
+from build_update_payload import BUNDLE_IDS, MACOS_PLATFORMS, app_name, macos_names, payload_names
 
 MANIFEST = "update-manifest.json"
 SUMS = "SHA256SUMS"
@@ -58,6 +64,8 @@ PLATFORMS = ("windows-x86_64", "macos-arm64", "macos-x86_64", "linux-x86_64")
 # Any name build_update_payload.py could write for Windows, in any version or flavor,
 # plus the .partial it writes first.
 WINDOWS_PAYLOAD = re.compile(r"^PyReconstruct-.+-update-windows-", re.IGNORECASE)
+# Likewise any macOS tree.json, in any version or flavor; the dmg is never matched.
+MACOS_TREE = {p: re.compile(rf"^PyReconstruct-.+-update-{p}", re.IGNORECASE) for p in MACOS_PLATFORMS}
 
 
 def manifest(tag: str, flavor: str, dist: Path | None = None) -> dict:
@@ -70,6 +78,10 @@ def manifest(tag: str, flavor: str, dist: Path | None = None) -> dict:
         payload = windows_payload(dist, version, flavor)
         if payload:
             platforms["windows-x86_64"].update(payload)
+        for platform in MACOS_PLATFORMS:
+            payload = macos_payload(dist, version, flavor, platform)
+            if payload:
+                platforms[platform].update(payload)
     return {
         "schema": SCHEMA,
         "tag": tag,
@@ -112,17 +124,44 @@ def windows_payload(dist: Path, version: str, flavor: str) -> dict | None:
         for name in pair:
             _drop(dist, name, problem)
         return None
+    return _entry(archive, tree_path)
+
+
+def macos_payload(dist: Path, version: str, flavor: str, platform: str) -> dict | None:
+    """The macOS entry's payload fields, or None when DIST holds no usable tree.json for it.
+
+    Deletes every tree.json for ``platform`` that is not this release's, or
+    that has no dmg beside it, so the manifest and SHA256SUMS never name it.
+    """
+    dmg_name, tree_name = macos_names(version, flavor, platform)
+    for path in sorted(dist.iterdir()):
+        base = path.name[:-len(".sha256")] if path.name.endswith(".sha256") else path.name
+        if path.is_file() and MACOS_TREE[platform].match(base) and base != tree_name:
+            _drop(dist, base, f"it is not named for {version} ({flavor})")
+
+    dmg, tree_path = dist / dmg_name, dist / tree_name
+    if not tree_path.is_file():
+        return None
+    problem = _tree_problem(dmg, tree_path, version, flavor, platform, BUNDLE_IDS[flavor])
+    if problem:
+        _drop(dist, tree_name, problem)
+        return None
+    return _entry(dmg, tree_path)
+
+
+def _entry(payload: Path, tree_path: Path) -> dict:
     tree = json.loads(tree_path.read_text(encoding="utf-8"))
     files = [e for e in tree["files"] if e.get("type", "file") == "file"]
     return {
-        "payload": {"name": archive_name, "size": archive.stat().st_size},
-        "tree": {"name": tree_name, "size": tree_path.stat().st_size},
+        "payload": {"name": payload.name, "size": payload.stat().st_size},
+        "tree": {"name": tree_path.name, "size": tree_path.stat().st_size},
         "installed_size": sum(e["size"] for e in files),
         "files": len(files),
     }
 
 
-def _tree_problem(archive: Path, tree_path: Path, version: str, flavor: str) -> str | None:
+def _tree_problem(archive: Path, tree_path: Path, version: str, flavor: str,
+                  platform: str = "windows-x86_64", bundle_id: str | None = None) -> str | None:
     """Why this pair cannot ship, or None when it can."""
     if not archive.is_file() or not tree_path.is_file():
         return "it has no partner"
@@ -133,7 +172,9 @@ def _tree_problem(archive: Path, tree_path: Path, version: str, flavor: str) -> 
     if not isinstance(tree, dict):
         return "its tree.json is not an object"
     expected = {"version": version, "flavor": flavor, "app_name": app_name(flavor),
-                "platform": "windows-x86_64"}
+                "platform": platform}
+    if bundle_id is not None:
+        expected["bundle_id"] = bundle_id
     for key, value in expected.items():
         if tree.get(key) != value:
             return f"its tree.json has {key} {tree.get(key)!r}, expected {value!r}"

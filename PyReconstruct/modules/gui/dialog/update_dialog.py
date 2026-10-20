@@ -6,8 +6,8 @@ to the main window for the launch-on-close step. The checksum comes from the
 release's signed ``SHA256SUMS`` when it has one. Styling is intentionally plain
 Qt so it inherits the app theme.
 
-An install that can update in place (``backend/updater/inplace.py``; Windows,
-the Dev build for now) stages the update next to the install instead, and the
+An install that can update in place (``backend/updater/inplace.py``; Windows
+and macOS, the Dev build for now) stages the update next to the install instead, and the
 dialog says it goes in when the user quits, with a Restart Now button. If it
 cannot, the same download step fetches the installer, as before.
 

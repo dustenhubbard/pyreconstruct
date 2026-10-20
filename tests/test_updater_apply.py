@@ -15,9 +15,11 @@ early: a self-test that fails, a new version that never reports healthy, a
 locked folder, a second rename that fails, and every input the helper must
 refuse before it touches anything.
 """
+import errno
 import json
 import os
 import plistlib
+import shutil
 import stat
 import subprocess
 import sys
@@ -227,7 +229,7 @@ class Setup:
             _write(self.parent, "PyReconstruct.AppImage", f"appimage {OLD_V}", 0o755)
         self.staging = os.path.join(self.parent, ".PyReconstruct-update")
         os.makedirs(self.staging)
-        self.new = os.path.join(self.staging, "new")
+        self.new = os.path.join(self.staging, A.staged_name(style))
         if style == "windows":
             windows_tree(self.new, NEW_V)
         elif style == "macos":
@@ -832,16 +834,40 @@ def test_app_reports_its_public_version_from_the_install_folder(win, frozen_wind
     assert win.read("health.json")["version"] == NEW_V
 
 
-@pytest.mark.parametrize("build", ["source", "macos"])
-def test_app_reports_only_from_a_frozen_windows_build(win, frozen_windows_app, monkeypatch, build):
+@pytest.mark.parametrize("build", ["source", "linux"])
+def test_app_reports_only_from_a_frozen_windows_or_macos_build(win, frozen_windows_app, monkeypatch, build):
     from PyReconstruct.modules.backend.updater.updater import report_update_started
     if build == "source":
         monkeypatch.setattr(frozen_windows_app, "is_frozen", lambda: False)
     else:
-        monkeypatch.setattr(frozen_windows_app, "os_key", lambda: "macos")
+        monkeypatch.setattr(frozen_windows_app, "os_key", lambda: "linux")
     _waiting_journal(win)
     assert report_update_started() is False
     assert win.read("health.json") is None
+
+
+def test_a_macos_app_reports_from_the_bundle_that_holds_it(tmp_path, frozen_windows_app, monkeypatch):
+    from PyReconstruct.modules.backend.updater.updater import report_update_started
+    s = Setup(tmp_path / "mac", "macos")
+    monkeypatch.setattr(frozen_windows_app, "os_key", lambda: "macos")
+    monkeypatch.setattr(sys, "executable", os.path.join(s.install, "Contents", "MacOS", "PyReconstruct"))
+    _waiting_journal(s)
+
+    assert report_update_started() is True
+    assert s.read("health.json")["version"] == NEW_V
+
+
+def test_a_macos_bundle_is_staged_as_new_app_so_its_self_test_runs_as_a_bundle(tmp_path):
+    # PyInstaller's launcher finds the bundle's Python only under a folder named *.app;
+    # the same bundle staged as new/ fails its self-test every time.
+    s = Setup(tmp_path, "macos")
+    assert s.applier().run()["status"] == "updated"
+
+    (selftest, *_), = s.world.selftests
+    bundle = os.path.dirname(os.path.dirname(os.path.dirname(selftest)))
+    assert bundle == os.path.join(s.staging, "new.app")
+    assert selftest == os.path.join(bundle, "Contents", "MacOS", "PyReconstruct")
+    assert A.staged_name("windows") == "new" and A.staged_name("linux") == "new"
 
 
 def test_app_report_never_raises(win, frozen_windows_app, monkeypatch):
@@ -1624,3 +1650,298 @@ def test_selftest_log_keeps_only_its_last_part(win):
         kept = f.read()
     assert len(kept) == A.SELFTEST_LOG_MAX // 2
     assert kept.endswith(b"the newest line\n")
+
+
+def _link_to(target, link):
+    """A link to the folder ``target``: a symlink, or on Windows a junction if this account cannot make one."""
+    try:
+        os.symlink(target, link, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        if os.name != "nt":
+            pytest.skip("this account cannot make links")
+        import _winapi
+        _winapi.CreateJunction(str(target), str(link))
+
+
+@pytest.mark.parametrize("alone", [False, True], ids=["in-a-folder", "alone"])
+def test_a_link_that_will_not_delete_never_changes_what_it_points_to(tmp_path, monkeypatch, alone):
+    # A dmg still attached in staging holds Applications -> /Applications. Its delete fails,
+    # and making it writable to try again must change the link, never the folder it names.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    os.chmod(outside, 0o555)
+    before = os.stat(outside).st_mode
+    folder = tmp_path / "download"
+    folder.mkdir()
+    link = folder / "Applications"
+    _link_to(outside, link)
+    real_unlink, refused = os.unlink, []
+
+    def unlink(path, *, dir_fd=None):
+        if os.path.basename(os.fspath(path)) == "Applications" and not refused:
+            refused.append(path)
+            raise PermissionError(errno.EACCES, "refused", os.fspath(path))
+        return real_unlink(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "unlink", unlink)
+    try:
+        try:
+            A._remove(str(link if alone else folder))
+        except OSError:
+            pass  # where the system cannot change a link itself, the delete gives up instead
+        assert refused
+        assert os.stat(outside).st_mode == before
+    finally:
+        monkeypatch.undo()
+        os.chmod(outside, 0o755)
+
+
+def _another_disk(monkeypatch, at, how):
+    """Make the folder ``at`` look like a disk mounted there: by its device number alone, or as a mount point.
+
+    ``device`` hides every mount point, so it tests the device check on its own
+    (on POSIX ``ismount`` compares device numbers too).
+    """
+    target = os.path.normcase(os.path.abspath(at))
+    real_lstat, real_ismount = os.lstat, os.path.ismount
+
+    def here(path):
+        return os.path.normcase(os.path.abspath(os.fspath(path))) == target
+
+    class Elsewhere:
+        """``st`` with another device number, keeping the fields only some systems have."""
+
+        def __init__(self, st):
+            self.st, self.st_dev = st, st.st_dev + 1
+
+        def __getattr__(self, name):
+            return getattr(self.st, name)
+
+    def lstat(path, *a, **kw):
+        st = real_lstat(path, *a, **kw)
+        return Elsewhere(st) if how == "device" and here(path) else st
+
+    monkeypatch.setattr(os, "lstat", lstat)
+    monkeypatch.setattr(os.path, "ismount", lambda p: how == "mount" and (here(p) or real_ismount(p)))
+
+
+@pytest.mark.parametrize("how,where", [("device", "inside"), ("mount", "inside"), ("mount", "top")])
+def test_a_delete_never_goes_onto_another_disk(tmp_path, monkeypatch, how, where):
+    download = tmp_path / "download"
+    _write(download, "payload.tar", "done with")
+    _write(download, "other/kept.txt", "on the other disk")
+    _another_disk(monkeypatch, download / "other" if where == "inside" else download, how)
+    with pytest.raises(OSError) as e:
+        A._remove(str(download))
+    monkeypatch.undo()
+    assert e.value.errno == errno.EXDEV
+    with open(download / "other" / "kept.txt") as f:
+        assert f.read() == "on the other disk"
+
+
+def test_a_drive_mounted_on_a_link_is_left_mounted(tmp_path, monkeypatch):
+    # On Windows a drive mounted in a folder is a reparse point; removing it would unmount the drive.
+    outside = tmp_path / "outside"
+    _write(outside, "kept.txt", "on the other disk")
+    download = tmp_path / "download"
+    download.mkdir()
+    link = download / "drive"
+    _link_to(outside, link)
+    _another_disk(monkeypatch, link, "mount")
+    try:
+        with pytest.raises(OSError) as e:
+            A._remove(str(download))
+        monkeypatch.undo()
+        assert e.value.errno == errno.EXDEV
+        assert os.path.lexists(link)
+        assert os.path.exists(outside / "kept.txt")
+    finally:
+        monkeypatch.undo()
+        if os.name == "nt" and os.path.lexists(link):
+            os.rmdir(link)  # the junction only
+
+
+@pytest.mark.parametrize("kind", ["symlink", "junction"])
+def test_a_link_in_a_tree_is_deleted_but_never_what_it_points_to(tmp_path, kind):
+    outside = tmp_path / "outside"
+    _write(outside, "kept.txt", "outside staging")
+    folder = tmp_path / "download"
+    folder.mkdir()
+    link = folder / "Applications"
+    if kind == "junction":
+        if os.name != "nt":
+            pytest.skip("junctions are Windows only")
+        import _winapi
+        _winapi.CreateJunction(str(outside), str(link))
+    else:
+        _link_to(outside, link)
+    A._remove(str(folder))
+    assert not os.path.lexists(folder)
+    with open(outside / "kept.txt") as f:
+        assert f.read() == "outside staging"
+
+
+@pytest.mark.parametrize("alone", [False, True], ids=["in-a-folder", "alone"])
+def test_a_link_that_cannot_be_looked_at_is_never_made_writable(tmp_path, monkeypatch, alone):
+    # The delete is refused, and then lstat fails too: with no telling whether it is a link,
+    # a chmod could reach through it to the folder it names.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    os.chmod(outside, 0o555)
+    before = os.stat(outside).st_mode
+    folder = tmp_path / "download"
+    folder.mkdir()
+    link = folder / "Applications"
+    _link_to(outside, link)
+    real_unlink, real_lstat, refused = os.unlink, os.lstat, []
+
+    def unlink(path, *a, **kw):
+        if os.path.basename(os.fspath(path)) == "Applications" and not refused:
+            refused.append(path)
+            raise PermissionError(errno.EACCES, "refused", os.fspath(path))
+        return real_unlink(path, *a, **kw)
+
+    def lstat(path, *a, **kw):
+        if refused and os.path.basename(os.fspath(path)) == "Applications":
+            raise PermissionError(errno.EACCES, "cannot look", os.fspath(path))
+        return real_lstat(path, *a, **kw)
+
+    monkeypatch.setattr(os, "unlink", unlink)
+    monkeypatch.setattr(os, "lstat", lstat)
+    try:
+        with pytest.raises(OSError):
+            A._remove(str(link if alone else folder))
+        assert refused
+        assert os.stat(outside).st_mode == before
+    finally:
+        monkeypatch.undo()
+        os.chmod(outside, 0o755)
+
+
+@pytest.mark.skipif(not shutil.rmtree.avoids_symlink_attacks,
+                    reason="shutil.rmtree goes by path here, as on Windows, the same as before")
+def test_a_folder_swapped_for_a_link_during_the_delete_never_empties_what_it_points_to(tmp_path, monkeypatch):
+    # Another program swaps download/sub for a link to an outside folder after the delete has
+    # looked at sub and just before it goes in. The delete must stop there.
+    outside = tmp_path / "outside"
+    _write(outside, "valuable.jser", "the user's series")
+    download = tmp_path / "download"
+    _write(download, "sub/staged.txt", "done with")
+    sub = download / "sub"
+    real_open, real_listdir, swapped = os.open, os.listdir, []
+
+    def swap(path):
+        if os.path.basename(os.fspath(path)) == "sub" and not swapped:
+            swapped.append(path)
+            os.rename(sub, tmp_path / "moved")
+            os.symlink(outside, sub, target_is_directory=True)
+
+    def open_(path, *a, **kw):  # how shutil.rmtree goes into a folder
+        swap(path)
+        return real_open(path, *a, **kw)
+
+    def listdir(path="."):
+        swap(path)
+        return real_listdir(path)
+
+    monkeypatch.setattr(os, "open", open_)
+    monkeypatch.setattr(os, "listdir", listdir)
+    try:
+        A._remove(str(download))
+    except OSError:
+        pass  # stopping at the link is the safe outcome
+    monkeypatch.undo()
+    assert swapped
+    with open(outside / "valuable.jser") as f:
+        assert f.read() == "the user's series"
+
+
+@pytest.mark.skipif(os.chmod not in os.supports_follow_symlinks, reason="this system cannot change a link itself")
+def test_an_item_swapped_for_a_link_before_its_chmod_never_changes_what_it_points_to(tmp_path, monkeypatch):
+    # The delete of a read-only item is refused, the retry looks at it, and then another
+    # program swaps it for a link. Making it writable must change only the link.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    os.chmod(outside, 0o555)
+    before = os.stat(outside).st_mode
+    download = tmp_path / "download"
+    _write(download, "item", "read-only")
+    item = download / "item"
+    real_unlink, real_lstat, refused, swapped = os.unlink, os.lstat, [], []
+
+    def unlink(path, *a, **kw):
+        if os.path.basename(os.fspath(path)) == "item" and not refused:
+            refused.append(path)
+            raise PermissionError(errno.EACCES, "refused", os.fspath(path))
+        return real_unlink(path, *a, **kw)
+
+    def lstat(path, *a, **kw):
+        st = real_lstat(path, *a, **kw)
+        if refused and not swapped and os.path.basename(os.fspath(path)) == "item":
+            swapped.append(path)
+            real_unlink(item)
+            os.symlink(outside, item, target_is_directory=True)
+        return st
+
+    monkeypatch.setattr(os, "unlink", unlink)
+    monkeypatch.setattr(os, "lstat", lstat)
+    try:
+        try:
+            A._remove(str(download))
+        except OSError:
+            pass
+        assert swapped
+        assert os.stat(outside).st_mode == before
+    finally:
+        monkeypatch.undo()
+        os.chmod(outside, 0o755)
+
+
+def test_a_cloud_synced_folder_is_deleted_like_any_folder(tmp_path, monkeypatch):
+    # OneDrive and other sync programs mark a folder as a reparse point that is not a link
+    # (IO_REPARSE_TAG_CLOUD). shutil.rmtree deletes it as a folder, and so must the delete here.
+    download = tmp_path / "download"
+    _write(download, "synced/staged.txt", "done with")
+    synced = os.path.normcase(str(download / "synced"))
+    real_lstat = os.lstat
+
+    class Cloud:
+        """``st`` marked as a cloud-sync reparse point, keeping the fields only some systems have."""
+
+        def __init__(self, st):
+            self.st = st
+            self.st_file_attributes = getattr(st, "st_file_attributes", 0) | stat.FILE_ATTRIBUTE_REPARSE_POINT
+            self.st_reparse_tag = 0x9000001A  # IO_REPARSE_TAG_CLOUD
+
+        def __getattr__(self, name):
+            return getattr(self.st, name)
+
+    def lstat(path, *a, **kw):
+        st = real_lstat(path, *a, **kw)
+        return Cloud(st) if os.path.normcase(os.fspath(path)) == synced else st
+
+    monkeypatch.setattr(os, "lstat", lstat)
+    A._remove(str(download))
+    monkeypatch.undo()
+    assert not os.path.lexists(download)
+
+
+def test_a_file_that_vanishes_during_the_delete_is_not_an_error(tmp_path, monkeypatch):
+    # A virus scanner or a second cleanup can delete a staged file first. As with
+    # Python 3.13's rmtree, the delete carries on.
+    download = tmp_path / "download"
+    _write(download, "payload.tar", "done with")
+    _write(download, "sub/gone.txt", "deleted by another program")
+    real_unlink, gone = os.unlink, []
+
+    def unlink(path, *a, **kw):
+        if os.path.basename(os.fspath(path)) == "gone.txt" and not gone:
+            gone.append(path)
+            real_unlink(path, *a, **kw)  # the other program gets there first
+        return real_unlink(path, *a, **kw)
+
+    monkeypatch.setattr(os, "unlink", unlink)
+    A._remove(str(download))
+    monkeypatch.undo()
+    assert gone
+    assert not os.path.lexists(download)

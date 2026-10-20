@@ -31,7 +31,8 @@ Staging layout, ``<parent>/.<AppName>-update/``::
 
     plan.json            what to do, written by the app
     tree.json            path, size, sha256, and mode of every staged file
-    new/                 the staged tree (a folder, or one file later on Linux)
+    new/                 the staged tree (a folder, or one file later on Linux);
+                         new.app/ on macOS (see the end of this docstring)
     old/                 the backup of the install during a swap
     rejected/            a failed new version while it is rolled back
     state.json           the journal
@@ -54,13 +55,20 @@ on a rollback) gets ``PYINSTALLER_RESET_ENVIRONMENT=1`` and none of the
 child sets itself up from its own folder rather than the helper's.
 
 On macOS the new version is started by running ``Contents/MacOS/<app>``
-directly, because that gives the helper the process ID it health-checks and,
-on a rollback, stops. Step 7 of the build plan (the macOS helper) should
-decide between that and ``open -n -a``, which is how Finder starts an app but
-returns no process ID, in which case the ID would come from health.json.
+directly, not with ``open -n -a``. Only a direct start gives the helper the
+process ID it health-checks and, on a rollback, the creation time it checks
+before it stops that one copy and never another; ``open`` returns neither.
+The staged bundle there is ``new.app``, not ``new``: PyInstaller's launcher
+finds the bundle's Python only beside a folder whose name ends in ``.app``,
+so a self-test of a bundle staged as ``new`` fails every time. The helper on
+macOS is the installed app itself, and it keeps running while its bundle is
+renamed into staging and deleted, since it imports nothing more from the
+bundle once it has started (it never loads Qt, which ends the process when
+its bundle moves).
 """
 
 import argparse
+import errno
 import fnmatch
 import hashlib
 import json
@@ -94,6 +102,7 @@ SELFTEST_LOG = "selftest.log"
 # selftest.log grows by one run per quit; past this many bytes only the last half is kept.
 SELFTEST_LOG_MAX = 1 << 20
 NEW = "new"
+NEW_APP = "new.app"  # the staged tree on macOS, where only a .app runs as a bundle
 OLD = "old"
 REJECTED = "rejected"
 
@@ -172,6 +181,11 @@ def os_key():
     return "linux"
 
 
+def staged_name(host):
+    """The staged tree's name in the staging folder on ``host``: new.app on macOS, new elsewhere."""
+    return NEW_APP if host == "macos" else NEW
+
+
 def _now():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -243,22 +257,91 @@ def _sha256(path):
     return h.hexdigest()
 
 
+def _junction(st):
+    """Whether the ``os.lstat`` result ``st`` is a Windows junction, which shutil.rmtree deletes as a link."""
+    return getattr(st, "st_reparse_tag", 0) == 0xA0000003  # IO_REPARSE_TAG_MOUNT_POINT, in stat only on Windows
+
+
+def _make_writable(path):
+    """Clear ``path``'s read-only flag so it can be deleted. False if that cannot be done safely.
+
+    A plain chmod on a link changes what it points to, which can be anywhere
+    (a dmg's ``Applications`` link is ``/Applications``). So only the link
+    itself is changed where the system can do that, a link is left where it
+    cannot, and a path that cannot be looked at is not changed.
+    """
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    if os.chmod in os.supports_follow_symlinks:  # changes only a link, even one swapped in since the lstat
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD, follow_symlinks=False)
+    elif stat.S_ISLNK(st.st_mode) or _junction(st):
+        return False
+    else:
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+    return True
+
+
+def _writable_and_retry(func, path, exc_info):
+    """shutil.rmtree's error hook: retry a refused delete once ``path`` is writable; skip what is gone."""
+    if isinstance(exc_info[1], FileNotFoundError):
+        return  # as rmtree itself does from Python 3.13
+    if func not in (os.unlink, os.rmdir) or not _make_writable(path):
+        raise exc_info[1]
+    func(path)
+
+
+def _mounted(path):
+    return OSError(errno.EXDEV, "a disk is mounted here, so nothing was deleted", path)
+
+
+def _refuse_mounts(folder):
+    """Raise OSError if a disk is mounted at ``folder`` or in the tree under it. Deletes nothing.
+
+    shutil.rmtree does not stop at a mount point, and deleting into a mounted
+    dmg would go through its links. No link is followed here either.
+    """
+    if os.path.ismount(folder):
+        raise _mounted(folder)
+    dev = os.lstat(folder).st_dev
+
+    def unless_gone(e):
+        if not isinstance(e, FileNotFoundError):
+            raise e
+
+    for top, names, _files in os.walk(folder, onerror=unless_gone):
+        for name in list(names):
+            p = os.path.join(top, name)
+            try:
+                st = os.lstat(p)
+            except FileNotFoundError:
+                names.remove(name)
+                continue
+            # ismount also finds a drive mounted in a folder on Windows, which looks like a junction
+            if (stat.S_ISDIR(st.st_mode) and st.st_dev != dev) or os.path.ismount(p):
+                raise _mounted(p)
+            if not stat.S_ISDIR(st.st_mode) or _junction(st):
+                names.remove(name)  # a link, which rmtree deletes without going into
+
+
 def _remove(path):
-    """Delete a file, a link, or a whole tree. Read-only files on Windows are made writable first."""
+    """Delete a file, a link, or a whole tree. Read-only files on Windows are made writable first.
+
+    A tree with a disk image or drive mounted in it raises OSError before
+    anything is deleted. An item that vanishes during the delete is skipped.
+    """
     if not os.path.lexists(path):
         return
-
-    def _writable_and_retry(func, p, _exc):
-        os.chmod(p, stat.S_IWRITE | stat.S_IREAD)
-        func(p)
-
     if os.path.isdir(path) and not os.path.islink(path):
+        _refuse_mounts(path)
         shutil.rmtree(path, onerror=_writable_and_retry)
     else:
         try:
             os.unlink(path)
         except PermissionError:
-            os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+            if not _make_writable(path):
+                raise
             os.unlink(path)
 
 
@@ -1007,7 +1090,7 @@ class Applier:
         self.state = None
         self.plan = None
         self.state_path = os.path.join(self.staging, STATE)
-        self.new = os.path.join(self.staging, NEW)
+        self.new = os.path.join(self.staging, staged_name(self.host))
         self.old = os.path.join(self.staging, OLD)
         self.rejected = os.path.join(self.staging, REJECTED)
         self.install = None
