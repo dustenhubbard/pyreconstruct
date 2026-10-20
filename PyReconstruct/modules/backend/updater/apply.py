@@ -990,7 +990,7 @@ class Applier:
     """One helper run over one staging folder: apply the plan, or recover an unfinished one."""
 
     def __init__(self, staging, platform, timings=None, *, host=None, pid=None, open_path=None,
-                 recover_only=False):
+                 recover_only=False, expect=None):
         self.staging = os.path.abspath(staging)
         self.platform = platform
         self.timings = timings or default_timings(host)
@@ -1001,6 +1001,9 @@ class Applier:
         # ``pid`` is that app, which ran from the install: it never applies a
         # plan, and starts nothing, since the user quit.
         self.recover_only = recover_only
+        # The version the quitting app offered. Any other staged plan is left
+        # for the next launch: no swap, no delete, no result.
+        self.expect = expect
         self.state = None
         self.plan = None
         self.state_path = os.path.join(self.staging, STATE)
@@ -1215,6 +1218,13 @@ class Applier:
     # -- apply --
 
     def apply(self, previous=None):
+        if self.expect is not None:
+            staged = read_json(os.path.join(self.staging, PLAN))
+            staged = staged.get("to_version") if isinstance(staged, dict) else None
+            if staged != self.expect:
+                self._log(f"not applying: the app expected {self.expect}, but {staged} is staged")
+                return {"status": "not_expected", "installed": None,
+                        "reason": f"{staged} is staged, not {self.expect}"}
         finished = isinstance(previous, dict) and previous.get("status") == "done"
         if finished and previous.get("result") in ("updated", "rolled_back"):
             # A copy that run could not delete. Cleared first, before any
@@ -1726,13 +1736,15 @@ class Applier:
 
 
 def main(argv=None):
-    """``__apply_update__ <staging> [--pid N] [--open SERIES] [--recover]``: apply or recover, exit 0 when the new version is in."""
+    """``__apply_update__ <staging> [--pid N] [--expect VERSION] [--open SERIES] [--recover]``: apply or recover, exit 0 when the new version is in."""
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == APPLY_ARG:
         argv = argv[1:]
     parser = argparse.ArgumentParser(prog=APPLY_ARG)
     parser.add_argument("staging", help="the .<AppName>-update folder next to the install")
     parser.add_argument("--pid", type=int, default=None, help="wait for this process to exit first")
+    parser.add_argument("--expect", default=None,
+                        help="apply only a plan for this version, the one the app offered")
     parser.add_argument("--open", dest="open_path", default=None,
                         help="the series to open in the version this run starts (an absolute path)")
     parser.add_argument("--recover", dest="recover_only", action="store_true",
@@ -1744,7 +1756,7 @@ def main(argv=None):
     staging = os.path.abspath(args.staging)
     os.chdir(staging)
     applier = Applier(staging, default_platform(), pid=args.pid, open_path=open_path,
-                      recover_only=args.recover_only)
+                      recover_only=args.recover_only, expect=args.expect)
     result = applier.run()
     return 0 if result.get("installed") == "new" else 1
 

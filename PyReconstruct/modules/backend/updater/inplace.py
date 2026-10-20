@@ -27,7 +27,9 @@ no rollback reports.
 The helper is started only for the plan this process staged, for exactly
 the version the dialog offered. plan.json carries a token made
 fresh for each staging, and the plan on disk has to match the one staged,
-token and all, when the app quits.
+token and all, when the app quits. The helper is told that version too, and
+puts in nothing else: after File > Restart, the closed window's restage can
+still write its plan once the check here has passed.
 """
 
 import hashlib
@@ -225,7 +227,7 @@ def helper_path(pending):
 
 
 def helper_argv(pending, pid, open_path=None):
-    argv = [helper_path(pending), pending.staging, "--pid", str(int(pid))]
+    argv = [helper_path(pending), pending.staging, "--pid", str(int(pid)), "--expect", pending.version]
     if open_path and os.path.isabs(open_path) and os.path.isfile(open_path):
         argv += ["--open", open_path]
     return argv

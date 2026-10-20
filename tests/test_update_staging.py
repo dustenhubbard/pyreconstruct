@@ -43,19 +43,20 @@ def _tar(entries):
 class Release:
     """A fake install, a newer build packed as its payload, and a signed release serving both."""
 
-    def __init__(self, tmp_path, monkeypatch, flavor="stable", manifest=None):
+    def __init__(self, tmp_path, monkeypatch, flavor="stable", manifest=None, version=NEW_V):
         self.flavor = flavor
+        self.version, self.tag = version, f"v{version}"
         self.app_name = "PyReconstruct Dev" if flavor == "dev" else "PyReconstruct"
-        self.archive_name, self.tree_name = S.payload_names(NEW_V, flavor)
+        self.archive_name, self.tree_name = S.payload_names(version, flavor)
         self.manifest = manifest  # update-manifest.json, published and signed when set
         self.install = str(tmp_path / "Programs" / self.app_name)
         windows_tree(self.install, OLD_V, self.app_name)
         _write(self.install, "unins000.exe", "inno uninstaller", 0o755)
         _write(self.install, "_updater/" + S.HELPER_EXE, "the installed helper", 0o755)
         self.staging = S.staging_dir(self.install, self.app_name)
-        build = str(tmp_path / "build" / self.app_name)
-        windows_tree(build, NEW_V, self.app_name)
-        self.tree = A.build_tree(build, version=NEW_V, flavor=flavor, app_name=self.app_name,
+        build = str(tmp_path / "build" / version / self.app_name)
+        windows_tree(build, version, self.app_name)
+        self.tree = A.build_tree(build, version=version, flavor=flavor, app_name=self.app_name,
                                  platform=S.PLATFORM)
         entries = []
         for e in self.tree["files"]:
@@ -78,7 +79,7 @@ class Release:
         sums = "".join(f"{hashlib.sha256(self.files[n]).hexdigest()}  {n}\n" for n in sorted(self.files)
                        if n not in ("SHA256SUMS", "SHA256SUMS.minisig")).encode()
         self.files["SHA256SUMS"] = sums
-        self.files["SHA256SUMS.minisig"] = make_sig(sums, comment=f"tag:{TAG} file:SHA256SUMS")
+        self.files["SHA256SUMS.minisig"] = make_sig(sums, comment=f"tag:{self.tag} file:SHA256SUMS")
         self.sizes = {n: len(d) for n, d in self.files.items()}
 
     def _open(self, url, timeout):
@@ -91,13 +92,13 @@ class Release:
         resp.headers = {"Content-Length": str(len(self.files[name]))}
         return resp
 
-    def release(self, tag=TAG):
-        return {"tag_name": tag, "assets": [
+    def release(self, tag=None):
+        return {"tag_name": tag or self.tag, "assets": [
             {"name": n, "size": self.sizes[n],
-             "browser_download_url": f"https://github.com/o/r/releases/download/{TAG}/{n}"}
+             "browser_download_url": f"https://github.com/o/r/releases/download/{self.tag}/{n}"}
             for n in self.files]}
 
-    def stage(self, tag=TAG):
+    def stage(self, tag=None):
         return S.stage_update(self.release(tag), install=self.install, app_name=self.app_name,
                               flavor=self.flavor, from_version=OLD_V, trusted_keys=[TEST_PUB])
 
@@ -290,9 +291,9 @@ def test_an_install_without_its_helper_is_not_staged(rel):
 DEV_KEY = I.REGISTRY_KEYS["dev"]
 
 
-def _manifest(enabled=True, min_client=OLD_V, **top):
+def _manifest(enabled=True, min_client=OLD_V, version=NEW_V, **top):
     entry = {"inplace": {"enabled": enabled}, "min_client": min_client}
-    return dict({"schema": 1, "tag": TAG, "version": NEW_V, "flavor": "dev",
+    return dict({"schema": 1, "tag": f"v{version}", "version": version, "flavor": "dev",
                  "platforms": {S.PLATFORM: entry, "macos-arm64": {"inplace": {"enabled": False}}}}, **top)
 
 
@@ -309,16 +310,17 @@ class Registry:
 class Dev:
     """A per-user Dev install, a release that turns in-place on for it, and a helper start recorder."""
 
-    def __init__(self, tmp_path, monkeypatch):
-        self.rel = Release(tmp_path, monkeypatch, flavor="dev", manifest=_manifest())
+    def __init__(self, tmp_path, monkeypatch, version=NEW_V):
+        self.rel = Release(tmp_path, monkeypatch, flavor="dev", manifest=_manifest(version=version),
+                           version=version)
         self.rel.publish(self.rel.files[self.rel.archive_name])
         self.install = I.Install(folder=self.rel.install, app_name="PyReconstruct Dev",
                                  flavor="dev", version=OLD_V)
         self.registry = Registry({DEV_KEY: self.rel.install + "\\"})  # as Inno Setup writes it
         self.started = []
 
-    def stage(self, offered=NEW_V):
-        return I.stage_for_quit(self.rel.release(), offered, install=self.install,
+    def stage(self, offered=None):
+        return I.stage_for_quit(self.rel.release(), offered or self.rel.version, install=self.install,
                                 platform=self.registry, trusted_keys=[TEST_PUB])
 
     def popen(self, argv, **kw):
@@ -349,7 +351,7 @@ def test_an_eligible_dev_install_is_staged_for_the_quit(dev, tmp_path):
     argv = I.start_helper(pending, 4321, str(series), popen=dev.popen)
 
     helper = os.path.join(dev.rel.staging, S.HELPER, S.HELPER_EXE)
-    assert argv == [helper, dev.rel.staging, "--pid", "4321", "--open", str(series)]
+    assert argv == [helper, dev.rel.staging, "--pid", "4321", "--expect", NEW_V, "--open", str(series)]
     (started, kw), = dev.started
     assert started == argv and kw["cwd"] == dev.rel.staging  # never inside the install
     assert kw["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
@@ -511,6 +513,87 @@ def test_the_series_is_passed_only_when_it_is_a_file(dev, tmp_path):
     assert "--open" not in I.helper_argv(pending, 1, str(tmp_path / "gone.jser"))
     assert "--open" not in I.helper_argv(pending, 1, "relative.jser")
     assert "--open" not in I.helper_argv(pending, 1, None)
+
+
+# --- The helper puts in only the version the quitting window offered ------------------
+# File > Restart opens a new window in the same process, while the closed
+# window's restage at launch may still be running. That restage can write its
+# plan after the new window checked its own and before the helper starts.
+
+NEWER_V = "1.24.1"
+
+
+@pytest.fixture
+def two(tmp_path, monkeypatch):
+    """The Dev install, with a release of NEW_V and a newer one of NEWER_V on the feed."""
+    older, newer = Dev(tmp_path, monkeypatch), Dev(tmp_path, monkeypatch, version=NEWER_V)
+    releases = {older.rel.tag: older.rel, newer.rel.tag: newer.rel}
+    monkeypatch.setattr(U, "_open_download",
+                        lambda url, timeout: releases[url.split("/")[-2]]._open(url, timeout))
+    return older, newer
+
+
+def _helper_from(argv, dev, monkeypatch):
+    """Run the helper from the argv the app started it with. Returns its exit code and world."""
+    w = World()
+    w.install, w.staging = dev.rel.install, dev.rel.staging
+    w.healthy[NEWER_V] = True
+    monkeypatch.setattr(A, "default_platform", lambda: FakePlatform(w))
+    monkeypatch.setattr(A, "default_timings", lambda host=None: replace(FAST, health=0.2))
+    monkeypatch.setattr(A, "os_key", lambda: "windows")
+    monkeypatch.chdir(dev.rel.staging)  # main() moves into staging; this puts the test's folder back
+    assert argv[0] == I.helper_path(I.Pending(dev.rel.staging, {}, ""))
+    code = A.main(argv[1:])
+    # the release build ships its own helper; this test payload has none
+    _write(dev.rel.install, "_updater/" + S.HELPER_EXE, "the installed helper", 0o755)
+    return code, w
+
+
+def _installed(dev):
+    with open(os.path.join(dev.rel.install, "version.txt")) as f:
+        return f.read()
+
+
+def test_a_late_plan_for_another_version_is_not_put_in(two, monkeypatch):
+    older, newer = two
+    plan_path = os.path.join(newer.rel.staging, A.PLAN)
+    pending = newer.stage()  # the new window: the user took the newer release by hand
+
+    def late_restage(argv, **kw):
+        older.stage()  # the closed window's restage of the older release lands now
+        newer.started.append(argv)
+
+    argv = I.start_helper(pending, 4321, popen=late_restage)
+    assert argv == newer.started[0] and A.read_json(plan_path)["to_version"] == NEW_V
+    staged = snapshot(newer.rel.staging)
+
+    code, w = _helper_from(argv, newer, monkeypatch)
+
+    assert code == 1 and _installed(newer) == OLD_V and w.launches == []
+    assert snapshot(newer.rel.install) == newer.rel.before
+    # nothing deleted and no result, so no installer offer and no deferral; only the log grew
+    after = snapshot(newer.rel.staging)
+    with open(os.path.join(newer.rel.staging, A.LOG), encoding="utf-8") as f:
+        log = f.read()
+    assert {k: v for k, v in after.items() if k != A.LOG} == staged
+    assert f"expected {NEWER_V}, but {NEW_V} is staged" in log
+
+    # the next quit after staging it again puts the newer release in
+    pending = newer.stage()
+    argv = I.start_helper(pending, 4321, popen=newer.popen)
+    code, w = _helper_from(argv, newer, monkeypatch)
+    assert code == 0 and _installed(newer) == NEWER_V
+
+
+def test_a_late_plan_for_the_same_version_is_put_in(dev, monkeypatch):
+    """Another session's complete plan for the offered version, same process and install: accepted."""
+    pending = dev.stage()
+
+    argv = I.start_helper(pending, 4321, popen=lambda argv, **kw: dev.stage())
+    assert not I.still_staged(pending)  # the late restage replaced the plan the window checked
+
+    code, w = _helper_from(argv, dev, monkeypatch)
+    assert code == 0 and _installed(dev) == NEW_V
 
 
 # --- A run a helper left part way is finished at the next quit ------------------------

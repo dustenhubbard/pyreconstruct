@@ -165,7 +165,7 @@ class FakePlatform(A.Platform):
                           if os.path.exists(m))
         with open(marker, "rb") as f:
             text = f.read().decode()
-        version = OLD_V if OLD_V in text else NEW_V
+        version = next((v for v in (OLD_V, NEW_V) if v in text), text.strip())
         self.w.versions[pid] = version
         if version in self.w.quits_on_start:
             del self.w.alive[pid]
@@ -1004,6 +1004,28 @@ def test_main_leaves_the_install_as_its_working_folder(win, monkeypatch):
 
 # --- Refusals: nothing is touched --------------------------------------------------------
 
+def test_a_plan_for_another_version_than_expected_is_left_alone(win):
+    """Not even a refusal: that would offer the installer, and the app may stage it again."""
+    with open(os.path.join(win.staging, "plan.json"), "rb") as f:
+        plan = f.read()
+
+    result = win.applier(expect="1.24.1").run()
+
+    assert result["status"] == "not_expected" and result["installed"] is None, result
+    _untouched(win)
+    with open(os.path.join(win.staging, "plan.json"), "rb") as f:
+        assert f.read() == plan
+    for name in ("result.json", "state.json"):
+        assert not os.path.lexists(os.path.join(win.staging, name)), name
+    with open(os.path.join(win.staging, A.LOG), encoding="utf-8") as f:
+        assert f"expected 1.24.1, but {NEW_V} is staged" in f.read()
+
+
+def test_a_plan_for_the_expected_version_goes_in(win):
+    assert win.applier(expect=NEW_V).run()["status"] == "updated"
+
+
+
 def test_refuses_an_install_holding_someone_elses_files(win):
     """A series saved inside the install folder would be deleted with the old version."""
     _write(win.install, "my work/cells.jser", '{"series": "mine"}')
@@ -1565,9 +1587,11 @@ def test_the_helper_takes_only_an_absolute_series_path(tmp_path, monkeypatch, gi
     argv = [str(tmp_path), "--pid", "7"] + (["--open", path] if path else [])
 
     assert A.main(argv) == 1
-    assert seen == {"pid": 7, "open_path": path if passed else None, "recover_only": False}
+    assert seen == {"pid": 7, "open_path": path if passed else None, "recover_only": False, "expect": None}
     assert A.main(argv + ["--recover"]) == 1
     assert seen["recover_only"] is True
+    assert A.main(argv + ["--expect", NEW_V]) == 1
+    assert seen["expect"] == NEW_V
 
 
 def test_recovery_refuses_a_journal_whose_install_is_not_beside_staging(win, tmp_path):

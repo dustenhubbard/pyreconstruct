@@ -56,7 +56,8 @@ def test_a_committed_quit_starts_the_helper_and_quits(main_window, dev, quit_cal
     assert main_window.close() is True
 
     (argv, kw), = dev.started
-    assert argv == [I.helper_path(pending), pending.staging, "--pid", str(os.getpid()), "--open", series]
+    assert argv == [I.helper_path(pending), pending.staging, "--pid", str(os.getpid()),
+                    "--expect", pending.version, "--open", series]
     assert kw["cwd"] == pending.staging
     assert quit_calls == ["quit"]
     assert main_window._pending_inplace is None
@@ -245,7 +246,7 @@ def test_a_staged_update_goes_in_at_the_quit_after_an_in_app_restart(restart_loo
     pending = staged[0]
     (argv, kw), = dev.started
     assert argv == [I.helper_path(pending), pending.staging, "--pid", str(os.getpid()),
-                    "--open", restart_loop.series]
+                    "--expect", pending.version, "--open", restart_loop.series]
     assert kw["cwd"] == pending.staging
     assert quit_calls == ["quit"]
 
