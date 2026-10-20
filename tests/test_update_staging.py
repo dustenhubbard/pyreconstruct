@@ -897,10 +897,12 @@ class MacDev:
         self.started = []
         self.install_info = I.Install(folder=self.install, app_name=MAC_APP, flavor="dev",
                                       version=OLD_V, platform=MAC, bundle_id=DEV_ID)
+        self.runs, self.run_result = [], 0
         monkeypatch.setattr(U, "_open_download", self._open)
         if not real:
             monkeypatch.setattr(S, "_copy_from_dmg", self._copy_from_dmg)
             monkeypatch.setattr(S, "check_code_signature", self._codesign)
+            monkeypatch.setattr(A, "default_platform", lambda: _Runs(self))
 
     def publish(self, tree=None):
         self.files[self.tree_name] = json.dumps(tree or self.tree).encode()
@@ -950,6 +952,20 @@ class MacDev:
         assert snapshot(self.install) == self.before
         for name in (A.PLAN, A.TREE, A.NEW, A.NEW_APP, S.DOWNLOAD):
             assert not os.path.lexists(os.path.join(self.staging, name)), name
+
+
+class _Runs(A.Platform):
+    """Records each program staging runs, and what the plan folder held then. Returns ``run_result``."""
+
+    def __init__(self, mac):
+        self.mac = mac
+
+    def run(self, argv, timeout, cwd, log=None):
+        planned = os.path.lexists(os.path.join(self.mac.staging, A.PLAN))
+        self.mac.runs.append((list(argv), cwd, log, planned))
+        if isinstance(self.mac.run_result, Exception):
+            raise self.mac.run_result
+        return self.mac.run_result
 
 
 def _sign_ad_hoc(bundle):
@@ -1065,6 +1081,33 @@ def test_an_ineligible_macos_app_downloads_the_installer_instead(mac, monkeypatc
         os.chmod(mac.folder, 0o755)
 
 
+def test_the_staged_bundle_runs_once_before_the_quit_and_the_helper_still_tests_it(mac):
+    # macOS checks a new copy's code on its first run: 13.4 s against 3.2 s after
+    # it on the mini. That run belongs here, before the plan, not in the helper at quit.
+    mac.stage()
+
+    new = os.path.join(mac.staging, A.NEW_APP)
+    program = os.path.join(new, "Contents", "MacOS", MAC_APP)
+    log = os.path.join(mac.staging, A.SELFTEST_LOG)
+    assert mac.runs == [([program, "--selftest"], new, log, False)]
+
+    w = World()
+    w.install, w.staging = mac.install, mac.staging
+    w.selftest_code = 1  # the run at quit still decides
+    assert A.Applier(mac.staging, FakePlatform(w), FAST, host="macos").run()["status"] == "selftest_failed"
+    assert w.selftests == [[program, "--selftest"]]
+    assert snapshot(mac.install) == mac.before
+
+
+@pytest.mark.parametrize("result", [1, None, OSError("exec format error")])
+def test_a_first_run_that_fails_leaves_the_verdict_to_the_helper(mac, result):
+    mac.run_result = result
+    pending = mac.stage()
+
+    assert len(mac.runs) == 1 and I.still_staged(pending)
+    A.load_plan(os.path.join(mac.staging, A.PLAN))
+
+
 @pytest.mark.parametrize("problem", ["codesign", "tree"])
 def test_a_staged_bundle_that_fails_a_check_leaves_nothing(mac, problem):
     if problem == "codesign":
@@ -1147,6 +1190,8 @@ def test_a_real_dmg_is_attached_copied_checked_and_detached(tmp_path, monkeypatc
     assert not os.path.ismount(os.path.join(mac.staging, S.DOWNLOAD, S.MOUNT))
     xattrs = subprocess.run(["xattr", "-r", new], capture_output=True, text=True).stdout
     assert "com.apple.FinderInfo" not in xattrs and "com.apple.quarantine" not in xattrs
+    with open(os.path.join(mac.staging, A.SELFTEST_LOG), encoding="utf-8") as f:
+        assert repr([os.path.join(new, "Contents", "MacOS", MAC_APP), "--selftest"]) in f.read()
 
 
 @needs_macos

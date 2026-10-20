@@ -16,8 +16,9 @@ On macOS the payload is the release's notarized dmg itself. It is attached
 read-only inside ``download/``, the app is copied out with ``ditto`` into
 ``new.app/`` (apply.py, ``staged_name``), and the image is detached. The copy
 is then checked against tree.json and with ``codesign`` against our Team ID
-and the flavor's bundle id. The helper is the installed app, so nothing is
-copied for it.
+and the flavor's bundle id, and its self-test is run once, so the slow first
+run of a new copy is over before the quit. The helper is the installed app,
+so nothing is copied for it.
 
 Any failure (a bad or missing signature, a hash or size that does not match,
 an archive entry that would land outside ``new/``, a bundle codesign refuses,
@@ -281,6 +282,7 @@ def _stage_bundle(dmg, tree, staging, install, app_name, flavor, bundle_id, from
     except A.Refused as e:
         raise StageError(f"the app in the disk image does not match tree.json: {e}")
     check_code_signature(new, requirement or code_requirement(bundle_id))
+    _first_run(new, staging, app_name)
     A.atomic_write_json(os.path.join(staging, A.TREE), tree)
     return _write_plan(staging, session, {
         "format": A.FORMAT, "platform": "macos", "kind": "folder",
@@ -289,6 +291,25 @@ def _stage_bundle(dmg, tree, staging, install, app_name, flavor, bundle_id, from
         "exe": f"Contents/MacOS/{app_name}", "args": [], "selftest_args": ["--selftest"],
         "carry": [], "registry_key": None,
     })
+
+
+def _first_run(new, staging, app_name):
+    """Run the staged bundle's self-test once now, so its first run is not the one at quit.
+
+    macOS checks a copy's code the first time it runs, and that first run is
+    slow: 13.4 s for a fresh copy of the Dev app on an M4 Mac mini, 3.2 s for
+    each run after it, the first after a rename included. Run here, that cost
+    falls while the app is still open. What this run finds decides nothing:
+    the helper checks the tree again at quit and runs the self-test itself,
+    and its run decides. So any failure here is left for that run to find.
+    """
+    argv = [os.path.join(new, "Contents", "MacOS", app_name), "--selftest"]
+    log = os.path.join(staging, A.SELFTEST_LOG)
+    A._trim_log(log, A.SELFTEST_LOG_MAX)
+    try:
+        A.default_platform().run(argv, A.Timings().selftest, new, log=log)
+    except Exception:
+        pass
 
 
 def _run(argv, what):
