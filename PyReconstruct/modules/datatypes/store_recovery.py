@@ -27,7 +27,8 @@ never deleted. The open says where it is, and so does every later open of the
 .jser until ``PyReconstruct --export-local-copy <file>`` writes it out
 (`exportStore`). A store that cannot be made one file first (another program
 has it open) is not moved: it stays where it is, whole, the open says so, and
-the next open tries again.
+the next open tries again. A store written out is set aside without a word,
+and never offered.
 
 A store keyed by a .jser that is gone (moved, renamed or deleted) is never
 opened again by that .jser. Every open names each such store with work no
@@ -68,6 +69,8 @@ META_WRITTEN_OUT = store_save.META_WRITTEN_OUT
 SIDECARS = ("-wal", "-shm", "-journal")
 ## what to run to write a set-aside store out (cli.py)
 EXPORT_OPTION = "--export-local-copy"
+
+_WINDOWS = sys.platform == "win32"
 
 
 ## ---------------------------------------------------------------------------
@@ -135,6 +138,13 @@ def setAside(held) -> str:
     If it cannot be made one file (another program has it open), nothing
     moves. The path is left free for a new store.
 
+    No other program writes the file from the check that it is one file to
+    the rename. Off Windows, the store holds SQLite's exclusive lock through
+    the rename, and SQLite refuses a write to a moved file from a connection
+    made before the move. Windows renames no file a program has open, so the
+    store is closed first: a program with it open stops the rename, and a
+    journal one left at the old name sends the store back to it.
+
         Returns:
             (str): the set-aside store file
         Raises:
@@ -152,18 +162,25 @@ def setAside(held) -> str:
     try:
         row = store.con.execute("PRAGMA journal_mode=DELETE").fetchone()
         folded = row is not None and str(row[0]).lower() == "delete"
+        if folded:
+            # no other connection reads or writes the file until it has moved
+            store.con.execute("BEGIN EXCLUSIVE")
     except sqlite3.Error as e:
         store_open._raiseIfBug(e)
         folded = False
     try:
-        store.con.close()
-        store.con = None
-        left = [db_fp + ext for ext in SIDECARS if os.path.lexists(db_fp + ext)]
-        if not folded or left:
+        if not folded or _sidecars(db_fp):
             raise store_open.StoreUnavailable(
                 "the store could not be set aside: its WAL could not be folded into it"
             )
-        os.rename(db_fp, kept)
+        if not _WINDOWS:
+            os.rename(db_fp, kept)
+        store.con.close()
+        store.con = None
+        if _WINDOWS:
+            os.rename(db_fp, kept)
+            if _sidecars(db_fp):
+                _sendBack(db_fp, kept)
         _fsyncFolder(os.path.dirname(db_fp))
     except OSError as e:
         raise store_open.StoreUnavailable(f"the store could not be set aside ({e})") from e
@@ -172,6 +189,29 @@ def setAside(held) -> str:
         held.close()
     store_open.log_note(f"Local store for {os.path.basename(held.jser_fp)} set aside as {kept}")
     return kept
+
+
+def _sidecars(db_fp : str) -> list:
+    return [db_fp + ext for ext in SIDECARS if os.path.lexists(db_fp + ext)]
+
+
+def _sendBack(db_fp : str, kept : str):
+    """A program wrote the store between its close and its rename (Windows):
+    put it back beside the journal, which SQLite finds by name.
+
+        Raises:
+            StoreUnavailable: it is whole where it was
+    """
+    try:
+        os.rename(kept, db_fp)  # refuses a file made there meanwhile
+    except OSError as e:
+        # a third program made a file there: the journal may be that file's
+        store_open.log_note(f"Local store set aside as {kept} with a journal left at {db_fp} ({e})")
+        return
+    _fsyncFolder(os.path.dirname(db_fp))
+    raise store_open.StoreUnavailable(
+        "the store could not be set aside: another program wrote it as it moved"
+    )
 
 
 def _keepAside(held) -> tuple:
@@ -205,10 +245,11 @@ def strandedStores(skip=()) -> list:
     out (`exportStore`) is not listed again until it takes another Save.
     """
     skip = {os.path.normcase(os.path.abspath(fp)) for fp in skip if fp}
-    root = storeRoot()
+    # PYRECON_HYBRID_STORE_DIR may be relative: to the folder the app started in
+    root = os.path.abspath(storeRoot())
     tag = f".v{SCHEMA_VERSION}."
     out = []
-    for fp in sorted(glob.glob(os.path.join(glob.escape(str(root)), "*" + STORE_EXT))):
+    for fp in sorted(glob.glob(os.path.join(glob.escape(root), "*" + STORE_EXT))):
         if tag not in os.path.basename(fp) or os.path.normcase(os.path.abspath(fp)) in skip:
             continue
         read = _readStore(fp)
@@ -229,7 +270,7 @@ def _readStore(db_fp : str) -> "tuple[dict, bool] | None":
     """(meta, holds working rows) of a store file, read without its lock;
     None if it cannot be read. A missing file is not made."""
     try:
-        con = sqlite3.connect(Path(db_fp).as_uri() + "?mode=rw", uri=True, timeout=1)
+        con = sqlite3.connect(Path(os.path.abspath(db_fp)).as_uri() + "?mode=rw", uri=True, timeout=1)
         try:
             meta = {
                 k: (v.decode("utf-8", "surrogatepass") if isinstance(v, bytes) else v)
@@ -266,23 +307,31 @@ def atOpen(held, notifier=None):
                 one after the old was set aside; or None if no store can be had
     """
     jser_fp = held.jser_fp
-    state, digest = standing(held)
-    kept = in_place = None
-    if state == WRITTEN:
-        finishWrite(held, digest)
-    elif state == AHEAD:
-        if _asker(notifier).confirm(offerText(held), title="Unsaved Series") is False:
+    kept = in_place = state = None
+    done = False
+    try:
+        state, digest = standing(held)
+        # written out (exportStore): kept aside without a word, never offered
+        done = state in (AHEAD, CHANGED, UNREADABLE) and _writtenOut(held)
+        if state == WRITTEN:
+            finishWrite(held, digest)
+        elif state == AHEAD and not done:
+            if _asker(notifier).confirm(offerText(held), title="Unsaved Series") is False:
+                kept, in_place = _keepAside(held)
+            else:
+                held.opens_save = True
+        elif state in (AHEAD, CHANGED, UNREADABLE):
             kept, in_place = _keepAside(held)
-        else:
-            held.opens_save = True
-    elif state in (CHANGED, UNREADABLE):
-        kept, in_place = _keepAside(held)
-    if in_place is not None:
-        # the store stays as it is, unused: the .jser opens as it is
-        held = None
-    elif kept is not None:
-        held = store_open.StoreForOpen.attempt(jser_fp)
-    _tellSetAside(notifier, jser_fp, kept, state, in_place)
+        if in_place is not None:
+            # the store stays as it is, unused: the .jser opens as it is
+            held = None
+        elif kept is not None:
+            held = store_open.StoreForOpen.attempt(jser_fp)
+    finally:
+        # told even when the store cannot be read just now
+        if done:
+            kept = in_place = None
+        tellKept(notifier, jser_fp, kept, state, in_place)
     return held
 
 
@@ -300,6 +349,7 @@ def resumed(series, notifier=None):
     jser_fp = series.jser_fp
     held = store_open.StoreForOpen.attempt(jser_fp)
     if held is None:
+        tellKept(notifier, jser_fp)
         return
     kept = in_place = None
     state = None
@@ -308,8 +358,11 @@ def resumed(series, notifier=None):
         if state == WRITTEN:
             finishWrite(held, digest)
         if state in (CHANGED, UNREADABLE):
+            done = _writtenOut(held)
             kept, in_place = _keepAside(held)
             held = None
+            if done:
+                kept = in_place = None
         elif state == AHEAD or held.holdsJser(digest):
             store_save.attach(series, held)
             held = None
@@ -318,7 +371,16 @@ def resumed(series, notifier=None):
     finally:
         if held is not None:
             held.close()
-    _tellSetAside(notifier, jser_fp, kept, state, in_place)
+    tellKept(notifier, jser_fp, kept, state, in_place)
+
+
+def _writtenOut(held) -> bool:
+    """True when the store was written out (exportStore) after its last Save."""
+    try:
+        return bool(held.store.meta(META_WRITTEN_OUT))
+    except sqlite3.Error as e:
+        store_open._raiseIfBug(e)
+        raise store_open.StoreUnavailable(str(e)) from e
 
 
 def _asker(notifier):
@@ -334,14 +396,19 @@ def tell(notifier, message : str):
     _asker(notifier).notify(message)
 
 
-def _tellSetAside(notifier, jser_fp : str, kept, state, in_place=None):
+def tellKept(notifier, jser_fp : str, kept=None, state=None, in_place=None):
+    """Tell of the store set aside or kept in place at this open, if any, and
+    of every store with work no .jser has: this .jser's set-aside stores, and
+    the stores whose .jser is gone. The scans never stop an open."""
     try:
         others = [fp for fp in setAsideStores(jser_fp) if fp != kept]
-    except OSError:
+    except Exception as e:
+        store_open.log_note(f"Set-aside local stores not listed: {e!r}")
         others = []
     try:
         stranded = strandedStores(skip=[storePaths(jser_fp)[0], kept, *others])
-    except OSError:
+    except Exception as e:
+        store_open.log_note(f"Local stores whose .jser is gone not listed: {e!r}")
         stranded = []
     if kept is None and in_place is None and not others and not stranded:
         return
@@ -442,8 +509,9 @@ def exportStore(path : str, out_fp=None) -> str:
     rows over it. The bytes are those a close writes from the same store
     (store_save.writeJser), since both use today's writer on the same rows.
     An existing file is never replaced, and the store is not changed, but for
-    a set-aside store, or one whose .jser is gone, which records where it was
-    written out so later opens stop listing it.
+    one with work no .jser has (set aside, kept where it was, or its .jser
+    gone), which records where it was written out so later opens stop naming
+    it. A later Save to it drops that record.
 
         Params:
             path (str): a .pyrstore file, or a .jser whose store is wanted
@@ -494,8 +562,9 @@ def exportStore(path : str, out_fp=None) -> str:
         def tail():
             return {"series": series_data, "log": log}
 
+        unsaved = store.meta(store_save.META_DIRTY) == "1" or store.hasPending()
         _writeNew(out_fp, lambda f: write_jser(f, sections, tail))
-        if SET_ASIDE in base or not (recorded and os.path.isfile(recorded)):
+        if unsaved or SET_ASIDE in base or not (recorded and os.path.isfile(recorded)):
             with store_open._transaction(store):
                 store.setMeta(META_WRITTEN_OUT, out_fp)
     finally:

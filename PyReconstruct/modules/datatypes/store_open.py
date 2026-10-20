@@ -218,6 +218,8 @@ def openJser(fp : str, progress=None, notifier=None):
 
     held = StoreForOpen.attempt(fp)
     if held is None:
+        # work kept in other stores is named all the same
+        store_recovery.tellKept(notifier, fp)
         return Series._unpackJser(fp, progress, notifier)[0]
     try:
         try:

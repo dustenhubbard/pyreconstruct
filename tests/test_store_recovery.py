@@ -308,8 +308,9 @@ def test_the_close_notes_the_jser_it_writes_until_it_is_recorded(
     series.close()
 
 
+@pytest.mark.parametrize("error", [OSError(errno.EIO, "the disk failed"), RuntimeError("a fault")])
 def test_a_close_that_fails_drops_its_note_of_the_jser_it_was_writing(
-    tmp_path, switch_on, store_mode, monkeypatch,  # noqa: F811
+    error, tmp_path, switch_on, store_mode, monkeypatch,  # noqa: F811
 ):
     from PyReconstruct.modules.backend.func import atomic_io
 
@@ -322,12 +323,12 @@ def test_a_close_that_fails_drops_its_note_of_the_jser_it_was_writing(
 
     def fail(src, dst, *a, **k):
         seen.append(_meta_held(series, store_save.META_WRITING))
-        raise OSError(errno.EIO, "the disk failed")
+        raise error
 
     with monkeypatch.context() as m:
         m.setattr(atomic_io, "replace_with_retry", fail)
         m.setattr(series, "_surfaceSaveError", lambda *a, **k: None)
-        with pytest.raises(OSError):
+        with pytest.raises(type(error)):
             store_save.writeJser(series)
     assert fp.read_bytes() == before
     assert len(seen) == 1 and seen[0] is not None
@@ -444,13 +445,256 @@ def test_a_store_another_program_has_open_is_kept_whole_where_it_is(
     assert len(asker.told) == 1
     assert "could not be set aside just now" in asker.told[0] and db_fp in asker.told[0]
     assert _meta(fp, store_save.META_DIRTY) == "1"
-    out = tmp_path / "back.jser"
-    store_recovery.exportStore(db_fp, str(out))
-    assert out.read_bytes() == expected_bytes
     # the next open, with the store let go, sets it aside
     asker = _Asked()
     _open(fp, notifier=asker).close()
     assert len(store_root_glob(fp)) == 1 and len(asker.told) == 1
+    out = tmp_path / "back.jser"
+    store_recovery.exportStore(store_root_glob(fp)[0], str(out))
+    assert out.read_bytes() == expected_bytes
+
+
+def _kept_in_place(tmp_path, monkeypatch, then=None):
+    """A store with a Save over a changed .jser, held open by another program
+    through one open, so it stays where it is. `then(series)` runs on that open."""
+    fp = _saved_then_crashed(tmp_path)
+    _decline(fp)
+    shutil.copyfile(SERIES_FILES[1], fp)
+    db_fp, _ = hybrid_store.storePaths(str(fp))
+    reader = sqlite3.connect(db_fp)
+    try:
+        reader.execute("SELECT count(*) FROM meta").fetchone()
+        asker = _Asked()
+        series = _open(fp, notifier=asker)
+        try:
+            assert store_save.heldStore(series) is None
+            if then is not None:
+                then(series)
+        finally:
+            series.close()
+    finally:
+        reader.close()
+    assert store_root_glob(fp) == [] and "could not be set aside just now" in asker.told[0]
+    return fp, db_fp
+
+
+def test_a_store_kept_in_place_and_written_out_is_named_no_more(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    expected_bytes = _today_saved(PARITY, tmp_path, monkeypatch)
+    fp, db_fp = _kept_in_place(tmp_path, monkeypatch)
+    out = tmp_path / "back.jser"
+    store_recovery.exportStore(db_fp, str(out))
+    assert out.read_bytes() == expected_bytes
+    # written out: the next open sets it aside without a word, and keeps it
+    asker = _Asked()
+    _open(fp, notifier=asker).close()
+    assert asker.asked == [] and asker.told == []
+    aside = store_root_glob(fp)
+    assert len(aside) == 1
+    assert store_recovery.exportStore(aside[0], str(tmp_path / "again.jser"))
+    assert (tmp_path / "again.jser").read_bytes() == expected_bytes
+    asker = _Asked()
+    _open(fp, notifier=asker).close()
+    assert asker.told == []
+
+
+def test_a_save_written_out_before_the_open_is_not_offered_again(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    expected_bytes = _today_saved(PARITY, tmp_path, monkeypatch)
+    fp = _saved_then_crashed(tmp_path)
+    _decline(fp)
+    before = fp.read_bytes()
+    out = tmp_path / "back.jser"
+    code, _ = _cli(monkeypatch, str(fp), str(out))
+    assert code == 0 and out.read_bytes() == expected_bytes
+    # written out: not offered, set aside without a word, and kept
+    asker = _Asked(True)
+    _open(fp, notifier=asker).close()
+    assert asker.asked == [] and asker.told == []
+    assert fp.read_bytes() == before
+    aside = store_root_glob(fp)
+    assert len(aside) == 1
+    store_recovery.exportStore(aside[0], str(tmp_path / "again.jser"))
+    assert (tmp_path / "again.jser").read_bytes() == expected_bytes
+
+
+def test_a_resumed_folder_over_a_store_written_out_says_nothing(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    fp = _saved_then_crashed(tmp_path)
+    shutil.copyfile(SERIES_FILES[1], fp)
+    store_recovery.exportStore(str(fp), str(tmp_path / "back.jser"))
+    asker = _Asked()
+    resumed = _open(fp, notifier=asker)
+    try:
+        assert store_save.heldStore(resumed) is None
+    finally:
+        resumed.close()
+    assert asker.told == [] and len(store_root_glob(fp)) == 1
+
+
+def test_a_save_over_a_store_kept_in_place_leaves_that_store_whole(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    expected_bytes = _today_saved(PARITY, tmp_path, monkeypatch)
+
+    def save(series):
+        _edit_last(series)
+        # no store: Save writes the .jser, as today
+        assert series.saveToStore() is False
+        series.saveJser()
+
+    fp, db_fp = _kept_in_place(tmp_path, monkeypatch, then=save)
+    assert fp.read_bytes() != Path(SERIES_FILES[1]).read_bytes()
+    assert _meta(fp, store_save.META_DIRTY) == "1"
+    asker = _Asked()
+    _open(fp, notifier=asker).close()
+    aside = store_root_glob(fp)
+    assert len(aside) == 1 and len(asker.told) == 1 and aside[0] in asker.told[0]
+    out = tmp_path / "back.jser"
+    store_recovery.exportStore(aside[0], str(out))
+    assert out.read_bytes() == expected_bytes
+
+
+def _just_before_the_rename(m, db_fp, then):
+    """Run then() as the store is about to be renamed to its set-aside name."""
+    real = os.rename
+
+    def rename(src, dst, *a, **k):
+        if os.path.abspath(src) == os.path.abspath(db_fp) and store_recovery.SET_ASIDE in str(dst):
+            then()
+        return real(src, dst, *a, **k)
+
+    m.setattr(os, "rename", rename)
+
+
+def test_no_other_program_writes_a_store_as_it_moves(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    expected_bytes = _today_saved(PARITY, tmp_path, monkeypatch)
+    fp = _saved_then_crashed(tmp_path)
+    _decline(fp)
+    db_fp, _ = hybrid_store.storePaths(str(fp))
+    # another program has the store open, idle, and writes it at the rename
+    other = sqlite3.connect(db_fp, isolation_level=None, timeout=0)
+    refused = []
+
+    def write():
+        try:
+            other.execute("BEGIN IMMEDIATE")
+            other.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('theirs', '1')")
+        except sqlite3.OperationalError as e:
+            refused.append(str(e))
+
+    try:
+        with monkeypatch.context() as m:
+            _just_before_the_rename(m, db_fp, write)
+            try:
+                kept = store_recovery.setAside(store_open.StoreForOpen.attempt(str(fp)))
+            except store_open.StoreUnavailable:
+                kept = None
+        # a journal is never apart from the store it is for
+        if kept is not None:
+            assert not os.path.lexists(db_fp + "-journal")
+        if sys.platform != "win32":
+            # the store held SQLite's lock through the rename
+            assert kept is not None and refused and "locked" in refused[0]
+    finally:
+        try:
+            other.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass
+        other.close()
+    out = tmp_path / "back.jser"
+    store_recovery.exportStore(kept or db_fp, str(out))
+    assert out.read_bytes() == expected_bytes
+
+
+_DIES_WRITING = """
+import os, sqlite3, sys
+con = sqlite3.connect(sys.argv[1], isolation_level=None)
+con.execute("PRAGMA cache_size=2")
+con.execute("BEGIN IMMEDIATE")
+con.execute("CREATE TABLE theirs(x)")
+con.execute(
+    "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 400)"
+    " INSERT INTO theirs SELECT randomblob(4000) FROM n"
+)
+os._exit(0)
+"""
+
+
+def test_a_store_a_program_wrote_as_it_moved_on_windows_goes_back_to_its_journal(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    import subprocess
+
+    expected_bytes = _today_saved(PARITY, tmp_path, monkeypatch)
+    fp = _saved_then_crashed(tmp_path)
+    _decline(fp)
+    db_fp, _ = hybrid_store.storePaths(str(fp))
+    # Windows: the store is closed before the rename, and another program
+    # writes it in that moment and dies, leaving its journal
+    def die_writing():
+        subprocess.run([sys.executable, "-c", _DIES_WRITING, db_fp], check=True)
+        assert os.path.isfile(db_fp + "-journal")
+
+    with monkeypatch.context() as m:
+        m.setattr(store_recovery, "_WINDOWS", True)
+        _just_before_the_rename(m, db_fp, die_writing)
+        with pytest.raises(store_open.StoreUnavailable):
+            store_recovery.setAside(store_open.StoreForOpen.attempt(str(fp)))
+    assert store_root_glob(fp) == [] and os.path.isfile(db_fp)
+    # SQLite puts back what that program wrote
+    con = sqlite3.connect(db_fp)
+    try:
+        assert con.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert con.execute("SELECT 1 FROM sqlite_master WHERE name = 'theirs'").fetchone() is None
+    finally:
+        con.close()
+    out = tmp_path / "back.jser"
+    store_recovery.exportStore(db_fp, str(out))
+    assert out.read_bytes() == expected_bytes
+
+
+class _ReportsWal:
+    """A store connection whose change out of WAL reports that it failed."""
+
+    def __init__(self, con):
+        self._con = con
+
+    def execute(self, sql, *a):
+        cur = self._con.execute(sql, *a)
+        if sql.startswith("PRAGMA journal_mode="):
+            return _Row(("wal",))
+        return cur
+
+    def __getattr__(self, name):
+        return getattr(self._con, name)
+
+
+class _Row:
+    def __init__(self, row):
+        self.row = row
+
+    def fetchone(self):
+        return self.row
+
+
+def test_a_store_whose_journal_mode_stays_wal_is_not_moved(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    fp = _saved_then_crashed(tmp_path)
+    _decline(fp)
+    db_fp, _ = hybrid_store.storePaths(str(fp))
+    held = store_open.StoreForOpen.attempt(str(fp))
+    held.store.con = _ReportsWal(held.store.con)
+    with pytest.raises(store_open.StoreUnavailable):
+        store_recovery.setAside(held)
+    assert store_root_glob(fp) == [] and os.path.isfile(db_fp)
+    assert _meta(fp, store_save.META_DIRTY) == "1"
 
 
 def test_two_set_asides_in_one_second_keep_both(
@@ -528,6 +772,113 @@ def test_a_save_whose_jser_moved_is_named_at_every_open_until_written_out(
     assert len(asker.told) == 1 and db_fp in asker.told[0]
 
 
+def _moved(tmp_path, name="s"):
+    """A store with a Save its .jser lacks, whose .jser was then renamed."""
+    fp = _saved_then_crashed(tmp_path / name)
+    _decline(fp)
+    db_fp, _ = hybrid_store.storePaths(str(fp))
+    fp.rename(fp.with_name("renamed.jser"))
+    return os.path.abspath(db_fp)
+
+
+def test_an_open_whose_own_store_is_held_names_a_store_whose_jser_moved(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    db_fp = _moved(tmp_path)
+    other = _kept(SERIES_FILES[1], tmp_path, "other")
+    # another window holds the store of the series opened
+    holder = store_open.StoreForOpen.attempt(str(other))
+    try:
+        asker = _Asked()
+        _open(other, notifier=asker).close()
+        assert len(asker.told) == 1 and db_fp in asker.told[0]
+        # so does a resumed working folder
+        series = _open(other, notifier=_Asked())
+        series.leave_open = True
+        series.close()
+        asker = _Asked()
+        resumed = _open(other, notifier=asker)
+        resumed.close()
+        assert len(asker.told) == 1 and db_fp in asker.told[0]
+    finally:
+        holder.close()
+
+
+def test_an_open_whose_own_store_cannot_be_read_names_a_store_whose_jser_moved(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    db_fp = _moved(tmp_path)
+    other = _saved_then_crashed(tmp_path / "other")
+    _decline(other)
+
+    def fail(held):
+        raise store_open.StoreUnavailable("disk I/O error")
+
+    monkeypatch.setattr(store_recovery, "standing", fail)
+    asker = _Asked()
+    _open(other, notifier=asker).close()
+    assert len(asker.told) == 1 and db_fp in asker.told[0]
+
+
+def test_a_relative_store_folder_names_a_store_whose_jser_moved(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(hybrid_store.ENV_DIR, "stores")
+    db_fp = _moved(tmp_path)
+    other = _kept(SERIES_FILES[1], tmp_path, "other")
+    asker = _Asked()
+    _open(other, notifier=asker).close()
+    assert len(asker.told) == 1 and db_fp in asker.told[0]
+
+
+def test_the_scan_for_kept_work_never_stops_an_open(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    _moved(tmp_path)
+    other = _kept(SERIES_FILES[1], tmp_path, "other")
+
+    def fail(db_fp):
+        raise RuntimeError("a fault")
+
+    monkeypatch.setattr(store_recovery, "_readStore", fail)
+    asker = _Asked()
+    _open(other, notifier=asker).close()
+    assert asker.told == []
+    assert any("not listed" in line and "a fault" in line for line in notes)
+
+
+def test_a_store_with_only_working_rows_whose_jser_moved_is_named(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    fp = _kept(PARITY, tmp_path)
+    db_fp, _ = hybrid_store.storePaths(str(fp))
+    store = HybridStore.forJser(str(fp))
+    try:
+        snum = store.sectionNumbers()[0]
+        store.writePendingSection(snum, store.readSection(snum))
+    finally:
+        store.close()
+    assert _meta(fp, store_save.META_DIRTY) == "0"
+    fp.rename(fp.with_name("renamed.jser"))
+    other = _copy(SERIES_FILES[1], tmp_path / "other")
+    asker = _Asked()
+    _open(other, notifier=asker).close()
+    assert len(asker.told) == 1 and os.path.abspath(db_fp) in asker.told[0]
+
+
+def test_a_set_aside_store_that_cannot_be_read_is_named(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    fp = _kept(PARITY, tmp_path)
+    db_fp, _ = hybrid_store.storePaths(str(fp))
+    damaged = db_fp[:-len(store_recovery.STORE_EXT)] + ".conflict-20261019T120000Z.pyrstore"
+    Path(damaged).write_bytes(b"not a store")
+    asker = _Asked()
+    _open(fp, notifier=asker).close()
+    assert len(asker.told) == 1 and damaged in asker.told[0]
+
+
 # ---------------------------------------------------------------------------
 # a resumed working folder
 # ---------------------------------------------------------------------------
@@ -584,6 +935,27 @@ def test_a_resumed_folder_over_a_changed_jser_sets_the_store_aside(
     finally:
         resumed.close()
     assert len(store_root_glob(fp)) == 1
+
+
+def test_a_resumed_folder_whose_store_cannot_be_set_aside_says_where_it_is(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    fp = _saved_then_crashed(tmp_path)
+    shutil.copyfile(SERIES_FILES[1], fp)
+    db_fp, _ = hybrid_store.storePaths(str(fp))
+    reader = sqlite3.connect(db_fp)
+    try:
+        reader.execute("SELECT count(*) FROM meta").fetchone()
+        asker = _Asked()
+        resumed = _open(fp, notifier=asker)
+        try:
+            assert store_save.heldStore(resumed) is None
+        finally:
+            resumed.close()
+    finally:
+        reader.close()
+    assert store_root_glob(fp) == [] and len(asker.told) == 1
+    assert "could not be set aside just now" in asker.told[0] and db_fp in asker.told[0]
 
 
 def test_a_resumed_folder_of_an_unchanged_jser_takes_its_store(
@@ -674,6 +1046,26 @@ def test_the_export_without_hard_links_writes_the_same_bytes(
     assert store_recovery.exportStore(str(fp), str(out)) == str(out)
     assert out.read_bytes() == expected_bytes
     assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".export-")] == []
+
+
+def test_a_copy_that_fails_without_hard_links_leaves_no_part_of_a_file(
+    tmp_path, switch_on, store_mode, monkeypatch,  # noqa: F811
+):
+    fp = _saved_then_crashed(tmp_path)
+    _no_hard_links(monkeypatch)
+
+    def copy(src, dst, length=0):
+        dst.write(src.read(100))
+        raise OSError(errno.ENOSPC, "the disk is full")
+
+    out = tmp_path / "new.jser"
+    with monkeypatch.context() as m:
+        m.setattr(shutil, "copyfileobj", copy)
+        with pytest.raises(OSError):
+            store_recovery.exportStore(str(fp), str(out))
+    assert not os.path.lexists(out)
+    assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".export-")] == []
+    assert _meta(fp, store_save.META_WRITTEN_OUT) is None
 
 
 def test_the_command_line_names_its_file_beside_the_series_by_default(
