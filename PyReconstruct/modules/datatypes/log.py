@@ -1,3 +1,4 @@
+import codecs
 import re
 
 from pathlib import Path
@@ -6,6 +7,32 @@ from datetime import datetime
 from PyReconstruct.modules.constants import getDateTime, remove_days_from_today
 
 from .filters import passesFilters
+
+
+## How existing_log.csv is written and read. An object name can hold a lone
+## surrogate (half of a UTF-16 pair, from an old or damaged file). The .jser
+## keeps it as a JSON escape, but strict UTF-8 cannot encode it, so the open
+## raised writing the log out. "surrogatepass" writes it as its three UTF-8
+## style bytes. The reader takes those bytes back as the surrogate and still
+## replaces any other bad byte, as errors="replace" did before.
+LOG_WRITE_ERRORS = "surrogatepass"
+LOG_READ_ERRORS = "pyreconstruct-log"
+
+
+def _surrogatepassOrReplace(err):
+    if not isinstance(err, UnicodeDecodeError):
+        raise err
+    chunk = err.object[err.start:err.start + 3]
+    try:
+        char = chunk.decode("utf-8", "surrogatepass")
+    except UnicodeDecodeError:
+        return "\ufffd", err.end
+    if len(char) == 1 and "\ud800" <= char <= "\udfff":
+        return char, err.start + 3
+    return "\ufffd", err.end
+
+
+codecs.register_error(LOG_READ_ERRORS, _surrogatepassOrReplace)
 
 
 ## What a row of the log begins with, and the only thing about the format that
@@ -630,9 +657,12 @@ class LogSet():
         
         older_than = remove_days_from_today(older_than)
 
-        with storage_log.open("a", encoding="utf-8") as external_store, new_log.open("a", encoding="utf-8") as new:
+        # The exported file is for other programs, so a lone surrogate goes
+        # there as the text \ud800 and the file stays valid UTF-8.
+        with storage_log.open("a", encoding="utf-8", errors="backslashreplace") as external_store, \
+                new_log.open("a", encoding="utf-8", errors=LOG_WRITE_ERRORS) as new:
 
-            with existing_log.open("r", encoding="utf-8", errors="replace") as log:
+            with existing_log.open("r", encoding="utf-8", errors=LOG_READ_ERRORS) as log:
 
                 # where the row currently being read was sent, so its
                 # continuation lines can follow it. None until the first row.
