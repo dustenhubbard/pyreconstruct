@@ -1707,11 +1707,18 @@ def _another_disk(monkeypatch, at, how):
     def here(path):
         return os.path.normcase(os.path.abspath(os.fspath(path))) == target
 
+    class Elsewhere:
+        """``st`` with another device number, keeping the fields only some systems have."""
+
+        def __init__(self, st):
+            self.st, self.st_dev = st, st.st_dev + 1
+
+        def __getattr__(self, name):
+            return getattr(self.st, name)
+
     def lstat(path, *a, **kw):
         st = real_lstat(path, *a, **kw)
-        if how == "device" and here(path):
-            return os.stat_result((st.st_mode, st.st_ino, st.st_dev + 1) + tuple(st)[3:])
-        return st
+        return Elsewhere(st) if how == "device" and here(path) else st
 
     monkeypatch.setattr(os, "lstat", lstat)
     monkeypatch.setattr(os.path, "ismount", lambda p: how == "mount" and (here(p) or real_ismount(p)))
