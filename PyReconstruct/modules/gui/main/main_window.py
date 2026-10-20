@@ -3261,8 +3261,10 @@ class MainWindow(QMainWindow):
         when the series closes, so that is when the automatic backup is made.
 
             Params:
-                written (list): when given, the files written are added to it:
-                    the .jser, then the backup file
+                written (list): when given (turning the local copy off), the
+                    files written are added to it: the .jser, then the backup
+                    file. A backup that fails then is told and does not raise:
+                    the .jser holds the Save, and the caller names it.
             Returns:
                 (bool): False if the .jser could not be written. The user was
                     told, and the series keeps its store and working folder,
@@ -3274,11 +3276,20 @@ class MainWindow(QMainWindow):
             store_save.writeJser(self.series)
         except (OSError, SeriesSaveError):
             return False
-        backup = self.backup(check_auto=True, from_saved=True)
-        if written is not None:
-            written.append(self.series.jser_fp)
-            if backup:
-                written.append(backup)
+        if written is None:
+            self.backup(check_auto=True, from_saved=True)
+            return True
+        written.append(self.series.jser_fp)
+        try:
+            backup = self.backup(check_auto=True, from_saved=True)
+        except OSError as e:
+            notify(
+                f"The backup could not be written: {e}\n"
+                f"The last Save is in {self.series.jser_fp}."
+            )
+            return True
+        if backup:
+            written.append(backup)
         return True
 
     def exportJserNow(self):

@@ -269,6 +269,60 @@ def test_unticking_it_names_a_backup_made_in_a_folder_picked_then(kept, tmp_path
         window.close()
 
 
+def test_unticking_it_with_the_automatic_backup_off_names_the_jser_alone(kept, tmp_path, main_window_dialogs, monkeypatch):  # noqa: F811
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    try:
+        snum, edited, backups = _setting_on_and_saved(window, tmp_path, monkeypatch)
+        window.series.setOption("autobackup", False)
+        before = kept.read_bytes()
+        told = _untick(window, monkeypatch)
+        assert kept.read_bytes() != before
+        assert list(backups.iterdir()) == []
+        assert told == [
+            f"Fast local copy is off. The last Save in the local copy was written to:\n{kept}"
+        ]
+        assert store_save.heldStore(window.series) is None
+    finally:
+        window.close()
+    assert _section_in_the_jser(kept, snum) == edited
+
+
+def test_unticking_it_when_the_backup_fails_still_names_the_jser(kept, tmp_path, main_window_dialogs, monkeypatch):  # noqa: F811
+    from PyReconstruct.modules.gui.main import main_window as main_window_module
+
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    try:
+        snum, edited, backups = _setting_on_and_saved(window, tmp_path, monkeypatch)
+        before = kept.read_bytes()
+
+        def full(src, dst, *args, **kwargs):
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(main_window_module.shutil, "copyfile", full)
+        backup_told = []
+        monkeypatch.setattr(main_window_module, "notify", backup_told.append)
+        told = _untick(window, monkeypatch)
+        # the Save is in the .jser; the backup failed and the user is told both
+        assert kept.read_bytes() != before
+        assert list(backups.iterdir()) == []
+        assert backup_told == [
+            "The backup could not be written: [Errno 28] No space left on device\n"
+            f"The last Save is in {kept}."
+        ]
+        assert told == [
+            f"Fast local copy is off. The last Save in the local copy was written to:\n{kept}"
+        ]
+        assert store_save.heldStore(window.series) is None
+        saved = kept.read_bytes()
+    finally:
+        window.close()
+    # the close had nothing more to write
+    assert kept.read_bytes() == saved
+    assert _section_in_the_jser(kept, snum) == edited
+
+
 def test_a_parent_window_with_another_series_does_not_write_this_one(qapp, kept, tmp_path, main_window_dialogs, monkeypatch):  # noqa: F811
     from PySide6.QtWidgets import QWidget
 
