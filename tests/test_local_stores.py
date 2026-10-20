@@ -1,0 +1,1088 @@
+"""The local store's setting, its cleanup, and the check at open (local_stores.py).
+
+What these pin:
+
+* the switch: PYRECON_HYBRID_STORE, when set, wins over the setting; unset,
+  the setting decides in a Dev build and nothing turns the store on in a
+  stable one. With neither, an open is today's: no store folder, no store
+  code, nothing said;
+* the Options row: a Dev build has a Files tab with the row, a stable build
+  has neither, and the setting waits for OK;
+* cleanup removes a clean store unused for 30 days, then clean stores oldest
+  first while the folder is over the cap, and never a store with work, one
+  in use, one whose .jser is not found, or one it cannot read;
+* nothing outside the store folder, and no file in it that is not a store's
+  own, is ever removed;
+* turning the setting off writes the store this series holds to its .jser
+  when it holds a Save the .jser lacks, and lets go of it; a write that fails
+  keeps the store, its Save and its hold; every other store with work, and
+  every one another window holds, is named and kept; so is every set-aside
+  store (store_recovery.py) not written out;
+* with the store off, an open names a store that holds work its .jser lacks,
+  and one another window holds (with Save writing the store only it may hold
+  a Save the .jser lacks until that window closes), but not this process's
+  cleanup reading it; it names the .jser's set-aside stores not written out,
+  as an open with the store on does.
+"""
+import os
+import shutil
+import subprocess
+import sys
+import threading
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pytest
+
+from PyReconstruct.modules.backend import settings_store
+from PyReconstruct.modules.backend.progress import NullProgressReporter
+from PyReconstruct.modules.backend.settings_store import DictSettingsStore
+from PyReconstruct.modules.constants import build_flavor
+from PyReconstruct.modules.datatypes import hybrid_store, local_stores, store_open, store_recovery, store_save
+from PyReconstruct.modules.datatypes import series as series_module
+from PyReconstruct.modules.datatypes.hybrid_store import HybridStore, storePaths
+from PyReconstruct.modules.datatypes.local_stores import (
+    ENV_SWITCH, META_OPENED, SETTING, cleanUp, removeClean,
+)
+from PyReconstruct.modules.datatypes.series import Series
+
+from test_hybrid_store import PARITY, store_root  # noqa: F401  (fixture)
+from test_store_open import _copy
+from test_store_save import _edit
+
+DAY = 86400
+
+
+class _Told:
+    """A notifier that records what it is told and asks nothing."""
+
+    def __init__(self):
+        self.told = []
+
+    def notify(self, message):
+        self.told.append(message)
+        return True
+
+    def confirm(self, *a, **k):
+        raise AssertionError(f"the open asked: {a}")
+
+
+class _Answers(_Told):
+    """A notifier that records what it is told and asked, and answers."""
+
+    def __init__(self, answer):
+        super().__init__()
+        self.answer = answer
+        self.asked = []
+
+    def confirm(self, message, **k):
+        self.asked.append(message)
+        return self.answer
+
+
+@pytest.fixture
+def settings(monkeypatch):
+    """The process's settings, in memory."""
+    store = DictSettingsStore()
+    monkeypatch.setattr(settings_store, "_DEFAULT_STORE", store)
+    return store
+
+
+@pytest.fixture
+def dev(monkeypatch):
+    monkeypatch.setattr(build_flavor, "is_dev_build", lambda: True)
+
+
+@pytest.fixture
+def stable(monkeypatch):
+    monkeypatch.setattr(build_flavor, "is_dev_build", lambda: False)
+
+
+@pytest.fixture
+def no_switch(monkeypatch):
+    monkeypatch.delenv(ENV_SWITCH, raising=False)
+
+
+@pytest.fixture
+def notes(monkeypatch):
+    lines = []
+    monkeypatch.setattr(local_stores, "log_note", lines.append)
+    return lines
+
+
+def _open(fp, notifier=None):
+    return Series.openJser(str(fp), progress=NullProgressReporter, notifier=notifier)
+
+
+def _utc(t):
+    return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def make_store(folder, monkeypatch, days_ago=0):
+    """A clean store, made by an open with the switch on; (jser, store file)."""
+    fp = _copy(PARITY, folder)
+    with monkeypatch.context() as m:
+        m.setenv(ENV_SWITCH, "1")
+        _open(fp).close()
+    db, _ = storePaths(str(fp))
+    assert os.path.isfile(db)
+    if days_ago:
+        set_meta(db, **{META_OPENED: _utc(time.time() - days_ago * DAY)})
+    return fp, db
+
+
+def held(db):
+    return HybridStore(db, db[:-len(".pyrstore")] + ".work")
+
+
+def set_meta(db, **values):
+    store = held(db)
+    try:
+        for key, value in values.items():
+            store.setMeta(key, value)
+    finally:
+        store.close()
+
+
+def files_of(db):
+    """Every file of one store that is on disk."""
+    root, name = os.path.split(db)
+    base = name[:-len(".pyrstore")]
+    return sorted(n for n in os.listdir(root) if n.startswith(base))
+
+
+# ---------------------------------------------------------------------------
+# the switch and the setting
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("dev_build", [True, False], ids=["dev", "stable"])
+def test_with_no_switch_and_the_setting_off_an_open_is_today_s(dev_build, tmp_path, store_root, settings, no_switch, monkeypatch):  # noqa: F811
+    """Nothing changes for anyone who has not turned it on: no store code runs,
+    no folder is made, nothing is said, no setting is written."""
+    monkeypatch.setattr(build_flavor, "is_dev_build", lambda: dev_build)
+
+    def refuse(*a, **k):
+        raise AssertionError("store code ran with the store off")
+
+    monkeypatch.setattr(store_open, "openJser", refuse)
+    told = _Told()
+    series = _open(_copy(PARITY, tmp_path / "s"), notifier=told)
+    series.close()
+    assert told.told == []
+    assert not store_root.exists()
+    assert local_stores.startCleanup() is None
+    assert not store_root.exists()
+    assert not any(settings._data.values())
+
+
+def test_the_setting_turns_it_on_in_a_dev_build(tmp_path, store_root, settings, dev, no_switch):  # noqa: F811
+    settings.set_value(None, SETTING, True)
+    assert local_stores.enabled()
+    fp = _copy(PARITY, tmp_path / "s")
+    _open(fp).close()
+    assert os.path.isfile(storePaths(str(fp))[0])
+
+
+def test_a_stable_build_ignores_the_setting(tmp_path, store_root, settings, stable, no_switch):  # noqa: F811
+    """The Dev and stable apps share their settings: a Dev choice must not reach stable."""
+    settings.set_value(None, SETTING, True)
+    assert not local_stores.enabled()
+    _open(_copy(PARITY, tmp_path / "s")).close()
+    assert not store_root.exists()
+
+
+@pytest.mark.parametrize("switch, setting, on", [
+    ("1", False, True), ("0", True, False), ("", True, False), ("true", True, False),
+])
+def test_the_switch_wins_over_the_setting(switch, setting, on, settings, dev, monkeypatch):
+    settings.set_value(None, SETTING, setting)
+    monkeypatch.setenv(ENV_SWITCH, switch)
+    assert local_stores.enabled() is on
+
+
+def test_the_setting_is_read_as_settings_store_it(settings, dev, no_switch):
+    assert not local_stores.enabled()
+    for stored, on in [(False, False), ("false", False), (True, True), ("true", True)]:
+        settings.set_value(None, SETTING, stored)
+        assert local_stores.enabled() is on
+
+
+def test_an_open_records_when_the_store_was_opened(tmp_path, store_root, monkeypatch):  # noqa: F811
+    fp, db = make_store(tmp_path / "s", monkeypatch, days_ago=40)
+    with monkeypatch.context() as m:
+        m.setenv(ENV_SWITCH, "1")
+        _open(fp).close()
+    state = local_stores.readState(*os.path.split(db))
+    assert time.time() - state.last_used < DAY
+
+
+# ---------------------------------------------------------------------------
+# cleanup
+# ---------------------------------------------------------------------------
+
+def test_a_clean_store_unused_for_30_days_is_removed_and_a_recent_one_kept(tmp_path, store_root, notes, monkeypatch):  # noqa: F811
+    _, old = make_store(tmp_path / "old", monkeypatch, days_ago=31)
+    _, recent = make_store(tmp_path / "recent", monkeypatch, days_ago=29)
+    report = cleanUp()
+    assert report.removed == [os.path.basename(old)]
+    # the lock file stays (test_the_lock_file_outlives_the_store)
+    assert files_of(old) == [os.path.basename(old) + ".lock"]
+    assert os.path.isfile(recent)
+    assert local_stores.readState(*os.path.split(recent)).clean
+
+
+def test_over_the_cap_clean_stores_go_oldest_first(tmp_path, store_root, monkeypatch):  # noqa: F811
+    _, a = make_store(tmp_path / "a", monkeypatch, days_ago=3)
+    _, b = make_store(tmp_path / "b", monkeypatch, days_ago=2)
+    _, c = make_store(tmp_path / "c", monkeypatch, days_ago=1)
+    total = local_stores.folderSize()
+    one = total // 3
+    # room for two of the three
+    report = cleanUp(cap=total - one // 2)
+    assert report.removed == [os.path.basename(a)]
+    assert not os.path.exists(a)
+    assert os.path.isfile(b) and os.path.isfile(c)
+    assert local_stores.folderSize() <= total - one // 2
+
+
+def _pending(db):
+    store = held(db)
+    try:
+        store.writePendingSection(0, {"edited": True})
+    finally:
+        store.close()
+
+
+def _dirty(db):
+    set_meta(db, dirty=1)
+
+
+def _work_file(db):
+    work = db[:-len(".pyrstore")] + ".work"
+    with open(os.path.join(work, "0.section"), "w") as f:
+        f.write("{}")
+
+
+def _work_in_the_wal(db):
+    """Saved past its .jser by a process that then crashed: the write is in
+    the WAL, not yet in the store file."""
+    script = (
+        "import os, sqlite3, sys\n"
+        "con = sqlite3.connect(sys.argv[1], isolation_level=None)\n"
+        "con.execute('PRAGMA wal_autocheckpoint=0')\n"
+        "con.execute(\"INSERT OR REPLACE INTO meta(key, value) VALUES ('dirty', '1')\")\n"
+        "os._exit(0)\n"
+    )
+    subprocess.run([sys.executable, "-c", script, db], check=True)
+    assert os.path.getsize(db + "-wal") > 0
+
+
+@pytest.mark.parametrize("give_work", [_pending, _dirty, _work_file, _work_in_the_wal],
+                         ids=["working-rows", "saved-past-its-jser", "a-file-in-its-working-folder",
+                              "a-write-a-crash-left-in-its-wal"])
+def test_a_store_with_work_is_never_removed(give_work, tmp_path, store_root, monkeypatch):  # noqa: F811
+    _, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
+    give_work(db)
+    before = files_of(db)
+    for report in (cleanUp(cap=0), cleanUp(now=time.time() + 1000 * DAY, cap=0), removeClean()):
+        assert report.removed == []
+        assert report.kept == [(os.path.basename(db), local_stores.WORK)]
+    assert files_of(db) == before
+    state = local_stores.readState(*os.path.split(db))
+    assert state.work and not state.clean
+
+
+def test_a_store_in_use_is_never_removed(tmp_path, store_root, monkeypatch):  # noqa: F811
+    _, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
+    store = held(db)
+    try:
+        for report in (cleanUp(cap=0), removeClean()):
+            assert report.removed == []
+            assert report.kept == [(os.path.basename(db), local_stores.IN_USE)]
+        assert os.path.isfile(db)
+    finally:
+        store.close()
+    assert cleanUp(cap=0).removed == [os.path.basename(db)]
+
+
+def test_a_store_whose_jser_is_not_found_is_kept(tmp_path, store_root, monkeypatch):  # noqa: F811
+    """A share not mounted at app start looks the same as a deleted file."""
+    fp, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
+    os.rename(fp, str(fp) + ".away")
+    report = cleanUp(cap=0)
+    assert report.removed == []
+    assert report.kept == [(os.path.basename(db), local_stores.NO_JSER)]
+    os.rename(str(fp) + ".away", fp)
+    assert cleanUp(cap=0).removed == [os.path.basename(db)]
+
+
+def test_a_store_that_cannot_be_read_is_kept(tmp_path, store_root, notes, monkeypatch):  # noqa: F811
+    _, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
+    with open(db, "r+b") as f:
+        f.seek(100)
+        f.write(b"\xff" * 4000)  # the schema page, past the header
+    report = cleanUp(cap=0)
+    assert report.removed == []
+    assert report.kept == [(os.path.basename(db), local_stores.UNREADABLE)]
+    assert os.path.isfile(db)
+
+
+def test_cleanup_leaves_every_file_that_is_not_a_store_s_own(tmp_path, store_root, monkeypatch):  # noqa: F811
+    _, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
+    key = os.path.basename(db)[:16]
+    others = [
+        "notes.txt",
+        f"{key}.v1.conflict-20261019T000000Z.pyrstore",   # a set-aside store
+        f"{key}.v2.pyrstore",                             # another schema
+        f"{key}.v1.pyrstore.bak",
+    ]
+    for name in others:
+        (store_root / name).write_bytes(b"keep me")
+    (store_root / "folder").mkdir()
+    (store_root / "folder" / f"{key}.v1.pyrstore").write_bytes(b"keep me")
+    assert cleanUp(cap=0).removed == [os.path.basename(db)]
+    assert removeClean().removed == []
+    for name in others:
+        assert (store_root / name).read_bytes() == b"keep me"
+    assert (store_root / "folder" / f"{key}.v1.pyrstore").read_bytes() == b"keep me"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="links need rights on Windows")
+@pytest.mark.parametrize("part", ["-wal", "-shm", ".lock", ".work", ""])
+def test_a_link_in_the_store_folder_is_never_followed(part, tmp_path, store_root, notes, monkeypatch):  # noqa: F811
+    """A link where a store's file or folder goes: what it points at stays."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    target_file = outside / "precious.txt"
+    target_file.write_bytes(b"precious")
+    _, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
+    if part == ".work":
+        link = db[:-len(".pyrstore")] + ".work"
+        os.rmdir(link)
+        os.symlink(outside, link)
+    elif part == "":
+        # the store itself is a link to a store kept elsewhere
+        moved = outside / os.path.basename(db)
+        os.rename(db, moved)
+        os.symlink(moved, db)
+    else:
+        link = db + part
+        if os.path.exists(link):
+            os.remove(link)
+        os.symlink(target_file, link)
+    cleanUp(cap=0)
+    removeClean()
+    assert target_file.read_bytes() == b"precious"
+    if part == "":
+        assert (outside / os.path.basename(db)).is_file()
+    assert os.path.lexists(db[:-len(".pyrstore")] + part if part == ".work" else db + part)
+
+
+@pytest.mark.parametrize("name", [
+    "../escape.v1.pyrstore", "/etc/passwd", "notes.txt", "0123456789abcdef.v1.pyrstore/../x",
+    "0123456789abcdef.v1.pyrstore-wal/x",
+])
+def test_removal_refuses_any_name_that_is_not_a_store_file(name, tmp_path):
+    with pytest.raises(ValueError):
+        local_stores._removeFile(str(tmp_path), name)
+    with pytest.raises(ValueError):
+        local_stores._removeWorkDir(str(tmp_path), name)
+    with pytest.raises(ValueError):
+        local_stores.removeIfClean(str(tmp_path), name)
+
+
+def test_a_non_empty_working_folder_is_never_emptied(tmp_path):
+    work = tmp_path / "0123456789abcdef.v1.work"
+    work.mkdir()
+    (work / "x").write_text("work")
+    folder = local_stores._Folder(str(tmp_path))
+    try:
+        with pytest.raises(OSError):
+            local_stores._removeWorkDir(folder, work.name)
+    finally:
+        folder.close()
+    assert (work / "x").read_text() == "work"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="flock; Windows will not remove an open file")
+def test_the_lock_file_outlives_the_store(tmp_path, store_root, monkeypatch):  # noqa: F811
+    """An opener that opened the lock file before a removal locks the same
+    file as the next opener, so only one of them holds the store."""
+    import fcntl
+    _, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
+    early = os.open(db + ".lock", os.O_RDWR)  # opened, not yet locked
+    try:
+        assert local_stores.removeIfClean(*os.path.split(db)).clean
+        assert os.path.isfile(db + ".lock")
+        fcntl.flock(early, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert hybrid_store._lockFile(db + ".lock") is None
+    finally:
+        os.close(early)
+
+
+def _swap_folder_after_the_read(monkeypatch, folder, outside):
+    """Once the store is read, move the store folder away and put a link to
+    outside at its path, as another program could."""
+    read = local_stores._readState
+
+    def read_then_swap(folder_held, name):
+        state = read(folder_held, name)
+        if not os.path.islink(folder):
+            os.rename(folder, str(folder) + ".moved")
+            os.symlink(outside, folder)
+        return state
+
+    monkeypatch.setattr(local_stores, "_readState", read_then_swap)
+
+
+def _same_names_outside(db, outside):
+    """Copies of the store's files, by the same names, in a folder outside."""
+    outside.mkdir()
+    root, name = os.path.split(db)
+    for n in os.listdir(root):
+        if n.startswith(name[:16]) and os.path.isfile(os.path.join(root, n)):
+            shutil.copyfile(os.path.join(root, n), outside / n)
+    return sorted(os.listdir(outside))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="links need rights on Windows")
+@pytest.mark.parametrize("remove", [lambda: cleanUp(cap=0), removeClean], ids=["cleanup", "button"])
+def test_a_store_folder_swapped_for_a_link_is_never_reached(remove, tmp_path, store_root, notes, monkeypatch):  # noqa: F811
+    """Swapped once the store is read: the removal lands in the folder that
+    was read, and nothing at the folder's path now is touched."""
+    _, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
+    outside = tmp_path / "outside"
+    names = _same_names_outside(db, outside)
+    _swap_folder_after_the_read(monkeypatch, store_root, outside)
+    assert remove().removed == [os.path.basename(db)]
+    assert sorted(os.listdir(outside)) == names
+    moved = str(store_root) + ".moved"
+    assert not os.path.exists(os.path.join(moved, os.path.basename(db)))
+
+
+def _clean_copy_then_work(db, tmp_path):
+    """A clean copy of the store's folder (its files, by the same names), and
+    then work in the store: what another program could put at the folder's
+    path while cleanup reads."""
+    clean = tmp_path / "clean"
+    _same_names_outside(db, clean)
+    _dirty(db)
+    return clean
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows removes nothing; it will not move a folder in use")
+@pytest.mark.parametrize("remove", [lambda: cleanUp(cap=0), removeClean], ids=["cleanup", "button"])
+def test_a_folder_swapped_away_and_back_inside_the_read_keeps_its_work(remove, tmp_path, store_root, notes, monkeypatch):  # noqa: F811
+    """The clean copy is at the folder's path while SQLite opens and reads,
+    and the folder is back before anything after: the store's work is read,
+    so it is kept."""
+    _, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
+    clean = _clean_copy_then_work(db, tmp_path)
+    clean_files = {n: (clean / n).read_bytes() for n in os.listdir(clean)}
+    away = str(store_root) + ".away"
+    connect = local_stores.sqlite3.connect
+    swaps = []
+
+    def swapped(*a, **k):
+        os.rename(store_root, away)
+        os.rename(clean, store_root)
+        try:
+            con = connect(*a, **k)
+            con.execute("SELECT count(*) FROM sqlite_master").fetchone()
+        finally:
+            os.rename(store_root, clean)
+            os.rename(away, store_root)
+            swaps.append(1)
+        return con
+
+    monkeypatch.setattr(local_stores.sqlite3, "connect", swapped)
+    report = remove()
+    monkeypatch.undo()
+    assert swaps
+    assert report.removed == []
+    assert report.kept == [(os.path.basename(db), local_stores.WORK)]
+    assert local_stores.readState(*os.path.split(db)).work
+    assert {n: (clean / n).read_bytes() for n in os.listdir(clean)} == clean_files
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows removes nothing")
+@pytest.mark.parametrize("remove", [lambda: cleanUp(cap=0), removeClean], ids=["cleanup", "button"])
+def test_a_read_that_reaches_another_file_removes_nothing(remove, tmp_path, store_root, notes, monkeypatch):  # noqa: F811
+    """SQLite opens the clean copy instead of the store file opened for it
+    (on Linux it follows /dev/fd/N as a link, by path): nothing is removed."""
+    _, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
+    clean = _clean_copy_then_work(db, tmp_path)
+    other = Path(clean / os.path.basename(db)).as_uri() + "?mode=ro&immutable=1"
+    connect = local_stores.sqlite3.connect
+    monkeypatch.setattr(local_stores.sqlite3, "connect", lambda *a, **k: connect(other, uri=True))
+    report = remove()
+    monkeypatch.undo()
+    assert report.removed == []
+    assert report.kept == [(os.path.basename(db), local_stores.UNREADABLE)]
+    assert local_stores.readState(*os.path.split(db)).work
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows removes nothing")
+def test_a_store_file_replaced_since_the_read_is_left(tmp_path, store_root, notes, monkeypatch):  # noqa: F811
+    _, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
+    read = local_stores._readState
+
+    def read_then_replace(folder, name):
+        state = read(folder, name)
+        shutil.copyfile(db, db + ".copy")
+        os.replace(db + ".copy", db)
+        return state
+
+    monkeypatch.setattr(local_stores, "_readState", read_then_replace)
+    report = cleanUp(cap=0)
+    assert report.removed == []
+    assert report.kept == [(os.path.basename(db), local_stores.UNREADABLE)]
+    assert os.path.isfile(db)
+
+
+def test_without_dir_fd_as_on_windows_nothing_is_removed(tmp_path, store_root, settings, dev, no_switch, notes, monkeypatch):  # noqa: F811
+    """Windows cannot hold the folder or open the store file for SQLite:
+    the store is read (the notice at open works) and never removed."""
+    fp, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
+    monkeypatch.setattr(local_stores, "_DIR_FD", False)
+    before = files_of(db)
+    for report in (cleanUp(cap=0), removeClean()):
+        assert report.removed == []
+        assert report.kept == [(os.path.basename(db), local_stores.WINDOWS)]
+    assert files_of(db) == before
+    assert local_stores.readState(*os.path.split(db)).clean
+    _dirty(db)
+    assert local_stores.noteWorkAtOpen(str(fp), _Told())
+
+
+def test_a_store_opened_since_the_scan_is_not_removed(tmp_path, store_root, monkeypatch):  # noqa: F811
+    """Old when cleanup looked, opened before it took the store's lock: it
+    is recent now, and under the cap it stays."""
+    _, db = make_store(tmp_path / "s", monkeypatch, days_ago=400)
+    read = local_stores.readState
+
+    def read_then_open(root, name, folder=None):
+        state = read(root, name, folder)
+        set_meta(db, **{META_OPENED: _utc(time.time())})
+        return state
+
+    monkeypatch.setattr(local_stores, "readState", read_then_open)
+    report = cleanUp()
+    assert report.removed == []
+    assert report.kept == [(os.path.basename(db), "")]
+    assert os.path.isfile(db)
+
+
+def test_cleanup_with_no_store_folder_makes_none(store_root):  # noqa: F811
+    assert cleanUp(cap=0).removed == []
+    assert removeClean().removed == []
+    assert local_stores.folderSize() == 0
+    assert not store_root.exists()
+
+
+def test_cleanup_at_app_start_runs_in_the_background(tmp_path, store_root, notes, monkeypatch):  # noqa: F811
+    _, db = make_store(tmp_path / "s", monkeypatch, days_ago=31)
+    thread = local_stores.startCleanup()
+    assert thread is not None and thread.daemon
+    thread.join(30)
+    assert not os.path.exists(db)
+    assert any(line.startswith("Removed 1 unused local copy") for line in notes)
+
+
+def test_a_store_made_again_after_cleanup_opens_from_the_store(tmp_path, store_root, monkeypatch):  # noqa: F811
+    """Removing a clean store loses nothing: the next open builds it again."""
+    fp, db = make_store(tmp_path / "s", monkeypatch, days_ago=31)
+    assert cleanUp().removed == [os.path.basename(db)]
+    make_store(tmp_path / "s2", monkeypatch)
+    with monkeypatch.context() as m:
+        m.setenv(ENV_SWITCH, "1")
+        _open(fp).close()
+    assert local_stores.readState(*os.path.split(db)).clean
+
+
+# ---------------------------------------------------------------------------
+# the check at open, with the store off
+# ---------------------------------------------------------------------------
+
+def test_with_the_store_off_an_open_names_a_store_with_work(tmp_path, store_root, settings, dev, no_switch, notes, monkeypatch):  # noqa: F811
+    fp, db = make_store(tmp_path / "s", monkeypatch)
+    _pending(db)
+    told = _Told()
+    series = _open(fp, notifier=told)
+    series.close()
+    assert len(told.told) == 1
+    assert "The local copy of parity_series on this computer holds work" in told.told[0]
+    assert "parity_series.jser does not have" in told.told[0]
+    assert len(notes) == 1
+    # the store is left as it was
+    assert local_stores.readState(*os.path.split(db)).work
+
+
+@pytest.mark.parametrize("dir_fd", [True, False], ids=["dir-fd", "no-dir-fd-as-on-windows"])
+def test_with_the_store_off_and_the_store_folder_set_relative_the_series_opens(dir_fd, tmp_path, store_root, settings, dev, no_switch, notes, monkeypatch):  # noqa: F811
+    fp, db = make_store(tmp_path / "s", monkeypatch)
+    _pending(db)
+    if not dir_fd:
+        monkeypatch.setattr(local_stores, "_DIR_FD", False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(hybrid_store.ENV_DIR, "stores")
+    told = _Told()
+    _open(fp, notifier=told).close()
+    assert len(told.told) == 1
+
+
+def test_the_notice_is_true_when_the_open_resumes_a_working_folder(tmp_path, store_root, settings, dev, no_switch, notes, monkeypatch):  # noqa: F811
+    """A working folder left beside the .jser is what opens, not the .jser."""
+    fp, db = make_store(tmp_path / "s", monkeypatch)
+    _pending(db)
+    first = _open(fp, notifier=_Told())
+    try:
+        told = _Told()
+        resumed = _open(fp, notifier=told)
+        assert resumed.leave_open
+        assert told.told == [
+            "The local copy of parity_series on this computer holds work that "
+            "parity_series.jser does not have.\n\n"
+            "Fast local copy is off, so this open does not use it. "
+            "The local copy is kept, and cleanup never removes it."
+        ]
+    finally:
+        first.close()
+
+
+def test_with_the_store_off_a_clean_store_says_nothing(tmp_path, store_root, settings, dev, no_switch, monkeypatch):  # noqa: F811
+    fp, db = make_store(tmp_path / "s", monkeypatch)
+    before = files_of(db)
+    told = _Told()
+    _open(fp, notifier=told).close()
+    assert told.told == []
+    assert files_of(db) == before
+
+
+IN_USE_NOTICE = (
+    "Another PyReconstruct window is using the local copy of parity_series. "
+    "A Save made there may not be in parity_series.jser yet: that window "
+    "writes it when it closes.\n\n"
+    "Fast local copy is off, so this open does not use it."
+)
+
+
+def test_with_the_store_off_a_store_another_window_holds_is_named_not_read(tmp_path, store_root, settings, dev, no_switch, monkeypatch):  # noqa: F811
+    fp, db = make_store(tmp_path / "s", monkeypatch)
+    before = files_of(db)
+    store = held(db)
+    try:
+        told = _Told()
+        _open(fp, notifier=told).close()
+        assert told.told == [IN_USE_NOTICE]
+    finally:
+        store.close()
+    assert files_of(db) == before
+
+
+# ---------------------------------------------------------------------------
+# the store states Save, close and Export leave (store_save.py), with the
+# store off at the next open
+# ---------------------------------------------------------------------------
+
+def _saved_to_the_store(fp, monkeypatch):
+    """Open fp with the store on and Save to the store alone: the .jser lacks it."""
+    monkeypatch.setenv(store_save.ENV_MODE, store_save.MODE_STORE)
+    with monkeypatch.context() as m:
+        m.setenv(ENV_SWITCH, "1")
+        series = _open(fp)
+        assert store_save.heldStore(series) is not None
+        snum = _edit(series)
+        assert series.saveToStore()
+    assert store_save.ahead(series)
+    return series, snum
+
+
+def test_with_the_store_off_an_open_while_another_window_holds_a_save_names_it(tmp_path, store_root, settings, dev, no_switch, notes, monkeypatch):  # noqa: F811
+    fp = _copy(PARITY, tmp_path / "s")
+    _open_with_switch(fp, monkeypatch)
+    first, _ = _saved_to_the_store(fp, monkeypatch)
+    try:
+        told = _Told()
+        _open(fp, notifier=told)
+        assert told.told == [IN_USE_NOTICE]
+    finally:
+        first.close()
+
+
+def test_with_the_store_off_an_open_after_a_crash_since_a_save_names_it(tmp_path, store_root, settings, dev, no_switch, notes, monkeypatch):  # noqa: F811
+    fp = _copy(PARITY, tmp_path / "s")
+    _open_with_switch(fp, monkeypatch)
+    first, _ = _saved_to_the_store(fp, monkeypatch)
+    # a crash: the lock goes with the process, the .jser is not written
+    store_save.release(first)
+    told = _Told()
+    _open(fp, notifier=told)
+    assert len(told.told) == 1
+    assert "holds work that parity_series.jser does not have" in told.told[0]
+
+
+def test_with_the_store_off_an_open_after_a_close_says_nothing(tmp_path, store_root, settings, dev, no_switch, monkeypatch):  # noqa: F811
+    fp = _copy(PARITY, tmp_path / "s")
+    _open_with_switch(fp, monkeypatch)
+    first, _ = _saved_to_the_store(fp, monkeypatch)
+    before = fp.read_bytes()
+    first.close()
+    assert fp.read_bytes() != before  # the close wrote the Save
+    told = _Told()
+    _open(fp, notifier=told).close()
+    assert told.told == []
+
+
+_ON_WINDOWS_NOT_SET_ASIDE = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="on Windows a store with work is not set aside (store_recovery.setAside)",
+)
+
+
+def _set_aside(fp, db, monkeypatch):
+    """The store with a Save its .jser lacks, set aside by an open with the
+    store on that is told No; the set-aside file."""
+    _dirty(db)
+    with monkeypatch.context() as m:
+        m.setenv(ENV_SWITCH, "1")
+        _open(fp, notifier=_Answers(False)).close()
+    aside = store_recovery.setAsideStores(str(fp))
+    assert len(aside) == 1
+    return aside[0]
+
+
+@_ON_WINDOWS_NOT_SET_ASIDE
+@pytest.mark.parametrize("store", ["there", "removed-by-cleanup"])
+def test_with_the_store_off_an_open_names_a_set_aside_store(store, tmp_path, store_root, settings, dev, no_switch, notes, monkeypatch):  # noqa: F811
+    fp, db = make_store(tmp_path / "s", monkeypatch)
+    aside = _set_aside(fp, db, monkeypatch)
+    before = Path(aside).read_bytes()
+    if store == "removed-by-cleanup":
+        # the store the open made in its place is clean; the set-aside one is never touched
+        assert removeClean().removed == [os.path.basename(db)]
+        assert not os.path.exists(db)
+    told = _Told()
+    _open(fp, notifier=told).close()
+    assert told.told == [store_recovery.setAsideText(str(fp), None, None, others=[aside])]
+    assert aside in told.told[0]
+    assert f'PyReconstruct --export-local-copy "{aside}"' in told.told[0]
+    assert Path(aside).read_bytes() == before
+
+
+@_ON_WINDOWS_NOT_SET_ASIDE
+def test_with_the_store_off_an_open_with_its_store_and_a_set_aside_one_names_both(tmp_path, store_root, settings, dev, no_switch, notes, monkeypatch):  # noqa: F811
+    fp, db = make_store(tmp_path / "s", monkeypatch)
+    aside = _set_aside(fp, db, monkeypatch)
+    _pending(db)
+    told = _Told()
+    _open(fp, notifier=told).close()
+    assert len(told.told) == 1
+    assert told.told[0].startswith("The local copy of parity_series on this computer holds work")
+    assert told.told[0].endswith(store_recovery.setAsideText(str(fp), None, None, others=[aside]))
+
+
+@_ON_WINDOWS_NOT_SET_ASIDE
+def test_with_the_store_off_an_open_says_nothing_of_a_set_aside_store_written_out(tmp_path, store_root, settings, dev, no_switch, monkeypatch):  # noqa: F811
+    fp, db = make_store(tmp_path / "s", monkeypatch)
+    aside = _set_aside(fp, db, monkeypatch)
+    store_recovery.exportStore(aside, str(tmp_path / "out.jser"))
+    told = _Told()
+    _open(fp, notifier=told).close()
+    assert told.told == []
+
+
+def test_with_the_store_off_cleanup_reading_the_store_is_not_another_window(tmp_path, store_root, settings, dev, no_switch, monkeypatch):  # noqa: F811
+    fp, db = make_store(tmp_path / "s", monkeypatch)
+    read = local_stores._readState
+    started = threading.Event()
+
+    def slow(folder, name):
+        started.set()
+        time.sleep(0.5)
+        return read(folder, name)
+
+    monkeypatch.setattr(local_stores, "_readState", slow)
+    cleanup = threading.Thread(target=local_stores.readState, args=os.path.split(db))
+    cleanup.start()
+    try:
+        assert started.wait(5)
+        monkeypatch.setattr(local_stores, "_readState", read)
+        told = _Told()
+        assert local_stores.noteWorkAtOpen(str(fp), told) is False
+        assert told.told == []
+    finally:
+        cleanup.join()
+
+
+def _open_with_switch(fp, monkeypatch):
+    """The first open, with the store on: it makes the store."""
+    with monkeypatch.context() as m:
+        m.setenv(ENV_SWITCH, "1")
+        _open(fp).close()
+
+
+# ---------------------------------------------------------------------------
+# turning the setting off
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def setting_on(settings, dev, no_switch, store_root, monkeypatch):  # noqa: F811
+    """The setting on, Save writing the store only."""
+    settings.set_value(None, SETTING, True)
+    monkeypatch.setenv(store_save.ENV_MODE, store_save.MODE_STORE)
+    return settings
+
+
+def _on_and_saved(tmp_path, monkeypatch):
+    """A series opened with the setting on, an edit saved to its store alone."""
+    fp = _copy(PARITY, tmp_path / "s")
+    _open(fp).close()
+    series = _open(fp)
+    assert store_save.heldStore(series) is not None
+    snum = _edit(series)
+    assert series.saveToStore()
+    assert store_save.ahead(series)
+    return fp, series, snum
+
+
+def _in_the_jser(fp, snum, edited, monkeypatch):
+    with monkeypatch.context() as m:
+        m.setenv(ENV_SWITCH, "0")
+        plain = _open(fp)
+        try:
+            assert plain.loadSection(snum).getDict() == edited
+        finally:
+            plain.close()
+
+
+def test_turning_it_off_writes_the_save_to_the_jser_and_lets_go_of_the_store(tmp_path, setting_on, notes, monkeypatch):
+    fp, series, snum = _on_and_saved(tmp_path, monkeypatch)
+    edited = series.loadSection(snum).getDict()
+    before = fp.read_bytes()
+    db, _ = storePaths(str(fp))
+    try:
+        report = local_stores.setSetting(series, False)
+        assert report.written == [str(fp)]
+        assert report.failed == [] and report.work == [] and report.in_use == 0
+        assert fp.read_bytes() != before
+        assert store_save.heldStore(series) is None
+        assert not local_stores.enabled()
+        assert f"Fast local copy turned off: wrote {fp}" in notes
+        assert local_stores.turnOffText(report) == (
+            "Fast local copy is off. The last Save in the local copy was written to:\n" + str(fp)
+        )
+        # the store is a clean copy now, left for cleanup
+        state = local_stores.readState(*os.path.split(db))
+        assert state.clean
+        # and Save writes the .jser from now on
+        assert series.saveToStore() is False
+    finally:
+        series.close()
+    _in_the_jser(fp, snum, edited, monkeypatch)
+
+
+def test_turning_it_off_names_the_files_the_write_out_wrote(tmp_path, setting_on, monkeypatch):
+    fp, series, _ = _on_and_saved(tmp_path, monkeypatch)
+    backups = tmp_path / "backups"
+    backups.mkdir()
+    series.setBackupUsesDefaults(False)
+    series.setOption("backup_dir", str(backups))
+    # the set folder was missing, so the backup went to one picked then
+    picked = tmp_path / "picked"
+    picked.mkdir()
+
+    def write_out(s):
+        store_save.writeJser(s)
+        shutil.copyfile(s.jser_fp, picked / "s-backup.jser")
+        return [s.jser_fp, str(picked / "s-backup.jser")]
+
+    try:
+        report = local_stores.setSetting(series, False, write_out)
+        assert report.written == [str(fp), str(picked / "s-backup.jser")]
+        assert store_save.heldStore(series) is None
+    finally:
+        series.close()
+
+
+def test_a_write_out_that_fails_keeps_the_store_its_save_and_its_hold(tmp_path, setting_on, monkeypatch):
+    fp, series, snum = _on_and_saved(tmp_path, monkeypatch)
+    edited = series.loadSection(snum).getDict()
+    before = fp.read_bytes()
+    db, work = storePaths(str(fp))
+    shown = []
+    series._surfaceSaveError = lambda fp, err, message=None: shown.append(err)
+    write = series_module._atomicWrite
+
+    def full(path, data):
+        if str(path) == series.jser_fp:
+            raise OSError(28, "No space left on device")
+        return write(path, data)
+
+    monkeypatch.setattr(series_module, "_atomicWrite", full)
+    try:
+        report = local_stores.setSetting(series, False)
+        assert report.written == []
+        assert report.failed == [str(fp)]
+        assert len(shown) == 1
+        assert fp.read_bytes() == before
+        # nothing removed or set aside: the series holds its store, which
+        # holds the Save
+        assert store_save.heldStore(series) is not None
+        assert store_save.ahead(series)
+        assert os.path.isfile(db)
+        assert sorted(n for n in os.listdir(os.path.dirname(db)) if ".conflict-" in n) == []
+        text = local_stores.turnOffText(report)
+        assert text == (
+            "The local copy could not be written to:\n" + str(fp)
+            + "\nThe local copy is kept, with that Save in it. This series goes on "
+            "saving to it, and its .jser is written when the series closes."
+        )
+        monkeypatch.setattr(series_module, "_atomicWrite", write)
+    finally:
+        series.close()
+    # the close wrote it
+    _in_the_jser(fp, snum, edited, monkeypatch)
+
+
+def test_ok_again_with_the_setting_off_writes_out_what_failed_before(tmp_path, setting_on, monkeypatch):
+    fp, series, snum = _on_and_saved(tmp_path, monkeypatch)
+    edited = series.loadSection(snum).getDict()
+    before = fp.read_bytes()
+    series._surfaceSaveError = lambda fp, err, message=None: None
+    write = series_module._atomicWrite
+
+    def full(path, data):
+        if str(path) == series.jser_fp:
+            raise OSError(28, "No space left on device")
+        return write(path, data)
+
+    monkeypatch.setattr(series_module, "_atomicWrite", full)
+    try:
+        assert local_stores.setSetting(series, False).failed == [str(fp)]
+        assert store_save.heldStore(series) is not None
+        monkeypatch.setattr(series_module, "_atomicWrite", write)
+        # the setting is off already; OK again writes the Save out
+        report = local_stores.setSetting(series, False)
+        assert report.written == [str(fp)]
+        assert report.failed == []
+        assert fp.read_bytes() != before
+        assert store_save.heldStore(series) is None
+        # with the store let go of, OK again does nothing
+        assert local_stores.setSetting(series, False) is None
+    finally:
+        series.close()
+    _in_the_jser(fp, snum, edited, monkeypatch)
+
+
+def test_turning_it_off_with_nothing_saved_writes_nothing(tmp_path, setting_on, monkeypatch):
+    fp = _copy(PARITY, tmp_path / "s")
+    _open(fp).close()
+    series = _open(fp)
+    before = fp.read_bytes()
+    db, _ = storePaths(str(fp))
+    try:
+        assert store_save.heldStore(series) is not None
+        report = local_stores.setSetting(series, False)
+        assert (report.written, report.failed, report.work, report.in_use) == ([], [], [], 0)
+        assert local_stores.turnOffText(report) == ""
+        assert store_save.heldStore(series) is None
+    finally:
+        series.close()
+    assert fp.read_bytes() == before
+    assert local_stores.readState(*os.path.split(db)).clean
+
+
+def test_turning_it_off_names_every_other_store_with_work_and_keeps_it(tmp_path, setting_on, monkeypatch):
+    fp, series, _ = _on_and_saved(tmp_path, monkeypatch)
+    with monkeypatch.context() as m:
+        m.setenv(ENV_SWITCH, "1")
+        work_fp, work_db = make_store(tmp_path / "w", monkeypatch)
+        _, busy_db = make_store(tmp_path / "b", monkeypatch)
+        _, clean_db = make_store(tmp_path / "c", monkeypatch)
+    _dirty(work_db)
+    work_before = work_fp.read_bytes()
+    kept = {db: files_of(db) for db in (work_db, busy_db, clean_db)}
+    busy = held(busy_db)
+    try:
+        report = local_stores.setSetting(series, False)
+        assert report.written == [str(fp)]
+        assert report.work == [str(work_fp)]
+        assert report.in_use == 1
+        assert local_stores.turnOffText(report).endswith(
+            "These local copies hold work their .jser does not have. They are kept, "
+            "and cleanup never removes them:\n" + str(work_fp) + "\n\n"
+            "1 local copy is in use by another PyReconstruct window. A Save made "
+            "there is written to its .jser when that window closes."
+        )
+    finally:
+        busy.close()
+        series.close()
+    assert work_fp.read_bytes() == work_before
+    assert {db: files_of(db) for db in kept} == kept
+    assert local_stores.readState(*os.path.split(work_db)).work
+
+
+@_ON_WINDOWS_NOT_SET_ASIDE
+def test_turning_it_off_names_a_set_aside_store_and_how_to_write_it_out(tmp_path, setting_on, monkeypatch):
+    fp, series, _ = _on_and_saved(tmp_path, monkeypatch)
+    with monkeypatch.context() as m:
+        m.setenv(ENV_SWITCH, "1")
+        other_fp, other_db = make_store(tmp_path / "o", monkeypatch)
+        done_fp, done_db = make_store(tmp_path / "d", monkeypatch)
+    aside = _set_aside(other_fp, other_db, monkeypatch)
+    # one written out is not named again
+    done = _set_aside(done_fp, done_db, monkeypatch)
+    store_recovery.exportStore(done, str(tmp_path / "out.jser"))
+    before = Path(aside).read_bytes()
+    try:
+        report = local_stores.setSetting(series, False)
+        assert report.written == [str(fp)]
+        assert report.aside == [aside]
+        assert report.work == []
+        assert local_stores.turnOffText(report).endswith(
+            "These local copies were set aside with work no .jser has. They are "
+            "kept, and cleanup never removes them:\n" + aside + "\n\n"
+            "To write it to a new .jser, run:\n"
+            f'  PyReconstruct --export-local-copy "{aside}"'
+        )
+    finally:
+        series.close()
+    assert Path(aside).read_bytes() == before
+
+
+def test_with_the_switch_set_turning_the_setting_off_does_nothing_else(tmp_path, setting_on, monkeypatch):
+    fp, series, _ = _on_and_saved(tmp_path, monkeypatch)
+    before = fp.read_bytes()
+    monkeypatch.setenv(ENV_SWITCH, "1")
+    try:
+        assert local_stores.setSetting(series, False) is None
+        assert store_save.heldStore(series) is not None
+        assert store_save.ahead(series)
+        assert fp.read_bytes() == before
+    finally:
+        series.close()
+
+
+def test_turning_it_on_or_leaving_it_off_writes_nothing(tmp_path, settings, dev, no_switch, store_root, monkeypatch):  # noqa: F811
+    fp = _copy(PARITY, tmp_path / "s")
+    series = _open(fp)
+    try:
+        assert local_stores.setSetting(series, False) is None
+        assert local_stores.setSetting(series, True) is None
+        assert settings.value(None, SETTING, bool) is True
+    finally:
+        series.close()
+
+
+def test_with_the_store_on_the_open_does_not_name_it(tmp_path, store_root, monkeypatch):  # noqa: F811
+    """With the store on, the open itself deals with the store (store_recovery.py)."""
+    fp, db = make_store(tmp_path / "s", monkeypatch)
+    _dirty(db)
+    monkeypatch.setenv(ENV_SWITCH, "1")
+    told = _Answers(True)
+    _open(fp, notifier=told).close()
+    # the open offers the Save the .jser lacks, and says nothing of the store off
+    assert len(told.asked) == 1
+    assert told.told == []

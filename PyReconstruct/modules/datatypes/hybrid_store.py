@@ -38,6 +38,8 @@ import numpy as np
 from PyReconstruct.modules.constants import fast_loads, fast_dumps
 from PyReconstruct.modules.constants.fast_json import have_orjson, orjson_dumps, stdlib_dumps
 
+from .log import LOG_READ_ERRORS
+
 ## Moves the folder that holds every store (tests and benchmarks)
 ENV_DIR = "PYRECON_HYBRID_STORE_DIR"
 BUSY_TIMEOUT_MS = 5000
@@ -106,13 +108,13 @@ def _isBusy(err : Exception) -> bool:
     return "locked" in text or "busy" in text
 
 
-def _lockFile(path : str):
+def _lockFile(path : str, dir_fd=None):
     """Hold an exclusive lock on path for the life of the process, or None.
 
     The operating system drops the lock when the process ends, so a crash
-    never leaves a series locked.
+    never leaves a series locked. dir_fd: as os.open's (local_stores.py).
     """
-    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600, dir_fd=dir_fd)
     try:
         if sys.platform == "win32":
             import msvcrt
@@ -552,7 +554,20 @@ class HybridStore():
 
     def logText(self) -> str:
         row = self.con.execute("SELECT text FROM log").fetchone()
-        return "" if row is None else row[0]
+        if row is None:
+            return ""
+        return _text(row[0]) if isinstance(row[0], bytes) else row[0]
+
+    def setLogText(self, text : str):
+        """Store the log. A log naming a lone surrogate (log.py) goes in as its
+        UTF-8 bytes, as names do: SQLite text cannot take one. Any other log
+        stays text, as every store before this one holds it."""
+        value : "str | bytes" = text
+        try:
+            text.encode("utf-8")
+        except UnicodeEncodeError:
+            value = _utf8(text)
+        self.con.execute("INSERT OR REPLACE INTO log(id, text) VALUES (1, ?)", (value,))
 
     def objectTraces(self, name : str) -> list:
         """(section, row) for every saved trace of one object, by the per-object index."""
@@ -652,10 +667,10 @@ class HybridStore():
                     changed = True
             log_fp = os.path.join(series.getwdir(), "existing_log.csv")
             if os.path.isfile(log_fp):
-                with open(log_fp, "r", encoding="utf-8", errors="replace") as f:
+                with open(log_fp, "r", encoding="utf-8", errors=LOG_READ_ERRORS) as f:
                     text = f.read()
                 if text != self.logText():
-                    self.con.execute("INSERT OR REPLACE INTO log(id, text) VALUES (1, ?)", (text,))
+                    self.setLogText(text)
                     changed = True
             self.con.execute("DELETE FROM pending_section")
             self.con.execute("DELETE FROM pending_series")
@@ -709,9 +724,7 @@ class HybridStore():
                     done += 1
                     if reporter is not None and total:
                         reporter.set_progress(done / total * 100)
-                self.con.execute(
-                    "INSERT INTO log(id, text) VALUES (1, ?)", (source.log,)
-                )
+                self.setLogText(source.log)
                 series_data = source.series
                 if not migrated:
                     series_data["log_set"] = []

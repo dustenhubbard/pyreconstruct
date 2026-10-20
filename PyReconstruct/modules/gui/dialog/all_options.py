@@ -19,8 +19,10 @@ from PySide6.QtGui import (
 from .quick_dialog import QuickDialog
 from .backup import BackupDialog
 from .autoseg_palette import AutosegColorsWidget
+from .local_store_option import LocalStoreOptionWidget
 
 from PyReconstruct.modules.datatypes import Series
+from PyReconstruct.modules.constants import build_flavor
 from PyReconstruct.modules.backend.func.utils import (
     zarr_worker_count, MAX_ZARR_WORKERS,
 )
@@ -28,6 +30,7 @@ from PyReconstruct.modules.datatypes.default_settings import (
     MAX_SELECTION_GLOW_OPACITY,
 )
 from PyReconstruct.modules.backend.view.trace_layer import SELECTED_TRACE_STYLES
+from PyReconstruct.modules.gui.utils import notify
 from .scale_bar_settings import (
     scaleBarStructure,
     storeScaleBarResponse,
@@ -55,6 +58,9 @@ def cpuSliderReadout(percent : int) -> str:
 # clamps it. Wide enough for the lists tab's columns, tall enough for the
 # colors page's embedded picker.
 DEFAULT_SIZE = (1100, 850)
+
+# a NUL in the series code would stop every backup into a {series} folder
+SERIES_CODE_NUL = "The series code holds a NUL character. Remove it to save the code."
 
 
 class AllOptionsDialog(QDialog):
@@ -173,6 +179,11 @@ class AllOptionsDialog(QDialog):
             "Backup": [
                 ["backup"],
             ],
+            # the local copy is not a backup (cleanup may remove it), so it
+            # gets its own tab, and only a Dev build has one
+            "Files": [
+                ["local_store"],
+            ],
             "Lists": [
                 ["object_columns"],
                 ["trace_columns"],
@@ -181,6 +192,9 @@ class AllOptionsDialog(QDialog):
                 ["flag_columns"],
             ]
         }
+
+        if "local_store" not in self.all_widgets:
+            del tab_structure["Files"]
 
         for tab_name, structure, in tab_structure.items():
             widget = QWidget(self)
@@ -494,7 +508,10 @@ class AllOptionsDialog(QDialog):
         def setOption(response):
             self.series.code = response[0]
             self.series.setOption("series_code_pattern", response[1])
-        self.addOptionWidget("series_code", structure, setOption)
+        self.addOptionWidget(
+            "series_code",
+            SeriesCodeWidget(self, "Series Code", structure, self.series, setOption),
+        )
 
         # left_handed
         structure = [
@@ -595,6 +612,12 @@ class AllOptionsDialog(QDialog):
         # backup
         backup_widget = BackupDialog(self, self.series, include_confirm=False)
         self.addOptionWidget("backup", backup_widget)
+
+        # the local store's setting and cleanup button, Dev builds only
+        if build_flavor.is_dev_build():
+            self.addOptionWidget(
+                "local_store", LocalStoreOptionWidget(self, self.series, use_defaults)
+            )
     
     def addOptionWidget(self, name : str, structure : list, setOption=None, grid=False):
         """Add a widget to the all_widgets dictionary
@@ -764,3 +787,18 @@ class OptionWidget(QuickDialog):
         painter = QPainter(self)
         painter.setPen(QApplication.palette().color(QPalette.WindowText))  # Set border color
         painter.drawRect(self.rect().adjusted(0, 0, -1, -1))  # Draw rectangle inside border
+
+
+class SeriesCodeWidget(OptionWidget):
+    """The series code option, which refuses a newly typed NUL character."""
+
+    def accept(self, close=True):
+        if not super().accept(close):
+            return False
+        # a code that already held one passes, so a series opened with it
+        # can still save its other options
+        code = self.responses[0]
+        if "\0" in code and code != self.series.code:
+            notify(SERIES_CODE_NUL)
+            return False
+        return True

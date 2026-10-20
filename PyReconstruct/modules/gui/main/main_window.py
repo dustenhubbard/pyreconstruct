@@ -12,7 +12,7 @@ from PySide6.QtCore import QEvent
 from .main_imports import *
 
 from PyReconstruct.modules.datatypes.section import Section, zarrHasScaleLevels
-from PyReconstruct.modules.datatypes import store_open, store_recovery, store_save
+from PyReconstruct.modules.datatypes import local_stores, store_open, store_recovery, store_save
 from PyReconstruct.modules.datatypes.series import SeriesSaveError
 from PyReconstruct.modules.backend.image_name_match import (
     matchByNumber, zarrImageNames,
@@ -23,6 +23,7 @@ from PyReconstruct.modules.datatypes.series import (
 )
 from PyReconstruct.modules.backend.crop_zarr import CropError, CropStopped, LOG_NAME
 from PyReconstruct.modules.gui.dialog.crop_zarr import cropWithProgress
+from PyReconstruct.modules.gui.dialog.all_options import SERIES_CODE_NUL
 from PyReconstruct.modules.backend.func.window_geometry import (
     default_window_rect,
     window_geometry_is_usable,
@@ -1778,6 +1779,9 @@ class MainWindow(QMainWindow):
                 # with the store switch on, the series takes its local store
                 if store_open.enabled():
                     store_recovery.resumed(new_series)
+                else:
+                    # Series.openJser does not run: its look for the local store
+                    local_stores.noteWorkAtOpen(jser_fp)
                 return new_series
             # remove the folder if not needed
             self._clearHiddenSeriesDir(hidden_series_dir)
@@ -3094,6 +3098,9 @@ class MainWindow(QMainWindow):
             from_saved (bool): if True, copy the already-saved jser file rather
                 than re-serializing the entire series again. Used by the save
                 paths so a save + autobackup is one full serialization, not two.
+        Returns:
+            (str): the backup file written, or None when none was. It can be
+                in a folder the user picked here, when the set one is missing.
         """
         if check_auto and not self.series.autobackupOn():
             return
@@ -3113,6 +3120,11 @@ class MainWindow(QMainWindow):
         if self.series.seriesStepRunning():
             self.series.refuseSaveDuringStep(self.series.backupFolder())
             return
+        # a NUL in the folder, most often from the series code in a {series}
+        # default folder, would make creating it raise ValueError
+        if "\0" in self.series.backupFolder():
+            self._refuseNulBackup("folder", from_saved)
+            return
 
         # make sure the backup directory exists
         if not os.path.isdir(self.series.backupFolder(create=True)):
@@ -3131,6 +3143,12 @@ class MainWindow(QMainWindow):
         # double check if user entered a valid backup directory
         if os.path.isdir(self.series.backupFolder(create=True)):
             fp = self.series.getBackupPath(comment)
+            if "\0" in fp:
+                # a NUL in the series code, the user name, the comment or a
+                # name part in Backup Settings: the copy would raise
+                # ValueError on the path
+                self._refuseNulBackup("file", from_saved)
+                return
             if (
                 from_saved
                 and self.series.jser_fp
@@ -3141,6 +3159,7 @@ class MainWindow(QMainWindow):
                 shutil.copyfile(self.series.jser_fp, fp)
             else:
                 self.series.saveJser(fp)
+            return fp
         else:
             notify(
                 "Backup folder not found.\n" +
@@ -3158,6 +3177,28 @@ class MainWindow(QMainWindow):
                 self.series.setOption("backup_dir", "")
                 self.series.setOption("autobackup", False)
     
+    def _refuseNulBackup(self, part : str, from_saved : bool):
+        """Tell that no backup was made because its path holds a NUL character.
+
+            Params:
+                part (str): "folder" or "file", the name that holds it
+                from_saved (bool): the backup follows a Save; the notice names
+                    the .jser that holds it
+        """
+        if "\0" in (self.series.code or ""):
+            where = "Check the series code in Series ▸ Series code ▸ Set series code."
+        elif part == "folder":
+            where = "Check the backup folder in File ▸ Backup ▸ Settings."
+        else:
+            where = "Check the name parts in File ▸ Backup ▸ Settings."
+        message = (
+            f"The backup {part} name holds a NUL character, so no backup was made.\n"
+            + where
+        )
+        if from_saved and self.series.jser_fp:
+            message += f"\nThe last Save is in {self.series.jser_fp}."
+        notify(message)
+
     def saveToJser(self, notify=False, close=False):
         """Store data in JSER file.
 
@@ -3258,15 +3299,38 @@ class MainWindow(QMainWindow):
             self.series.saveJser()
         except (OSError, SeriesSaveError):
             return False
-        self.backup(check_auto=True, from_saved=True)
+        self._backupSaved()
         return True
 
-    def _writeStoreSave(self) -> bool:
+    def _backupSaved(self):
+        """Make the automatic backup of the .jser just written.
+
+        A backup that fails shows a notice and does not raise: the .jser holds
+        the Save, so a close, an export or the turning off of the local copy
+        goes on.
+
+            Returns:
+                (str): the backup file written, or None when none was.
+        """
+        try:
+            return self.backup(check_auto=True, from_saved=True)
+        except (OSError, ValueError) as e:
+            notify(
+                f"The backup could not be written: {e}\n"
+                f"The last Save is in {self.series.jser_fp}."
+            )
+            return None
+
+    def _writeStoreSave(self, written=None) -> bool:
         """Write the .jser from the local store if it holds a Save the .jser lacks.
 
         With Save writing the store only (store_save.py), the .jser is written
         when the series closes, so that is when the automatic backup is made.
 
+            Params:
+                written (list): when given (turning the local copy off), the
+                    files written are added to it: the .jser, then the backup
+                    file. The caller names them.
             Returns:
                 (bool): False if the .jser could not be written. The user was
                     told, and the series keeps its store and working folder,
@@ -3278,7 +3342,11 @@ class MainWindow(QMainWindow):
             store_save.writeJser(self.series)
         except (OSError, SeriesSaveError):
             return False
-        self.backup(check_auto=True, from_saved=True)
+        backup = self._backupSaved()
+        if written is not None:
+            written.append(self.series.jser_fp)
+            if backup:
+                written.append(backup)
         return True
 
     def exportJserNow(self):
@@ -3295,7 +3363,7 @@ class MainWindow(QMainWindow):
                 store_save.writeJser(self.series)
         else:
             self.series.saveJser()
-        self.backup(check_auto=True, from_saved=True)
+        self._backupSaved()
         self.seriesModified(False)
 
     def saveAsToJser(self, close=False):
@@ -5625,6 +5693,10 @@ class MainWindow(QMainWindow):
                 ["Series code:", (True, "text", self.series.code)]
             ]
             response, confirmed = QuickDialog.get(self, structure, "Series Code", cancelable=cancelable)
+            if confirmed and "\0" in response[0]:
+                # it would stop every backup into a {series} folder
+                notify(SERIES_CODE_NUL)
+                continue
             if confirmed:
                 self.series.code = response[0]
             

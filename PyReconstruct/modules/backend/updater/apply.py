@@ -68,6 +68,7 @@ its bundle moves).
 """
 
 import argparse
+import errno
 import fnmatch
 import hashlib
 import json
@@ -256,22 +257,91 @@ def _sha256(path):
     return h.hexdigest()
 
 
+def _junction(st):
+    """Whether the ``os.lstat`` result ``st`` is a Windows junction, which shutil.rmtree deletes as a link."""
+    return getattr(st, "st_reparse_tag", 0) == 0xA0000003  # IO_REPARSE_TAG_MOUNT_POINT, in stat only on Windows
+
+
+def _make_writable(path):
+    """Clear ``path``'s read-only flag so it can be deleted. False if that cannot be done safely.
+
+    A plain chmod on a link changes what it points to, which can be anywhere
+    (a dmg's ``Applications`` link is ``/Applications``). So only the link
+    itself is changed where the system can do that, a link is left where it
+    cannot, and a path that cannot be looked at is not changed.
+    """
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    if os.chmod in os.supports_follow_symlinks:  # changes only a link, even one swapped in since the lstat
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD, follow_symlinks=False)
+    elif stat.S_ISLNK(st.st_mode) or _junction(st):
+        return False
+    else:
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+    return True
+
+
+def _writable_and_retry(func, path, exc_info):
+    """shutil.rmtree's error hook: retry a refused delete once ``path`` is writable; skip what is gone."""
+    if isinstance(exc_info[1], FileNotFoundError):
+        return  # as rmtree itself does from Python 3.13
+    if func not in (os.unlink, os.rmdir) or not _make_writable(path):
+        raise exc_info[1]
+    func(path)
+
+
+def _mounted(path):
+    return OSError(errno.EXDEV, "a disk is mounted here, so nothing was deleted", path)
+
+
+def _refuse_mounts(folder):
+    """Raise OSError if a disk is mounted at ``folder`` or in the tree under it. Deletes nothing.
+
+    shutil.rmtree does not stop at a mount point, and deleting into a mounted
+    dmg would go through its links. No link is followed here either.
+    """
+    if os.path.ismount(folder):
+        raise _mounted(folder)
+    dev = os.lstat(folder).st_dev
+
+    def unless_gone(e):
+        if not isinstance(e, FileNotFoundError):
+            raise e
+
+    for top, names, _files in os.walk(folder, onerror=unless_gone):
+        for name in list(names):
+            p = os.path.join(top, name)
+            try:
+                st = os.lstat(p)
+            except FileNotFoundError:
+                names.remove(name)
+                continue
+            # ismount also finds a drive mounted in a folder on Windows, which looks like a junction
+            if (stat.S_ISDIR(st.st_mode) and st.st_dev != dev) or os.path.ismount(p):
+                raise _mounted(p)
+            if not stat.S_ISDIR(st.st_mode) or _junction(st):
+                names.remove(name)  # a link, which rmtree deletes without going into
+
+
 def _remove(path):
-    """Delete a file, a link, or a whole tree. Read-only files on Windows are made writable first."""
+    """Delete a file, a link, or a whole tree. Read-only files on Windows are made writable first.
+
+    A tree with a disk image or drive mounted in it raises OSError before
+    anything is deleted. An item that vanishes during the delete is skipped.
+    """
     if not os.path.lexists(path):
         return
-
-    def _writable_and_retry(func, p, _exc):
-        os.chmod(p, stat.S_IWRITE | stat.S_IREAD)
-        func(p)
-
     if os.path.isdir(path) and not os.path.islink(path):
+        _refuse_mounts(path)
         shutil.rmtree(path, onerror=_writable_and_retry)
     else:
         try:
             os.unlink(path)
         except PermissionError:
-            os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+            if not _make_writable(path):
+                raise
             os.unlink(path)
 
 
