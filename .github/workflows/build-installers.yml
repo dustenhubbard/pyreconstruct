@@ -22,7 +22,8 @@ name: build-installers
 # a job of its own, and the publish job ships both; the in-app updater checks
 # the signature before it runs an installer. The Windows leg also packs its
 # frozen app as an in-place update payload, which the swap-windows job tries
-# on a real install before the release job ships it.
+# on a real install before the release job ships it. A macOS leg lists the app
+# inside its finished dmg in a tree.json, so the dmg is its update payload.
 #
 # Installers are built ONLY for a tag (or a manual workflow_dispatch), NOT on
 # every push to main. The former rolling "latest main" build that republished a
@@ -430,6 +431,43 @@ jobs:
           xcrun stapler staple "$DMG"
           xcrun stapler validate "$DMG"
           spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
+
+      - name: List the app in the dmg for in-place updates (macOS)
+        # macOS has no update archive: the dmg is the payload. This writes its
+        # tree.json (scripts/build_update_payload.py --macos-tree) from the app
+        # inside the finished dmg, attached read-only, so the tree lists the
+        # app as users download it: signed, and in the notarized, stapled dmg.
+        # The release job adds it to the manifest and SHA256SUMS beside the dmg.
+        #
+        # A tag lists only a signed app. A manual run on a branch lists the
+        # unsigned one too, as a dry run; a branch never publishes. A failure
+        # here never costs the release its dmg: the step removes any tree.json
+        # left behind, and the upload goes ahead with the dmg alone.
+        id: macos-tree
+        if: runner.os == 'macOS' && (steps.macsign.outputs.sign == 'true' || !startsWith(github.ref, 'refs/tags/v'))
+        continue-on-error: true
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          FLAVOR="$(cat packaging/FLAVOR 2>/dev/null | tr -d '[:space:]' || true)"
+          if [ "$FLAVOR" = "dev" ]; then APP_NAME="PyReconstruct Dev"; KIND=dev; else APP_NAME="PyReconstruct"; KIND=stable; fi
+          no_tree() {
+            rm -f dist-assets/PyReconstruct-*-update-macos-*
+            echo "::warning::$1; the release has no macOS $ARCH tree.json"
+            exit 1
+          }
+          DMG="$(ls dist-assets/PyReconstruct-*.dmg)" || no_tree "no dmg"
+          MOUNT="$(mktemp -d)"
+          hdiutil attach -readonly -nobrowse -noautoopen -mountpoint "$MOUNT" "$DMG" > /dev/null || no_tree "the dmg did not attach"
+          set +e
+          python scripts/build_update_payload.py "$MOUNT/$APP_NAME.app" --version "$PYR_PUBLIC" \
+            --flavor "$KIND" --macos-tree "macos-$ARCH" --out dist-assets
+          BUILT=$?
+          set -e
+          hdiutil detach "$MOUNT" > /dev/null || hdiutil detach -force "$MOUNT" > /dev/null \
+            || echo "::warning::could not detach $MOUNT"
+          [ "$BUILT" -eq 0 ] || no_tree "the tree.json did not build"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
