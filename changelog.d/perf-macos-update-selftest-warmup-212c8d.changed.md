@@ -1,1 +1,0 @@
-- **PyReconstruct Dev on macOS reopens sooner after it installs an update at quit.**
