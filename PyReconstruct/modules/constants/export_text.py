@@ -1,9 +1,9 @@
 ## How a text export writes a name. An object or trace name can hold a lone
 ## surrogate (half of a UTF-16 pair, from an old or damaged file). Strict
 ## encoding has no bytes for it, so the export raised. "backslashreplace"
-## writes it as the text \ud800 instead: the export finishes and the file
-## stays valid UTF-8. Exports are for other programs, so they do not need the
-## surrogate back; the .jser and existing_log.csv keep it as it is.
+## writes it as the text \ud800 instead, so the export finishes. Each export
+## keeps its existing encoding. Exports are for other programs, so they do
+## not need the surrogate back; the .jser and existing_log.csv keep it as it is.
 EXPORT_ERRORS = "backslashreplace"
 
 
