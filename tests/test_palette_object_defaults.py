@@ -629,6 +629,7 @@ def test_paste_with_shape_keeps_the_buttons_defaults(tmp_path):
         s.palette_index[1] = 0
         pal.palette_buttons = [Button(item)]
         pal.modifyPaletteButton = lambda bpos, t: MousePalette.modifyPaletteButton(pal, bpos, t)
+        pal.selectedPos = lambda: MousePalette.selectedPos(pal)
         pal.paletteButtonChanged = lambda b: None
 
         section_trace = Trace("other", (9, 9, 9), True)
