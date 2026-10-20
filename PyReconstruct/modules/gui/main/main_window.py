@@ -12,7 +12,7 @@ from PySide6.QtCore import QEvent
 from .main_imports import *
 
 from PyReconstruct.modules.datatypes.section import Section, zarrHasScaleLevels
-from PyReconstruct.modules.datatypes import store_open, store_recovery, store_save
+from PyReconstruct.modules.datatypes import local_stores, store_open, store_recovery, store_save
 from PyReconstruct.modules.datatypes.series import SeriesSaveError
 from PyReconstruct.modules.backend.image_name_match import (
     matchByNumber, zarrImageNames,
@@ -1779,6 +1779,9 @@ class MainWindow(QMainWindow):
                 # with the store switch on, the series takes its local store
                 if store_open.enabled():
                     store_recovery.resumed(new_series)
+                else:
+                    # Series.openJser does not run: its look for the local store
+                    local_stores.noteWorkAtOpen(jser_fp)
                 return new_series
             # remove the folder if not needed
             self._clearHiddenSeriesDir(hidden_series_dir)
