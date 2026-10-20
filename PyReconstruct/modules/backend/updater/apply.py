@@ -31,7 +31,8 @@ Staging layout, ``<parent>/.<AppName>-update/``::
 
     plan.json            what to do, written by the app
     tree.json            path, size, sha256, and mode of every staged file
-    new/                 the staged tree (a folder, or one file later on Linux)
+    new/                 the staged tree (a folder, or one file later on Linux);
+                         new.app/ on macOS (see the end of this docstring)
     old/                 the backup of the install during a swap
     rejected/            a failed new version while it is rolled back
     state.json           the journal
@@ -54,10 +55,16 @@ on a rollback) gets ``PYINSTALLER_RESET_ENVIRONMENT=1`` and none of the
 child sets itself up from its own folder rather than the helper's.
 
 On macOS the new version is started by running ``Contents/MacOS/<app>``
-directly, because that gives the helper the process ID it health-checks and,
-on a rollback, stops. Step 7 of the build plan (the macOS helper) should
-decide between that and ``open -n -a``, which is how Finder starts an app but
-returns no process ID, in which case the ID would come from health.json.
+directly, not with ``open -n -a``. Only a direct start gives the helper the
+process ID it health-checks and, on a rollback, the creation time it checks
+before it stops that one copy and never another; ``open`` returns neither.
+The staged bundle there is ``new.app``, not ``new``: PyInstaller's launcher
+finds the bundle's Python only beside a folder whose name ends in ``.app``,
+so a self-test of a bundle staged as ``new`` fails every time. The helper on
+macOS is the installed app itself, and it keeps running while its bundle is
+renamed into staging and deleted, since it imports nothing more from the
+bundle once it has started (it never loads Qt, which ends the process when
+its bundle moves).
 """
 
 import argparse
@@ -94,6 +101,7 @@ SELFTEST_LOG = "selftest.log"
 # selftest.log grows by one run per quit; past this many bytes only the last half is kept.
 SELFTEST_LOG_MAX = 1 << 20
 NEW = "new"
+NEW_APP = "new.app"  # the staged tree on macOS, where only a .app runs as a bundle
 OLD = "old"
 REJECTED = "rejected"
 
@@ -170,6 +178,11 @@ def os_key():
     if sys.platform == "darwin":
         return "macos"
     return "linux"
+
+
+def staged_name(host):
+    """The staged tree's name in the staging folder on ``host``: new.app on macOS, new elsewhere."""
+    return NEW_APP if host == "macos" else NEW
 
 
 def _now():
@@ -1007,7 +1020,7 @@ class Applier:
         self.state = None
         self.plan = None
         self.state_path = os.path.join(self.staging, STATE)
-        self.new = os.path.join(self.staging, NEW)
+        self.new = os.path.join(self.staging, staged_name(self.host))
         self.old = os.path.join(self.staging, OLD)
         self.rejected = os.path.join(self.staging, REJECTED)
         self.install = None

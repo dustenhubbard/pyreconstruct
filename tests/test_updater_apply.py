@@ -227,7 +227,7 @@ class Setup:
             _write(self.parent, "PyReconstruct.AppImage", f"appimage {OLD_V}", 0o755)
         self.staging = os.path.join(self.parent, ".PyReconstruct-update")
         os.makedirs(self.staging)
-        self.new = os.path.join(self.staging, "new")
+        self.new = os.path.join(self.staging, A.staged_name(style))
         if style == "windows":
             windows_tree(self.new, NEW_V)
         elif style == "macos":
@@ -832,16 +832,40 @@ def test_app_reports_its_public_version_from_the_install_folder(win, frozen_wind
     assert win.read("health.json")["version"] == NEW_V
 
 
-@pytest.mark.parametrize("build", ["source", "macos"])
-def test_app_reports_only_from_a_frozen_windows_build(win, frozen_windows_app, monkeypatch, build):
+@pytest.mark.parametrize("build", ["source", "linux"])
+def test_app_reports_only_from_a_frozen_windows_or_macos_build(win, frozen_windows_app, monkeypatch, build):
     from PyReconstruct.modules.backend.updater.updater import report_update_started
     if build == "source":
         monkeypatch.setattr(frozen_windows_app, "is_frozen", lambda: False)
     else:
-        monkeypatch.setattr(frozen_windows_app, "os_key", lambda: "macos")
+        monkeypatch.setattr(frozen_windows_app, "os_key", lambda: "linux")
     _waiting_journal(win)
     assert report_update_started() is False
     assert win.read("health.json") is None
+
+
+def test_a_macos_app_reports_from_the_bundle_that_holds_it(tmp_path, frozen_windows_app, monkeypatch):
+    from PyReconstruct.modules.backend.updater.updater import report_update_started
+    s = Setup(tmp_path / "mac", "macos")
+    monkeypatch.setattr(frozen_windows_app, "os_key", lambda: "macos")
+    monkeypatch.setattr(sys, "executable", os.path.join(s.install, "Contents", "MacOS", "PyReconstruct"))
+    _waiting_journal(s)
+
+    assert report_update_started() is True
+    assert s.read("health.json")["version"] == NEW_V
+
+
+def test_a_macos_bundle_is_staged_as_new_app_so_its_self_test_runs_as_a_bundle(tmp_path):
+    # PyInstaller's launcher finds the bundle's Python only under a folder named *.app;
+    # the same bundle staged as new/ fails its self-test every time.
+    s = Setup(tmp_path, "macos")
+    assert s.applier().run()["status"] == "updated"
+
+    (selftest, *_), = s.world.selftests
+    bundle = os.path.dirname(os.path.dirname(os.path.dirname(selftest)))
+    assert bundle == os.path.join(s.staging, "new.app")
+    assert selftest == os.path.join(bundle, "Contents", "MacOS", "PyReconstruct")
+    assert A.staged_name("windows") == "new" and A.staged_name("linux") == "new"
 
 
 def test_app_report_never_raises(win, frozen_windows_app, monkeypatch):

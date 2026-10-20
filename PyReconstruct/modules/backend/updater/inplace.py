@@ -1,4 +1,4 @@
-"""Windows in-place updates from the app's side: decide, stage, and start the helper at quit.
+"""In-place updates from the app's side (Windows and macOS): decide, stage, and start the helper at quit.
 
 The update dialog asks :func:`stage_for_quit` first. It checks that this
 install may update in place, stages the release next to the install
@@ -12,14 +12,17 @@ run a helper left part way. An update the helper put off is staged again
 at the next launch (:func:`deferred_version`), so the quit after it puts
 it in.
 
-Eligibility: a frozen Windows x86_64 build of a flavor turned on here; the
-release's ``update-manifest.json``, checked against its signed
+Eligibility: a frozen Windows x86_64 or macOS build of a flavor turned on
+here; the release's ``update-manifest.json``, checked against its signed
 ``SHA256SUMS``, turns in-place on for this platform and flavor and names a
 ``min_client`` this build meets; the version has not failed in place, nor
-been put off ``MAX_DEFERRALS`` times; and the install is the per-user one
-Setup.exe wrote (its HKCU uninstall entry names this folder, the uninstaller
-and the helper are in it). An all-users install has no HKCU entry, so it
-keeps the installer.
+been put off ``MAX_DEFERRALS`` times. On Windows the install is the per-user
+one Setup.exe wrote (its HKCU uninstall entry names this folder, the
+uninstaller and the helper are in it); an all-users install has no HKCU
+entry, so it keeps the installer. On macOS the app is the bundle the user
+put in place: not a translocated copy, not on a disk image or another
+volume, signed with our Team ID, and in a folder this user can write to. The
+installed app is its own helper there (``run.py``, ``__apply_update__``).
 
 Only the Dev flavor is on. Stable follows once Dev has gone two weeks with
 no rollback reports.
@@ -55,6 +58,11 @@ REGISTRY_KEYS = {
     "stable": A._UNINSTALL_KEY_PREFIX + "{A1B2C3D4-E5F6-47A8-9B0C-1D2E3F4A5B6C}_is1",
     "dev": A._UNINSTALL_KEY_PREFIX + "{0C76AF3D-BB20-4EDB-99FC-2B9244E213F7}_is1",
 }
+# The bundle id of each flavor's macOS app (packaging/PyReconstruct.spec).
+BUNDLE_IDS = {
+    "stable": "edu.utexas.synapseweb.pyreconstruct",
+    "dev": "edu.utexas.synapseweb.pyreconstruct.dev",
+}
 _MAX_MANIFEST_BYTES = 1 << 20
 
 
@@ -73,36 +81,51 @@ class Pending:
 
 @dataclass
 class Install:
-    """The running build, as the eligibility checks see it."""
+    """The running build, as the eligibility checks see it.
+
+    ``folder`` is the install folder on Windows and the .app bundle on macOS;
+    ``platform`` is the release's key for it, such as "macos-arm64".
+    """
 
     folder: str
     app_name: str
     flavor: str
     version: str
+    platform: str = S.PLATFORM
+    bundle_id: str | None = None
 
 
 def running_install():
-    """The running build, or None when it is not a frozen Windows x86_64 build."""
+    """The running build, or None when it is not a frozen Windows x86_64 or macOS build."""
     from PyReconstruct.modules.backend.updater.install_info import (
         arch_key, current_version_str, install_kind, os_key,
     )
     from PyReconstruct.modules.datatypes.series_owner import app_display_name
-    if install_kind() != "frozen" or os_key() != "windows" or arch_key() != "x86_64":
+    if install_kind() != "frozen":
         return None
     version = current_version_str()
     if not version:
         return None
     app_name = app_display_name()
+    flavor = "dev" if app_name.endswith(" Dev") else "stable"
+    # the release and plan.json spell the public version, with no +local part
+    version = version.split("+", 1)[0]
     exe = os.path.abspath(sys.executable)
-    if os.path.basename(exe).casefold() != f"{app_name}.exe".casefold():
-        return None  # not the program Setup.exe installed
-    return Install(
-        folder=os.path.dirname(exe),
-        app_name=app_name,
-        flavor="dev" if app_name.endswith(" Dev") else "stable",
-        # the release and plan.json spell the public version, with no +local part
-        version=version.split("+", 1)[0],
-    )
+    if os_key() == "windows" and arch_key() == "x86_64":
+        if os.path.basename(exe).casefold() != f"{app_name}.exe".casefold():
+            return None  # not the program Setup.exe installed
+        return Install(folder=os.path.dirname(exe), app_name=app_name, flavor=flavor,
+                       version=version)
+    if os_key() == "macos" and arch_key() in ("arm64", "x86_64"):
+        macos = os.path.dirname(exe)
+        contents = os.path.dirname(macos)
+        bundle = os.path.dirname(contents)
+        if (os.path.basename(exe), os.path.basename(macos), os.path.basename(contents),
+                os.path.basename(bundle)) != (app_name, "MacOS", "Contents", f"{app_name}.app"):
+            return None  # not the program in the bundle the dmg holds
+        return Install(folder=bundle, app_name=app_name, flavor=flavor, version=version,
+                       platform=f"macos-{arch_key()}", bundle_id=BUNDLE_IDS[flavor])
+    return None
 
 
 def check_eligible(release, install, *, platform=None, trusted_keys=None):
@@ -121,7 +144,7 @@ def _check_eligible(release, install, platform, trusted_keys):
     version = U._tag_version(release)
     if version is None:
         raise NotEligible("the release has no version")
-    entry = _manifest_entry(release, str(version), install.flavor, trusted_keys)
+    entry = _manifest_entry(release, str(version), install.flavor, trusted_keys, install.platform)
     if entry.get("inplace", {}).get("enabled") is not True:
         raise NotEligible("the release does not turn in-place updates on")
     try:
@@ -139,12 +162,19 @@ def _check_eligible(release, install, platform, trusted_keys):
             and int(deferrals.get("count", 0)) >= A.MAX_DEFERRALS):
         raise NotEligible(f"{version} was put off {A.MAX_DEFERRALS} times")
 
-    _check_per_user(install, platform or A.default_platform())
+    if _is_macos(install):
+        _check_bundle(install)
+    else:
+        _check_per_user(install, platform or A.default_platform())
     return entry
 
 
-def _manifest_entry(release, version, flavor, trusted_keys):
-    """The release's signed manifest entry for Windows, checked against the release itself."""
+def _is_macos(install):
+    return install.platform.startswith("macos-")
+
+
+def _manifest_entry(release, version, flavor, trusted_keys, platform_key=S.PLATFORM):
+    """The release's signed manifest entry for this platform, checked against the release itself."""
     assets = {a.get("name"): a for a in release.get("assets") or [] if isinstance(a, dict)}
     if MANIFEST not in assets:
         raise NotEligible("the release has no update manifest")
@@ -161,9 +191,9 @@ def _manifest_entry(release, version, flavor, trusted_keys):
     if (not isinstance(manifest, dict) or manifest.get("schema") != MANIFEST_SCHEMA
             or manifest.get("version") != version or manifest.get("flavor") != flavor):
         raise NotEligible("the update manifest is for another release or build")
-    entry = (manifest.get("platforms") or {}).get(S.PLATFORM)
+    entry = (manifest.get("platforms") or {}).get(platform_key)
     if not isinstance(entry, dict):
-        raise NotEligible("the update manifest has no Windows entry")
+        raise NotEligible(f"the update manifest has no {platform_key} entry")
     return entry
 
 
@@ -180,6 +210,34 @@ def _check_per_user(install, platform):
         raise NotEligible("the folder that holds the install is not writable")
 
 
+def _check_bundle(install):
+    """The bundle is one the user put in place, signed by us, in a folder the swap can write.
+
+    A copy macOS translocated, or one run from the dmg or another volume, is
+    not where the user keeps the app, so the installer is the way to update it.
+    """
+    bundle = install.folder
+    real = os.path.realpath(bundle)
+    if os.path.islink(bundle):
+        raise NotEligible("the app is a link")
+    if "/AppTranslocation/" in real:
+        raise NotEligible("macOS runs this app from a translocated copy")
+    if real.startswith("/Volumes/"):
+        raise NotEligible("the app runs from a disk image or another volume")
+    try:
+        info = A._read_plist(os.path.join(bundle, "Contents", "Info.plist"))
+    except A.Refused as e:
+        raise NotEligible(str(e))
+    if info.get("CFBundleIdentifier") != install.bundle_id:
+        raise NotEligible("the app has another bundle id")
+    if not os.access(os.path.dirname(bundle), os.W_OK):
+        raise NotEligible("the folder that holds the app is not writable")
+    try:
+        S.check_code_signature(bundle, S.code_requirement(install.bundle_id), deep=False)
+    except S.StageError as e:
+        raise NotEligible(str(e))
+
+
 def stage_for_quit(release, offered, *, install=None, platform=None, trusted_keys=None,
                    progress_cb=None, cancel_cb=None):
     """Stage ``release`` to go in at quit. Returns a :class:`Pending`.
@@ -191,7 +249,7 @@ def stage_for_quit(release, offered, *, install=None, platform=None, trusted_key
     """
     install = install or running_install()
     if install is None:
-        raise NotEligible("only a frozen Windows build updates in place")
+        raise NotEligible("only a frozen Windows or macOS build updates in place")
     try:
         same = Version(str(U._tag_version(release))) == Version(str(offered))
     except InvalidVersion:
@@ -203,8 +261,9 @@ def stage_for_quit(release, offered, *, install=None, platform=None, trusted_key
     plan = S.stage_update(
         release, install=install.folder, app_name=install.app_name, flavor=install.flavor,
         from_version=install.version, pid=os.getpid(),
-        registry_key=REGISTRY_KEYS[install.flavor], trusted_keys=trusted_keys,
-        progress_cb=progress_cb, cancel_cb=cancel_cb, session=session,
+        registry_key=None if _is_macos(install) else REGISTRY_KEYS[install.flavor],
+        trusted_keys=trusted_keys, progress_cb=progress_cb, cancel_cb=cancel_cb,
+        session=session, platform=install.platform, bundle_id=install.bundle_id,
     )
     return Pending(staging=S.staging_dir(install.folder, install.app_name), plan=plan,
                    version=plan["to_version"])
@@ -218,16 +277,32 @@ def still_staged(pending):
         return False
     if A.read_json(os.path.join(pending.staging, A.PLAN)) != pending.plan:
         return False
-    return all(os.path.lexists(os.path.join(pending.staging, n)) for n in (A.TREE, A.NEW)) \
+    staged = A.staged_name(pending.plan.get("platform"))
+    return all(os.path.lexists(os.path.join(pending.staging, n)) for n in (A.TREE, staged)) \
         and os.path.isfile(helper_path(pending))
 
 
+def _helper(platform, staging, install, app_name):
+    """The helper's program and the arguments before the staging folder.
+
+    Windows runs the helper staging copied from the install. macOS runs the
+    installed app itself, whose ``run.py`` turns into the helper on its first
+    argument before it loads anything from Qt.
+    """
+    if platform == "macos":
+        return [os.path.join(install, "Contents", "MacOS", app_name), A.APPLY_ARG]
+    return [os.path.join(staging, S.HELPER, S.HELPER_EXE)]
+
+
 def helper_path(pending):
-    return os.path.join(pending.staging, S.HELPER, S.HELPER_EXE)
+    plan = pending.plan
+    return _helper(plan.get("platform"), pending.staging, plan.get("install"), plan.get("app_name"))[0]
 
 
 def helper_argv(pending, pid, open_path=None):
-    argv = [helper_path(pending), pending.staging, "--pid", str(int(pid)), "--expect", pending.version]
+    plan = pending.plan
+    argv = _helper(plan.get("platform"), pending.staging, plan.get("install"), plan.get("app_name")) \
+        + [pending.staging, "--pid", str(int(pid)), "--expect", pending.version]
     if open_path and os.path.isabs(open_path) and os.path.isfile(open_path):
         argv += ["--open", open_path]
     return argv
@@ -288,21 +363,29 @@ def start_recovery(pid, install=None, popen=None):
     plan = state.get("plan") if isinstance(state, dict) else None
     if not isinstance(plan, dict) or state.get("status") != "running":
         return None
-    if not isinstance(plan.get("install"), str) or A._norm_win(plan["install"]) != A._norm_win(install.folder):
+    if not isinstance(plan.get("install"), str) or not _same_path(plan["install"], install):
         return None
     if install.version not in (plan.get("from_version"), plan.get("to_version")):
         return None  # the installer put another version in since; this journal is not about it
-    helper = os.path.join(staging, S.HELPER, S.HELPER_EXE)
-    if not os.path.isfile(helper):
+    helper = _helper("macos" if _is_macos(install) else "windows", staging, install.folder,
+                     install.app_name)
+    if not os.path.isfile(helper[0]):
         return None
     lock = A.take_lock(staging)
     if lock is None:
         return None  # a helper is still at work, and may be waiting on a report of its own
     A.release_lock(lock)
     A.write_health(staging, install.version)
-    argv = [helper, staging, "--pid", str(int(pid)), "--recover"]
+    argv = helper + [staging, "--pid", str(int(pid)), "--recover"]
     _start(argv, staging, popen)
     return argv
+
+
+def _same_path(path, install):
+    """True if ``path`` names ``install``'s folder, compared as its platform compares paths."""
+    if _is_macos(install):
+        return os.path.normcase(os.path.realpath(path)) == os.path.normcase(os.path.realpath(install.folder))
+    return A._norm_win(path) == A._norm_win(install.folder)
 
 
 def _start(argv, cwd, popen=None):
@@ -313,4 +396,5 @@ def _start(argv, cwd, popen=None):
     (popen or subprocess.Popen)(
         argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags, env=A.child_env(),
+        start_new_session=os.name != "nt",
     )

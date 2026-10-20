@@ -25,6 +25,17 @@ installs could not update itself in place.
 Both names use a lowercase platform token, so no installer matcher, old or
 new, takes them for an installer
 (tests/test_old_clients_never_pick_update_assets.py).
+
+macOS has no archive: its payload is the release's notarized dmg. Only the
+tree.json is written, for the signed app as the dmg holds it:
+
+    python scripts/build_update_payload.py "/Volumes/<dmg>/PyReconstruct Dev.app" \
+        --version 1.26.0.dev20261020 --flavor dev --macos-tree macos-arm64 --out dist-assets
+
+writes ``PyReconstruct-<ver>-update-macos-<arch>[-Dev].tree.json``. Run it on
+the app inside the finished dmg, attached read-only, so the tree lists the
+published app byte for byte; the app staging copies out of that dmg is
+checked against it file by file.
 """
 
 import argparse
@@ -40,7 +51,10 @@ ROOT = Path(__file__).resolve().parents[1]
 APPLY_PY = ROOT / "PyReconstruct" / "modules" / "backend" / "updater" / "apply.py"
 
 PLATFORM = "windows-x86_64"
+MACOS_PLATFORMS = ("macos-arm64", "macos-x86_64")
 FLAVORS = ("stable", "dev")
+BUNDLE_IDS = {"stable": "edu.utexas.synapseweb.pyreconstruct",
+              "dev": "edu.utexas.synapseweb.pyreconstruct.dev"}
 HELPER = "_updater/pyreconstruct-updater.exe"
 XZ_PRESET = 6
 
@@ -54,6 +68,14 @@ def payload_names(version: str, flavor: str, platform: str = PLATFORM) -> tuple[
     suffix = "-Dev" if flavor == "dev" else ""
     base = f"PyReconstruct-{version}-update-{platform}{suffix}"
     return f"{base}.tar.xz", f"{base}.tree.json"
+
+
+def macos_names(version: str, flavor: str, platform: str) -> tuple[str, str]:
+    """(dmg, tree) asset names for one macOS release: the installer dmg is the payload."""
+    suffix = "-Dev" if flavor == "dev" else ""
+    arch = platform.split("-", 1)[1]
+    return (f"PyReconstruct-{version}-macOS-{arch}{suffix}.dmg",
+            f"PyReconstruct-{version}-update-{platform}{suffix}.tree.json")
 
 
 def _apply():
@@ -126,14 +148,70 @@ def build(app_dir: Path, version: str, flavor: str, out: Path, mtime: int | None
     return archive, tree_path, tree
 
 
+def build_macos_tree(app_dir: Path, version: str, flavor: str, platform: str, out: Path):
+    """Write the tree.json of a signed macOS app into ``out``. Returns (tree path, tree)."""
+    if flavor not in FLAVORS:
+        raise SystemExit(f"unknown flavor {flavor!r}; expected one of {', '.join(FLAVORS)}")
+    if platform not in MACOS_PLATFORMS:
+        raise SystemExit(f"unknown macOS platform {platform!r}; expected one of {', '.join(MACOS_PLATFORMS)}")
+    name = app_name(flavor)
+    app_dir = Path(app_dir)
+    if app_dir.name != f"{name}.app":
+        raise SystemExit(f"{app_dir} is not the {flavor} app; expected a bundle named {name + '.app'!r}")
+    if not (app_dir / "Contents" / "MacOS" / name).is_file():
+        raise SystemExit(f"{app_dir} has no Contents/MacOS/{name}")
+    A = _apply()
+    try:
+        info = A._read_plist(str(app_dir / "Contents" / "Info.plist"))
+    except A.Refused as e:
+        raise SystemExit(f"{app_dir}: {e}")
+    if info.get("CFBundleIdentifier") != BUNDLE_IDS[flavor]:
+        raise SystemExit(f"{app_dir} has bundle id {info.get('CFBundleIdentifier')!r}, "
+                         f"expected {BUNDLE_IDS[flavor]!r}")
+    tree = A.build_tree(str(app_dir), version=version, flavor=flavor, app_name=name,
+                        bundle_id=BUNDLE_IDS[flavor], platform=platform)
+    for entry in tree["files"]:
+        try:
+            parts = A.safe_parts(entry["path"])
+            if entry.get("type") == "symlink":
+                A._link_target_parts(parts, entry["target"])
+        except A.Refused as e:
+            raise SystemExit(f"the helper would refuse this tree: {e}")
+
+    out = Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    tree_path = out / macos_names(version, flavor, platform)[1]
+    partial = tree_path.with_name(tree_path.name + ".partial")
+    try:
+        partial.write_text(json.dumps(tree, indent=2, sort_keys=True) + "\n",
+                           encoding="utf-8", newline="\n")
+        os.replace(partial, tree_path)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
+    return tree_path, tree
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("app_dir", type=Path, help="the frozen onedir folder, dist/<app name>")
+    ap.add_argument("app_dir", type=Path,
+                    help="the frozen onedir folder, dist/<app name>, or with --macos-tree the .app")
     ap.add_argument("--version", required=True)
     ap.add_argument("--flavor", required=True)
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--macos-tree", metavar="PLATFORM", choices=MACOS_PLATFORMS,
+                    help="write only the tree.json of a signed macOS app, for this platform")
     args = ap.parse_args(argv)
     started = time.monotonic()
+    if args.macos_tree:
+        tree_path, tree = build_macos_tree(args.app_dir, args.version, args.flavor,
+                                           args.macos_tree, args.out)
+        files = [e for e in tree["files"] if e.get("type", "file") == "file"]
+        sys.stdout.write(
+            f"{tree_path.name}: {len(files)} files, {sum(e['size'] for e in files)} bytes installed\n"
+            f"listed in {time.monotonic() - started:.0f} s\n"
+        )
+        return
     archive, tree_path, tree = build(args.app_dir, args.version, args.flavor, args.out)
     files = [e for e in tree["files"] if e.get("type", "file") == "file"]
     installed = sum(e["size"] for e in files)

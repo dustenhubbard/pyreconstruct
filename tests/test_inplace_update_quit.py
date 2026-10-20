@@ -28,7 +28,7 @@ from PyReconstruct.modules.backend.updater import inplace as I
 from PyReconstruct.modules.backend.updater import staging as S
 from PyReconstruct.modules.backend.updater.updater import UpdateCancelled
 
-from test_update_staging import NEW_V, OLD_V, _locked, _run_helper, dev, snapshot  # noqa: F401  (fixture)
+from test_update_staging import NEW_V, OLD_V, _locked, _run_helper, dev, mac, snapshot  # noqa: F401  (fixture)
 
 pytestmark = pytest.mark.gui
 
@@ -60,6 +60,27 @@ def test_a_committed_quit_starts_the_helper_and_quits(main_window, dev, quit_cal
                     "--expect", pending.version, "--open", series]
     assert kw["cwd"] == pending.staging
     assert quit_calls == ["quit"]
+    assert main_window._pending_inplace is None
+
+
+def test_a_committed_quit_on_macos_starts_the_installed_app_as_the_helper(main_window, mac, monkeypatch):  # noqa: F811
+    from PySide6.QtWidgets import QApplication
+    real = I.start_helper
+    monkeypatch.setattr(I, "start_helper",
+                        lambda pending, pid, open_path=None: real(pending, pid, open_path, popen=mac.popen))
+    calls = []
+    monkeypatch.setattr(QApplication, "quit", lambda *a: calls.append("quit"))
+    pending = mac.stage()
+    main_window._pending_inplace = pending
+    series = main_window.series.jser_fp
+
+    assert main_window.close() is True
+
+    (argv, kw), = mac.started
+    assert argv == [os.path.join(mac.install, "Contents", "MacOS", "PyReconstruct Dev"), A.APPLY_ARG,
+                    pending.staging, "--pid", str(os.getpid()), "--expect", NEW_V, "--open", series]
+    assert kw["cwd"] == pending.staging
+    assert calls == ["quit"]
     assert main_window._pending_inplace is None
 
 

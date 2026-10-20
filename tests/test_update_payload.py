@@ -19,6 +19,7 @@ payload the same app.
 import hashlib
 import json
 import os
+import plistlib
 import re
 import shutil
 import subprocess
@@ -30,7 +31,7 @@ import pytest
 
 from PyReconstruct.modules.backend.updater import apply as A
 
-from test_old_clients_never_pick_update_assets import planned
+from test_old_clients_never_pick_update_assets import installers, planned
 from test_pruning_preserves_release_tags import workflow_script
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -140,6 +141,110 @@ def test_a_link_is_refused(tmp_path):
     os.symlink("python311.dll", app / "_internal" / "python3.dll")
     with pytest.raises(SystemExit, match="files and folders only"):
         P.build(app, STABLE, "stable", tmp_path / "out")
+
+
+# --- The macOS tree.json -------------------------------------------------------------
+
+def fake_bundle(root, flavor="stable", bundle_id=None):
+    """A small stand-in for the signed .app inside the dmg, with a framework link."""
+    name = P.app_name(flavor)
+    app = root / f"{name}.app"
+    (app / "Contents" / "MacOS").mkdir(parents=True)
+    (app / "Contents" / "Frameworks" / "Python.framework" / "Versions" / "A").mkdir(parents=True)
+    (app / "Contents" / "Resources" / "empty").mkdir(parents=True)
+    with open(app / "Contents" / "Info.plist", "wb") as f:
+        plistlib.dump({"CFBundleIdentifier": bundle_id or P.BUNDLE_IDS[flavor],
+                       "CFBundleExecutable": name}, f)
+    exe = app / "Contents" / "MacOS" / name
+    exe.write_bytes(b"\xcf\xfa\xed\xfe program " + os.urandom(64))
+    exe.chmod(0o755)
+    (app / "Contents" / "Frameworks" / "Python.framework" / "Versions" / "A" / "Python").write_bytes(os.urandom(512))
+    if hasattr(os, "symlink") and os.name != "nt":
+        os.symlink("A", app / "Contents" / "Frameworks" / "Python.framework" / "Versions" / "Current")
+    return app
+
+
+@pytest.mark.parametrize("version,flavor", [(STABLE, "stable"), (NIGHTLY, "dev")])
+@pytest.mark.parametrize("platform", P.MACOS_PLATFORMS)
+def test_the_macos_payload_is_the_installer_dmg_and_its_tree_is_planned(version, flavor, platform):
+    dev = "-Dev" if flavor == "dev" else ""
+    dmg, tree = P.macos_names(version, flavor, platform)
+    tag = {"macos-arm64": "macOS-arm64", "macos-x86_64": "macOS-x86_64"}[platform]
+    assert dmg == installers(version, dev)[tag]
+    assert tree in planned(version, dev)
+
+
+@pytest.mark.parametrize("flavor", ["stable", "dev"])
+def test_the_macos_tree_lists_the_bundle_for_the_helper(tmp_path, flavor):
+    app = fake_bundle(tmp_path, flavor)
+    tree_path, tree = P.build_macos_tree(app, NIGHTLY, flavor, "macos-arm64", tmp_path / "out")
+
+    assert tree_path.name == P.macos_names(NIGHTLY, flavor, "macos-arm64")[1]
+    assert json.loads(tree_path.read_text()) == tree
+    assert {k: tree[k] for k in ("version", "flavor", "app_name", "bundle_id", "platform")} == {
+        "version": NIGHTLY, "flavor": flavor, "app_name": P.app_name(flavor),
+        "bundle_id": P.BUNDLE_IDS[flavor], "platform": "macos-arm64"}
+    A.verify_tree(str(app), tree)  # the helper's own check passes on the bundle it lists
+    assert not list((tmp_path / "out").glob("*.partial"))
+
+
+@pytest.mark.parametrize("change", ["name", "bundle_id", "program"])
+def test_a_bundle_that_is_not_the_flavor_app_gets_no_tree(tmp_path, change):
+    app = fake_bundle(tmp_path, "dev", bundle_id=P.BUNDLE_IDS["stable"] if change == "bundle_id" else None)
+    if change == "name":
+        app = app.rename(tmp_path / "Other.app")
+    if change == "program":
+        (app / "Contents" / "MacOS" / "PyReconstruct Dev").unlink()
+    with pytest.raises(SystemExit):
+        P.build_macos_tree(app, NIGHTLY, "dev", "macos-arm64", tmp_path / "out")
+    assert not (tmp_path / "out").exists() or not list((tmp_path / "out").iterdir())
+
+
+def _dist_with_macos_tree(tmp_path, version, flavor, platform="macos-arm64"):
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    dmg_name, _ = P.macos_names(version, flavor, platform)
+    (dist / dmg_name).write_bytes(os.urandom(2048))
+    tree_path, tree = P.build_macos_tree(fake_bundle(tmp_path, flavor), version, flavor, platform, dist)
+    return dist, dist / dmg_name, tree_path, tree
+
+
+@pytest.mark.parametrize("tag,version,flavor", [("v1.24.0", STABLE, "stable"),
+                                                ("v1.24.0.dev20260929", NIGHTLY, "dev")])
+def test_the_manifest_names_the_dmg_as_the_macos_payload_and_keeps_it_off(tmp_path, tag, version, flavor):
+    dist, dmg, tree_path, tree = _dist_with_macos_tree(tmp_path, version, flavor)
+    r, manifest = _manifest(dist, tag, flavor)
+    assert r.returncode == 0, r.stderr
+
+    files = [e for e in tree["files"] if e.get("type", "file") == "file"]
+    assert manifest["platforms"]["macos-arm64"] == {
+        "inplace": {"enabled": False},
+        "min_client": version,
+        "payload": {"name": dmg.name, "size": dmg.stat().st_size},
+        "tree": {"name": tree_path.name, "size": tree_path.stat().st_size},
+        "installed_size": sum(e["size"] for e in files),
+        "files": len(files),
+    }
+    assert manifest["platforms"]["macos-x86_64"] == {"inplace": {"enabled": False}, "min_client": version}
+    assert dmg.name in _listed(dist) and tree_path.name in _listed(dist)
+
+
+@pytest.mark.parametrize("problem", ["no-dmg", "other-version", "other-bundle-id"])
+def test_a_macos_tree_that_cannot_ship_is_left_out_and_the_dmg_ships(tmp_path, problem):
+    dist, dmg, tree_path, tree = _dist_with_macos_tree(tmp_path, NIGHTLY, "dev")
+    if problem == "no-dmg":
+        dmg.unlink()
+    elif problem == "other-version":
+        tree_path.rename(dist / P.macos_names("1.23.0", "dev", "macos-arm64")[1])
+    else:
+        tree_path.write_text(json.dumps(dict(tree, bundle_id=P.BUNDLE_IDS["stable"])))
+    r, manifest = _manifest(dist, "v1.24.0.dev20260929", "dev")
+    assert r.returncode == 0, r.stderr
+
+    assert manifest["platforms"]["macos-arm64"] == {"inplace": {"enabled": False}, "min_client": NIGHTLY}
+    assert not [p for p in dist.iterdir() if "-update-macos-" in p.name]
+    if problem != "no-dmg":
+        assert dmg.is_file() and dmg.name in _listed(dist)
 
 
 # --- The manifest ------------------------------------------------------------------

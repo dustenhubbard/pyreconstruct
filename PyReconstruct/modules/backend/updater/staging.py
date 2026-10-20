@@ -1,19 +1,29 @@
-"""Stage an in-place update on Windows: download the payload, check it, unpack it, write plan.json.
+"""Stage an in-place update: download the payload, check it, unpack it, write plan.json.
 
 The app's half of an in-place update, before the hand-off at quit. The
-release's update archive and its tree.json are checked against the release's
-signed ``SHA256SUMS``, unpacked into ``new/`` in the staging folder next to
-the install, checked file by file against tree.json, and only then is
-``plan.json`` written, for ``apply.py`` to act on at quit. The installed
-helper, ``_updater/pyreconstruct-updater.exe``, is copied to ``helper/`` in
-the staging folder too, since a helper run from the install would keep the
-install folder from being renamed. ``backend/updater/inplace.py`` calls this
-and starts the helper.
+release's payload and its tree.json are checked against the release's signed
+``SHA256SUMS``, unpacked into the staging folder next to the install, checked
+file by file against tree.json, and only then is ``plan.json`` written, for
+``apply.py`` to act on at quit. ``backend/updater/inplace.py`` calls this and
+starts the helper.
+
+On Windows the payload is the release's update archive, unpacked into
+``new/``. The installed helper, ``_updater/pyreconstruct-updater.exe``, is
+copied to ``helper/`` too, since a helper run from the install would keep
+the install folder from being renamed.
+
+On macOS the payload is the release's notarized dmg itself. It is attached
+read-only inside ``download/``, the app is copied out with ``ditto`` into
+``new.app/`` (apply.py, ``staged_name``), and the image is detached. The copy
+is then checked against tree.json and with ``codesign`` against our Team ID
+and the flavor's bundle id. The helper is the installed app, so nothing is
+copied for it.
 
 Any failure (a bad or missing signature, a hash or size that does not match,
-an archive entry that would land outside ``new/``, a full disk) clears what
-this run staged, ``plan.json`` first, and raises :class:`StageError`. The
-install itself is never touched here; only the helper changes it.
+an archive entry that would land outside ``new/``, a bundle codesign refuses,
+a full disk) clears what this run staged, ``plan.json`` first, and raises
+:class:`StageError`. The install itself is never touched here; only the
+helper changes it.
 """
 
 import hashlib
@@ -21,6 +31,7 @@ import json
 import os
 import shutil
 import stat
+import subprocess
 import tarfile
 
 from PyReconstruct.modules.backend.updater import apply as A
@@ -29,8 +40,11 @@ from PyReconstruct.modules.backend.updater import updater as U
 PLATFORM = "windows-x86_64"
 CARRY = ["unins*.*"]  # the Inno Setup uninstaller stays with the install
 DOWNLOAD = "download"
+MOUNT = "mnt"  # the dmg's mount point, inside download/
 HELPER = "helper"
 HELPER_EXE = "pyreconstruct-updater.exe"
+# The Developer ID team that signs the macOS builds (packaging/macos/sign_app.sh).
+TEAM_ID = "57Z336NM5P"
 # tree.json for a release build is under 1 MB (3,634 files); anything far bigger is not ours.
 _MAX_TREE_BYTES = 32 << 20
 
@@ -39,10 +53,34 @@ class StageError(RuntimeError):
     """The update was not staged. No plan is left behind and the install is untouched."""
 
 
-def payload_names(version, flavor):
-    """(archive, tree) asset names, as scripts/build_update_payload.py writes them."""
-    base = f"PyReconstruct-{version}-update-{PLATFORM}{'-Dev' if flavor == 'dev' else ''}"
+def payload_names(version, flavor, platform=PLATFORM):
+    """(payload, tree) asset names, as the release names them.
+
+    On Windows the payload is the archive scripts/build_update_payload.py
+    writes; on macOS it is the release's dmg, the installer the app offers
+    when it cannot update in place.
+    """
+    dev = "-Dev" if flavor == "dev" else ""
+    base = f"PyReconstruct-{version}-update-{platform}{dev}"
+    if platform.startswith("macos-"):
+        return f"PyReconstruct-{version}-macOS-{platform.split('-', 1)[1]}{dev}.dmg", f"{base}.tree.json"
     return f"{base}.tar.xz", f"{base}.tree.json"
+
+
+def code_requirement(bundle_id, team_id=TEAM_ID):
+    """The codesign requirement a macOS bundle of ours meets: Developer ID, our team, this bundle id."""
+    return (f'anchor apple generic and certificate leaf[subject.OU] = "{team_id}" '
+            f'and identifier "{bundle_id}"')
+
+
+def check_code_signature(path, requirement, deep=True):
+    """Raise StageError unless ``codesign`` finds ``path`` intact and meeting ``requirement``.
+
+    ``deep`` checks every nested framework and library too, for a bundle
+    about to be put in place; the running app is checked without it.
+    """
+    _run(["/usr/bin/codesign", "--verify"] + (["--deep", "--strict"] if deep else [])
+         + [f"-R={requirement}", path], "the app's signature is not ours")
 
 
 def staging_dir(install, app_name):
@@ -66,8 +104,11 @@ def _clear(staging):
     another process holds open), because a plan.json without its tree.json or
     new/ beside it is one the helper refuses.
     """
+    mount = os.path.join(staging, DOWNLOAD, MOUNT)
+    if os.path.ismount(mount):
+        _detach(mount)  # left by a staging run that was killed; deleting into it would fail
     failed = []
-    for name in (A.PLAN, A.TREE, A.NEW, DOWNLOAD, HELPER):
+    for name in (A.PLAN, A.TREE, A.NEW, A.NEW_APP, DOWNLOAD, HELPER):
         try:
             A._remove(os.path.join(staging, name))
         except OSError as e:
@@ -78,11 +119,15 @@ def _clear(staging):
 
 def stage_update(release, *, install, app_name, flavor, from_version, pid=None,
                  registry_key=None, trusted_keys=None, progress_cb=None, cancel_cb=None,
-                 session=None):
-    """Stage ``release``'s Windows payload for the install at ``install``. Returns the plan written.
+                 session=None, platform=PLATFORM, bundle_id=None, requirement=None):
+    """Stage ``release``'s payload for the install at ``install``. Returns the plan written.
 
-    ``install`` is the install folder, ``app_name`` its name ("PyReconstruct"
-    or "PyReconstruct Dev"), and ``from_version`` the running version.
+    ``install`` is the install folder (on macOS the .app bundle), ``app_name``
+    its name ("PyReconstruct" or "PyReconstruct Dev"), and ``from_version``
+    the running version. ``platform`` is the release's platform key, such as
+    "windows-x86_64" or "macos-arm64"; a macOS one needs the bundle's
+    ``bundle_id``, and the staged copy has to meet ``requirement``
+    (:func:`code_requirement` for it by default).
     ``session`` is written into plan.json as it is, so the app can tell the
     plan it staged from one an earlier run left. Raises :class:`StageError`
     when the update cannot be staged, and :class:`UpdateCancelled` when
@@ -110,9 +155,11 @@ def stage_update(release, *, install, app_name, flavor, from_version, pid=None,
             _clear(staging)  # first, so an earlier plan never outlives a refusal below
             if version is None:
                 raise StageError("the release has no version")
+            if platform.startswith("macos-") and not bundle_id:
+                raise StageError("a macOS install needs its bundle id")
             plan = _stage(release, str(version), staging, install, app_name, flavor,
                           from_version, pid, registry_key, trusted_keys, progress_cb, cancel_cb,
-                          session)
+                          session, platform, bundle_id, requirement)
         except BaseException as e:
             try:
                 _clear(staging)
@@ -135,8 +182,10 @@ def stage_update(release, *, install, app_name, flavor, from_version, pid=None,
 
 
 def _stage(release, version, staging, install, app_name, flavor, from_version, pid,
-           registry_key, trusted_keys, progress_cb, cancel_cb, session):
-    archive_name, tree_name = payload_names(version, flavor)
+           registry_key, trusted_keys, progress_cb, cancel_cb, session, platform, bundle_id,
+           requirement):
+    macos = platform.startswith("macos-")
+    archive_name, tree_name = payload_names(version, flavor, platform)
     assets = {a.get("name"): a for a in release.get("assets") or [] if isinstance(a, dict)}
     if archive_name not in assets or tree_name not in assets:
         raise StageError("the release has no update payload for this build")
@@ -152,7 +201,9 @@ def _stage(release, version, staging, install, app_name, flavor, from_version, p
         raise StageError("tree.json does not match the signed checksum")
     tree = json.loads(tree_bytes)
     identity = {"format": A.FORMAT, "version": version, "flavor": flavor,
-                "app_name": app_name, "platform": PLATFORM}
+                "app_name": app_name, "platform": platform}
+    if macos:
+        identity["bundle_id"] = bundle_id
     if not isinstance(tree, dict) or any(tree.get(k) != v for k, v in identity.items()):
         raise StageError("tree.json is for another build")
     listed = {e.get("path"): e for e in tree.get("files") or [] if isinstance(e, dict)}
@@ -175,6 +226,9 @@ def _stage(release, version, staging, install, app_name, flavor, from_version, p
     if digest != signed[archive_name]:
         raise StageError("the payload does not match the signed checksum")
 
+    if macos:
+        return _stage_bundle(archive, tree, staging, install, app_name, flavor, bundle_id,
+                             from_version, version, pid, session, requirement)
     new = os.path.join(staging, A.NEW)
     os.mkdir(new)
     with tarfile.open(archive, "r:xz") as tar:
@@ -206,13 +260,90 @@ def _stage(release, version, staging, install, app_name, flavor, from_version, p
         raise StageError("the install has no update helper")
     os.mkdir(os.path.join(staging, HELPER))
     shutil.copy2(helper, os.path.join(staging, HELPER, HELPER_EXE))
-    plan = {
+    return _write_plan(staging, session, {
         "format": A.FORMAT, "platform": "windows", "kind": "folder",
         "install": os.path.abspath(install), "app_name": app_name, "flavor": flavor,
         "bundle_id": None, "from_version": from_version, "to_version": version, "pid": pid,
         "exe": f"{app_name}.exe", "args": [], "selftest_args": ["--selftest"],
         "carry": list(CARRY), "registry_key": registry_key,
-    }
+    })
+
+
+def _stage_bundle(dmg, tree, staging, install, app_name, flavor, bundle_id, from_version,
+                  version, pid, session, requirement):
+    """macOS: copy the app out of the verified dmg into new.app, check it, write the plan."""
+    new = os.path.join(staging, A.NEW_APP)
+    _copy_from_dmg(dmg, os.path.join(staging, DOWNLOAD, MOUNT), f"{app_name}.app", new)
+    A._remove(os.path.join(staging, DOWNLOAD))
+    _clear_attributes(new)
+    try:
+        A.verify_tree(new, tree)
+    except A.Refused as e:
+        raise StageError(f"the app in the disk image does not match tree.json: {e}")
+    check_code_signature(new, requirement or code_requirement(bundle_id))
+    A.atomic_write_json(os.path.join(staging, A.TREE), tree)
+    return _write_plan(staging, session, {
+        "format": A.FORMAT, "platform": "macos", "kind": "folder",
+        "install": os.path.abspath(install), "app_name": app_name, "flavor": flavor,
+        "bundle_id": bundle_id, "from_version": from_version, "to_version": version, "pid": pid,
+        "exe": f"Contents/MacOS/{app_name}", "args": [], "selftest_args": ["--selftest"],
+        "carry": [], "registry_key": None,
+    })
+
+
+def _run(argv, what):
+    try:
+        done = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                              timeout=600)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise StageError(f"{what}: {e}") from e
+    if done.returncode != 0:
+        detail = (done.stderr or done.stdout).strip().splitlines()
+        raise StageError(f"{what}: {detail[-1] if detail else done.returncode}")
+
+
+def _detach(mount):
+    """Detach the dmg at ``mount``, forcing it if a plain detach fails. Never raises."""
+    for extra in ([], ["-force"]):
+        try:
+            if subprocess.run(["/usr/bin/hdiutil", "detach", mount] + extra,
+                              stdin=subprocess.DEVNULL, capture_output=True, timeout=120).returncode == 0:
+                return
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+
+def _copy_from_dmg(dmg, mount, bundle, dest):
+    """Attach ``dmg`` read-only at ``mount``, ``ditto`` its ``bundle`` to ``dest``, and detach it."""
+    os.mkdir(mount)
+    _run(["/usr/bin/hdiutil", "attach", "-readonly", "-nobrowse", "-noautoopen",
+          "-mountpoint", mount, dmg], "could not open the disk image")
+    try:
+        src = os.path.join(mount, bundle)
+        if os.path.islink(src) or not os.path.isdir(src):
+            raise StageError(f"the disk image holds no {bundle}")
+        _run(["/usr/bin/ditto", src, dest], "could not copy the app from the disk image")
+    finally:
+        _detach(mount)
+
+
+def _clear_attributes(bundle):
+    """Clear the Finder flags on the bundle folder and any quarantine inside it.
+
+    The dmg sets Finder information on the app's folder, which codesign's
+    strict check refuses, and a dmg the system quarantined passes quarantine
+    to every file copied out of it. Neither is part of the signed app.
+    Failures are left to the checks after this.
+    """
+    for argv in (["/usr/bin/xattr", "-c", bundle],
+                 ["/usr/bin/xattr", "-r", "-d", "com.apple.quarantine", bundle]):
+        try:
+            subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, timeout=600)
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+
+def _write_plan(staging, session, plan):
     if session is not None:
         plan["session"] = session
     plan_path = os.path.join(staging, A.PLAN)
