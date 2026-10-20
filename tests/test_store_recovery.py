@@ -1095,6 +1095,23 @@ def test_the_scan_for_kept_work_never_stops_an_open(
     assert any("could not be read" in line and "a fault" in line for line in notes)
 
 
+def test_a_fault_in_either_list_of_kept_work_never_stops_an_open(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    other = _kept(SERIES_FILES[1], tmp_path, "other")
+
+    def fail(*a, **k):
+        raise RuntimeError("a fault")
+
+    monkeypatch.setattr(store_recovery, "setAsideStores", fail)
+    monkeypatch.setattr(store_recovery, "strandedStores", fail)
+    asker = _Asked()
+    _open(other, notifier=asker).close()
+    assert asker.told == []
+    assert any(line.startswith("Set-aside local stores not listed") for line in notes)
+    assert any(line.startswith("Local stores whose .jser is gone not listed") for line in notes)
+
+
 def test_a_store_whose_meta_is_not_text_stops_no_other_store_being_named(
     tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
 ):
