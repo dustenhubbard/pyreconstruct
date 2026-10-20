@@ -9,6 +9,9 @@ is no working folder to resume:
     writes the working folder from the store, the same files today's open
     writes, and fills the object list from the stored numbers. No section is
     loaded, and the .jser is read only to hash it.
+  * The store holds a Save the .jser lacks (a crash before close wrote it):
+    store_recovery.py offers that Save, and the open comes from it as above,
+    or keeps the store aside.
   * Otherwise: today's open, unchanged, and then the working folder it wrote
     and the numbers it measured go into the store for the next open.
 
@@ -211,13 +214,20 @@ def openJser(fp : str, progress=None, notifier=None):
     store afterwards. Returns what Series.openJser returns.
     """
     from .series import Series, _default_progress_reporter_factory
+    from . import store_recovery
 
     held = StoreForOpen.attempt(fp)
     if held is None:
+        # work kept in other stores is named all the same
+        store_recovery.tellKept(notifier, fp)
         return Series._unpackJser(fp, progress, notifier)[0]
     try:
         try:
-            if held.holdsJser():
+            # a Save the .jser lacks is offered, or kept aside (store_recovery.py)
+            held = store_recovery.atOpen(held, notifier)
+            if held is None:
+                return Series._unpackJser(fp, progress, notifier)[0]
+            if held.opens_save or held.holdsJser():
                 with _gcPaused():
                     series = Series._unpackJser(fp, progress, notifier, store=held)[0]
                 if series is not None:
@@ -227,8 +237,12 @@ def openJser(fp : str, progress=None, notifier=None):
         except StoreUnavailable as e:
             # a read failed partway: the open put back what it changed
             _unavailable(fp, e)
-            held.close()
-            held = None
+            if held is not None:
+                if held.opens_save:
+                    # the store keeps that Save, and offers it at the next open
+                    store_recovery.tell(notifier, store_recovery.unreadSaveText(fp))
+                held.close()
+                held = None
             return Series._unpackJser(fp, progress, notifier)[0]
         # the open hashes the bytes it decodes, so the store keeps the hash of
         # what went into it, whatever happens to the file meanwhile
@@ -258,6 +272,9 @@ class StoreForOpen():
         """
         self.store = store
         self.jser_fp = jser_fp
+        # True once the user takes the Save the .jser lacks (store_recovery.py):
+        # the open comes from the store's last Save
+        self.opens_save = False
 
     @staticmethod
     def attempt(jser_fp : str):
@@ -300,7 +317,7 @@ class StoreForOpen():
 
     ## reading -----------------------------------------------------------------
 
-    def holdsJser(self) -> bool:
+    def holdsJser(self, digest=None) -> bool:
         """True when an open can come from the store: it holds this .jser as
         imported, every section's numbers, and nothing else.
 
@@ -308,9 +325,10 @@ class StoreForOpen():
         (`jserDigest`, which refuses a file written to while it is hashed). Its
         size and modification time decide nothing: a copy that keeps times
         keeps them, and a network folder that stores whole seconds repeats
-        them. The file is hashed last, once the store could be read. A store
-        with work in its working layer or saved past its .jser (later steps
-        write those) is not read here.
+        them. The file is hashed last, once the store could be read, unless
+        `digest` gives its sha256 already. A store with work in its working
+        layer or saved past its .jser is not read here: store_recovery.py
+        offers that Save (`opens_save`) or keeps it aside.
         """
         store = self.store
         try:
@@ -323,7 +341,9 @@ class StoreForOpen():
             stored = {r[0] for r in store.con.execute("SELECT snum FROM section_stats")}
             if stored != set(store.sectionNumbers()):
                 return False
-            return store.meta(META_SHA) == jserDigest(self.jser_fp)
+            if digest is None:
+                digest = jserDigest(self.jser_fp)
+            return store.meta(META_SHA) == digest
         except (OSError, sqlite3.Error) as e:
             _raiseIfBug(e)
             raise StoreUnavailable(str(e)) from e

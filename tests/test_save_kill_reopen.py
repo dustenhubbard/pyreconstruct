@@ -83,10 +83,11 @@ class IncompleteWorkingFolder(Exception):
     """
 
 
-def run_child(jser_fp, point):
+def run_child(jser_fp, point, child=CHILD):
     """Run the child to `point` and SIGKILL it there, or to the end for a control.
 
-    Any other outcome is a plain test failure (pytest.fail).
+    Any other outcome is a plain test failure (pytest.fail). `child` is the
+    script to run (tests/store_kill_child.py runs the same way).
     """
     control = point.startswith("none")
     env = dict(os.environ)
@@ -94,7 +95,7 @@ def run_child(jser_fp, point):
     err_fp = jser_fp + ".child-stderr.txt"
     with open(err_fp, "w") as err:
         proc = subprocess.Popen(
-            [sys.executable, CHILD, jser_fp, point],
+            [sys.executable, child, jser_fp, point],
             stdout=subprocess.PIPE, stderr=err, text=True, env=env,
             cwd=os.path.dirname(jser_fp),
         )
