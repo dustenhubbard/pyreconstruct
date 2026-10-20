@@ -1,15 +1,19 @@
 """The native macOS menu bar at the top of the screen (Dev builds only).
 
-A second, parentless QMenuBar holds a few rows that reuse the main window's
-own actions, so a key fires one action whichever bar shows it, and a remap in
-the shortcuts dialog shows up in both. Every row carries an explicit menu role:
-Qt's default guess from the text moved "Options..." into the app menu and let
-"About this series..." take the About slot. The in-window menu bar does not
-change on any platform.
+A second, parentless QMenuBar. A row that is also in the in-window menu
+reuses the main window's own action, so a key fires one action whichever bar
+shows it, and a remap in the shortcuts dialog shows up in both. Every row
+carries an explicit menu role: Qt's default guess from the text moved
+"Options..." into the app menu and let "About this series..." take the About
+slot. The in-window menu bar keeps its rows; on macOS Dev only, the shared
+Save and Save as turn off at once for the welcome series.
 
 Offscreen there is no native bar, so the global bar is an ordinary hidden
 QMenuBar here; the tests read its rows, roles and wiring, not the Cocoa side.
 """
+import sys
+import types
+
 import pytest
 import shiboken6
 from PySide6.QtCore import QCoreApplication, Qt
@@ -19,7 +23,7 @@ from PySide6.QtWidgets import QApplication
 
 from conftest import menu_leaf_paths, same_action, submenu_at
 
-from PyReconstruct.modules.constants import build_flavor
+from PyReconstruct.modules.constants import build_flavor, repo_info
 from PyReconstruct.modules.gui.main import mac_menubar
 
 pytestmark = pytest.mark.gui
@@ -217,6 +221,44 @@ def test_about_box_names_the_build(main_window, bar):
     box.deleteLater()
 
 
+def _about_commit(main_window):
+    """The Commit line of the About box, and what Copy commit copies."""
+    box = mac_menubar.aboutBox(main_window)
+    line = box.text().splitlines()[-1]
+    QApplication.clipboard().clear()
+    next(b for b in box.buttons() if b.text() == "Copy commit").click()
+    copied = QApplication.clipboard().text()
+    box.deleteLater()
+    return line, copied
+
+
+def test_about_box_shows_the_baked_commit_in_a_built_app(main_window, bar, monkeypatch):
+    # a built app: repo_info's "commit" is the version, _version.py has the commit
+    version = "1.26.0.dev202610201708+g0c2734b59"
+    monkeypatch.setitem(repo_info, "branch", "PyReconstruct")
+    monkeypatch.setitem(repo_info, "commit", version)
+    baked = types.ModuleType("PyReconstruct._version")
+    baked.version = version
+    baked.commit_id = "g0c2734b59"
+    monkeypatch.setitem(sys.modules, "PyReconstruct._version", baked)
+    assert _about_commit(main_window) == ("Commit 0c2734b59", "0c2734b59")
+
+
+def test_about_box_with_no_version_file(main_window, bar, monkeypatch):
+    # a source checkout without git or a build: no _version.py to read
+    monkeypatch.setitem(repo_info, "branch", "unknown")
+    monkeypatch.setitem(repo_info, "commit", "unknown")
+    monkeypatch.setitem(sys.modules, "PyReconstruct._version", None)
+    assert _about_commit(main_window) == ("Commit unknown", "unknown")
+
+
+def test_about_box_in_a_git_checkout(main_window, bar, monkeypatch):
+    monkeypatch.setitem(repo_info, "branch", "main")
+    monkeypatch.setitem(repo_info, "commit", "0c2734b")
+    monkeypatch.setitem(sys.modules, "PyReconstruct._version", None)
+    assert _about_commit(main_window) == ("Commit 0c2734b", "0c2734b")
+
+
 # --- no series ---------------------------------------------------------------
 
 def test_series_rows_are_off_with_no_series(main_window, bar):
@@ -259,6 +301,33 @@ def test_minimize_takes_cmd_m_only_when_free(main_window, bar, local_series_sett
     main_window.createMenuBar()
     assert mac_menubar.globalBar() is bar
     assert _rows(bar)["Window > Minimize"].shortcut().isEmpty()
+
+
+def _own_rows_with_keys(main_window, bar):
+    """The bar's new rows that have a key: not one of the window's actions."""
+    window_actions = list(main_window.actions())
+    return {
+        path: action for path, action in _rows(bar).items()
+        if not action.shortcut().isEmpty()
+        and not any(same_action(action, a) for a in window_actions)
+    }
+
+
+def test_a_remap_takes_the_bar_keys_at_once(main_window, bar, local_series_settings):
+    """The shortcuts dialog remaps through resetShortcuts, with no rebuild."""
+    local_series_settings(main_window)
+    bar = mac_menubar.globalBar()
+    own = _own_rows_with_keys(main_window, bar)
+    assert list(own) == ["Window > Minimize"]
+    first = main_window.homeview_act.shortcut().toString()
+    for path, row in own.items():
+        key = row.shortcut()
+        main_window.resetShortcuts({"homeview_act": key.toString()})
+        assert row.shortcut().isEmpty(), path
+        assert main_window.homeview_act.shortcut() == key
+        # the user's key moves on: the row has it back
+        main_window.resetShortcuts({"homeview_act": first})
+        assert row.shortcut() == key, path
 
 
 # --- one trigger per key -------------------------------------------------------

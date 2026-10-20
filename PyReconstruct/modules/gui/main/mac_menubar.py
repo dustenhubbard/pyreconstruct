@@ -4,14 +4,21 @@ Every PyReconstruct window keeps its own in-window menu bar
 (setNativeMenuBar(False)), so the top of the screen used to show only the app
 menu Qt makes by itself. This adds one more bar: a parentless QMenuBar, which
 Qt shows at the top of the screen for every window that has no native bar of
-its own, and every window here has none. The in-window bars do not change.
+its own, and every window here has none. The in-window bars keep their rows.
+They share Save and Save as with this bar, so those two now turn off at once
+for the welcome series in both.
 
-The rows reuse the main window's own QActions, never copies, so a key still
-belongs to one action (Qt fires neither of two actions that share a key) and a
-remap in the shortcuts dialog shows up in both bars. createMenuBar and
-createContextMenus delete and remake those actions, and a deleted action drops
-out of every menu it was in, so the bar is rebuilt after each pass
-(MainWindow.createContextMenus, which also ends every createMenuBar).
+A row that is also in the in-window menu reuses the main window's own QAction,
+never a copy, so a key still belongs to one action (Qt fires neither of two
+actions that share a key) and a remap in the shortcuts dialog shows up in both
+bars. createMenuBar and createContextMenus delete and remake those actions,
+and a deleted action drops out of every menu it was in, so the bar is rebuilt
+after each pass (MainWindow.createContextMenus, which also ends every
+createMenuBar).
+
+The new rows (About, Close series, Open recent series, the Window menu) are
+this bar's own. Only Minimize has a key, and it gives Cmd+M up while a user
+binding holds it (claimKeys, after every rebuild and every remap).
 
 Every row gets an explicit menu role. Qt's default guesses from the text:
 measured, "Options..." became Preferences, and "About this series..." took the
@@ -41,9 +48,13 @@ APP_MENU_ROLES = {
     "quit_act": Role.QuitRole,
 }
 
+MINIMIZE_KEY = QKeySequence("Ctrl+M")
+
 _bar = None
 _owner = None
 _translator = None
+# (row, key) for each new row that has a key of its own
+_own_keys = []
 
 
 def _isMac() -> bool:
@@ -68,6 +79,7 @@ def clear():
         _bar.deleteLater()
     _bar = None
     _owner = None
+    _own_keys.clear()
 
 
 def rebuild(mainwindow):
@@ -83,6 +95,7 @@ def rebuild(mainwindow):
         # a restarted window builds the next bar before the old one dies
         mainwindow.destroyed.connect(lambda *_, mw=mainwindow: _ownerGone(mw))
     _clearMenus(_bar)
+    _own_keys.clear()
 
     file_menu = _bar.addMenu("File")
     new_menu = file_menu.addMenu("New series")
@@ -103,7 +116,22 @@ def rebuild(mainwindow):
     window_menu.aboutToShow.connect(lambda: _listWindows(mainwindow, window_menu))
 
     _addRows(mainwindow, _bar.addMenu("Help"), HELP_ROWS)
+    claimKeys(mainwindow)
     return _bar
+
+
+def claimKeys(mainwindow):
+    """Give each new row its key only while no window action has that key.
+
+    A user binding wins: two actions on one key make Qt fire neither. The
+    shortcuts dialog remaps in place (MainWindow.resetShortcuts) with no
+    rebuild, so that calls this too.
+    """
+    if _owner is not mainwindow:
+        return
+    for row, key in _own_keys:
+        taken = any(key in a.shortcuts() for a in mainwindow.actions())
+        row.setShortcut(QKeySequence() if taken else key)
 
 
 def _hasMenus(mainwindow) -> bool:
@@ -213,10 +241,7 @@ def _show(window):
 
 def _fillWindowMenu(mainwindow, menu):
     minimize = _row(menu, "Minimize", lambda: _activeWindow(mainwindow).showMinimized())
-    # Cmd+M only while no binding of the user's has it
-    ctrl_m = QKeySequence("Ctrl+M")
-    if not any(ctrl_m in a.shortcuts() for a in mainwindow.actions()):
-        minimize.setShortcut(ctrl_m)
+    _own_keys.append((minimize, MINIMIZE_KEY))
     _row(menu, "Zoom", lambda: _zoom(_activeWindow(mainwindow)))
     _row(menu, "Bring all to front", lambda: _bringAllToFront(mainwindow))
     menu.addSeparator()
@@ -236,20 +261,41 @@ def _listWindows(mainwindow, menu):
 
 ## --- the app menu -----------------------------------------------------------
 
+def commitId():
+    """The commit this build runs, or "unknown".
+
+    repo_info has the git commit in a source checkout, but in a built app (and
+    a plain pip install) its "commit" is the version. There the commit is the
+    one setuptools-scm baked into PyReconstruct/_version.py, as "g" plus the
+    hash; a checkout that never ran the build has no such file.
+    """
+    from PyReconstruct.modules.constants import repo_info
+
+    if repo_info["branch"] not in ("PyReconstruct", "unknown"):
+        return repo_info["commit"]
+    try:
+        from PyReconstruct._version import commit_id
+    except ImportError:
+        commit_id = None
+    if not commit_id:
+        return "unknown"
+    return commit_id[1:] if commit_id.startswith("g") else commit_id
+
+
 def aboutBox(mainwindow):
     """Name, version and commit, with a button that copies the commit."""
-    from PyReconstruct.modules.constants import repo_info
     from PyReconstruct.modules.datatypes.series_owner import app_display_name
 
+    commit = commitId()
     box = QMessageBox(mainwindow)
     box.setWindowTitle("About PyReconstruct")
     box.setText(
         f"{app_display_name()}\n"
         f"Version {build_flavor.running_version()}\n"
-        f"Commit {repo_info['commit']}"
+        f"Commit {commit}"
     )
     copy = box.addButton("Copy commit", QMessageBox.ActionRole)
-    copy.clicked.connect(mainwindow.copyCommit)
+    copy.clicked.connect(lambda: QApplication.clipboard().setText(commit))
     box.addButton(QMessageBox.Ok)
     return box
 

@@ -5577,6 +5577,9 @@ class MainWindow(QMainWindow):
         if field is not None:
             field.updateFocusHint()
 
+        # a key the user just took from the screen bar's own rows is theirs now
+        mac_menubar.claimKeys(self)
+
     def displayAbout(self):
         """Display the widget display information about the series."""
         # update the editors
