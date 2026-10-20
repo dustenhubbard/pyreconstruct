@@ -15,6 +15,7 @@ early: a self-test that fails, a new version that never reports healthy, a
 locked folder, a second rename that fails, and every input the helper must
 refuse before it touches anything.
 """
+import errno
 import json
 import os
 import plistlib
@@ -1648,3 +1649,47 @@ def test_selftest_log_keeps_only_its_last_part(win):
         kept = f.read()
     assert len(kept) == A.SELFTEST_LOG_MAX // 2
     assert kept.endswith(b"the newest line\n")
+
+
+def _link_to(target, link):
+    """A link to the folder ``target``: a symlink, or on Windows a junction if this account cannot make one."""
+    try:
+        os.symlink(target, link, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        if os.name != "nt":
+            pytest.skip("this account cannot make links")
+        import _winapi
+        _winapi.CreateJunction(str(target), str(link))
+
+
+@pytest.mark.parametrize("alone", [False, True], ids=["in-a-folder", "alone"])
+def test_a_link_that_will_not_delete_never_changes_what_it_points_to(tmp_path, monkeypatch, alone):
+    # A dmg still attached in staging holds Applications -> /Applications. Its delete fails,
+    # and making it writable to try again must change the link, never the folder it names.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    os.chmod(outside, 0o555)
+    before = os.stat(outside).st_mode
+    folder = tmp_path / "download"
+    folder.mkdir()
+    link = folder / "Applications"
+    _link_to(outside, link)
+    real_unlink, refused = os.unlink, []
+
+    def unlink(path, *, dir_fd=None):
+        if os.path.basename(os.fspath(path)) == "Applications" and not refused:
+            refused.append(path)
+            raise PermissionError(errno.EACCES, "refused", os.fspath(path))
+        return real_unlink(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "unlink", unlink)
+    try:
+        try:
+            A._remove(str(link if alone else folder))
+        except PermissionError:
+            pass  # where the system cannot change a link itself, the delete gives up instead
+        assert refused
+        assert os.stat(outside).st_mode == before
+    finally:
+        monkeypatch.undo()
+        os.chmod(outside, 0o755)

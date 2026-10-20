@@ -30,7 +30,6 @@ import hashlib
 import json
 import os
 import shutil
-import stat
 import subprocess
 import tarfile
 
@@ -87,16 +86,6 @@ def staging_dir(install, app_name):
     return os.path.join(os.path.dirname(os.path.abspath(install)), f".{app_name}-update")
 
 
-def _is_link(path):
-    """A symlink, or on Windows any reparse point such as a junction, which os.path.islink misses."""
-    try:
-        st = os.lstat(path)
-    except OSError:
-        return False
-    return (stat.S_ISLNK(st.st_mode)
-            or bool(getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT))
-
-
 def _clear(staging):
     """Delete what a staging run writes, plan.json first. Raises StageError if any of it stays.
 
@@ -104,14 +93,14 @@ def _clear(staging):
     another process holds open), because a plan.json without its tree.json or
     new/ beside it is one the helper refuses.
     """
-    mount = os.path.join(staging, DOWNLOAD, MOUNT)
-    if os.path.ismount(mount):
-        _detach(mount)  # left by a staging run that was killed; deleting into it would fail
     failed = []
     for name in (A.PLAN, A.TREE, A.NEW, A.NEW_APP, DOWNLOAD, HELPER):
         try:
-            A._remove(os.path.join(staging, name))
-        except OSError as e:
+            if name == DOWNLOAD:
+                _remove_download(staging)
+            else:
+                A._remove(os.path.join(staging, name))
+        except (OSError, StageError) as e:
             failed.append(f"{name} ({e})")
     if failed:
         raise StageError(f"could not clear the staging folder: {', '.join(failed)}")
@@ -137,7 +126,7 @@ def stage_update(release, *, install, app_name, flavor, from_version, pid=None,
     version = U._tag_version(release)
     staging = staging_dir(install, app_name)
     created = not os.path.lexists(staging)
-    if _is_link(staging):
+    if A._is_link(staging):
         # a junction to the install would put the lock and every staged file inside it
         raise StageError("the staging folder is a link or a junction")
     os.makedirs(staging, exist_ok=True)
@@ -274,7 +263,7 @@ def _stage_bundle(dmg, tree, staging, install, app_name, flavor, bundle_id, from
     """macOS: copy the app out of the verified dmg into new.app, check it, write the plan."""
     new = os.path.join(staging, A.NEW_APP)
     _copy_from_dmg(dmg, os.path.join(staging, DOWNLOAD, MOUNT), f"{app_name}.app", new)
-    A._remove(os.path.join(staging, DOWNLOAD))
+    _remove_download(staging)
     _clear_attributes(new)
     try:
         A.verify_tree(new, tree)
@@ -303,14 +292,31 @@ def _run(argv, what):
 
 
 def _detach(mount):
-    """Detach the dmg at ``mount``, forcing it if a plain detach fails. Never raises."""
+    """Detach the dmg at ``mount``, forcing it if a plain detach fails. Never raises.
+
+    Returns whether ``mount`` is free of it.
+    """
     for extra in ([], ["-force"]):
         try:
             if subprocess.run(["/usr/bin/hdiutil", "detach", mount] + extra,
                               stdin=subprocess.DEVNULL, capture_output=True, timeout=120).returncode == 0:
-                return
+                break
         except (OSError, subprocess.SubprocessError):
             pass
+    return not os.path.ismount(mount)
+
+
+def _remove_download(staging):
+    """Delete download/, detaching a dmg still attached inside it first.
+
+    A dmg left by a staging run that was killed, or one neither detach
+    could close, raises StageError and is left as it is: deleting into it
+    would go through its links, such as Applications -> /Applications.
+    """
+    mount = os.path.join(staging, DOWNLOAD, MOUNT)
+    if os.path.ismount(mount) and not _detach(mount):
+        raise StageError("the disk image in the staging folder could not be detached")
+    A._remove(os.path.join(staging, DOWNLOAD))
 
 
 def _copy_from_dmg(dmg, mount, bundle, dest):

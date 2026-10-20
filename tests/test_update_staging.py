@@ -835,10 +835,11 @@ class MacDev:
 
     Off macOS the dmg is a tar the fake attach unpacks; ``codesign`` is a
     recorder unless ``real`` is set, when the dmg, hdiutil, ditto, and
-    codesign are all real (macOS only).
+    codesign are all real (macOS only). ``link_out`` puts a link to that
+    path beside the app in a real dmg.
     """
 
-    def __init__(self, tmp_path, monkeypatch, parent=None, real=False):
+    def __init__(self, tmp_path, monkeypatch, parent=None, real=False, link_out=None):
         from test_updater_apply import macos_tree
         self.tmp_path = tmp_path
         self.folder = str(parent or tmp_path / "Applications")
@@ -857,6 +858,8 @@ class MacDev:
                             self.build], check=True, timeout=60)
             subprocess.run(["xattr", "-w", "com.apple.quarantine", "0081;00000000;Safari;",
                             os.path.join(self.build, "Contents", "Info.plist")], check=True, timeout=60)
+            if link_out:  # beside the app, as the release dmg's Applications link
+                os.symlink(link_out, build / "Applications")
             dmg = tmp_path / "release.dmg"
             subprocess.run(["hdiutil", "create", "-quiet", "-srcfolder", str(build), "-volname", "Update",
                             "-fs", "HFS+", "-format", "UDZO", str(dmg)], check=True, timeout=300)
@@ -1135,3 +1138,35 @@ def test_a_real_bundle_not_signed_by_our_team_is_refused(tmp_path, monkeypatch):
     mac.nothing_left()
     mounts = subprocess.run(["mount"], capture_output=True, text=True).stdout
     assert mac.staging not in mounts
+
+
+@needs_macos
+@pytest.mark.parametrize("when", ["left-by-a-killed-run", "after-the-copy"])
+def test_a_disk_image_that_will_not_detach_is_never_deleted_through(tmp_path, monkeypatch, when):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    before = os.stat(outside).st_mode
+    mac = MacDev(tmp_path, monkeypatch, real=True, link_out=str(outside))
+    mount = os.path.join(mac.staging, S.DOWNLOAD, S.MOUNT)
+    run = subprocess.run
+    if when == "left-by-a-killed-run":
+        os.makedirs(mount)
+        run(["hdiutil", "attach", "-readonly", "-nobrowse", "-noautoopen", "-mountpoint", mount,
+             str(tmp_path / "release.dmg")], check=True, capture_output=True, timeout=120)
+    # both detaches fail, as for an image something still holds open
+    monkeypatch.setattr(subprocess, "run", lambda argv, *a, **kw: (
+        subprocess.CompletedProcess(argv, 1) if argv[:2] == ["/usr/bin/hdiutil", "detach"]
+        else run(argv, *a, **kw)))
+    try:
+        with pytest.raises(S.StageError, match="could not be detached"):
+            S.stage_update(mac.release(), install=mac.install, app_name=MAC_APP, flavor="dev",
+                           from_version=OLD_V, trusted_keys=[TEST_PUB], platform=MAC, bundle_id=DEV_ID,
+                           requirement=f'identifier "{DEV_ID}"')
+        assert os.path.ismount(mount) and os.path.islink(os.path.join(mount, "Applications"))
+        assert os.stat(outside).st_mode == before
+        assert not os.path.lexists(os.path.join(mac.staging, A.PLAN))
+        assert not os.path.lexists(os.path.join(mac.staging, A.NEW_APP))
+        assert snapshot(mac.install) == mac.before
+    finally:
+        monkeypatch.setattr(subprocess, "run", run)
+        run(["hdiutil", "detach", mount, "-force"], capture_output=True, timeout=120)

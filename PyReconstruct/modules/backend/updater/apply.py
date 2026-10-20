@@ -256,22 +256,50 @@ def _sha256(path):
     return h.hexdigest()
 
 
+def _is_link(path):
+    """A symlink, or on Windows any reparse point such as a junction, which os.path.islink misses."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    return (stat.S_ISLNK(st.st_mode)
+            or bool(getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT))
+
+
+def _make_writable(path):
+    """Clear ``path``'s read-only flag so it can be deleted. False if that cannot be done safely.
+
+    A plain ``os.chmod`` on a link changes what the link points to, which can
+    be anywhere (a dmg's ``Applications`` link is ``/Applications``), so a link
+    is changed only where the system can change the link itself.
+    """
+    if not _is_link(path):
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+    elif os.chmod in os.supports_follow_symlinks:
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD, follow_symlinks=False)
+    else:
+        return False
+    return True
+
+
 def _remove(path):
     """Delete a file, a link, or a whole tree. Read-only files on Windows are made writable first."""
     if not os.path.lexists(path):
         return
 
-    def _writable_and_retry(func, p, _exc):
-        os.chmod(p, stat.S_IWRITE | stat.S_IREAD)
+    def _writable_and_retry(func, p, exc_info):
+        if not _make_writable(p):
+            raise exc_info[1]
         func(p)
 
-    if os.path.isdir(path) and not os.path.islink(path):
+    if os.path.isdir(path) and not _is_link(path):
         shutil.rmtree(path, onerror=_writable_and_retry)
     else:
         try:
             os.unlink(path)
         except PermissionError:
-            os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+            if not _make_writable(path):
+                raise
             os.unlink(path)
 
 
