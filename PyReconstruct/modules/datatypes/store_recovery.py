@@ -27,8 +27,7 @@ never deleted. The open says where it is, and so does every later open of the
 .jser until ``PyReconstruct --export-local-copy <file>`` writes it out
 (`exportStore`). A store that cannot be made one file first (another program
 has it open) is not moved: it stays where it is, whole, the open says so, and
-the next open tries again. A store written out is set aside without a word,
-and never offered.
+the next open tries again. A store written out is set aside without a word.
 
 A store keyed by a .jser that is gone (moved, renamed or deleted) is never
 opened again by that .jser. Every open names each such store with work no
@@ -311,16 +310,16 @@ def atOpen(held, notifier=None):
     done = False
     try:
         state, digest = standing(held)
-        # written out (exportStore): kept aside without a word, never offered
+        # written out (exportStore): kept aside without a word
         done = state in (AHEAD, CHANGED, UNREADABLE) and _writtenOut(held)
         if state == WRITTEN:
             finishWrite(held, digest)
-        elif state == AHEAD and not done:
+        elif state == AHEAD:
             if _asker(notifier).confirm(offerText(held), title="Unsaved Series") is False:
                 kept, in_place = _keepAside(held)
             else:
                 held.opens_save = True
-        elif state in (AHEAD, CHANGED, UNREADABLE):
+        elif state in (CHANGED, UNREADABLE):
             kept, in_place = _keepAside(held)
         if in_place is not None:
             # the store stays as it is, unused: the .jser opens as it is
@@ -509,9 +508,9 @@ def exportStore(path : str, out_fp=None) -> str:
     rows over it. The bytes are those a close writes from the same store
     (store_save.writeJser), since both use today's writer on the same rows.
     An existing file is never replaced, and the store is not changed, but for
-    one with work no .jser has (set aside, kept where it was, or its .jser
-    gone), which records where it was written out so later opens stop naming
-    it. A later Save to it drops that record.
+    one with work no .jser has (a Save, or working rows), which records where
+    it was written out so later opens stop naming it. A later Save to it drops that
+    record.
 
         Params:
             path (str): a .pyrstore file, or a .jser whose store is wanted
@@ -564,7 +563,7 @@ def exportStore(path : str, out_fp=None) -> str:
 
         unsaved = store.meta(store_save.META_DIRTY) == "1" or store.hasPending()
         _writeNew(out_fp, lambda f: write_jser(f, sections, tail))
-        if unsaved or SET_ASIDE in base or not (recorded and os.path.isfile(recorded)):
+        if unsaved:
             with store_open._transaction(store):
                 store.setMeta(META_WRITTEN_OUT, out_fp)
     finally:

@@ -499,7 +499,7 @@ def test_a_store_kept_in_place_and_written_out_is_named_no_more(
     assert asker.told == []
 
 
-def test_a_save_written_out_before_the_open_is_not_offered_again(
+def test_a_save_written_out_and_declined_is_set_aside_without_a_word(
     tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
 ):
     expected_bytes = _today_saved(PARITY, tmp_path, monkeypatch)
@@ -509,10 +509,10 @@ def test_a_save_written_out_before_the_open_is_not_offered_again(
     out = tmp_path / "back.jser"
     code, _ = _cli(monkeypatch, str(fp), str(out))
     assert code == 0 and out.read_bytes() == expected_bytes
-    # written out: not offered, set aside without a word, and kept
-    asker = _Asked(True)
+    # written out: still offered; No sets it aside without a word, and keeps it
+    asker = _Asked(False)
     _open(fp, notifier=asker).close()
-    assert asker.asked == [] and asker.told == []
+    assert len(asker.asked) == 1 and asker.told == []
     assert fp.read_bytes() == before
     aside = store_root_glob(fp)
     assert len(aside) == 1
@@ -601,6 +601,10 @@ def test_no_other_program_writes_a_store_as_it_moves(
         if sys.platform != "win32":
             # the store held SQLite's lock through the rename
             assert kept is not None and refused and "locked" in refused[0]
+            # and SQLite refuses a write to the moved file from that program
+            with pytest.raises(sqlite3.OperationalError, match="readonly"):
+                other.execute("BEGIN IMMEDIATE")
+                other.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('theirs', '1')")
     finally:
         try:
             other.execute("ROLLBACK")
