@@ -5,8 +5,8 @@ once anything in the series is edited that save runs on every step. It used
 to rewrite both files and rebuild both stores each time, which on a large
 series was most of a section change. Now `Section.save` still builds the
 bytes, and writes them only when they differ from the bytes in the file,
-read back to compare. It rebuilds the store when it wrote, or when the store
-changed since its last build or save.
+read back to compare. It still rebuilds the store on every save: equal bytes
+do not mean the store matches the traces.
 
 The fixture series is in an older file format, so the first save of each of
 its sections writes new bytes, as it always has. The tests save a section
@@ -63,7 +63,7 @@ def test_an_unchanged_section_is_not_rewritten(section, rebuilds):
     section.save(update_series_data=False)
     section.save(update_series_data=False)
     assert _state(section.filepath) == before
-    assert rebuilds == []
+    assert rebuilds == [section.n, section.n]
 
 
 def test_a_repeat_save_after_an_edit_writes_once(section, rebuilds):
@@ -73,7 +73,7 @@ def test_a_repeat_save_after_an_edit_writes_once(section, rebuilds):
     assert rebuilds == [section.n]
     section.save(update_series_data=False)
     assert _state(section.filepath) == written
-    assert rebuilds == [section.n]
+    assert rebuilds == [section.n, section.n]
 
 
 def test_an_edit_is_written(real_series, section, rebuilds):
@@ -196,13 +196,79 @@ def test_a_store_edited_then_put_back_outside_the_section_is_rebuilt(section):
     section._assertColumnsMatchObjectModel("test")
 
 
-def test_an_untouched_store_is_not_rebuilt_but_a_touched_one_is(section, rebuilds):
+def _saveSameBytes(section):
+    """Save, and check that the file kept its bytes and was not written."""
+    before = _state(section.filepath)
     section.save(update_series_data=False)
-    assert rebuilds == []
+    assert _state(section.filepath) == before
+
+
+def test_a_contour_swapped_for_a_copy_of_itself_is_rebuilt(section):
+    # new trace objects with the same values: the bytes match the file, and
+    # the store's rows still point at the old traces
+    name = section.tracesAsList()[0].name
+    section.contours[name] = section.contours[name].copy()
+    _saveSameBytes(section)
+    section._assertColumnsMatchObjectModel("test")
+    trace = section.contours[name][0]
+    section.hideTraces([trace], hide=not trace.hidden, log_event=False)
+    section._assertColumnsMatchObjectModel("test")
+
+
+def test_a_point_moved_below_the_rounding_is_rebuilt(section):
+    # a new points list, moved by less than the 7 places the file keeps
+    trace = section.tracesAsList()[0]
+    x, y = trace.points[0]
+    trace.points = [(x + 1e-10, y)] + list(trace.points[1:])
+    _saveSameBytes(section)
+    section._assertColumnsMatchObjectModel("test")
+
+
+def test_a_point_moved_in_place_below_the_rounding_is_rebuilt(section):
+    # the same points list, one item replaced: no list or trace changes identity
+    trace = section.tracesAsList()[0]
+    points = trace.points
+    x, y = points[0]
+    points[0] = (x + 1e-10, y)
+    assert trace.points is points
+    _saveSameBytes(section)
+    section._assertColumnsMatchObjectModel("test")
+
+
+def test_a_store_column_written_directly_is_rebuilt(section):
+    # a write through the store's column view moves no generation
+    trace = section.tracesAsList()[0]
+    row = section._column_rows[trace]
+    hidden = section._columns.flagColumn("hidden")
+    generation = section._columns.generation
+    hidden[row] = not hidden[row]
+    assert section._columns.generation == generation
+    _saveSameBytes(section)
+    section._assertColumnsMatchObjectModel("test")
+
+
+def test_every_save_rebuilds_the_store(section, rebuilds):
+    section.save(update_series_data=False)
     trace = section.tracesAsList()[0]
     section.hideTraces([trace], hide=not trace.hidden, log_event=False)
     section.hideTraces([trace], hide=not trace.hidden, log_event=False)
     section.save(update_series_data=False)
-    assert rebuilds == [section.n]
     section.save(update_series_data=False)
-    assert rebuilds == [section.n]
+    assert rebuilds == [section.n] * 3
+
+
+def test_a_failed_write_raises_and_keeps_the_file(section, monkeypatch):
+    # out of disk space at the replace: the save raises, the file keeps its
+    # bytes, and no temp file is left beside it
+    from PyReconstruct.modules.backend.func import atomic_io
+
+    mine = _bytes(section.filepath)
+
+    def full(src, dst, *args, **kwargs):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(atomic_io, "replace_with_retry", full)
+    section.brightness = (section.brightness + 11) % 100
+    with pytest.raises(OSError):
+        section.save(update_series_data=False)
+    assert _bytes(section.filepath) == mine
+    assert not os.path.exists(section.filepath + ".tmp")

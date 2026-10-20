@@ -637,9 +637,6 @@ class Section():
         ## once there are contours to build it from.
         self._columns = None
         self._column_rows : dict = {}
-        ## The store and its generation when a build or a save last made it
-        ## match the object model (see `_storeUnchanged`)
-        self._store_checked = None
 
         self.filepath = os.path.join(  # hidden trace file
             self.series.getwdir(),
@@ -821,9 +818,6 @@ class Section():
         
         ## For GUI use
         self.clearTracking()
-
-        ## The store above was built from the object model as loaded
-        self._markStoreChecked()
     
     @property
     def tform(self):
@@ -1529,8 +1523,7 @@ class Section():
         # once anything in the series is edited it does so on every step. A
         # section whose file already holds these bytes is not written again:
         # reading the file to compare costs far less than writing it.
-        written = not self._fileHolds(data)
-        if written:
+        if not self._fileHolds(data):
             self._writeFile(data)
 
         # The whole-section reconciliation, at the one non-per-frame point that
@@ -1578,15 +1571,15 @@ class Section():
         # `test_a_rebuild_that_cannot_be_built_leaves_the_section_usable`
         # pin the two halves.
         #
-        # SKIPPED ONLY WHEN NOTHING COULD HAVE MOVED
-        # ------------------------------------------
-        # A save that wrote nothing still rebuilds a store that changed since
-        # its last build or save: an edit through Section, then an edit outside
-        # it that puts the bytes back, leaves the store out of step while the
-        # file is right. A store untouched since it last matched, saving the
-        # bytes its file holds, has nothing to repair.
-        if written or not self._storeUnchanged():
-            self._rebuildColumnarStoreForSave()
+        # EVERY SAVE, WRITTEN OR NOT
+        # --------------------------
+        # A save that wrote nothing still rebuilds. Equal bytes do not mean an
+        # equal store: an edit outside Section can leave the bytes as they
+        # were and the store out of step (a contour swapped for a copy of
+        # itself, a point moved below the 7-place rounding, a trace hidden
+        # through Section and shown again outside it). Nothing cheaper than
+        # the rebuild sees all of those.
+        self._rebuildColumnarStoreForSave()
 
         # before the hook below: a field copy it reloads gets these same ids
         self._recordSavedTraceIDs(data)
@@ -1611,26 +1604,6 @@ class Section():
                 return f.read() == data
         except OSError:
             return False
-
-    def _markStoreChecked(self):
-        """Note that the store matches the object model as it is now."""
-        store = self._columns
-        self._store_checked = (
-            store, store.generation if store is not None else None
-        )
-
-    def _storeUnchanged(self) -> bool:
-        """True if no edit reached the store since `_markStoreChecked`.
-
-        Every store mutation moves its generation, and a rebuild that changes
-        anything replaces the store.
-        """
-        checked = getattr(self, "_store_checked", None)
-        store = self._columns
-        return (
-            checked is not None and checked[0] is store and
-            checked[1] == (store.generation if store is not None else None)
-        )
 
     def _writeFile(self, data : bytes):
         """Write the section file.
@@ -2164,8 +2137,6 @@ class Section():
                 f"contours in a shape a store cannot be built from, most "
                 f"likely an edit made outside Section:\n  {unbuildable}"
             )
-            ## Not checked, so the next save tries again
-            self._store_checked = None
             return
         except BaseException:
             ## Anything else is unexpected and still deserves to reach the
@@ -2178,7 +2149,6 @@ class Section():
         if not drift:
             self._columns = before
             self._column_rows = before_map
-            self._markStoreChecked()
             return
 
         self._warnAboutTheStore(
@@ -2189,7 +2159,6 @@ class Section():
             f"outside Section without calling resyncColumnarStore():\n  "
             + "\n  ".join(drift)
         )
-        self._markStoreChecked()
 
     def _warnAboutTheStore(self, message : str):
         """Report a save-time store problem where a user can retrieve it.
