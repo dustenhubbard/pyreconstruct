@@ -23,6 +23,7 @@ from PyReconstruct.modules.datatypes.series import (
 )
 from PyReconstruct.modules.backend.crop_zarr import CropError, CropStopped, LOG_NAME
 from PyReconstruct.modules.gui.dialog.crop_zarr import cropWithProgress
+from PyReconstruct.modules.gui.dialog.all_options import SERIES_CODE_NUL
 from PyReconstruct.modules.backend.func.window_geometry import (
     default_window_rect,
     window_geometry_is_usable,
@@ -3116,6 +3117,11 @@ class MainWindow(QMainWindow):
         if self.series.seriesStepRunning():
             self.series.refuseSaveDuringStep(self.series.backupFolder())
             return
+        # a NUL in the folder, most often from the series code in a {series}
+        # default folder, would make creating it raise ValueError
+        if "\0" in self.series.backupFolder():
+            self._refuseNulBackup("folder", from_saved)
+            return
 
         # make sure the backup directory exists
         if not os.path.isdir(self.series.backupFolder(create=True)):
@@ -3138,13 +3144,7 @@ class MainWindow(QMainWindow):
                 # a NUL in the series code, the user name, the comment or a
                 # name part in Backup Settings: the copy would raise
                 # ValueError on the path
-                message = (
-                    "The backup file name holds a NUL character, so no backup was made.\n"
-                    "Check the name parts in File ▸ Backup ▸ Settings."
-                )
-                if from_saved and self.series.jser_fp:
-                    message += f"\nThe last Save is in {self.series.jser_fp}."
-                notify(message)
+                self._refuseNulBackup("file", from_saved)
                 return
             if (
                 from_saved
@@ -3174,6 +3174,28 @@ class MainWindow(QMainWindow):
                 self.series.setOption("backup_dir", "")
                 self.series.setOption("autobackup", False)
     
+    def _refuseNulBackup(self, part : str, from_saved : bool):
+        """Tell that no backup was made because its path holds a NUL character.
+
+            Params:
+                part (str): "folder" or "file", the name that holds it
+                from_saved (bool): the backup follows a Save; the notice names
+                    the .jser that holds it
+        """
+        if "\0" in (self.series.code or ""):
+            where = "Check the series code in Series ▸ Series code ▸ Set series code."
+        elif part == "folder":
+            where = "Check the backup folder in File ▸ Backup ▸ Settings."
+        else:
+            where = "Check the name parts in File ▸ Backup ▸ Settings."
+        message = (
+            f"The backup {part} name holds a NUL character, so no backup was made.\n"
+            + where
+        )
+        if from_saved and self.series.jser_fp:
+            message += f"\nThe last Save is in {self.series.jser_fp}."
+        notify(message)
+
     def saveToJser(self, notify=False, close=False):
         """Store data in JSER file.
 
@@ -3280,8 +3302,9 @@ class MainWindow(QMainWindow):
     def _backupSaved(self):
         """Make the automatic backup of the .jser just written.
 
-        A backup that fails is told and does not raise: the .jser holds the
-        Save, so a close or the turning off of the local copy goes on.
+        A backup that fails shows a notice and does not raise: the .jser holds
+        the Save, so a close, an export or the turning off of the local copy
+        goes on.
 
             Returns:
                 (str): the backup file written, or None when none was.
@@ -3337,7 +3360,7 @@ class MainWindow(QMainWindow):
                 store_save.writeJser(self.series)
         else:
             self.series.saveJser()
-        self.backup(check_auto=True, from_saved=True)
+        self._backupSaved()
         self.seriesModified(False)
 
     def saveAsToJser(self, close=False):
@@ -5667,6 +5690,10 @@ class MainWindow(QMainWindow):
                 ["Series code:", (True, "text", self.series.code)]
             ]
             response, confirmed = QuickDialog.get(self, structure, "Series Code", cancelable=cancelable)
+            if confirmed and "\0" in response[0]:
+                # it would stop every backup into a {series} folder
+                notify(SERIES_CODE_NUL)
+                continue
             if confirmed:
                 self.series.code = response[0]
             

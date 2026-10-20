@@ -6324,8 +6324,10 @@ class Series():
             if os.path.isdir(os.path.dirname(template[:i])):
                 try:
                     os.makedirs(folder, exist_ok=True)
-                except OSError:
-                    pass  # reported by the caller as a missing folder
+                except (OSError, ValueError):
+                    # reported by the caller as a missing folder; ValueError
+                    # is a NUL in the series code
+                    pass
         return folder
 
     def getBackupPath(self, comment : str = "", check_existing : bool = True):
