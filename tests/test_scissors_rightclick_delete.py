@@ -122,7 +122,10 @@ def _run_scissors_cycle(hide_trace_layer, other_hidden, closed):
     )
     stub.mainwindow = types.SimpleNamespace(
         checkActions=lambda *a, **k: None,
-        mouse_palette=types.SimpleNamespace(incrementButton=lambda: None),
+        mouse_palette=types.SimpleNamespace(
+            incrementButton=lambda: None,
+            selectedTrace=lambda: sec.series.palette_traces[0][0],
+        ),
     )
     for attr in (
         "deselectAllTraces", "generateView", "activateMouseBoundaryTimer",

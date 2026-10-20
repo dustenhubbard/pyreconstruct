@@ -714,9 +714,8 @@ class FieldWidgetTrace(FieldWidgetBase):
         if tracing is None:
             return
         try:
-            group, index = self.series.palette_index
-            button = self.series.palette_traces[group][index]
-        except (KeyError, IndexError, TypeError, ValueError):
+            button = self.mainwindow.mouse_palette.selectedTrace()
+        except (AttributeError, KeyError, IndexError, TypeError, ValueError):
             return
         tracing.obj_defaults = copyObjDefaults(button.obj_defaults)
 
