@@ -971,7 +971,8 @@ def test_a_macos_dev_bundle_is_staged_as_new_app_and_the_app_is_its_own_helper(m
     assert argv == [program, A.APPLY_ARG, mac.staging, "--pid", "4321", "--expect", NEW_V,
                     "--open", str(series)]
     (started, kw), = mac.started
-    assert started == argv and kw["cwd"] == mac.staging and kw["start_new_session"] is True
+    assert started == argv and kw["cwd"] == mac.staging
+    assert kw["start_new_session"] is (os.name != "nt")  # the helper outlives the app's session
     assert kw["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
 
     w = World()
@@ -1028,8 +1029,8 @@ def _switched_off(mac, monkeypatch, tmp_path):
 ], ids=["translocated", "on-a-volume", "not-our-team", "other-bundle-id", "link", "read-only-folder",
         "stable", "switched-off"])
 def test_an_ineligible_macos_app_downloads_the_installer_instead(mac, monkeypatch, tmp_path, make_it):
-    if make_it in (_a_link, _read_only_folder) and os.name == "nt":
-        pytest.skip("POSIX links and modes")
+    if make_it in (_a_link, _read_only_folder, _translocated) and os.name == "nt":
+        pytest.skip("POSIX links, modes, and paths")
     if make_it is _read_only_folder and hasattr(os, "geteuid") and os.geteuid() == 0:
         pytest.skip("root writes anywhere")
     mac = make_it(mac, monkeypatch, tmp_path) or mac
