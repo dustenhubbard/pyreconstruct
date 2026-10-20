@@ -1516,31 +1516,15 @@ class Section():
             self.series.data.updateSection(self, update_traces=True)
     
         d = self.getDict()
-        # write atomically: a crash or ENOSPC mid-write must never leave the
-        # section file truncated, so write a sibling temp file and rename it
-        # over the original (os.replace is atomic on POSIX/Windows). We do NOT
-        # fsync here: this internal working file is re-saved on every section
-        # change (mouse-wheel scroll), so fsyncing each scroll would turn the
-        # gesture into a synchronous disk flush. The .jser master copy is the
-        # durable one; os.replace already prevents a truncated file on crash.
-        tmp_fp = self.filepath + ".tmp"
-        try:
-            with open(tmp_fp, "wb") as f:
-                # internal hidden working file -- write compact bytes to cut
-                # serialization cost and the bytes re-read on every saveJser
-                data = fast_dumps(d)
-                f.write(data)
-            # a save fires on scroll / section switch; retry a transiently-locked
-            # replace (Windows AV/indexer/sync) so it doesn't fail spuriously
-            from PyReconstruct.modules.backend.func.atomic_io import replace_with_retry
-            replace_with_retry(tmp_fp, self.filepath)
-        except OSError:
-            # leave the original file untouched; clean up the partial temp
-            try:
-                os.remove(tmp_fp)
-            except OSError:
-                pass
-            raise
+        # internal hidden working file -- write compact bytes to cut
+        # serialization cost and the bytes re-read on every saveJser
+        data = fast_dumps(d)
+        # Every section change saves the section left and the B section, and
+        # once anything in the series is edited it does so on every step. A
+        # section whose file already holds these bytes is not written again:
+        # reading the file to compare costs far less than writing it.
+        if not self._fileHolds(data):
+            self._writeFile(data)
 
         # The whole-section reconciliation, at the one non-per-frame point that
         # is already O(section). Per-mutation checking is targeted at the row
@@ -1586,6 +1570,15 @@ class Section():
         # `test_a_shadow_mismatch_no_longer_costs_the_save` and
         # `test_a_rebuild_that_cannot_be_built_leaves_the_section_usable`
         # pin the two halves.
+        #
+        # EVERY SAVE, WRITTEN OR NOT
+        # --------------------------
+        # A save that wrote nothing still rebuilds. Equal bytes do not mean an
+        # equal store: an edit outside Section can leave the bytes as they
+        # were and the store out of step (a contour swapped for a copy of
+        # itself, a point moved below the 7-place rounding, a trace hidden
+        # through Section and shown again outside it). Nothing cheaper than
+        # the rebuild sees all of those.
         self._rebuildColumnarStoreForSave()
 
         # before the hook below: a field copy it reloads gets these same ids
@@ -1594,6 +1587,53 @@ class Section():
         # inside a pass over the section files, the field refreshes its own
         # copies of this section from the file now (Series.passWroteSection)
         self.series.passWroteSection(self)
+
+    def _fileHolds(self, data : bytes) -> bool:
+        """True if the section file holds exactly these bytes.
+
+        Read from the file, not remembered: another program can change a file
+        and leave its size, time and inode as they were.
+
+            Params:
+                data (bytes): the bytes to save
+        """
+        try:
+            if os.path.getsize(self.filepath) != len(data):
+                return False
+            with open(self.filepath, "rb") as f:
+                return f.read() == data
+        except OSError:
+            return False
+
+    def _writeFile(self, data : bytes):
+        """Write the section file.
+
+        Atomically: a crash or ENOSPC mid-write must never leave the section
+        file truncated, so write a sibling temp file and rename it over the
+        original (os.replace is atomic on POSIX/Windows). We do NOT fsync here:
+        this internal working file is re-saved on every section change
+        (mouse-wheel scroll), so fsyncing each scroll would turn the gesture
+        into a synchronous disk flush. The .jser master copy is the durable
+        one; os.replace already prevents a truncated file on crash.
+
+            Params:
+                data (bytes): the bytes to write
+        """
+        tmp_fp = self.filepath + ".tmp"
+        try:
+            with open(tmp_fp, "wb") as f:
+                f.write(data)
+            # a save fires on scroll / section switch; retry a transiently-locked
+            # replace (Windows AV/indexer/sync) so it doesn't fail spuriously
+            from PyReconstruct.modules.backend.func.atomic_io import replace_with_retry
+            replace_with_retry(tmp_fp, self.filepath)
+        except OSError:
+            # leave the original file untouched; clean up the partial temp
+            try:
+                os.remove(tmp_fp)
+            except OSError:
+                pass
+            raise
 
     def tracesAsList(self) -> list[Trace]:
         """Return the trace dictionary as a list. Does NOT copy traces.

@@ -1,5 +1,6 @@
 import math
 import re
+from itertools import chain
 from typing import Union
 from xml.sax.saxutils import escape
 
@@ -88,6 +89,46 @@ def copyObjDefaults(defaults):
 def _ownList(value):
     """A new list with the same items if ``value`` is a list, else ``value``."""
     return list(value) if isinstance(value, list) else value
+
+
+# x * 1e7 is within |x * 1e7| * 2**-53 of its exact value, so a product
+# farther than this from a half rounds to the integer the exact value does
+_TIE_MARGIN = 2.0 ** -50
+
+
+def roundedCoordinates(points) -> tuple:
+    """The x and y lists of points, each value exactly round(v, 7).
+
+    Saving a section rounds every point, and round() one value at a time was
+    most of a save. Here a trace is rounded as one array: rint(v * 1e7) gives
+    the integer round() would reach, unless v * 1e7 lies next to a half, and
+    dividing that integer by 1e7 gives the nearest float to it, as round()
+    does. A value next to a half, or too large or not finite, goes through
+    round(); so does a trace with any value that is not a float, since
+    round() keeps an int an int.
+
+        Params:
+            points (list): (x, y) pairs
+        Returns:
+            (tuple): the list of x values and the list of y values
+    """
+    if not points:
+        return [], []
+    values = list(chain.from_iterable(points))
+    if set(map(len, points)) != {2} or set(map(type, values)) != {float}:
+        return [round(p[0], 7) for p in points], [round(p[1], 7) for p in points]
+    # a huge or non-finite value overflows or is invalid here; it goes
+    # through round() below, so numpy has nothing to warn about
+    with np.errstate(over="ignore", invalid="ignore"):
+        scaled = np.array(values) * 1e7
+        exact = (
+            (np.abs(scaled) < 2.0 ** 52) &
+            (np.abs(scaled - np.floor(scaled) - 0.5) > np.abs(scaled) * _TIE_MARGIN)
+        )
+        rounded = (np.rint(scaled) / 1e7).tolist()
+    for i in np.flatnonzero(~exact).tolist():
+        rounded[i] = round(values[i], 7)
+    return rounded[0::2], rounded[1::2]
 
 
 class Trace():
@@ -428,10 +469,7 @@ class Trace():
             Returns:
                 (list) list containing the trace data
         """
-        x, y = [], []
-        for p in self.points:
-            x.append(round(p[0], 7))
-            y.append(round(p[1], 7))
+        x, y = roundedCoordinates(self.points)
         
         l = []
         if include_name:
