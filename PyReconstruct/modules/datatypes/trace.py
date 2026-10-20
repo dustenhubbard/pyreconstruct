@@ -117,13 +117,15 @@ def roundedCoordinates(points) -> tuple:
     values = list(chain.from_iterable(points))
     if set(map(len, points)) != {2} or set(map(type, values)) != {float}:
         return [round(p[0], 7) for p in points], [round(p[1], 7) for p in points]
-    scaled = np.array(values) * 1e7
-    with np.errstate(invalid="ignore"):
+    # a huge or non-finite value overflows or is invalid here; it goes
+    # through round() below, so numpy has nothing to warn about
+    with np.errstate(over="ignore", invalid="ignore"):
+        scaled = np.array(values) * 1e7
         exact = (
             (np.abs(scaled) < 2.0 ** 52) &
             (np.abs(scaled - np.floor(scaled) - 0.5) > np.abs(scaled) * _TIE_MARGIN)
         )
-    rounded = (np.rint(scaled) / 1e7).tolist()
+        rounded = (np.rint(scaled) / 1e7).tolist()
     for i in np.flatnonzero(~exact).tolist():
         rounded[i] = round(values[i], 7)
     return rounded[0::2], rounded[1::2]

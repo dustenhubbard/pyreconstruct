@@ -4,9 +4,9 @@ Every section change saves the section being left and the B section, and
 once anything in the series is edited that save runs on every step. It used
 to rewrite both files and rebuild both stores each time, which on a large
 series was most of a section change. Now `Section.save` still builds the
-bytes, and writes them (and rebuilds the store) only when they differ from
-what the file holds: what this section last read from it or wrote to it, in
-a file nothing has replaced since.
+bytes, and writes them only when they differ from the bytes in the file,
+read back to compare. It rebuilds the store when it wrote, or when the store
+changed since its last build or save.
 
 The fixture series is in an older file format, so the first save of each of
 its sections writes new bytes, as it always has. The tests save a section
@@ -140,3 +140,69 @@ def test_paging_after_an_edit_rewrites_no_unchanged_section(main_window):
     for n in nums[1:] + nums[:1]:
         main_window.changeSection(n)
     assert {n: _state(p) for n, p in paths.items()} == before
+
+
+def test_a_file_rewritten_in_place_with_its_stamp_kept_is_written_again(section):
+    # another program writes other bytes of the same length and puts the
+    # times back: size, mtime and inode all match what this section saw
+    mine = _bytes(section.filepath)
+    st = os.stat(section.filepath)
+    other = mine.replace(b"{", b"[", 1)
+    assert other != mine and len(other) == len(mine)
+    with open(section.filepath, "r+b") as f:
+        f.write(other)
+    os.utime(section.filepath, ns=(st.st_atime_ns, st.st_mtime_ns))
+    assert _state(section.filepath) == (st.st_ino, st.st_size, st.st_mtime_ns)
+    section.save(update_series_data=False)
+    assert _bytes(section.filepath) == mine
+
+
+def test_a_file_replaced_while_the_store_rebuilds_is_written_again(
+        section, monkeypatch):
+    # another program replaces the file just after this section wrote it,
+    # while the save is still rebuilding the store
+    from PyReconstruct.modules.datatypes.section import Section
+
+    real = Section._rebuildColumnarStoreForSave
+    written = []
+
+    def replaced(self):
+        written.append(_bytes(self.filepath))
+        other = self.filepath + ".other"
+        with open(other, "wb") as f:
+            f.write(written[0].replace(b"{", b"[", 1))
+        os.replace(other, self.filepath)
+        return real(self)
+
+    section.brightness = (section.brightness + 9) % 100
+    monkeypatch.setattr(Section, "_rebuildColumnarStoreForSave", replaced)
+    section.save(update_series_data=False)
+    monkeypatch.setattr(Section, "_rebuildColumnarStoreForSave", real)
+    assert _bytes(section.filepath) != written[0]
+    section.save(update_series_data=False)
+    assert _bytes(section.filepath) == written[0]
+
+
+def test_a_store_edited_then_put_back_outside_the_section_is_rebuilt(section):
+    # hidden through Section (the store hears of it), shown again outside it
+    # (the store does not): the bytes match the file, the store does not
+    trace = section.tracesAsList()[0]
+    was = trace.hidden
+    section.hideTraces([trace], hide=not was, log_event=False)
+    trace.setHidden(was)
+    before = _bytes(section.filepath)
+    section.save(update_series_data=False)
+    assert _bytes(section.filepath) == before
+    section._assertColumnsMatchObjectModel("test")
+
+
+def test_an_untouched_store_is_not_rebuilt_but_a_touched_one_is(section, rebuilds):
+    section.save(update_series_data=False)
+    assert rebuilds == []
+    trace = section.tracesAsList()[0]
+    section.hideTraces([trace], hide=not trace.hidden, log_event=False)
+    section.hideTraces([trace], hide=not trace.hidden, log_event=False)
+    section.save(update_series_data=False)
+    assert rebuilds == [section.n]
+    section.save(update_series_data=False)
+    assert rebuilds == [section.n]

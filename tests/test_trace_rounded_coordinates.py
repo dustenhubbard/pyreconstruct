@@ -118,3 +118,17 @@ def test_get_list_writes_the_same_row_as_before():
     ]
     assert orjson.dumps(trace.getList()) == orjson.dumps(want)
     assert orjson.dumps(trace.getList(include_name=False)) == orjson.dumps(want[1:])
+
+
+def test_huge_and_not_finite_values_warn_nothing():
+    import struct
+    import warnings
+
+    signaling = struct.unpack("<d", struct.pack("<Q", 0x7FF0000000000001))[0]
+    points = [(1e302, 0.5), (-1.7e308, 2.5), (math.inf, math.nan), (signaling, 1.0)]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        got_x, got_y = roundedCoordinates(points)
+    want_x, want_y = _expected(points)
+    _same(got_x, want_x)
+    _same(got_y, want_y)

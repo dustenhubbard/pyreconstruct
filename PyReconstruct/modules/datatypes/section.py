@@ -514,15 +514,6 @@ def _storeDrift(before, before_map, after, after_map) -> list:
     return complaints
 
 
-def _fileStamp(st) -> tuple:
-    """What tells one version of a file from another without reading it.
-
-    Every write of a section file replaces it (a new inode), and a write in
-    place moves its size or its modification time.
-    """
-    return (st.st_size, st.st_mtime_ns, st.st_ino, st.st_dev)
-
-
 def tracesWithoutCounterpart(donor : Contour, keeper : Contour) -> list:
     """Return the traces in donor that overlap nothing at all in keeper.
 
@@ -646,9 +637,9 @@ class Section():
         ## once there are contours to build it from.
         self._columns = None
         self._column_rows : dict = {}
-        ## The digest of the bytes this section last read from or wrote to its
-        ## file, and the file's stamp then (see `_fileHolds`)
-        self._file_known = None
+        ## The store and its generation when a build or a save last made it
+        ## match the object model (see `_storeUnchanged`)
+        self._store_checked = None
 
         self.filepath = os.path.join(  # hidden trace file
             self.series.getwdir(),
@@ -664,8 +655,6 @@ class Section():
 
         with open(self.filepath, "rb") as f:
             raw = f.read()
-            stamp = _fileStamp(os.fstat(f.fileno()))
-        raw_digest = sectionFileDigest(raw)
         section_data = fast_loads(raw)
         
         ## `stored_ids` collects the ids the section file's own keyed rows
@@ -718,7 +707,7 @@ class Section():
         ## in between do not move any trace's id. Every row is in it or none.
         restored_ids = (
             issuer.restoreForSection(
-                n, raw_digest, section_data["contours"]
+                n, sectionFileDigest(raw), section_data["contours"]
             )
             if issuer is not None else None
         )
@@ -833,9 +822,8 @@ class Section():
         ## For GUI use
         self.clearTracking()
 
-        ## The store above was built from these bytes, so a save that would
-        ## write them back has nothing to write or rebuild
-        self._file_known = (raw_digest, stamp)
+        ## The store above was built from the object model as loaded
+        self._markStoreChecked()
     
     @property
     def tform(self):
@@ -1344,14 +1332,14 @@ class Section():
             return None
         return self._columns.getID(row)
 
-    def _recordSavedTraceIDs(self, digest : bytes):
-        """Tell the issuer which id each row of the file just saved holds.
+    def _recordSavedTraceIDs(self, data : bytes):
+        """Tell the issuer which id each row of the file just written holds.
 
         Rows in the order `getDict` writes them. If any trace has no id the
         section is forgotten instead, and its next load derives as before.
 
             Params:
-                digest (bytes): `sectionFileDigest` of the bytes the file holds
+                data (bytes): the bytes just written to the section file
         """
         issuer = getattr(self.series, "trace_id_issuer", None)
         if issuer is None:
@@ -1364,10 +1352,10 @@ class Section():
                 continue
             row_ids = [ids.get(trace) for trace in contour]
             if None in row_ids:
-                issuer.recordSaved(self.n, digest, None)
+                issuer.recordSaved(self.n, sectionFileDigest(data), None)
                 return
             by_contour[name] = row_ids
-        issuer.recordSaved(self.n, digest, by_contour)
+        issuer.recordSaved(self.n, sectionFileDigest(data), by_contour)
 
     def getDict(self, keyed_rows : bool = None) -> dict:
         """Convert section object into a dictionary.
@@ -1537,13 +1525,11 @@ class Section():
         # internal hidden working file -- write compact bytes to cut
         # serialization cost and the bytes re-read on every saveJser
         data = fast_dumps(d)
-        digest = sectionFileDigest(data)
         # Every section change saves the section left and the B section, and
         # once anything in the series is edited it does so on every step. A
-        # section that would write the bytes its file already holds is left
-        # alone: there is nothing to write, and its store was built from those
-        # same bytes, so there is nothing to rebuild either.
-        written = not self._fileHolds(digest)
+        # section whose file already holds these bytes is not written again:
+        # reading the file to compare costs far less than writing it.
+        written = not self._fileHolds(data)
         if written:
             self._writeFile(data)
 
@@ -1591,36 +1577,60 @@ class Section():
         # `test_a_shadow_mismatch_no_longer_costs_the_save` and
         # `test_a_rebuild_that_cannot_be_built_leaves_the_section_usable`
         # pin the two halves.
-        if written:
+        #
+        # SKIPPED ONLY WHEN NOTHING COULD HAVE MOVED
+        # ------------------------------------------
+        # A save that wrote nothing still rebuilds a store that changed since
+        # its last build or save: an edit through Section, then an edit outside
+        # it that puts the bytes back, leaves the store out of step while the
+        # file is right. A store untouched since it last matched, saving the
+        # bytes its file holds, has nothing to repair.
+        if written or not self._storeUnchanged():
             self._rebuildColumnarStoreForSave()
-            try:
-                self._file_known = (digest, _fileStamp(os.stat(self.filepath)))
-            except OSError:
-                self._file_known = None
 
         # before the hook below: a field copy it reloads gets these same ids
-        self._recordSavedTraceIDs(digest)
+        self._recordSavedTraceIDs(data)
 
         # inside a pass over the section files, the field refreshes its own
         # copies of this section from the file now (Series.passWroteSection)
         self.series.passWroteSection(self)
 
-    def _fileHolds(self, digest : bytes) -> bool:
-        """True if the section file holds the bytes with this digest.
+    def _fileHolds(self, data : bytes) -> bool:
+        """True if the section file holds exactly these bytes.
 
-        Known without reading the file: they are the bytes this section last
-        read from it or wrote to it, and the file has the same stamp as then.
+        Read from the file, not remembered: another program can change a file
+        and leave its size, time and inode as they were.
 
             Params:
-                digest (bytes): `sectionFileDigest` of the bytes to save
+                data (bytes): the bytes to save
         """
-        known = getattr(self, "_file_known", None)
-        if known is None or known[0] != digest:
-            return False
         try:
-            return _fileStamp(os.stat(self.filepath)) == known[1]
+            if os.path.getsize(self.filepath) != len(data):
+                return False
+            with open(self.filepath, "rb") as f:
+                return f.read() == data
         except OSError:
             return False
+
+    def _markStoreChecked(self):
+        """Note that the store matches the object model as it is now."""
+        store = self._columns
+        self._store_checked = (
+            store, store.generation if store is not None else None
+        )
+
+    def _storeUnchanged(self) -> bool:
+        """True if no edit reached the store since `_markStoreChecked`.
+
+        Every store mutation moves its generation, and a rebuild that changes
+        anything replaces the store.
+        """
+        checked = getattr(self, "_store_checked", None)
+        store = self._columns
+        return (
+            checked is not None and checked[0] is store and
+            checked[1] == (store.generation if store is not None else None)
+        )
 
     def _writeFile(self, data : bytes):
         """Write the section file.
@@ -2154,6 +2164,8 @@ class Section():
                 f"contours in a shape a store cannot be built from, most "
                 f"likely an edit made outside Section:\n  {unbuildable}"
             )
+            ## Not checked, so the next save tries again
+            self._store_checked = None
             return
         except BaseException:
             ## Anything else is unexpected and still deserves to reach the
@@ -2166,6 +2178,7 @@ class Section():
         if not drift:
             self._columns = before
             self._column_rows = before_map
+            self._markStoreChecked()
             return
 
         self._warnAboutTheStore(
@@ -2176,6 +2189,7 @@ class Section():
             f"outside Section without calling resyncColumnarStore():\n  "
             + "\n  ".join(drift)
         )
+        self._markStoreChecked()
 
     def _warnAboutTheStore(self, message : str):
         """Report a save-time store problem where a user can retrieve it.
