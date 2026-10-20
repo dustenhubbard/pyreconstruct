@@ -281,6 +281,114 @@ def test_a_restart_hands_on_only_what_this_window_staged(restart_loop, dev, quit
     assert dev.started == [] and quit_calls == []
 
 
+# --- An update a quit put off ------------------------------------------------------
+# The helper defers when Windows holds the install folder, and closes its run.
+# The next session stages the update again at launch, whatever the day's
+# stamp says, so its quit puts it in; a plan an earlier session staged is
+# never handed to the helper.
+
+def _quit_with_the_install_held(dev):  # noqa: F811
+    """The helper's run at quit, with Windows holding the install folder: it puts the update off."""
+    from dataclasses import replace
+    from test_updater_apply import FAST, FakePlatform, World, _locked as held
+    w = World()
+    w.install, w.staging = dev.rel.install, dev.rel.staging
+    w.rename_hook = held(dev.rel.install)
+    result = A.Applier(dev.rel.staging, FakePlatform(w), replace(FAST, health=0.2), host="windows").run()
+    assert result["status"] == "deferred"
+    assert A.read_json(os.path.join(dev.rel.staging, A.STATE))["status"] == "done"
+    return result
+
+
+@pytest.fixture
+def launch(main_window, dev, monkeypatch):  # noqa: F811
+    """The startup update check of a new session on this Windows Dev install, the day's check already done."""
+    import time
+    from PySide6.QtCore import QSettings
+    from PyReconstruct.modules.gui.main import main_window as MW
+    monkeypatch.setattr(MW, "install_kind", lambda: "frozen")
+    monkeypatch.setattr(MW, "ThreadPool", InlinePool)
+    monkeypatch.setattr(I, "running_install", lambda: dev.install)
+    real = I.stage_for_quit
+    monkeypatch.setattr(I, "stage_for_quit", lambda release, offered, **kw: real(
+        release, offered, **{"platform": dev.registry, "trusted_keys": dev_keys(), **kw}))
+    stamp = QSettings(*MW.domain_for("last_update_check_epoch"))
+    checks = []
+
+    def run(feed=None, error=None):
+        def check(channel):
+            checks.append(channel)
+            if error:
+                raise error
+            return feed or {"asset": {"name": "x"}, "release": dev.rel.release(), "status": "newer",
+                            "remote_version": NEW_V, "local_version": OLD_V}
+        monkeypatch.setattr(MW, "check_for_update", check)
+        stamp.setValue("last_update_check_epoch", time.time())
+        main_window.checkForUpdatesStartup()
+        return checks
+
+    yield run
+    stamp.remove("last_update_check_epoch")
+
+
+def test_a_deferred_update_is_staged_again_at_launch_and_goes_in_at_the_quit(
+        main_window, dev, quit_calls, launch):  # noqa: F811
+    earlier = dev.stage()
+    _quit_with_the_install_held(dev)
+
+    assert len(launch()) == 1  # checked at once, the day's stamp aside
+    pending = main_window._pending_inplace
+    assert pending is not None and I.still_staged(pending)
+    assert pending.plan["session"] != earlier.plan["session"]  # staged again in this session
+    assert main_window.close() is True
+
+    (argv, kw), = dev.started
+    assert argv[:4] == [I.helper_path(pending), pending.staging, "--pid", str(os.getpid())]
+    assert quit_calls == ["quit"]
+
+
+def test_a_third_deferral_sends_that_version_to_the_installer(main_window, dev, quit_calls, launch):  # noqa: F811
+    for count in range(1, A.MAX_DEFERRALS + 1):
+        dev.stage()
+        assert _quit_with_the_install_held(dev)["deferrals"] == count
+
+    assert launch() == []  # nothing to stage again; the day's check is done
+    assert main_window._pending_inplace is None
+    with pytest.raises(I.NotEligible, match="put off"):
+        dev.stage()
+    dlg = _dialog(None, dev)
+    assert dlg._try_inplace(dev.rel.release(), NEW_V, lambda p: None) is None  # the installer next
+    assert main_window.close() is True
+    assert dev.started == [] and quit_calls == []
+
+
+def test_only_a_deferral_from_the_running_version_is_staged_again(dev):  # noqa: F811
+    from dataclasses import replace
+    dev.stage()
+    _quit_with_the_install_held(dev)
+
+    assert I.deferred_version(dev.install) == NEW_V
+    assert I.deferred_version(replace(dev.install, version="1.23.5")) is None  # the installer since
+    assert I.deferred_version(replace(dev.install, flavor="stable")) is None
+
+
+@pytest.mark.parametrize("feed", ["offline", "another-version"])
+def test_a_plan_an_earlier_session_staged_never_reaches_the_helper(
+        main_window, dev, quit_calls, launch, feed):  # noqa: F811
+    dev.stage()
+    _quit_with_the_install_held(dev)
+    if feed == "offline":
+        launch(error=OSError("no network"))
+    else:
+        launch(feed={"asset": {"name": "x"}, "release": dev.rel.release("v1.25.0"), "status": "newer",
+                     "remote_version": "1.25.0", "local_version": OLD_V})
+
+    assert main_window._pending_inplace is None
+    assert os.path.isfile(os.path.join(dev.rel.staging, A.PLAN))  # still on disk, and left alone
+    assert main_window.close() is True
+    assert dev.started == [] and quit_calls == []
+
+
 def test_a_pending_installer_still_opens_the_installer(main_window, dev, quit_calls, monkeypatch, tmp_path):  # noqa: F811
     from PyReconstruct.modules.gui.main import main_window as mw
     opened = []

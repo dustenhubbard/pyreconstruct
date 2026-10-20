@@ -8,7 +8,9 @@ the user quits. Anything that stops it raises :class:`NotEligible` or
 committed quit, :func:`start_helper` starts the staged helper on the plan,
 with the app's process ID and the open series, and the app quits. A quit
 with nothing staged calls :func:`start_recovery` instead, which finishes a
-run a helper left part way.
+run a helper left part way. An update the helper put off is staged again
+at the next launch (:func:`deferred_version`), so the quit after it puts
+it in.
 
 Eligibility: a frozen Windows x86_64 build of a flavor turned on here; the
 release's ``update-manifest.json``, checked against its signed
@@ -240,6 +242,27 @@ def start_helper(pending, pid, open_path=None, popen=None):
     argv = helper_argv(pending, pid, open_path)
     _start(argv, pending.staging, popen)
     return argv
+
+
+def deferred_version(install=None):
+    """The version the helper put off at the last quit, for this session to stage again, or None.
+
+    A run the helper defers (Windows held the install folder) is closed, so
+    nothing goes in at the next quit unless that session stages the update
+    again: the helper starts only for a plan the running app staged. None
+    once the version has been put off ``MAX_DEFERRALS`` times; the dialog
+    offers the installer for it then.
+    """
+    install = install or running_install()
+    if install is None or install.flavor not in FLAVORS:
+        return None
+    result = A.read_json(os.path.join(S.staging_dir(install.folder, install.app_name), A.RESULT))
+    if not isinstance(result, dict) or result.get("status") != "deferred" or result.get("offer_installer"):
+        return None
+    if result.get("from_version") != install.version:
+        return None  # another version went in since
+    version = result.get("to_version")
+    return version if isinstance(version, str) else None
 
 
 def start_recovery(pid, install=None, popen=None):

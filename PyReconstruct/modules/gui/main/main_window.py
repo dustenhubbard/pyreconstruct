@@ -5051,7 +5051,9 @@ class MainWindow(QMainWindow):
         and download nothing), gated to once per 24h via QSettings so it never burns
         the anonymous GitHub rate limit. Any failure is swallowed — a background
         convenience must never disrupt startup. On by default, and switchable
-        under Help > Automatically check for updates.
+        under Help > Automatically check for updates. An update staged in
+        place that the last quit put off is the one exception: the check runs
+        at once, and stages it again (``_restageDeferred``).
 
         The stamp is written *before* the check is dispatched, deliberately: a
         check that fails has still spent the day, so a refused connection or a
@@ -5062,7 +5064,12 @@ class MainWindow(QMainWindow):
             kind = install_kind()
             if kind not in ("frozen",) + REINSTALL_KINDS or self.series is None:
                 return
-            if not self.series.getOption("update_check_on_startup"):
+            # An update the last quit put off is staged again now, whatever
+            # the option or the stamp say: the user chose it, and this quit
+            # can put it in only if this session staged it.
+            from PyReconstruct.modules.backend.updater import inplace
+            deferred = inplace.deferred_version() if kind == "frozen" else None
+            if not deferred and not self.series.getOption("update_check_on_startup"):
                 return
             # A notice from an earlier launch comes back first, so it stays
             # up on the days the 24h throttle skips the check.
@@ -5085,7 +5092,7 @@ class MainWindow(QMainWindow):
             # checks. So anything ahead of now counts as stale -- the check runs
             # and rewrites the stamp, which heals the stored value in one launch.
             elapsed = time.time() - last
-            if 0 <= elapsed < 24 * 3600:
+            if 0 <= elapsed < 24 * 3600 and not deferred:
                 return
             settings.setValue("last_update_check_epoch", time.time())
             channel = pinned_channel()
@@ -5099,11 +5106,38 @@ class MainWindow(QMainWindow):
                 return
             self._runUpdateCheck(
                 channel,
-                on_result=lambda info: self._onStartupCheck(info, channel),
+                on_result=lambda info: (self._restageDeferred(info, channel, deferred) if deferred
+                                        else self._onStartupCheck(info, channel)),
                 on_error=lambda exc: None,  # silent on a background failure
             )
         except Exception:
             pass
+
+    def _restageDeferred(self, info, channel, version):
+        """Stage again the update the last quit put off, so this session's quit puts it in.
+
+        Off the GUI thread, as the dialog stages. If the feed now offers
+        another version, or staging fails, the check ends as any startup
+        check does, with the notice.
+        """
+        from PyReconstruct.modules.backend.updater import inplace
+        pool = ThreadPool()
+        self._updater_pool = pool
+        worker = pool.createWorker(lambda: inplace.stage_for_quit(info.get("release"), version))
+
+        def _staged(pending):
+            self._updater_pool = None
+            self._pending_inplace = pending
+
+        def _failed(err):
+            self._updater_pool = None
+            exc = err[1] if isinstance(err, (tuple, list)) and len(err) >= 2 else err
+            print(f"Update {version} not staged again: {exc}")
+            self._onStartupCheck(info, channel)
+
+        worker.signals.result.connect(_staged)
+        worker.signals.error.connect(_failed)
+        pool.start(worker)
 
     @staticmethod
     def _noteNothingToOffer(info, channel):
