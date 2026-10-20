@@ -363,16 +363,16 @@ def test_the_version_heading_matches_the_files_format(repo):
 
 
 def test_a_multi_paragraph_fragment_survives_byte_for_byte(repo):
-    """The tool concatenates and does not reformat. That is what keeps the voice.
+    """The tool concatenates and does not reformat. What the author wrote ships.
 
-    A fragment format that could only carry one line would satisfy the tooling
-    and lose the thing that makes the file worth reading.
+    Notes are short, but older entries ran to more than one paragraph, and the
+    assembler must carry any wrapped bullet through unchanged.
     """
     changelog, fragments = repo
     entry = (
-        "- **A lead sentence naming the user-visible effect.** Then the mechanism,\n"
-        "  hard-wrapped at 80 columns with a two-space continuation indent, running\n"
-        "  to as many sentences as the mechanism needs.\n"
+        "- **A bold claim that wraps past the first line of the bullet.** Then one\n"
+        "  short sentence, hard-wrapped at 80 columns with a two-space continuation\n"
+        "  indent.\n"
         "\n"
         "  A second paragraph, indented the same way, so the bullet stays one list\n"
         "  item.\n"
@@ -577,6 +577,24 @@ def test_new_writes_a_template_and_prints_the_path(tmp_path, capsys):
     # The template is a valid fragment, so an author who edits nothing still
     # produces something the assembler accepts rather than an error at cut time.
     assert frag.read_fragment(path)
+
+
+def test_the_template_is_a_short_wrapped_note(tmp_path, capsys):
+    """The template shows the shape it asks for: one bold claim, one short line.
+
+    An author who copies its layout gets an 80-column wrap with a two-space
+    continuation indent, and no paragraph break.
+    """
+    directory = tmp_path / "changelog.d"
+    frag.main(["--dir", str(directory), "new", "added", "--slug", "a-tool"])
+    text = Path(capsys.readouterr().out.strip()).read_text(encoding="utf-8")
+
+    lines = text.splitlines()
+    assert lines[0].startswith("- **")
+    assert all(len(line) <= 80 for line in lines)
+    assert all(line.startswith("  ") for line in lines[1:])
+    assert "" not in lines
+    assert text.count("**") == 2
 
 
 def test_two_authors_on_the_same_branch_name_get_different_files(tmp_path):
