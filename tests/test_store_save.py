@@ -249,15 +249,12 @@ def _edit_last(series, in_the_first=False):
     raise AssertionError("no traces")
 
 
-## Not cases, as today has no answer for them: today's Save of an edit to a
-## section with a non-finite coordinate raises (Section.getDict rounds it), and
-## after an edit to an object whose name is a lone surrogate, today's open of
-## the file today's Save wrote raises (the log it writes cannot hold the name)
+## Not a case, as today has no answer for it: today's Save of an edit to a
+## section with a non-finite coordinate raises (Section.getDict rounds it)
 _EDGE_EDITS = [
     (place, name, surrogate, in_the_first)
     for place, name, surrogate in _EDGE_CASES for in_the_first in (False, True)
     if not (in_the_first and place == "coordinate" and name in ("nan", "inf", "-inf"))
-    and not (in_the_first and place == "contour-name")
 ]
 
 
@@ -503,17 +500,24 @@ def test_a_save_the_store_cannot_hold_is_today_s_and_so_is_the_next_open(
         series.close()
 
 
-def test_a_log_the_store_cannot_hold_leaves_the_save_to_the_jser(mode, tmp_path, switch_on, notes, monkeypatch):  # noqa: F811
+def test_a_log_naming_a_lone_surrogate_is_kept_by_the_store(mode, tmp_path, switch_on, notes, monkeypatch):  # noqa: F811
     fp = _kept(PARITY, tmp_path)
+    opens = _store_opens(monkeypatch)
     series = _open(fp)
     _edit(series)
     series.addLog("\ud800", None, "Create object")  # a name SQLite text cannot hold
     _save(series)
-    assert store_save.heldStore(series) is None
-    assert any("the log holds text the store cannot keep" in n for n in notes)
+    assert store_save.heldStore(series) is not None
+    assert not any("not kept" in n or "not the local store" in n for n in notes)
+    series.close()
     with open(fp, "rb") as f:
         assert b"\\ud800" in f.read()  # the .jser has it, as today's Save writes it
-    series.close()
+    series = _open(fp)
+    try:
+        assert opens == [series.name] * 2
+        assert "\ud800" in {log.obj_name for log in series.getFullHistory().all_logs}
+    finally:
+        series.close()
 
 
 def test_a_working_file_changed_while_it_is_saved_is_not_kept(tmp_path, switch_on, notes, monkeypatch):  # noqa: F811

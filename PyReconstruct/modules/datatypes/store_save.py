@@ -326,12 +326,6 @@ def _commit(series, held, keys : dict, tail : dict, written):
     series_bytes = fast_dumps(tail["series"])
     if fast_dumps(fast_loads(series_bytes)) != series_bytes:
         raise NotKept("the series does not read back as it was written")
-    try:
-        tail["log"].encode("utf-8")
-    except UnicodeEncodeError as e:
-        # SQLite text is UTF-8: a lone surrogate cannot be stored
-        raise NotKept(f"the log holds text the store cannot keep ({e.reason})") from e
-
     with store_open._transaction(store):
         # a .jser a close was writing holds an earlier Save than this one
         store.setMeta(META_WRITING, None)
@@ -372,7 +366,7 @@ def _commit(series, held, keys : dict, tail : dict, written):
         store.con.execute("INSERT OR REPLACE INTO series(id, data) VALUES (1, ?)", (series_bytes,))
         if tail["log"] != store.logText():
             content_changed = True
-            store.con.execute("INSERT OR REPLACE INTO log(id, text) VALUES (1, ?)", (tail["log"],))
+            store.setLogText(tail["log"])
         if written is not None:
             digest, index = written
             store.recordJser(series.jser_fp)

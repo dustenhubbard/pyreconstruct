@@ -47,6 +47,7 @@ from PyReconstruct.modules.constants.jser_splice import SpliceIndex, _stat_key, 
 from . import store_save
 from .hybrid_store import HybridStore, _now, storePaths
 from .local_stores import ENV_SWITCH, META_OPENED, enabled  # noqa: F401  (Series.openJser)
+from .log import LOG_READ_ERRORS
 from .network_folder import networkFileSystem
 
 ## The object-list numbers of one section, a blob per field. tags and colors:
@@ -508,7 +509,7 @@ class _WorkingFolderSource():
         }
         with open(series.filepath, "rb") as f:
             self.series = fast_loads(f.read())
-        with open(os.path.join(wdir, "existing_log.csv"), "r", encoding="utf-8") as f:
+        with open(os.path.join(wdir, "existing_log.csv"), "r", encoding="utf-8", errors=LOG_READ_ERRORS) as f:
             self.log = f.read()
         self.keys : dict = {}
 
