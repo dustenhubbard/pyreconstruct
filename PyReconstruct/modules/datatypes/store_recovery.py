@@ -25,9 +25,15 @@ A set-aside store is the whole store file, renamed to
 ``<store>.conflict-<UTC>.pyrstore`` in the same folder in one rename. It is
 never deleted. The open says where it is, and so does every later open of the
 .jser until ``PyReconstruct --export-local-copy <file>`` writes it out
-(`exportStore`). A store that cannot be made one file first (another program
-has it open) is not moved: it stays where it is, whole, the open says so, and
-the next open tries again. A store written out is set aside without a word.
+(`exportStore`). A store written out is set aside without a word.
+
+A store that cannot be made one file first (another program has it open) is
+not moved: it stays where it is, whole, and the next open tries again. The
+open says so, unless the store was written out.
+
+On Windows a store with work no .jser has is not moved at all: SQLite cannot
+hold its lock through a rename there (`setAside`). It stays where it is,
+whole, until it is written out, and every open names it or offers its Save.
 
 A store keyed by a .jser that is gone (moved, renamed or deleted) is never
 opened again by that .jser. Every open names each such store with work no
@@ -137,18 +143,35 @@ def setAside(held) -> str:
     If it cannot be made one file (another program has it open), nothing
     moves. The path is left free for a new store.
 
-    No other program writes the file from the check that it is one file to
-    the rename. Off Windows, the store holds SQLite's exclusive lock through
+    Off Windows, no other program writes the file from the check that it is
+    one file to the rename: the store holds SQLite's exclusive lock through
     the rename, and SQLite refuses a write to a moved file from a connection
-    made before the move. Windows renames no file a program has open, so the
-    store is closed first: a program with it open stops the rename, and a
-    journal one left at the old name sends the store back to it.
+    made before the move.
+
+    On Windows SQLite's file cannot be renamed while SQLite has it open, so
+    the store is closed first, and another program could write it before
+    the rename. So there a store is moved only once it is written out
+    (`exportStore`), when its work is in a .jser: until then it stays where
+    it is. A journal that a program left at the old name sends the moved
+    store back to it (`_sendBack`).
 
         Returns:
             (str): the set-aside store file
         Raises:
             StoreUnavailable: it was not moved; it is whole where it was
+            NotSentBack: it was moved, and a journal left at the old name
+                could not have it back
     """
+    if _WINDOWS:
+        try:
+            unwritten = not _writtenOut(held)
+        except store_open.StoreUnavailable:
+            unwritten = True
+        if unwritten:
+            held.close()
+            raise store_open.StoreUnavailable(
+                "the store was not set aside: on Windows it moves only once it is written out"
+            )
     store = held.store
     db_fp = store.db_fp
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -194,30 +217,46 @@ def _sidecars(db_fp : str) -> list:
     return [db_fp + ext for ext in SIDECARS if os.path.lexists(db_fp + ext)]
 
 
+class NotSentBack(store_open.StoreUnavailable):
+    """The store was set aside as `kept`, and could not go back beside the
+    files another program left at its old name (`left`)."""
+
+    def __init__(self, kept : str, left : list, err : OSError):
+        super().__init__(f"the store was set aside as {kept} and could not be put back beside {', '.join(left)} ({err})")
+        self.kept, self.left, self.err = kept, left, err
+
+
 def _sendBack(db_fp : str, kept : str):
     """A program wrote the store between its close and its rename (Windows):
     put it back beside the journal, which SQLite finds by name.
 
         Raises:
             StoreUnavailable: it is whole where it was
+            NotSentBack: it could not be put back; it is whole at `kept`
     """
     try:
         os.rename(kept, db_fp)  # refuses a file made there meanwhile
-    except OSError as e:
+    except FileExistsError as e:
         # a third program made a file there: the journal may be that file's
         store_open.log_note(f"Local store set aside as {kept} with a journal left at {db_fp} ({e})")
         return
+    except OSError as e:
+        raise NotSentBack(kept, _sidecars(db_fp), e) from e
     _fsyncFolder(os.path.dirname(db_fp))
     raise store_open.StoreUnavailable(
         "the store could not be set aside: another program wrote it as it moved"
     )
 
 
-def _keepAside(held) -> tuple:
+def _keepAside(held, notifier) -> tuple:
     """(set-aside file, None), or (None, store file) if the store stayed where it was."""
     db_fp = held.store.db_fp
     try:
         return setAside(held), None
+    except NotSentBack as e:
+        # never hidden, even for a store written out
+        tell(notifier, notSentBackText(held.jser_fp, e))
+        return e.kept, None
     except store_open.StoreUnavailable as e:
         store_open._unavailable(held.jser_fp, e)
         return None, db_fp
@@ -328,11 +367,11 @@ def atOpen(held, notifier=None):
             finishWrite(held, digest)
         elif state == AHEAD:
             if _asker(notifier).confirm(offerText(held), title="Unsaved Series") is False:
-                kept, in_place = _keepAside(held)
+                kept, in_place = _keepAside(held, notifier)
             else:
                 held.opens_save = True
         elif state in (CHANGED, UNREADABLE):
-            kept, in_place = _keepAside(held)
+            kept, in_place = _keepAside(held, notifier)
         if in_place is not None:
             # the store stays as it is, unused: the .jser opens as it is
             held = None
@@ -370,7 +409,7 @@ def resumed(series, notifier=None):
             finishWrite(held, digest)
         if state in (CHANGED, UNREADABLE):
             done = _writtenOut(held)
-            kept, in_place = _keepAside(held)
+            kept, in_place = _keepAside(held, notifier)
             held = None
             if done:
                 kept = in_place = None
@@ -461,7 +500,15 @@ def _exportLine(fp : str) -> str:
 def setAsideText(jser_fp : str, kept, state, others=(), in_place=None, stranded=()) -> str:
     name = _seriesName(jser_fp)
     parts = []
-    if in_place is not None:
+    if in_place is not None and _WINDOWS:
+        # setAside moves no store with work no .jser has on Windows
+        parts.append(
+            f"Work saved on this computer that {name} does not have is kept where "
+            f"it is, untouched, in:\n  {in_place}\n{name} opens as it is on disk. "
+            "On Windows that work stays there until it is written out.\n\n"
+            + _exportLine(in_place)
+        )
+    elif in_place is not None:
         parts.append(
             f"Work saved on this computer that {name} does not have could not be "
             f"set aside just now. It is kept where it is, untouched, in:\n  {in_place}\n"
@@ -498,6 +545,17 @@ def setAsideText(jser_fp : str, kept, state, others=(), in_place=None, stranded=
             + _exportLine(stranded[0][0] if len(stranded) == 1 else "<file>")
         )
     return "\n\n".join(parts)
+
+
+def notSentBackText(jser_fp : str, err : NotSentBack) -> str:
+    name = _seriesName(jser_fp)
+    left = "\n".join(f"  {fp}" for fp in err.left)
+    return (
+        f"Work saved on this computer for {name} was set aside in:\n  {err.kept}\n"
+        "Another program wrote it as it moved, and it could not be put back "
+        f"beside what that program left:\n{left}\n({err.err})\n"
+        f"Both are kept as they are. {name} opens as it is on disk."
+    )
 
 
 def unreadSaveText(jser_fp : str) -> str:

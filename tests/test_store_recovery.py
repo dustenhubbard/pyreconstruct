@@ -21,6 +21,10 @@ What these pin:
   as it is, is set aside whole, as one file, never deleted, and the user is
   told where, at that open and every later one until it is written out; a
   store that cannot be made one file stays where it is, and the user is told;
+* on Windows a store with work no .jser has is never moved: it stays where it
+  is, named at each open or its Save offered, until it is written out; then a
+  later open moves it, and a store that cannot go back beside a journal left
+  at its old name is named to the user;
 * a store whose .jser moved holds work no open takes: every open names it
   until it is written out;
 * a resumed working folder takes its store, and its next Save folds every
@@ -639,6 +643,8 @@ def test_a_store_a_program_wrote_as_it_moved_on_windows_goes_back_to_its_journal
     fp = _saved_then_crashed(tmp_path)
     _decline(fp)
     db_fp, _ = hybrid_store.storePaths(str(fp))
+    # on Windows only a store written out is moved
+    store_recovery.exportStore(str(fp), str(tmp_path / "first.jser"))
     # Windows: the store is closed before the rename, and another program
     # writes it in that moment and dies, leaving its journal
     def die_writing():
@@ -660,6 +666,156 @@ def test_a_store_a_program_wrote_as_it_moved_on_windows_goes_back_to_its_journal
         con.close()
     out = tmp_path / "back.jser"
     store_recovery.exportStore(db_fp, str(out))
+    assert out.read_bytes() == expected_bytes
+
+
+def _changed_on_windows(tmp_path, monkeypatch):
+    """A store with a Save over a changed .jser, under Windows' rules for setting it aside."""
+    fp = _saved_then_crashed(tmp_path)
+    _decline(fp)
+    shutil.copyfile(SERIES_FILES[1], fp)
+    monkeypatch.setattr(store_recovery, "_WINDOWS", True)
+    return fp, hybrid_store.storePaths(str(fp))[0]
+
+
+def test_on_windows_a_store_with_work_no_jser_has_stays_where_it_is_until_written_out(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    expected_bytes = _today_saved(PARITY, tmp_path, monkeypatch)
+    fp, db_fp = _changed_on_windows(tmp_path, monkeypatch)
+    for _ in range(2):
+        # each open names it where it is, and moves nothing
+        asker = _Asked()
+        series = _open(fp, notifier=asker)
+        try:
+            assert store_save.heldStore(series) is None
+        finally:
+            series.close()
+        assert store_root_glob(fp) == [] and _meta(fp, store_save.META_DIRTY) == "1"
+        assert len(asker.told) == 1 and db_fp in asker.told[0]
+        assert "On Windows that work stays there until it is written out." in asker.told[0]
+        assert "tries again" not in asker.told[0]
+    out = tmp_path / "back.jser"
+    store_recovery.exportStore(db_fp, str(out))
+    assert out.read_bytes() == expected_bytes
+    # written out: the next open moves it without a word, and the .jser gets a new store
+    asker = _Asked()
+    series = _open(fp, notifier=asker)
+    try:
+        assert store_save.heldStore(series) is not None
+    finally:
+        series.close()
+    aside = store_root_glob(fp)
+    assert asker.told == [] and len(aside) == 1
+    store_recovery.exportStore(aside[0], str(tmp_path / "again.jser"))
+    assert (tmp_path / "again.jser").read_bytes() == expected_bytes
+
+
+def test_on_windows_a_declined_save_stays_where_it_is_and_is_offered_again(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    expected_bytes = _today_saved(PARITY, tmp_path, monkeypatch)
+    fp = _saved_then_crashed(tmp_path)
+    _decline(fp)
+    db_fp, _ = hybrid_store.storePaths(str(fp))
+    monkeypatch.setattr(store_recovery, "_WINDOWS", True)
+    asker = _Asked(False)
+    _open(fp, notifier=asker).close()
+    assert len(asker.asked) == 1 and store_root_glob(fp) == []
+    assert len(asker.told) == 1 and db_fp in asker.told[0]
+    assert "On Windows that work stays there until it is written out." in asker.told[0]
+    # still there: offered again, and Yes opens it, and its close writes the .jser
+    asker = _Asked(True)
+    _open(fp, notifier=asker).close()
+    assert len(asker.asked) == 1 and asker.told == []
+    assert fp.read_bytes() == expected_bytes
+
+
+def test_on_windows_a_store_not_known_to_be_written_out_is_not_moved(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    fp, db_fp = _written_out_on_windows(tmp_path, monkeypatch)
+
+    def unread(held):
+        raise store_open.StoreUnavailable("disk I/O error")
+
+    with monkeypatch.context() as m:
+        m.setattr(store_recovery, "_writtenOut", unread)
+        with pytest.raises(store_open.StoreUnavailable):
+            store_recovery.setAside(store_open.StoreForOpen.attempt(str(fp)))
+    assert store_root_glob(fp) == [] and os.path.isfile(db_fp)
+
+
+def test_off_windows_a_store_kept_in_place_is_tried_again_at_the_next_open(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    monkeypatch.setattr(store_recovery, "_WINDOWS", False)
+    fp, db_fp = _kept_in_place(tmp_path, monkeypatch)
+    text = store_recovery.setAsideText(str(fp), None, None, in_place=db_fp)
+    assert "its next open tries again" in text and "On Windows" not in text
+
+
+def _written_out_on_windows(tmp_path, monkeypatch):
+    fp, db_fp = _changed_on_windows(tmp_path, monkeypatch)
+    store_recovery.exportStore(str(fp), str(tmp_path / "first.jser"))
+    return fp, db_fp
+
+
+def _moves_as_a_program_writes(m, db_fp, back):
+    """As the store moves, another program writes it and dies, leaving its
+    journal; putting the store back meets `back`."""
+    import subprocess
+
+    real = os.rename
+
+    def rename(src, dst, *a, **k):
+        if os.path.abspath(src) == os.path.abspath(db_fp) and store_recovery.SET_ASIDE in str(dst):
+            subprocess.run([sys.executable, "-c", _DIES_WRITING, db_fp], check=True)
+        elif os.path.abspath(dst) == os.path.abspath(db_fp):
+            raise back
+        return real(src, dst, *a, **k)
+
+    m.setattr(os, "rename", rename)
+
+
+def test_on_windows_a_store_that_cannot_go_back_beside_its_journal_is_named_and_kept(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    expected_bytes = _today_saved(PARITY, tmp_path, monkeypatch)
+    fp, db_fp = _written_out_on_windows(tmp_path, monkeypatch)
+    asker = _Asked()
+    with monkeypatch.context() as m:
+        _moves_as_a_program_writes(m, db_fp, PermissionError(13, "Access is denied"))
+        series = _open(fp, notifier=asker)
+        try:
+            # no store is made beside that journal
+            assert store_save.heldStore(series) is None
+        finally:
+            series.close()
+    aside = store_root_glob(fp)
+    assert len(aside) == 1 and not os.path.lexists(db_fp) and os.path.isfile(db_fp + "-journal")
+    # written out, and told all the same
+    assert len(asker.told) == 1
+    told = asker.told[0]
+    assert aside[0] in told and db_fp + "-journal" in told and "Access is denied" in told
+    assert any("could not be put back" in n for n in notes)
+    out = tmp_path / "back.jser"
+    store_recovery.exportStore(aside[0], str(out))
+    assert out.read_bytes() == expected_bytes
+
+
+def test_on_windows_a_file_made_at_the_old_name_keeps_the_store_set_aside(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    expected_bytes = _today_saved(PARITY, tmp_path, monkeypatch)
+    fp, db_fp = _written_out_on_windows(tmp_path, monkeypatch)
+    with monkeypatch.context() as m:
+        _moves_as_a_program_writes(m, db_fp, FileExistsError(17, "File exists"))
+        aside = store_recovery.setAside(store_open.StoreForOpen.attempt(str(fp)))
+    assert store_root_glob(fp) == [aside] and os.path.isfile(db_fp + "-journal")
+    assert any("with a journal left at" in n for n in notes)
+    out = tmp_path / "back.jser"
+    store_recovery.exportStore(aside, str(out))
     assert out.read_bytes() == expected_bytes
 
 
@@ -963,10 +1119,10 @@ def test_a_relative_store_folder_reads_its_set_aside_stores(
     monkeypatch.setenv(hybrid_store.ENV_DIR, "stores")
     fp = _saved_then_crashed(tmp_path)
     _decline(fp)
-    kept = store_recovery.setAside(store_open.StoreForOpen.attempt(str(fp)))
-    assert not os.path.isabs(kept)
-    assert store_recovery._readStore(kept)[0]["jser_path"] == str(fp)
-    store_recovery.exportStore(kept, str(tmp_path / "back.jser"))
+    aside = store_recovery.setAside(store_open.StoreForOpen.attempt(str(fp)))
+    assert not os.path.isabs(aside)
+    assert store_recovery._readStore(aside)[0]["jser_path"] == str(fp)
+    store_recovery.exportStore(aside, str(tmp_path / "back.jser"))
     # written out, and read as such: named no more
     asker = _Asked()
     _open(fp, notifier=asker).close()
