@@ -422,6 +422,10 @@ class TraceIDIssuer():
         ## something else. See `restoreForSection`.
         self._known = {}
         self._changed_outside = set()
+        ## The ids `deriveForSection` last gave each section file, by the
+        ## file's digest: {section number: (digest, (id, ...))}, the ids in
+        ## the derivation's own walk order. See `deriveForSection`.
+        self._derived_files = {}
 
     @property
     def taken(self) -> frozenset:
@@ -580,7 +584,7 @@ class TraceIDIssuer():
         return out
 
     def deriveForSection(
-            self, section_number: int, contours: dict, skip=()
+            self, section_number: int, contours: dict, skip=(), digest=None
         ) -> dict:
         """Derive ids for every trace of one section, deterministically.
 
@@ -626,6 +630,20 @@ class TraceIDIssuer():
         holding that version's JSON, and nothing evicts. The record becomes
         droppable once an id is persisted and can simply be read back.
 
+        THE SAME FILE AGAIN SKIPS THE WALK
+        ----------------------------------
+        Answering from the record still serializes every row to find its key,
+        about 0.1 s a section on DW09, and paging reloads the same files over
+        and over (the series-open pass has already loaded each one once). So
+        when the caller passes the file's `digest` and nothing is skipped, the
+        ids are also kept per section, in walk order, and a later call with the
+        same digest returns them without the walk. That is the answer the walk
+        would give: the same digest is the same bytes, so the same rows, and
+        each key's record is only ever appended to, so positions 0..k-1 of a
+        key still hold the ids the first walk read or wrote there. One entry
+        per section, replaced by the next file seen, holding references to
+        strings the record already holds.
+
             Params:
                 section_number (int): the section these contours sit on
                 contours (dict): {contour name: [stored 8-field row, ...]}, the
@@ -638,14 +656,29 @@ class TraceIDIssuer():
                     adopted one, so the row would burn two identities and every
                     later derivation on the series would salt past a value no
                     trace holds.
+                digest (bytes): `sectionFileDigest` of the file `contours`
+                    was read from, or None. Only used when `skip` is empty.
             Returns:
                 (dict): {(contour name, index within contour): id}
         """
+        names = sorted(contours, key=str)
+        if digest is not None and not skip:
+            known = self._derived_files.get(section_number)
+            if known is not None and known[0] == digest:
+                ids = known[1]
+                if len(ids) == sum(len(contours[cname]) for cname in names):
+                    out = {}
+                    position = 0
+                    for cname in names:
+                        for i in range(len(contours[cname])):
+                            out[(cname, i)] = ids[position]
+                            position += 1
+                    return out
         out = {}
         ## Within-call occurrence count per derivation key, so the k-th
         ## byte-identical row of a contour maps to the k-th recorded id.
         occurrence = {}
-        for cname in sorted(contours, key=str):
+        for cname in names:
             for i, row in enumerate(contours[cname]):
                 if (cname, i) in skip:
                     continue
@@ -667,6 +700,8 @@ class TraceIDIssuer():
                     self._taken.add(trace_id)
                     recorded.append(trace_id)
                 out[(cname, i)] = trace_id
+        if digest is not None and not skip:
+            self._derived_files[section_number] = (digest, tuple(out.values()))
         return out
 
     def recordSaved(self, section_number: int, digest, ids_by_contour) -> None:
