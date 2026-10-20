@@ -8,11 +8,13 @@ Run by the release job in .github/workflows/build-installers.yml after the
 per-file ``.sha256`` files exist and before ``SHA256SUMS`` is signed.
 
 ``update-manifest.json`` is what the in-place updater will read: a schema
-version, the tag, the version, the flavor, and one entry per platform. Every
-entry is ``"inplace": {"enabled": false}``, and ``min_client`` is the
+version, the tag, the version, the flavor, and one entry per platform. An
+entry is ``"inplace": {"enabled": false}``, and its ``min_client`` is the
 release's own version, which no installed client can be below and still be
-updating to it. Both stay closed until the step that turns in-place updates
-on opens them.
+updating to it, so both stay closed. The one exception is a Dev release's
+macOS entry that names its payload: it is ``"enabled": true``, and its
+``min_client`` is ``MACOS_DEV_MIN_CLIENT``, the first Dev build that can
+install a macOS update in place. Stable, Windows and Linux stay closed.
 
 When DIST holds the Windows payload (scripts/build_update_payload.py writes
 it, and the release job holds it back if its swap test failed), the Windows
@@ -66,6 +68,8 @@ PLATFORMS = ("windows-x86_64", "macos-arm64", "macos-x86_64", "linux-x86_64")
 WINDOWS_PAYLOAD = re.compile(r"^PyReconstruct-.+-update-windows-", re.IGNORECASE)
 # Likewise any macOS tree.json, in any version or flavor; the dmg is never matched.
 MACOS_TREE = {p: re.compile(rf"^PyReconstruct-.+-update-{p}", re.IGNORECASE) for p in MACOS_PLATFORMS}
+# The first Dev nightly whose app installs a macOS update in place at quit.
+MACOS_DEV_MIN_CLIENT = "1.26.0.dev202610201139"
 
 
 def manifest(tag: str, flavor: str, dist: Path | None = None) -> dict:
@@ -82,6 +86,9 @@ def manifest(tag: str, flavor: str, dist: Path | None = None) -> dict:
             payload = macos_payload(dist, version, flavor, platform)
             if payload:
                 platforms[platform].update(payload)
+                if flavor == "dev":
+                    platforms[platform].update(inplace={"enabled": True},
+                                               min_client=MACOS_DEV_MIN_CLIENT)
     return {
         "schema": SCHEMA,
         "tag": tag,

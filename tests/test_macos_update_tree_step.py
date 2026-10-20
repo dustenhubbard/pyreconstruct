@@ -17,7 +17,8 @@ from pathlib import Path
 import pytest
 
 from test_pruning_preserves_release_tags import workflow_script
-from test_update_payload import MANIFEST_SCRIPT, NIGHTLY, STABLE, P, WORKFLOW, _step, _step_order, fake_bundle
+from test_update_payload import (MACOS_DEV_MIN_CLIENT, MANIFEST_SCRIPT, NIGHTLY, STABLE, P, WORKFLOW, _step,
+                                 _step_order, fake_bundle)
 
 ROOT = Path(__file__).resolve().parents[1]
 STEP = "List the app in the dmg for in-place updates (macOS)"
@@ -89,7 +90,9 @@ def test_the_step_lists_the_app_in_the_dmg_and_the_manifest_names_both(tmp_path,
                        capture_output=True, text=True, timeout=60)
     assert m.returncode == 0, m.stderr
     entry = json.loads((dist / "update-manifest.json").read_text())["platforms"][platform]
-    assert entry["inplace"] == {"enabled": False}
+    dev = flavor == "dev"
+    assert entry["inplace"] == {"enabled": dev}
+    assert entry["min_client"] == (MACOS_DEV_MIN_CLIENT if dev else version)
     assert entry["payload"]["name"] == dmg.name and entry["tree"]["name"] == tree_name
     sums = (dist / "SHA256SUMS").read_text()
     assert dmg.name in sums and tree_name in sums

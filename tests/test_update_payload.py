@@ -45,6 +45,8 @@ HELPER_SPEC = ROOT / "packaging" / "windows" / "pyreconstruct-updater.spec"
 HARNESS = ROOT / "tests" / "windows_swap_harness.py"
 
 STABLE, NIGHTLY = "1.24.0", "1.24.0.dev20260929"
+# The first nightly that installs a macOS update in place; the one before it cannot.
+MACOS_DEV_MIN_CLIENT = "1.26.0.dev202610201139"
 
 
 def fake_app(root, flavor="stable"):
@@ -209,17 +211,20 @@ def _dist_with_macos_tree(tmp_path, version, flavor, platform="macos-arm64"):
     return dist, dist / dmg_name, tree_path, tree
 
 
-@pytest.mark.parametrize("tag,version,flavor", [("v1.24.0", STABLE, "stable"),
-                                                ("v1.24.0.dev20260929", NIGHTLY, "dev")])
-def test_the_manifest_names_the_dmg_as_the_macos_payload_and_keeps_it_off(tmp_path, tag, version, flavor):
+@pytest.mark.parametrize("tag,version,flavor,inplace,min_client", [
+    ("v1.24.0", STABLE, "stable", False, STABLE),
+    ("v1.24.0.dev20260929", NIGHTLY, "dev", True, MACOS_DEV_MIN_CLIENT),
+])
+def test_the_manifest_names_the_dmg_as_the_macos_payload_and_turns_it_on_for_dev(
+        tmp_path, tag, version, flavor, inplace, min_client):
     dist, dmg, tree_path, tree = _dist_with_macos_tree(tmp_path, version, flavor)
     r, manifest = _manifest(dist, tag, flavor)
     assert r.returncode == 0, r.stderr
 
     files = [e for e in tree["files"] if e.get("type", "file") == "file"]
     assert manifest["platforms"]["macos-arm64"] == {
-        "inplace": {"enabled": False},
-        "min_client": version,
+        "inplace": {"enabled": inplace},
+        "min_client": min_client,
         "payload": {"name": dmg.name, "size": dmg.stat().st_size},
         "tree": {"name": tree_path.name, "size": tree_path.stat().st_size},
         "installed_size": sum(e["size"] for e in files),
@@ -227,6 +232,26 @@ def test_the_manifest_names_the_dmg_as_the_macos_payload_and_keeps_it_off(tmp_pa
     }
     assert manifest["platforms"]["macos-x86_64"] == {"inplace": {"enabled": False}, "min_client": version}
     assert dmg.name in _listed(dist) and tree_path.name in _listed(dist)
+
+
+@pytest.mark.parametrize("tag,version,flavor", [("v1.24.0", STABLE, "stable"),
+                                                ("v1.24.0.dev20260929", NIGHTLY, "dev")])
+def test_only_the_macos_dev_entries_turn_in_place_on(tmp_path, tag, version, flavor):
+    dist, *_ = _dist_with_payload(tmp_path, version, flavor)
+    for platform in P.MACOS_PLATFORMS:
+        dmg_name, _ = P.macos_names(version, flavor, platform)
+        (dist / dmg_name).write_bytes(os.urandom(2048))
+        P.build_macos_tree(fake_bundle(tmp_path / platform, flavor), version, flavor, platform, dist)
+    r, manifest = _manifest(dist, tag, flavor)
+    assert r.returncode == 0, r.stderr
+
+    on = {p: (e["inplace"], e["min_client"]) for p, e in manifest["platforms"].items()}
+    mac = ({"enabled": True}, MACOS_DEV_MIN_CLIENT) if flavor == "dev" else ({"enabled": False}, version)
+    assert on == {"windows-x86_64": ({"enabled": False}, version),
+                  "macos-arm64": mac,
+                  "macos-x86_64": mac,
+                  "linux-x86_64": ({"enabled": False}, version)}
+    assert all("payload" in manifest["platforms"][p] for p in ("windows-x86_64", *P.MACOS_PLATFORMS))
 
 
 @pytest.mark.parametrize("problem", ["no-dmg", "other-version", "other-bundle-id"])
