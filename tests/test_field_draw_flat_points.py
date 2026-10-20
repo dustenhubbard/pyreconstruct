@@ -15,6 +15,7 @@ import pytest
 
 from PySide6.QtWidgets import QApplication
 
+from PyReconstruct.modules.backend.settings_store import DictSettingsStore
 from PyReconstruct.modules.backend.view import trace_layer as trace_layer_module
 from PyReconstruct.modules.backend.view.trace_layer import flatPoints
 from PyReconstruct.modules.datatypes import Trace
@@ -63,6 +64,18 @@ def test_points_that_are_not_pairs_go_through_np_array():
 @pytest.fixture
 def field(main_window):
     """The field at a fixed size over a section of mixed traces."""
+    field = main_window.field
+    series = main_window.series
+    # the options set here live in the settings store, not the series; a
+    # store of this series' own keeps them from reaching later tests
+    series.setSettingsStore(DictSettingsStore())
+    try:
+        yield _mixed(main_window)
+    finally:
+        series.setSettingsStore(None)
+
+
+def _mixed(main_window):
     field = main_window.field
     field.setFixedSize(*FIELD_SIZE)
     main_window.resize(FIELD_SIZE[0] + 600, FIELD_SIZE[1] + 400)
