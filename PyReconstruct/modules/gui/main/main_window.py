@@ -29,6 +29,7 @@ from PyReconstruct.modules.backend.func.window_geometry import (
     window_geometry_is_usable,
 )
 from .status_readout import FieldStatusReadout, StatusSegment
+from . import mac_menubar
 from PyReconstruct.modules.gui.table.history import setAsideText
 from .wheel_steps import WheelSteps, zoom_factor
 from PyReconstruct.modules.constants import removeSeriesFiles
@@ -723,6 +724,11 @@ class MainWindow(QMainWindow):
 
         ## Check alignment in alignment submenu
         self.changeAlignment(self.series.alignment)
+
+        ## The macOS Dev bar at the top of the screen reuses actions from
+        ## both builds (selectall_act lives in the field menu), so it is
+        ## rebuilt after the last of them; this also ends every createMenuBar
+        mac_menubar.rebuild(self)
 
     def checkActions(self, clicked_label=None):
         """Define enabled and disabled actions based on field context.
@@ -5569,6 +5575,9 @@ class MainWindow(QMainWindow):
         field = getattr(self, "field", None)
         if field is not None:
             field.updateFocusHint()
+
+        # a key the user just took from the screen bar's own rows is theirs now
+        mac_menubar.claimKeys(self)
 
     def displayAbout(self):
         """Display the widget display information about the series."""
