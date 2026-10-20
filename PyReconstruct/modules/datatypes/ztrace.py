@@ -1,4 +1,5 @@
 from PyReconstruct.modules.calc import distance3D, rolling_average
+from PyReconstruct.modules.constants import exportText
 from PyReconstruct.modules.datatypes.transform import alignment_tform
 from PyReconstruct.modules.datatypes.trace import xmlColorChannel
 
@@ -134,8 +135,9 @@ class Ztrace():
         # color back
         color = [xmlColorChannel(c) for c in self.color]
 
+        # lxml encodes the name strictly, so a lone surrogate goes as text
         xml_zcontour = XMLZContour(
-            name = self.name,
+            name = exportText(self.name),
             closed = False,
             mode = 11,
             border = color,
