@@ -57,6 +57,11 @@ from .getdatetime import(
     remove_days_from_today
 )
 
+from .export_text import (
+    EXPORT_ERRORS,
+    exportText
+)
+
 from .fast_json import (
     fast_loads,
     fast_dumps

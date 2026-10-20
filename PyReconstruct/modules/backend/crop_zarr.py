@@ -69,6 +69,7 @@ import re
 import zarr
 import numpy as np
 
+from PyReconstruct.modules.constants import EXPORT_ERRORS
 from PyReconstruct.modules.datatypes import Series
 from PyReconstruct.modules.backend.image_name_match import (
     matchByNumber, plural, someNames, spans,
@@ -810,7 +811,7 @@ def cropSections(
              ("Output zarr", new_zarr_fp)]
     summary, text = describeCrop(plan, series, obj_name, radius, scales, about)
     log_fp = os.path.join(new_zarr_fp, LOG_NAME)
-    with open(log_fp, "w", encoding="utf-8") as log:
+    with open(log_fp, "w", encoding="utf-8", errors=EXPORT_ERRORS) as log:
         log.write(text)
     for line in summary:
         echo(line)

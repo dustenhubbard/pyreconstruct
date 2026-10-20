@@ -48,6 +48,7 @@ from PyReconstruct.modules.constants import (
     JSER_SCHEMA_VERSION,
     SERIES_KEYS,
     default_traces,
+    EXPORT_ERRORS,
 )
 from PyReconstruct.modules.constants.jser_scan import (
     FileChanged,
@@ -6062,7 +6063,7 @@ class Series():
             y = " ".join(str(y) for x, y in trace.points)
             csv_str += ",".join([name, color, fill, tags, x, y]) + "\n"
         
-        with open(fp, "w", encoding="utf-8") as f:
+        with open(fp, "w", encoding="utf-8", errors=EXPORT_ERRORS) as f:
             f.write(csv_str)
     
     def dropEmptyPalettes(self):
@@ -6163,7 +6164,7 @@ class Series():
 
         if output_fp:
 
-            with open(str(output_fp), "w") as f:
+            with open(str(output_fp), "w", errors=EXPORT_ERRORS) as f:
                 f.write(out_str)
 
         if notify:

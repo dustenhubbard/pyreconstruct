@@ -1,3 +1,6 @@
+from PyReconstruct.modules.constants import EXPORT_ERRORS
+
+
 class Objects():
 
     def __init__(self, series):
@@ -71,7 +74,7 @@ class Objects():
             
         if out_fp:
             
-            with open(out_fp, "w") as f:
+            with open(out_fp, "w", errors=EXPORT_ERRORS) as f:
                 f.write(out_str)
 
         return out_str
