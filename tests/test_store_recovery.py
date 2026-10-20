@@ -701,6 +701,93 @@ def test_a_store_whose_journal_mode_stays_wal_is_not_moved(
     assert _meta(fp, store_save.META_DIRTY) == "1"
 
 
+class _SidecarAfterLock:
+    """A store connection that finds a file beside the store once it holds the lock."""
+
+    def __init__(self, con, sidecar):
+        self._con = con
+        self._sidecar = sidecar
+
+    def execute(self, sql, *a):
+        cur = self._con.execute(sql, *a)
+        if sql == "BEGIN EXCLUSIVE":
+            Path(self._sidecar).write_bytes(b"")
+        return cur
+
+    def __getattr__(self, name):
+        return getattr(self._con, name)
+
+
+def test_a_store_with_a_file_beside_it_after_the_lock_is_not_moved(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    fp = _saved_then_crashed(tmp_path)
+    _decline(fp)
+    db_fp, _ = hybrid_store.storePaths(str(fp))
+    held = store_open.StoreForOpen.attempt(str(fp))
+    held.store.con = _SidecarAfterLock(held.store.con, db_fp + "-wal")
+    with pytest.raises(store_open.StoreUnavailable):
+        store_recovery.setAside(held)
+    assert store_root_glob(fp) == [] and os.path.isfile(db_fp)
+    os.remove(db_fp + "-wal")
+    assert _meta(fp, store_save.META_DIRTY) == "1"
+
+
+_DIES_AFTER_COMMIT = """
+import os, sqlite3, sys
+con = sqlite3.connect(sys.argv[1], isolation_level=None)
+con.execute("PRAGMA wal_autocheckpoint=0")
+con.execute("BEGIN IMMEDIATE")
+con.execute("CREATE TABLE theirs(x)")
+con.execute("INSERT INTO theirs VALUES (1)")
+con.execute("COMMIT")
+os._exit(0)
+"""
+
+
+@pytest.mark.parametrize("sidecar", ["-journal", "-wal"])
+def test_no_store_is_made_over_a_journal_or_wal_left_without_its_store(
+    sidecar, tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    import subprocess
+
+    expected_bytes = _today_saved(PARITY, tmp_path, monkeypatch)
+    fp = _saved_then_crashed(tmp_path)
+    _decline(fp)
+    db_fp, _ = hybrid_store.storePaths(str(fp))
+    # another program writes the store and dies, then the store is moved apart
+    # from its journal or WAL (what a crash in a rename would leave)
+    if sidecar == "-journal":
+        con = sqlite3.connect(db_fp)
+        con.execute("PRAGMA journal_mode=DELETE")
+        con.close()
+        subprocess.run([sys.executable, "-c", _DIES_WRITING, db_fp], check=True)
+    else:
+        subprocess.run([sys.executable, "-c", _DIES_AFTER_COMMIT, db_fp], check=True)
+    apart = tmp_path / "apart.pyrstore"
+    os.rename(db_fp, apart)
+    left = Path(db_fp + sidecar).read_bytes()
+    assert left
+    asker = _Asked()
+    _open(fp, notifier=asker).close()
+    # no store was made there, and what was left is as it was
+    assert not os.path.lexists(db_fp)
+    assert Path(db_fp + sidecar).read_bytes() == left
+    # put back beside it, SQLite takes back that program's half-written
+    # change, or keeps the one it committed
+    os.rename(apart, db_fp)
+    con = sqlite3.connect(db_fp)
+    try:
+        assert con.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        theirs = con.execute("SELECT 1 FROM sqlite_master WHERE name = 'theirs'").fetchone()
+        assert (theirs is not None) == (sidecar == "-wal")
+    finally:
+        con.close()
+    out = tmp_path / "back.jser"
+    store_recovery.exportStore(db_fp, str(out))
+    assert out.read_bytes() == expected_bytes
+
+
 def test_two_set_asides_in_one_second_keep_both(
     tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
 ):
@@ -849,7 +936,41 @@ def test_the_scan_for_kept_work_never_stops_an_open(
     asker = _Asked()
     _open(other, notifier=asker).close()
     assert asker.told == []
-    assert any("not listed" in line and "a fault" in line for line in notes)
+    assert any("could not be read" in line and "a fault" in line for line in notes)
+
+
+def test_a_store_whose_meta_is_not_text_stops_no_other_store_being_named(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    bad = _moved(tmp_path, "bad")
+    good = _moved(tmp_path, "good")
+    con = sqlite3.connect(bad, isolation_level=None)
+    try:
+        con.execute("UPDATE meta SET value = X'FF' WHERE key = 'created_utc'")
+    finally:
+        con.close()
+    other = _kept(SERIES_FILES[1], tmp_path, "other")
+    asker = _Asked()
+    _open(other, notifier=asker).close()
+    assert len(asker.told) == 1 and good in asker.told[0] and bad not in asker.told[0]
+    assert any(bad in line and "could not be read" in line for line in notes)
+
+
+def test_a_relative_store_folder_reads_its_set_aside_stores(
+    tmp_path, switch_on, store_mode, notes, monkeypatch,  # noqa: F811
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(hybrid_store.ENV_DIR, "stores")
+    fp = _saved_then_crashed(tmp_path)
+    _decline(fp)
+    kept = store_recovery.setAside(store_open.StoreForOpen.attempt(str(fp)))
+    assert not os.path.isabs(kept)
+    assert store_recovery._readStore(kept)[0]["jser_path"] == str(fp)
+    store_recovery.exportStore(kept, str(tmp_path / "back.jser"))
+    # written out, and read as such: named no more
+    asker = _Asked()
+    _open(fp, notifier=asker).close()
+    assert asker.told == []
 
 
 def test_a_store_with_only_working_rows_whose_jser_moved_is_named(

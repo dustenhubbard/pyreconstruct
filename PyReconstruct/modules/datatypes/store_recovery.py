@@ -229,7 +229,8 @@ def setAsideStores(jser_fp : str) -> list:
     pattern = glob.escape(db_fp[:-len(STORE_EXT)]) + SET_ASIDE + "*" + STORE_EXT
     out = []
     for fp in sorted(glob.glob(pattern)):
-        read = _readStore(fp)
+        # one that cannot be read is named all the same
+        read = _scanRead(fp)
         if read is None or not read[0].get(META_WRITTEN_OUT):
             out.append(fp)
     return out
@@ -251,7 +252,7 @@ def strandedStores(skip=()) -> list:
     for fp in sorted(glob.glob(os.path.join(glob.escape(root), "*" + STORE_EXT))):
         if tag not in os.path.basename(fp) or os.path.normcase(os.path.abspath(fp)) in skip:
             continue
-        read = _readStore(fp)
+        read = _scanRead(fp)
         if read is None:
             continue
         meta, pending = read
@@ -263,6 +264,17 @@ def strandedStores(skip=()) -> list:
         if jser and not os.path.isfile(jser):
             out.append((fp, jser))
     return out
+
+
+def _scanRead(db_fp : str) -> "tuple[dict, bool] | None":
+    """_readStore for a scan: a fault in one store (text in its meta that is
+    not UTF-8, say) is noted in the log and read as None, so the scan goes on
+    to the others."""
+    try:
+        return _readStore(db_fp)
+    except Exception as e:
+        store_open.log_note(f"Local store {db_fp} could not be read for the list of kept work: {e!r}")
+        return None
 
 
 def _readStore(db_fp : str) -> "tuple[dict, bool] | None":
