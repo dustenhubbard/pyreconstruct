@@ -99,7 +99,9 @@ from .buttons import PaletteButton, ModeButton, MoveableButton
 from .scale_bar import ScaleBar, drawableLengths, formatLength
 from .outlined_label import OutlinedLabel
 from .help import palette_help
+from .default_rows import shownButtonCount
 
+from PyReconstruct.modules.constants import build_flavor
 from PyReconstruct.modules.datatypes import Series, Trace
 from PyReconstruct.modules.datatypes.trace import copyObjDefaults
 from PyReconstruct.modules.datatypes.default_settings import pinnedLengthFor
@@ -168,12 +170,13 @@ class MousePalette():
         # startup.
         self.placeModeButtons()
 
-        # create palette buttons
-        traces = self.series.palette_traces[self.series.palette_index[0]]
+        # create palette buttons; a Dev build leaves off trailing rows that
+        # copy the standard buttons (default_rows), and the series keeps them
+        traces = self.shownTraces(self.series.palette_traces[self.series.palette_index[0]])
         self.palette_buttons = [None] * len(traces)
         for i, trace in enumerate(traces):  # create all the palette buttons
             self.createPaletteButton(trace, i)
-        self.palette_buttons[self.series.palette_index[1]].setChecked(True)
+        self.palette_buttons[self.selectedPos()].setChecked(True)
 
         # create palette increments
         self.createPaletteSideButtons()
@@ -425,10 +428,28 @@ class MousePalette():
             y += self.pblen + 5
         self.label.move(x, y)
 
+    @staticmethod
+    def shownTraces(traces : list) -> list:
+        """The traces that get a button: all of them, less a Dev build's
+        trailing copies of the standard rows."""
+        if build_flavor.is_dev_build():
+            return traces[:shownButtonCount(traces)]
+        return traces
+
+    def selectedPos(self) -> int:
+        """The button shown as selected: the series' current button, or the
+        last button on show when a Dev build leaves the current one off.
+        palette_index is not changed, so a save writes it as it was."""
+        return min(self.series.palette_index[1], len(self.palette_buttons) - 1)
+
+    def selectedTrace(self) -> Trace:
+        """The trace of the button shown as selected."""
+        g = self.series.palette_index[0]
+        return self.series.palette_traces[g][self.selectedPos()]
+
     def updateLabel(self):
         """Update the name of the trace palette label."""
-        g, i = tuple(self.series.palette_index)
-        selected_trace = self.series.palette_traces[g][i]
+        selected_trace = self.selectedTrace()
         n = selected_trace.name
         for c in "{}<>":
             n = n.replace(c, "")
@@ -508,7 +529,7 @@ class MousePalette():
             Params:
                 trace (Trace): the trace to paste
         """
-        bpos = self.series.palette_index[1]
+        bpos = self.selectedPos()
         if use_shape:
             t = trace.copy()
             t.centerAtOrigin()
@@ -548,7 +569,14 @@ class MousePalette():
         """
         for bpos, trace in enumerate(trace_list):
             self.modifyPaletteButton(bpos, trace)
-        self.activatePaletteButton(self.series.palette_index[1])
+        # check and draw with the shown button without a click: a click
+        # writes palette_index, which a Dev build may have moved off a
+        # hidden button (selectedPos)
+        pos = self.selectedPos()
+        for i, button in enumerate(self.palette_buttons):
+            button.setChecked(i == pos)
+        self.mainwindow.changeTracingTrace(self.selectedTrace())
+        self.updateLabel()
     
     def resetPalette(self):
         """Reset the palette to the default traces."""
@@ -926,7 +954,7 @@ class MousePalette():
         if self.series.getOption("palette_inc_all"):
             buttons = enumerate(self.palette_buttons)
         else:
-            i = self.series.palette_index[1]
+            i = self.selectedPos()
             buttons = [(i, self.palette_buttons[i])]
         for bpos, w in buttons:
             n = re.sub(pattern, replace, w.trace.name)
@@ -945,7 +973,7 @@ class MousePalette():
             return
         
         if not bpos:
-            bpos = self.series.palette_index[1]
+            bpos = self.selectedPos()
 
 
         pattern = r"\<(\d+)\>"
@@ -982,15 +1010,15 @@ class MousePalette():
         # the dialog can make a palette of another length current, by
         # switching to its tab or by removing the current one
         self.series.clampPaletteIndex()
-        g, i = self.series.palette_index
-        traces = self.series.palette_traces[g]
+        g = self.series.palette_index[0]
+        traces = self.shownTraces(self.series.palette_traces[g])
         if len(traces) == len(self.palette_buttons):
             self.modifyPalette(traces)
         else:
             # the buttons belong to the old palette: build new ones, and draw
             # with the new current button, which reset() checks but not clicks
             self.reset()
-            self.mainwindow.changeTracingTrace(traces[i])
+            self.mainwindow.changeTracingTrace(self.selectedTrace())
     
     def setFlag(self, name : str = None, color : tuple = None, font_size : int = None, display_flags : str = None):
         """Set the default flag in the palette."""

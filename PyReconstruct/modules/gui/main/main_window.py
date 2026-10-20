@@ -1974,9 +1974,8 @@ class MainWindow(QMainWindow):
         else:
             self.mouse_palette = MousePalette(self)
             self.createPaletteShortcuts()
-        palette_group, index = tuple(self.series.palette_index)
         self.changeTracingTrace(
-            self.series.palette_traces[palette_group][index]
+            self.mouse_palette.selectedTrace()
         ) # set the current trace
 
     def offerHomeIfViewOffImage(self):
@@ -5646,8 +5645,7 @@ class MainWindow(QMainWindow):
         self.mouse_palette.reset()
         # reset() checks the new palette's button without clicking it, so the
         # field would keep drawing with the old palette's trace
-        g, i = self.series.palette_index
-        self.changeTracingTrace(self.series.palette_traces[g][i])
+        self.changeTracingTrace(self.mouse_palette.selectedTrace())
         self.seriesModified(True)
 
         notify(f"Trace palette '{name}' successfully imported.\n" +
@@ -5730,8 +5728,10 @@ class MainWindow(QMainWindow):
         section = self.series.loadSection(first_section)
         obj_trace = section.contours[name][0].copy()
 
-        pname, i = self.series.palette_index
-        trace = self.series.palette_traces[pname][i]
+        # the button shown as selected, which a Dev build can move off a
+        # hidden one (MousePalette.selectedPos)
+        i = self.mouse_palette.selectedPos()
+        trace = self.mouse_palette.selectedTrace()
         trace.name = name
         trace.color = obj_trace.color
         trace.fill_mode = obj_trace.fill_mode
@@ -5992,10 +5992,8 @@ class MainWindow(QMainWindow):
             return
         # the new palette may be shorter than the selected button number
         self.series.clampPaletteIndex()
-        g, i = self.series.palette_index
-        palette = self.series.palette_traces[g]
         self.mouse_palette.reset()
-        self.changeTracingTrace(palette[i])
+        self.changeTracingTrace(self.mouse_palette.selectedTrace())
 
     def importFromZarrLabels(self):
         """Import label data from a neuroglancer zarr."""
