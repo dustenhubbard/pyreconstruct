@@ -11,6 +11,7 @@ import sys
 
 import pytest
 
+from PyReconstruct.modules.backend.settings_store import DictSettingsStore
 from PyReconstruct.modules.datatypes import store_open, store_save
 from PyReconstruct.modules.gui.main import main_window as main_window_module
 
@@ -95,6 +96,7 @@ def test_a_close_from_the_local_copy_with_a_nul_in_the_backup_name_tells_and_clo
     window = _window(kept)
     try:
         snum, edited = _saved_in_the_store(window)
+        window.series.setSettingsStore(DictSettingsStore())
         backups = tmp_path / "backups"
         _nul_in_the_name(window.series, backups)
         told, hooked = _told(monkeypatch)
