@@ -23,6 +23,7 @@ import subprocess
 import sys
 import time
 from dataclasses import replace
+from unittest import mock
 
 import pytest
 
@@ -164,7 +165,7 @@ class FakePlatform(A.Platform):
                           if os.path.exists(m))
         with open(marker, "rb") as f:
             text = f.read().decode()
-        version = OLD_V if OLD_V in text else NEW_V
+        version = next((v for v in (OLD_V, NEW_V) if v in text), text.strip())
         self.w.versions[pid] = version
         if version in self.w.quits_on_start:
             del self.w.alive[pid]
@@ -435,7 +436,14 @@ def test_crash_during_a_rollback_still_ends_on_the_old_version(win, point, when)
     with pytest.raises(Crash):
         win.applier(crashing_at(point, when), timings=timings).run()
 
-    win.applier(timings=timings).run()
+    if win.applier(timings=timings).run()["status"] == "busy":
+        # The dead run never recorded its launch, so the copy running now could
+        # be one the user started. It is waited for, never stopped.
+        assert point == ("launch", "end") and when == "before"
+        [copy] = [p for p in win.world.alive if win.world.versions.get(p) == NEW_V]
+        assert copy not in win.world.kills
+        win.world.alive.pop(copy)  # the user quits it
+        win.applier(timings=timings).run()
 
     assert win.settled() == "old"
     # no copy of the new version is left running
@@ -733,7 +741,11 @@ class ReportingPlatform(FakePlatform):
         pid = super().launch(argv, cwd)
         if pid in self.w.alive:
             version = self.w.versions[pid]
-            self.reports.append((version, A.report_started(self.w.install, "PyReconstruct", version)))
+            # the report carries the reporting process's own pid, which is the launched one
+            # (swap-windows on a real install logs both)
+            with mock.patch.object(A.os, "getpid", return_value=pid):
+                reported = A.report_started(self.w.install, "PyReconstruct", version)
+            self.reports.append((version, reported))
         return pid
 
 
@@ -991,6 +1003,28 @@ def test_main_leaves_the_install_as_its_working_folder(win, monkeypatch):
 
 
 # --- Refusals: nothing is touched --------------------------------------------------------
+
+def test_a_plan_for_another_version_than_expected_is_left_alone(win):
+    """Not even a refusal: that would offer the installer, and the app may stage it again."""
+    with open(os.path.join(win.staging, "plan.json"), "rb") as f:
+        plan = f.read()
+
+    result = win.applier(expect="1.24.1").run()
+
+    assert result["status"] == "not_expected" and result["installed"] is None, result
+    _untouched(win)
+    with open(os.path.join(win.staging, "plan.json"), "rb") as f:
+        assert f.read() == plan
+    for name in ("result.json", "state.json"):
+        assert not os.path.lexists(os.path.join(win.staging, name)), name
+    with open(os.path.join(win.staging, A.LOG), encoding="utf-8") as f:
+        assert f"expected 1.24.1, but {NEW_V} is staged" in f.read()
+
+
+def test_a_plan_for_the_expected_version_goes_in(win):
+    assert win.applier(expect=NEW_V).run()["status"] == "updated"
+
+
 
 def test_refuses_an_install_holding_someone_elses_files(win):
     """A series saved inside the install folder would be deleted with the old version."""
@@ -1370,3 +1404,223 @@ def test_build_tree_round_trips_through_verify(tmp_path, can_symlink):
     assert {"path": "Contents/Resources/empty", "type": "dir",
             "mode": stat.S_IMODE(os.stat(os.path.join(root, "Contents", "Resources", "empty")).st_mode)} \
         in tree["files"]
+
+
+# --- Wired to the app's quit (fork #435, step 5) ------------------------------------
+
+def _user_copy(s, quits_after=None):
+    """Start a copy the way the user would, once the new version is in and launched.
+
+    It writes its own health report. Once the helper has stopped what it
+    launched, the user's copy quits after ``quits_after`` more polls, or never.
+    Returns the list its pid lands in.
+    """
+    others, polls = [], []
+
+    def on_poll():
+        if s.world.launches and not others:
+            others.append(s.world.spawn(os.path.join(s.install, "PyReconstruct.exe")))
+            A.write_health(s.staging, NEW_V, others[0])
+        launched = [p for p, v in s.world.versions.items() if v == NEW_V]
+        if others and quits_after is not None and set(launched) <= set(s.world.kills):
+            polls.append(1)
+            if len(polls) > quits_after:
+                s.world.alive.pop(others[0], None)
+
+    s.world.on_poll = on_poll
+    return others
+
+
+def test_a_rollback_waits_for_a_copy_the_user_started_and_never_stops_it(win):
+    """Only the copy this run launched may say the new version started, and only that copy is stopped.
+
+    The user's copy may hold unsaved work. The rollback waits for it to quit.
+    """
+    win.world.healthy[NEW_V] = False  # the launched copy never reports
+    others = _user_copy(win, quits_after=3)
+
+    result = win.applier().run()
+
+    assert others and result["status"] == "rolled_back", result
+    [launched] = [p for p, v in win.world.versions.items() if v == NEW_V]
+    assert launched in win.world.kills
+    assert others[0] not in win.world.kills
+    assert win.settled() == "old"
+
+
+def test_a_rollback_leaves_a_copy_the_user_keeps_open_for_the_next_run(win):
+    win.world.healthy[NEW_V] = False
+    others = _user_copy(win)  # never quits while this helper runs
+
+    result = win.applier().run()
+
+    assert result["status"] == "busy" and result["installed"] == "new", result
+    assert others[0] in win.world.alive and others[0] not in win.world.kills
+    assert win.read("state.json")["step"] == "rb_kill"  # open, for the next run to finish
+
+    win.world.alive.pop(others[0])  # the user quits it
+    assert win.applier().run()["status"] == "rolled_back"
+    assert others[0] not in win.world.kills
+    assert win.settled() == "old"
+
+
+def test_a_recovered_rollback_never_stops_a_copy_it_did_not_record_launching(win):
+    """The dead run's launch was never recorded, so the copy running now may be one the user started."""
+    win.world.healthy[NEW_V] = False
+    with pytest.raises(Crash):
+        win.applier(crashing_at(("launch", "end"), "before")).run()
+    [copy] = [p for p, v in win.world.versions.items() if v == NEW_V]
+
+    result = win.applier().run()
+
+    assert result["status"] == "busy", result
+    assert copy in win.world.alive and copy not in win.world.kills
+
+
+def test_a_copy_the_user_started_writes_no_health_report(win):
+    """It would replace the launched copy's report, and the helper would roll a working update back."""
+    _waiting_journal(win, lambda state, s: state.update(launched_pid=os.getpid() + 1))
+    assert A.report_started(win.install, "PyReconstruct", NEW_V) is False
+    assert win.read("health.json") is None
+
+    _waiting_journal(win, lambda state, s: state.update(launched_pid=os.getpid()))
+    assert A.report_started(win.install, "PyReconstruct", NEW_V) is True
+
+
+# --- The app's quit finishes a run a helper left part way --------------------------
+
+def _quitting_app(s, version=NEW_V):
+    """The app the user ran from the install, now quitting: it reports in and starts the helper."""
+    pid = s.world.spawn(s.exe(s.install))
+    A.write_health(s.staging, version, pid)
+    del s.world.alive[pid]  # gone by the time the helper looks
+    return pid
+
+
+def test_a_quit_after_a_helper_died_waiting_for_health_finishes_the_update(win):
+    with pytest.raises(Crash):
+        win.applier(crashing_at(("health", "begin"), "after")).run()
+    win.world.alive.clear()  # the computer restarted; the user then ran the new version
+    launches = len(win.world.launches)
+
+    result = win.applier(pid=_quitting_app(win), recover_only=True).run()
+
+    assert result["status"] == "updated", result
+    assert len(win.world.launches) == launches  # the user quit: nothing is started
+    assert win.settled() == "new"
+
+
+def test_a_quit_after_a_helper_died_rolling_back_finishes_the_rollback(win):
+    win.world.healthy[NEW_V] = False
+    timings = replace(FAST, health=0.05)
+    with pytest.raises(Crash):
+        win.applier(crashing_at(("rb_restore", "end"), "after"), timings=timings).run()
+    launches = len(win.world.launches)
+
+    result = win.applier(timings=timings, pid=_quitting_app(win, OLD_V), recover_only=True).run()
+
+    assert result["status"] == "rolled_back", result
+    assert len(win.world.launches) == launches  # the old version is not started again
+    assert win.settled() == "old"
+
+
+def test_a_quit_from_the_old_version_after_the_swap_rolls_back_and_starts_nothing(win):
+    """The installer put the old version back over a half-finished update; the app that quits is that."""
+    with pytest.raises(Crash):
+        win.applier(crashing_at(("registry", "end"), "after")).run()
+    launches = len(win.world.launches)
+
+    result = win.applier(pid=_quitting_app(win, OLD_V), recover_only=True).run()
+
+    assert result["status"] == "rolled_back", result
+    assert len(win.world.launches) == launches
+    assert win.settled() == "old"
+
+
+def test_a_quit_with_nothing_left_part_way_applies_nothing(win):
+    """A plan on disk is never applied by a recovery run, only by the quit that staged it."""
+    result = win.applier(pid=_quitting_app(win, OLD_V), recover_only=True).run()
+
+    assert result["status"] == "nothing_to_recover", result
+    _untouched(win)
+    assert win.read("state.json") is None
+
+
+def test_the_series_open_at_quit_reopens_in_the_new_version(win, tmp_path):
+    series = str(tmp_path / "open at quit.jser")
+
+    result = win.applier(open_path=series).run()
+
+    assert result["status"] == "updated", result
+    assert win.world.launches[-1] == [win.exe(win.install)] + win.plan["args"] + [series]
+
+
+def test_the_series_reopens_in_the_old_version_after_a_rollback(win, tmp_path):
+    series = str(tmp_path / "open at quit.jser")
+    win.world.healthy[NEW_V] = False
+
+    result = win.applier(open_path=series).run()
+
+    assert result["status"] == "rolled_back", result
+    assert [argv[-1] for argv in win.world.launches] == [series, series]
+
+
+@pytest.mark.parametrize("given, passed", [
+    (lambda tmp: os.path.join(str(tmp), "a.jser"), True),
+    (lambda tmp: "a.jser", False),  # relative: it would resolve against the helper's folder
+    (lambda tmp: None, False),
+])
+def test_the_helper_takes_only_an_absolute_series_path(tmp_path, monkeypatch, given, passed):
+    seen = {}
+
+    class Recorder:
+        def __init__(self, staging, platform, **kw):
+            seen.update(kw)
+
+        def run(self):
+            return {"installed": "old"}
+
+    monkeypatch.setattr(A, "Applier", Recorder)
+    monkeypatch.setattr(A, "default_platform", lambda: None)
+    monkeypatch.chdir(tmp_path)  # main() moves into staging; this puts the test's folder back
+    path = given(tmp_path)
+    argv = [str(tmp_path), "--pid", "7"] + (["--open", path] if path else [])
+
+    assert A.main(argv) == 1
+    assert seen == {"pid": 7, "open_path": path if passed else None, "recover_only": False, "expect": None}
+    assert A.main(argv + ["--recover"]) == 1
+    assert seen["recover_only"] is True
+    assert A.main(argv + ["--expect", NEW_V]) == 1
+    assert seen["expect"] == NEW_V
+
+
+def test_recovery_refuses_a_journal_whose_install_is_not_beside_staging(win, tmp_path):
+    """A journal copied or moved away from its install must not drive renames there."""
+    elsewhere = os.path.join(str(tmp_path), "Elsewhere", "PyReconstruct")
+    windows_tree(elsewhere, OLD_V)
+    before = snapshot(elsewhere)
+    state = {"format": A.FORMAT, "status": "running", "step": "swap_out", "phase": "begin",
+             "plan": dict(win.plan, install=elsewhere), "installed": "old"}
+    A.atomic_write_json(os.path.join(win.staging, "state.json"), state)
+    _write(win.staging, "old/PyReconstruct.exe", "a backup")
+
+    result = win.applier().run()
+
+    assert result["status"] == "error" and "not next to the install" in result["reason"], result
+    assert win.read("state.json") == state  # left for a look, not closed as if nothing happened
+    assert snapshot(elsewhere) == before
+    assert os.path.isfile(os.path.join(win.staging, "old", "PyReconstruct.exe"))
+    assert snapshot(win.install) == win.old_snap
+
+
+def test_selftest_log_keeps_only_its_last_part(win):
+    log = os.path.join(win.staging, A.SELFTEST_LOG)
+    with open(log, "wb") as f:
+        f.write(b"o" * A.SELFTEST_LOG_MAX + b"the newest line\n")
+
+    assert win.applier().run()["status"] == "updated"
+
+    with open(log, "rb") as f:
+        kept = f.read()
+    assert len(kept) == A.SELFTEST_LOG_MAX // 2
+    assert kept.endswith(b"the newest line\n")

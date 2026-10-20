@@ -574,11 +574,14 @@ def launch(qapp, monkeypatch, tmp_path):
     class Window:
         restarts = 1
 
-        def __init__(self, filename):
+        def __init__(self, filename, staged_update=None):
             events.append(("window", filename))
             self.restart_mainwindow = Window.restarts > 0
             Window.restarts -= 1
             self.series = SimpleNamespace(isWelcomeSeries=lambda: True)
+
+        def stagedUpdate(self):
+            return None
 
     for module, name, value in [
         (logging_setup, "install_file_logging", lambda: None),

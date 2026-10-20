@@ -6,6 +6,11 @@ to the main window for the launch-on-close step. The checksum comes from the
 release's signed ``SHA256SUMS`` when it has one. Styling is intentionally plain
 Qt so it inherits the app theme.
 
+An install that can update in place (``backend/updater/inplace.py``; Windows,
+the Dev build for now) stages the update next to the install instead, and the
+dialog says it goes in when the user quits, with a Restart Now button. If it
+cannot, the same download step fetches the installer, as before.
+
 It deliberately does *not* render the release notes. Those belong to the version
 the user is running, and are shown once, on the first launch after the update
 lands (``gui.dialog.whats_new``). This dialog links to them instead, for anyone
@@ -43,7 +48,9 @@ class UpdateDialog(QDialog):
 
     On success it sets ``parent._pending_installer`` / ``_pending_update_dir`` and
     accepts; the caller then closes the window so the existing closeEvent launches
-    the installer. The dialog never launches anything itself.
+    the installer. An update staged in place sets ``parent._pending_inplace``
+    instead and waits: Later keeps it for the next quit, Restart Now sets
+    ``restart_now`` and accepts. The dialog never launches anything itself.
 
     The release notes are linked, not rendered: see the module docstring.
     """
@@ -54,12 +61,14 @@ class UpdateDialog(QDialog):
         self._info = info
         self._asset = info["asset"]
         self._release = info["release"]
+        self._remote = info["remote_version"]
         self._channel = channel
         # What the user reads: "Stable" or "Nightly", never the stored value.
         self._channel_name = channel_display_name(channel)
         self._pool = None
         self._cancel = threading.Event()
         self._tmpdir = None
+        self.restart_now = False
 
         self.setWindowTitle("PyReconstruct Update")
         self.setMinimumWidth(480)
@@ -131,7 +140,12 @@ class UpdateDialog(QDialog):
         self._pool = ThreadPool()
         self._parent._updater_pool = self._pool  # in-flight guard
 
+        release, offered = self._release, self._remote
+
         def _job():
+            pending = self._try_inplace(release, offered, worker.signals.progress.emit)
+            if pending is not None:
+                return ("inplace", pending)
             sha = download_asset(url, dest,
                                  progress_cb=worker.signals.progress.emit,
                                  cancel_cb=self._cancel.is_set)
@@ -144,10 +158,28 @@ class UpdateDialog(QDialog):
         worker.signals.error.connect(self._on_error)
         self._pool.start(worker)
 
+    def _try_inplace(self, release, offered, progress_cb):
+        """On the worker: stage the update in place, or None to fetch the installer instead."""
+        from PyReconstruct.modules.backend.updater import inplace
+        if inplace.running_install() is None:
+            return None
+        try:
+            return inplace.stage_for_quit(release, offered, progress_cb=progress_cb,
+                                          cancel_cb=self._cancel.is_set)
+        except UpdateCancelled:
+            raise
+        except Exception as e:
+            # Not eligible, or staging failed and cleared what it wrote: the installer it is.
+            print(f"Update {offered} uses the installer, not in place: {e}")
+            return None
+
     def _on_downloaded(self, result):
         from PyReconstruct.modules.gui.utils import notifyConfirm
         self._pool = None
         self._parent._updater_pool = None
+        if result[0] == "inplace":
+            self._on_staged(result[1])
+            return
         sha, cs_status, expected, dest = result
 
         # The user backed out (Esc/X/Cancel) while the last bytes were arriving,
@@ -197,7 +229,38 @@ class UpdateDialog(QDialog):
         # hand off to the window's launch-on-close path
         self._parent._pending_installer = dest
         self._parent._pending_update_dir = self._tmpdir
+        self._parent._pending_inplace = None  # the installer replaces whatever was staged
         self._tmpdir = None  # ownership transferred; don't clean it up here
+        self.accept()
+
+    def _on_staged(self, pending):
+        """The update is staged in place: keep it for the quit and say so."""
+        from PyReconstruct.modules.datatypes.series_owner import app_display_name
+        self._cleanup()  # the installer's download folder, never used
+        if self._cancel.is_set() or not self.isVisible():
+            # Dismissed while staging finished. Nothing is armed, so the
+            # helper never starts for it, and the next staging clears it.
+            self.reject()
+            return
+        old_dir = getattr(self._parent, "_pending_update_dir", None)
+        if getattr(self._parent, "_pending_installer", None) and old_dir:
+            shutil.rmtree(old_dir, ignore_errors=True)
+        self._parent._pending_installer = None
+        self._parent._pending_update_dir = None
+        self._parent._pending_inplace = pending
+        self._progress.setVisible(False)
+        self._status.setText(f"The update is ready. It installs when you quit {app_display_name()}.")
+        self._status.setWordWrap(True)
+        self._install_btn.clicked.disconnect()
+        self._install_btn.clicked.connect(self._restart)
+        self._install_btn.setText("Restart Now")
+        self._install_btn.setEnabled(True)
+        self._later_btn.clicked.disconnect()
+        self._later_btn.clicked.connect(self.accept)
+        self._later_btn.setText("Later")
+
+    def _restart(self):
+        self.restart_now = True
         self.accept()
 
     def _on_error(self, err):

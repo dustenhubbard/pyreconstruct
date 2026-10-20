@@ -348,8 +348,12 @@ _SERIES_LOCK_HEARTBEAT = 7
 
 class MainWindow(QMainWindow):
 
-    def __init__(self, filename):
-        """Constructs a skeleton for an empty main window."""
+    def __init__(self, filename, staged_update=None):
+        """Constructs a skeleton for an empty main window.
+
+        ``staged_update`` is what an in-app restart hands on from the window
+        before (``stagedUpdate``), so the update still goes in at the quit.
+        """
         super().__init__() # initialize QMainWindow
 
         ## Catch all exceptions and display errors
@@ -390,6 +394,10 @@ class MainWindow(QMainWindow):
         self._updater_pool          =  None   # in-flight update guard
         self._pending_installer     =  None   # launched on the accepted close
         self._pending_update_dir    =  None
+        self._pending_inplace       =  None   # an update staged in place, swapped in at quit
+        if staged_update is not None:
+            from PyReconstruct.modules.backend.updater import inplace
+            self._pending_inplace = inplace.Pending(**staged_update)
         self.check_actions_enabled  =  False
         self.actions_initialized    =  False
 
@@ -5122,8 +5130,9 @@ class MainWindow(QMainWindow):
         dialog = UpdateDialog(self, info, channel)
         self.clearUpdateNotice()  # the update is open now; the notice is done
         # the dialog downloads + verifies, sets _pending_installer, and accepts;
-        # closing then launches the installer (see closeEvent).
-        if dialog.exec() and self._pending_installer:
+        # closing then launches the installer (see closeEvent). An update
+        # staged in place waits for the quit, unless the user picks Restart Now.
+        if dialog.exec() and (self._pending_installer or dialog.restart_now):
             self.close()
 
     def checkForUpdatesStartup(self):
@@ -5133,7 +5142,9 @@ class MainWindow(QMainWindow):
         and download nothing), gated to once per 24h via QSettings so it never burns
         the anonymous GitHub rate limit. Any failure is swallowed — a background
         convenience must never disrupt startup. On by default, and switchable
-        under Help > Automatically check for updates.
+        under Help > Automatically check for updates. An update staged in
+        place that the last quit put off is the one exception: the check runs
+        at once, and stages it again (``_restageDeferred``).
 
         The stamp is written *before* the check is dispatched, deliberately: a
         check that fails has still spent the day, so a refused connection or a
@@ -5144,7 +5155,12 @@ class MainWindow(QMainWindow):
             kind = install_kind()
             if kind not in ("frozen",) + REINSTALL_KINDS or self.series is None:
                 return
-            if not self.series.getOption("update_check_on_startup"):
+            # An update the last quit put off is staged again now, whatever
+            # the option or the stamp say: the user chose it, and this quit
+            # can put it in only if this session staged it.
+            from PyReconstruct.modules.backend.updater import inplace
+            deferred = inplace.deferred_version() if kind == "frozen" else None
+            if not deferred and not self.series.getOption("update_check_on_startup"):
                 return
             # A notice from an earlier launch comes back first, so it stays
             # up on the days the 24h throttle skips the check.
@@ -5167,7 +5183,7 @@ class MainWindow(QMainWindow):
             # checks. So anything ahead of now counts as stale -- the check runs
             # and rewrites the stamp, which heals the stored value in one launch.
             elapsed = time.time() - last
-            if 0 <= elapsed < 24 * 3600:
+            if 0 <= elapsed < 24 * 3600 and not deferred:
                 return
             settings.setValue("last_update_check_epoch", time.time())
             channel = pinned_channel()
@@ -5181,11 +5197,38 @@ class MainWindow(QMainWindow):
                 return
             self._runUpdateCheck(
                 channel,
-                on_result=lambda info: self._onStartupCheck(info, channel),
+                on_result=lambda info: (self._restageDeferred(info, channel, deferred) if deferred
+                                        else self._onStartupCheck(info, channel)),
                 on_error=lambda exc: None,  # silent on a background failure
             )
         except Exception:
             pass
+
+    def _restageDeferred(self, info, channel, version):
+        """Stage again the update the last quit put off, so this session's quit puts it in.
+
+        Off the GUI thread, as the dialog stages. If the feed now offers
+        another version, or staging fails, the check ends as any startup
+        check does, with the notice.
+        """
+        from PyReconstruct.modules.backend.updater import inplace
+        pool = ThreadPool()
+        self._updater_pool = pool
+        worker = pool.createWorker(lambda: inplace.stage_for_quit(info.get("release"), version))
+
+        def _staged(pending):
+            self._updater_pool = None
+            self._pending_inplace = pending
+
+        def _failed(err):
+            self._updater_pool = None
+            exc = err[1] if isinstance(err, (tuple, list)) and len(err) >= 2 else err
+            print(f"Update {version} not staged again: {exc}")
+            self._onStartupCheck(info, channel)
+
+        worker.signals.result.connect(_staged)
+        worker.signals.error.connect(_failed)
+        pool.start(worker)
 
     @staticmethod
     def _noteNothingToOffer(info, channel):
@@ -6038,6 +6081,18 @@ class MainWindow(QMainWindow):
         else:
             return self.field
 
+    def stagedUpdate(self):
+        """The update staged in place, as plain data for the window an in-app restart builds next.
+
+        Plain data, since the restart reloads the modules and ``Pending`` is a
+        new class after it. The plan keeps its session token, and the quit
+        still checks it against the plan on disk.
+        """
+        if self._pending_inplace is None:
+            return None
+        import dataclasses
+        return dataclasses.asdict(self._pending_inplace)
+
     def restart(self):
         self.restart_mainwindow = True
 
@@ -6061,6 +6116,7 @@ class MainWindow(QMainWindow):
         response = self.saveToJser(notify=True, close=True)
         if response == "cancel":
             event.ignore()
+            # an update staged in place stays staged for the next quit
             # a deferred update installer must NOT run if the user aborted the close
             if self._pending_installer:
                 self._cleanupUpdateDir(self._pending_update_dir)
@@ -6071,6 +6127,11 @@ class MainWindow(QMainWindow):
             # app instead of exiting (found 2026-08-28)
             self.restart_mainwindow = False
             return
+        # the series to reopen after an in-place update, read after the save,
+        # which gives a series saved for the first time here its path
+        reopen = None
+        if self.series is not None and not self.series.isWelcomeSeries():
+            reopen = self.series.jser_fp
         # the startup timers serve no window once the close is committed.
         # Left running, they fired on this window after a restart had built
         # the next one, or in the next test of a suite that closes windows
@@ -6090,6 +6151,29 @@ class MainWindow(QMainWindow):
                 QApplication.quit()
             except Exception as e:
                 notify(f"Could not launch the installer:\n{e}\n\nFind it at: {self._pending_installer}")
+        # or start the helper that swaps in an update staged in place, or with
+        # nothing staged, one that finishes an update a helper left part way.
+        # Not on an in-app restart: this process lives on, and the helper waits on it.
+        # The next window gets the staged update instead (run.py, stagedUpdate).
+        elif not self.restart_mainwindow:
+            from PyReconstruct.modules.backend.updater import inplace
+            try:
+                if self._pending_inplace:
+                    started = inplace.start_helper(self._pending_inplace, os.getpid(), reopen)
+                    if not started:
+                        print("Update not installed: the staged update changed after it was staged.")
+                else:
+                    # A launch-time restage still running (_restageDeferred)
+                    # is not waited for: a quit must not hang on a download.
+                    # That update misses this quit, but stays put off on
+                    # disk, and the next launch stages it again.
+                    started = inplace.start_recovery(os.getpid())
+                if started:
+                    QApplication.quit()
+            except Exception:
+                print("Update not installed: the update helper did not start.")
+                traceback.print_exc()
+            self._pending_inplace = None
         event.accept()
 
 

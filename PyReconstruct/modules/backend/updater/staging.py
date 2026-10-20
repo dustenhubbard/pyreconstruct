@@ -4,8 +4,11 @@ The app's half of an in-place update, before the hand-off at quit. The
 release's update archive and its tree.json are checked against the release's
 signed ``SHA256SUMS``, unpacked into ``new/`` in the staging folder next to
 the install, checked file by file against tree.json, and only then is
-``plan.json`` written, for ``apply.py`` to act on at quit. Nothing calls this
-yet (fork #435).
+``plan.json`` written, for ``apply.py`` to act on at quit. The installed
+helper, ``_updater/pyreconstruct-updater.exe``, is copied to ``helper/`` in
+the staging folder too, since a helper run from the install would keep the
+install folder from being renamed. ``backend/updater/inplace.py`` calls this
+and starts the helper.
 
 Any failure (a bad or missing signature, a hash or size that does not match,
 an archive entry that would land outside ``new/``, a full disk) clears what
@@ -26,6 +29,8 @@ from PyReconstruct.modules.backend.updater import updater as U
 PLATFORM = "windows-x86_64"
 CARRY = ["unins*.*"]  # the Inno Setup uninstaller stays with the install
 DOWNLOAD = "download"
+HELPER = "helper"
+HELPER_EXE = "pyreconstruct-updater.exe"
 # tree.json for a release build is under 1 MB (3,634 files); anything far bigger is not ours.
 _MAX_TREE_BYTES = 32 << 20
 
@@ -62,7 +67,7 @@ def _clear(staging):
     new/ beside it is one the helper refuses.
     """
     failed = []
-    for name in (A.PLAN, A.TREE, A.NEW, DOWNLOAD):
+    for name in (A.PLAN, A.TREE, A.NEW, DOWNLOAD, HELPER):
         try:
             A._remove(os.path.join(staging, name))
         except OSError as e:
@@ -72,18 +77,19 @@ def _clear(staging):
 
 
 def stage_update(release, *, install, app_name, flavor, from_version, pid=None,
-                 registry_key=None, trusted_keys=None, progress_cb=None, cancel_cb=None):
+                 registry_key=None, trusted_keys=None, progress_cb=None, cancel_cb=None,
+                 session=None):
     """Stage ``release``'s Windows payload for the install at ``install``. Returns the plan written.
 
     ``install`` is the install folder, ``app_name`` its name ("PyReconstruct"
-    or "PyReconstruct Dev"), and ``from_version`` the running version. Raises
-    :class:`StageError` when the update cannot be staged, and
-    :class:`UpdateCancelled` when ``cancel_cb`` stops the download; either
-    way nothing this run staged is left.
+    or "PyReconstruct Dev"), and ``from_version`` the running version.
+    ``session`` is written into plan.json as it is, so the app can tell the
+    plan it staged from one an earlier run left. Raises :class:`StageError`
+    when the update cannot be staged, and :class:`UpdateCancelled` when
+    ``cancel_cb`` stops the download; either way nothing this run staged is
+    left, and neither is a plan an earlier run staged.
     """
     version = U._tag_version(release)
-    if version is None:
-        raise StageError("the release has no version")
     staging = staging_dir(install, app_name)
     created = not os.path.lexists(staging)
     if _is_link(staging):
@@ -101,9 +107,12 @@ def stage_update(release, *, install, app_name, flavor, from_version, pid=None,
             # old/ may be the only copy of the install; the helper finishes or undoes that run
             raise StageError("an earlier update has not finished")
         try:
-            _clear(staging)
+            _clear(staging)  # first, so an earlier plan never outlives a refusal below
+            if version is None:
+                raise StageError("the release has no version")
             plan = _stage(release, str(version), staging, install, app_name, flavor,
-                          from_version, pid, registry_key, trusted_keys, progress_cb, cancel_cb)
+                          from_version, pid, registry_key, trusted_keys, progress_cb, cancel_cb,
+                          session)
         except BaseException as e:
             try:
                 _clear(staging)
@@ -126,7 +135,7 @@ def stage_update(release, *, install, app_name, flavor, from_version, pid=None,
 
 
 def _stage(release, version, staging, install, app_name, flavor, from_version, pid,
-           registry_key, trusted_keys, progress_cb, cancel_cb):
+           registry_key, trusted_keys, progress_cb, cancel_cb, session):
     archive_name, tree_name = payload_names(version, flavor)
     assets = {a.get("name"): a for a in release.get("assets") or [] if isinstance(a, dict)}
     if archive_name not in assets or tree_name not in assets:
@@ -192,6 +201,11 @@ def _stage(release, version, staging, install, app_name, flavor, from_version, p
     # write here can also write the per-user install itself, so signing it again
     # would not keep out anyone the install folder lets in.
     A.atomic_write_json(os.path.join(staging, A.TREE), tree)
+    helper = os.path.join(install, "_updater", HELPER_EXE)
+    if not os.path.isfile(helper):
+        raise StageError("the install has no update helper")
+    os.mkdir(os.path.join(staging, HELPER))
+    shutil.copy2(helper, os.path.join(staging, HELPER, HELPER_EXE))
     plan = {
         "format": A.FORMAT, "platform": "windows", "kind": "folder",
         "install": os.path.abspath(install), "app_name": app_name, "flavor": flavor,
@@ -199,6 +213,8 @@ def _stage(release, version, staging, install, app_name, flavor, from_version, p
         "exe": f"{app_name}.exe", "args": [], "selftest_args": ["--selftest"],
         "carry": list(CARRY), "registry_key": registry_key,
     }
+    if session is not None:
+        plan["session"] = session
     plan_path = os.path.join(staging, A.PLAN)
     A.atomic_write_json(plan_path, plan)
     try:
