@@ -2690,11 +2690,12 @@ class Section():
             field_y : float,
             radius=0.5,
             traces_in_view : list[Trace] = None,
-            include_hidden=False):
+            include_hidden=False,
+            trace_bounds : np.ndarray | None = None):
         """Find closest trace/ztrace to field coordinates in a given radius.
-        
+
         (Only meant for GUI use.)
-        
+
             Params:
                 field_x (float): x coordinate of search center
                 field_y (float): y coordinate of search center
@@ -2702,6 +2703,11 @@ class Section():
                 traces_in_view (list): the traces in the window viewed by the
                     user; None to check every trace on the section
                 include_hidden (bool): True if hidden traces can be returned
+                trace_bounds (np.ndarray): optional (n, 4) xmin, ymin, xmax,
+                    ymax of each of the n traces checked, before the section
+                    transform (NaN for none); traces whose box misses the
+                    search window are then skipped without reading their
+                    points
             Returns:
                 (tuple): the object closest to the point and the type
                 None if no trace points are found within the radius
@@ -2751,6 +2757,23 @@ class Section():
             # loop did. Hover (a buttonless mouse move) must never crash here.
             s_xmin = s_ymin = float("-inf")
             s_xmax = s_ymax = float("inf")
+
+        # With the bounds of every trace given, drop the traces whose box
+        # misses the search window in one array test: walking each trace's
+        # points for its box was most of a hover at the whole field. The
+        # loop's own test still runs on the rest, so this only has to keep
+        # every trace that test keeps: a NaN box is kept, and the window
+        # grows by a hair in case a bound is the nearest float64 to a point
+        # (an integer past 2**53), so the order and every tie stay the same.
+        if trace_bounds is not None and len(traces):
+            pad = 1e-9 * (1 + max(abs(s_xmin), abs(s_xmax), abs(s_ymin), abs(s_ymax)))
+            missed = (
+                (trace_bounds[:, 2] < s_xmin - pad) |
+                (trace_bounds[:, 0] > s_xmax + pad) |
+                (trace_bounds[:, 3] < s_ymin - pad) |
+                (trace_bounds[:, 1] > s_ymax + pad)
+            )
+            traces = [traces[i] for i in np.flatnonzero(~missed)]
 
         # iterate through all traces to get closest
         for trace in traces:
