@@ -218,16 +218,19 @@ class TraceLayer():
         # the traces outside it must not be picked. With every trace hidden,
         # none is on the screen to pick.
         if self.traces_in_view or self.roi_box is not None or self.traces_hidden:
-            traces_in_view = self.traces_in_view
+            traces = self.traces_in_view
         else:
-            traces_in_view = None
+            traces = self.section.tracesAsList()
 
+        # paintText asks on every paint; the store's bounds let findClosest
+        # skip the traces far from the mouse without reading their points
         closest, closest_type = self.section.findClosest(
             field_x,
             field_y,
             radius=radius,
-            traces_in_view=traces_in_view,
-            include_hidden=self.show_all_traces
+            traces_in_view=traces,
+            include_hidden=self.show_all_traces,
+            trace_bounds=self._rawBounds(traces) if traces else None,
         )
 
         # the list is from the last draw; the box may have moved since
@@ -698,6 +701,40 @@ class TraceLayer():
             bounds[nonempty, 2:] = np.maximum.reduceat(pts, starts)
         return dict(zip(rows, range(n))), counts, bounds
 
+    def _rawBounds(self, trace_list : list):
+        """The untransformed bounds of each trace, mostly from the store.
+
+        The store's bounds are kept for one store generation, which moves on
+        every trace add, remove and edit, undo and redo included. A row with
+        the trace's point count is trusted: code that edits a trace's points
+        outside the section's edit methods must call
+        section.resyncColumnarStore(). A trace with no row, or with another
+        point count than its row, takes its bounds from its own points.
+
+            Params:
+                trace_list (list): the traces
+            Returns:
+                (np.ndarray): (n, 4) xmin, ymin, xmax, ymax per trace (NaN for
+                    no points), or None when the section has no store
+        """
+        # a Section built without a store has none
+        columns = self.section._columns
+        if columns is None:
+            return None
+        key = (self.section, columns.generation)
+        if key != self._raw_bounds_key:
+            self._raw_bounds = self._storeBounds(columns)
+            self._raw_bounds_key = key
+
+        index, counts, bounds = self._raw_bounds
+        n = len(trace_list)
+        at = np.fromiter((index.get(t, -1) for t in trace_list), dtype=np.int64, count=n)
+        lengths = np.fromiter((len(t.points) for t in trace_list), dtype=np.int64, count=n)
+        b = bounds[at]
+        for i in np.flatnonzero(counts[at] != lengths):
+            b[i] = pointBounds(trace_list[i].points)
+        return b
+
     def _cullMask(self, trace_list : list, tform : Transform):
         """Which traces could reach the screen, without transforming their points.
 
@@ -715,17 +752,10 @@ class TraceLayer():
             Returns:
                 (np.ndarray): one bool per trace, or None to keep every trace
         """
-        # the store generation moves on every trace add, remove and edit,
-        # undo and redo included; a Section built without a store has none,
-        # and then nothing is culled
-        columns = self.section._columns
-        if columns is None or not trace_list:
+        # a Section built without a store has no bounds, and then nothing
+        # is culled
+        if not trace_list:
             return None
-        key = (self.section, columns.generation)
-        if key != self._raw_bounds_key:
-            self._raw_bounds = self._storeBounds(columns)
-            self._raw_bounds_key = key
-
         window_x, window_y, window_w, window_h = tuple(self.series.window)
         pixmap_w, pixmap_h = tuple(self.pixmap_dim)
         if window_w <= 0 or window_h <= 0 or pixmap_w <= 0 or pixmap_h <= 0:
@@ -733,17 +763,10 @@ class TraceLayer():
         margin_x = 2 * window_w / pixmap_w
         margin_y = 2 * window_h / pixmap_h
 
-        index, counts, bounds = self._raw_bounds
+        b = self._rawBounds(trace_list)
+        if b is None:
+            return None
         n = len(trace_list)
-        at = np.fromiter((index.get(t, -1) for t in trace_list), dtype=np.int64, count=n)
-        lengths = np.fromiter((len(t.points) for t in trace_list), dtype=np.int64, count=n)
-        b = bounds[at]
-        # a row with the trace's point count is trusted: code that edits a
-        # trace's points outside the section's edit methods must call
-        # section.resyncColumnarStore(). A trace with no row, or with another
-        # point count than its row, takes its bounds from its own points
-        for i in np.flatnonzero(counts[at] != lengths):
-            b[i] = pointBounds(trace_list[i].points)
         # the four corners of every box, one block of n per corner
         mapped = tform.mapPointsArray(np.concatenate((
             b[:, (0, 1)], b[:, (2, 1)], b[:, (0, 3)], b[:, (2, 3)]
