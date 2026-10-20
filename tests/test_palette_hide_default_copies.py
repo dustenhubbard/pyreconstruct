@@ -17,11 +17,15 @@ import shutil
 from copy import deepcopy
 
 import pytest
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtTest import QTest
 
 from PyReconstruct.modules.constants import build_flavor
 from PyReconstruct.modules.constants.traces import default_traces
 from PyReconstruct.modules.datatypes import Series, Trace
+from PyReconstruct.modules.gui.main.field_widget_5_mouse import SCISSORS
+from PyReconstruct.modules.gui.palette import mouse_palette
 from PyReconstruct.modules.gui.palette.default_rows import (
     isDefaultRow, legacyDefaultRow, shownButtonCount,
 )
@@ -107,6 +111,12 @@ def test_the_trim_stops_at_the_first_row_that_is_not_defaults():
 def test_a_part_row_at_the_end_hides_nothing():
     traces = _custom(20) + _legacy_row() + _legacy_row()[:5]
     assert shownButtonCount(traces) == 35
+
+
+def test_a_part_row_before_default_rows_hides_nothing():
+    # 45 buttons: the last 10 are a standard row, but the rows are not whole
+    traces = _custom(25) + _legacy_row() + _legacy_row()
+    assert shownButtonCount(traces) == 45
 
 
 @pytest.mark.parametrize("field, value", [
@@ -234,6 +244,94 @@ def test_editing_the_shown_button_changes_that_button(main_window, monkeypatch):
     mp.incrementPalette(True)  # active button only
     assert mw.series.palette_traces["palette1"][19].name == "d19_{02}"
     assert mw.series.palette_traces["palette1"][35].name == "blue$+"
+
+
+def _cut_a_trace(mw, qapp):
+    """Draw a square and pick it up with the scissors."""
+    field = mw.field
+    wx, wy, ww, wh = mw.series.window
+    side = min(ww, wh) * 0.2
+    x0, y0 = wx + ww * 0.3, wy + wh * 0.3
+    square = [(x0, y0), (x0 + side, y0), (x0 + side, y0 + side), (x0, y0 + side)]
+    field.newTrace(square, Trace("cut_me", (0, 255, 0), True),
+                   points_as_pix=False, reduce_points=False)
+    trace = [t for t in field.section.tracesAsList() if t.name == "cut_me"][0]
+    mw.mouse_palette.activateModeButton("Scissors")
+    qapp.processEvents()
+    assert field.mouse_mode == SCISSORS
+    x, y = [int(round(v)) for v in field.section_layer.traceToPix(trace)[0]]
+    QTest.mousePress(field, Qt.LeftButton, Qt.NoModifier, QPoint(x, y))
+    QTest.mouseRelease(field, Qt.LeftButton, Qt.NoModifier, QPoint(x, y))
+    qapp.processEvents()
+    assert field.is_scissoring
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("ending", ["finish", "cancel"])
+def test_a_scissors_cut_ends_on_the_shown_button(main_window, qapp, monkeypatch, ending):
+    monkeypatch.setattr(build_flavor, "is_dev_build", lambda: True)
+    mw = main_window
+    _open_with(mw, _dw09_palette(), index=35)
+    _cut_a_trace(mw, qapp)
+    if ending == "finish":
+        mw.field.lineRelease(override=True)
+    else:
+        mw.field.cancelScissors()
+    qapp.processEvents()
+    assert not mw.field.is_scissoring
+    assert mw.field.tracing_trace.name == "d19_lab"
+    assert mw.series.palette_index == ["palette1", 35]
+
+
+@pytest.mark.gui
+def test_syncing_defaults_reads_the_shown_button(main_window, monkeypatch):
+    # a custom column edit or a series undo syncs the trace being drawn
+    monkeypatch.setattr(build_flavor, "is_dev_build", lambda: True)
+    mw = main_window
+    traces = _dw09_palette()
+    defaults = {"groups": ["spines"], "user_columns": {"Stage": "draft"}}
+    traces[19].obj_defaults = deepcopy(defaults)
+    _open_with(mw, traces, index=35)
+    assert mw.field.tracing_trace.obj_defaults == defaults
+    mw.field.syncTracingDefaults()
+    assert mw.field.tracing_trace.name == "d19_lab"
+    assert mw.field.tracing_trace.obj_defaults == defaults
+
+
+class _OkUnchanged:
+    """The palette editor, closed with OK and nothing changed."""
+    def __init__(self, *args):
+        pass
+
+    def exec(self):
+        return {}, True
+
+
+@pytest.mark.gui
+def test_ok_in_the_palette_editor_keeps_a_hidden_index(main_window, monkeypatch):
+    monkeypatch.setattr(build_flavor, "is_dev_build", lambda: True)
+    monkeypatch.setattr(mouse_palette, "TracePaletteDialog", _OkUnchanged)
+    mw = main_window
+    _open_with(mw, _dw09_palette(), index=35)
+    mp = mw.mouse_palette
+    mp.modifyAllPaletteButtons()
+    assert mw.series.palette_index == ["palette1", 35]
+    assert mp.palette_buttons[19].isChecked()
+    assert sum(b.isChecked() for b in mp.palette_buttons) == 1
+    assert mp.label.text() == "d19_lab"
+    assert mw.field.tracing_trace.name == "d19_lab"
+
+
+@pytest.mark.gui
+def test_ok_in_the_palette_editor_keeps_a_shown_index(main_window, monkeypatch):
+    monkeypatch.setattr(build_flavor, "is_dev_build", lambda: True)
+    monkeypatch.setattr(mouse_palette, "TracePaletteDialog", _OkUnchanged)
+    mw = main_window
+    _open_with(mw, _dw09_palette(), index=7)
+    mw.mouse_palette.modifyAllPaletteButtons()
+    assert mw.series.palette_index == ["palette1", 7]
+    assert mw.mouse_palette.palette_buttons[7].isChecked()
+    assert mw.field.tracing_trace.name == "d07_lab"
 
 
 def _shortcut(mw, keys):

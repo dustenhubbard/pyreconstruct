@@ -569,7 +569,14 @@ class MousePalette():
         """
         for bpos, trace in enumerate(trace_list):
             self.modifyPaletteButton(bpos, trace)
-        self.activatePaletteButton(self.selectedPos())
+        # check and draw with the shown button without a click: a click
+        # writes palette_index, which a Dev build may have moved off a
+        # hidden button (selectedPos)
+        pos = self.selectedPos()
+        for i, button in enumerate(self.palette_buttons):
+            button.setChecked(i == pos)
+        self.mainwindow.changeTracingTrace(self.selectedTrace())
+        self.updateLabel()
     
     def resetPalette(self):
         """Reset the palette to the default traces."""

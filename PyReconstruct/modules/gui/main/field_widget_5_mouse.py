@@ -910,7 +910,7 @@ class FieldWidgetMouse(FieldWidgetData):
 
                 self.setMouseMode(SCISSORS)
                 self.setTracingTrace(
-                    self.series.palette_traces[self.series.palette_index[0]][self.series.palette_index[1]]
+                    self.mainwindow.mouse_palette.selectedTrace()
                 )
 
                 ## NOTE: saveState is usually invoked through newTrace; however,
@@ -960,7 +960,7 @@ class FieldWidgetMouse(FieldWidgetData):
 
         self.setMouseMode(SCISSORS)
         self.setTracingTrace(
-            self.series.palette_traces[self.series.palette_index[0]][self.series.palette_index[1]]
+            self.mainwindow.mouse_palette.selectedTrace()
         )
         self.generateView()
 
