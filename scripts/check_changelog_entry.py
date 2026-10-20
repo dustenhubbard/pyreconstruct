@@ -92,7 +92,9 @@ NEW_FRAGMENT_COMMAND = "python3 scripts/changelog_fragments.py new <category>"
 # The house style, written out rather than sampled from the file: the real
 # bullets are hard-wrapped, so no single line of one is a usable example and a
 # sampled one comes out cut off mid-sentence.
-ENTRY_SHAPE = "- **Short title, bold, ending in a period.** What changed and why."
+ENTRY_SHAPE = (
+    "- **What the user sees now, bold, ending in a period.** One short plain sentence."
+)
 
 
 def _is_fragment(path):

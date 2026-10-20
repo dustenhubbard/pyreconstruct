@@ -4,6 +4,7 @@ from typing import Optional, Union
 
 
 from PyReconstruct.modules.calc import traceGeometry
+from PyReconstruct.modules.constants import EXPORT_ERRORS
 
 from .columnar_store import TraceView
 from .object_ids import ObjectIds
@@ -884,7 +885,7 @@ class SeriesData():
 
         # export the csv file
         if out_fp:
-            with open(out_fp, "w") as f:
+            with open(out_fp, "w", errors=EXPORT_ERRORS) as f:
                 f.write(out_str)
         else:
             return out_str

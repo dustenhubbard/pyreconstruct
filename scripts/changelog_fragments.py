@@ -68,14 +68,8 @@ FRAGMENT_RE = re.compile(r"^(?P<slug>.+)\.(?P<category>[a-z]+)\.md$")
 # Files that live in the directory and are not fragments.
 NOT_FRAGMENTS = {"README.md"}
 
-TEMPLATE = """- **A short lead sentence naming the user-visible effect, in bold, \
-ending in a
-  period.** Then the mechanism, in ordinary prose: what the code was doing, why
-  that produced the effect above, and what it does now. Hard-wrap at 80
-  columns and indent continuation lines by two spaces.
-
-  A fragment may run to more than one paragraph. Indent the blank line's
-  neighbors by two spaces and the bullet stays a single list item.
+TEMPLATE = """- **Say what the user sees now, in about 12 words, ending in a period.** At
+  most one short plain sentence follows, such as where to find it.
 """
 
 

@@ -68,6 +68,15 @@ CREATE TABLE IF NOT EXISTS section_key(
 
 ## meta: "1" while the store holds a Save the .jser lacks (hybrid_store.py)
 META_DIRTY = "dirty"
+## meta: when the store last took a Save the .jser lacks (UTC)
+META_SAVED = "saved_utc"
+## meta: the sha256 of the .jser `writeJser` is writing, kept from just before
+## the file is put in place until the store records it (store_recovery.py).
+## A failed write and every later Save drop it: it names one Save's .jser
+META_WRITING = "writing_sha256"
+## meta: the .jser a store with no .jser of its own was written out to
+## (store_recovery.py); a later Save drops it
+META_WRITTEN_OUT = "written_out"
 
 
 class NotKept(Exception):
@@ -324,6 +333,8 @@ def _commit(series, held, keys : dict, tail : dict, written):
         raise NotKept(f"the log holds text the store cannot keep ({e.reason})") from e
 
     with store_open._transaction(store):
+        # a .jser a close was writing holds an earlier Save than this one
+        store.setMeta(META_WRITING, None)
         old_series = _opened(store.seriesData())
         new_series = _opened(fast_loads(series_bytes))
         content_changed = bool(changed or dropped) or fast_dumps(old_series) != fast_dumps(new_series)
@@ -370,6 +381,8 @@ def _commit(series, held, keys : dict, tail : dict, written):
             store.setMeta(META_DIRTY, 0)
         elif content_changed:
             store.setMeta(META_DIRTY, 1)
+            store.setMeta(META_SAVED, _now())
+            store.setMeta(META_WRITTEN_OUT, None)
 
 
 def _asOpened(index, store):
@@ -407,6 +420,11 @@ def _statsComplete(store) -> bool:
 def _trace_cols() -> str:
     from .hybrid_store import TRACE_COLS
     return TRACE_COLS
+
+
+def _now() -> str:
+    from .hybrid_store import _now as now
+    return now()
 
 
 def _opened(series_data : dict) -> dict:
@@ -633,10 +651,22 @@ def writeJser(series):
             index = None
         splice = JserSplice(index)
         hasher = JserHasher()
+
+        def write(f):
+            write_jser(hasher.wrap(f), sections, tail, splice=splice)
+            # before the file is put in place: a crash after that, before the
+            # record below, leaves a .jser the next open knows as this one
+            digest = hasher.digest()
+            if digest is not None:
+                _noteWriting(store, digest)
+
         try:
-            _atomicWrite(jser_fp, lambda f: write_jser(hasher.wrap(f), sections, tail, splice=splice))
-        except OSError as e:
-            series._surfaceSaveError(jser_fp, e)
+            _atomicWrite(jser_fp, write)
+        except BaseException as e:
+            # no .jser was put in place: nothing may be known as this one
+            _noteWriting(store, None)
+            if isinstance(e, OSError):
+                series._surfaceSaveError(jser_fp, e)
             raise
         series._jser_splice_index = new_index = splice.indexFor(jser_fp)
         digest = hasher.digest()
@@ -647,6 +677,7 @@ def writeJser(series):
                 store.recordJser(jser_fp)
                 store.setMeta(store_open.META_SHA, digest)
                 store.setMeta(store_open.META_SPLICE, store_open._spliceMeta(_asOpened(new_index, store)))
+                store.setMeta(META_WRITING, None)
                 store.setMeta(META_DIRTY, 0)
         except (store_open.StoreUnavailable, OSError, sqlite3.Error) as e:
             # the .jser holds the Save: only the store's record of it failed
@@ -655,3 +686,21 @@ def writeJser(series):
     finally:
         series._jser_save_running = False
         reporter.finish()
+
+
+def _noteWriting(store, digest):
+    """Keep the sha256 of the .jser about to be put in place (META_WRITING),
+    or drop it (None).
+
+    Only crash recovery reads it, so a store that cannot take it is noted in
+    the log and the write goes on: without it, a crash in that gap sets the
+    store aside rather than finishing its record (store_recovery.py).
+    """
+    from . import store_open
+
+    try:
+        with store_open._transaction(store):
+            store.setMeta(META_WRITING, digest)
+    except sqlite3.Error as e:
+        _raiseIfBug(e)
+        store_open.log_note(f"Local store did not note the .jser it is writing: {e}")

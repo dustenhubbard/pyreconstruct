@@ -9,6 +9,7 @@ import trimesh
 
 from .objects_3D import Surface, Spheres, Contours
 
+from PyReconstruct.modules.constants import EXPORT_ERRORS
 from PyReconstruct.modules.datatypes import Series
 from PyReconstruct.modules.gui.utils import notify
 
@@ -185,7 +186,7 @@ def export3DData(series: Series, obj_names: list, output_fp: str, notify_user: b
 
     if measured or not obj_names:
 
-        with open(output_fp, "w") as fp:
+        with open(output_fp, "w", errors=EXPORT_ERRORS) as fp:
             fp.write(csv_str)
 
         if notify_user:

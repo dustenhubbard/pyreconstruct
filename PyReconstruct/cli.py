@@ -55,6 +55,12 @@ def main():
         help='List the history rows PyReconstruct cannot read in a .jser file, '
              'or in every .jser file in a folder. Changes no file.',
     )
+    parser.add_argument(
+        '--export-local-copy', nargs='+', metavar='PATH', default=None,
+        help='Write a new .jser from a local copy of a series: a set-aside '
+             '.pyrstore file, or the .jser whose local copy holds work it lacks. '
+             'A second PATH names the new .jser. Replaces no file.',
+    )
 
     args = parser.parse_args()
 
@@ -66,6 +72,11 @@ def main():
 
         from PyReconstruct.modules.backend.func.check_history import checkHistory
         sys.exit(checkHistory(args.check_history, sys.stdout))
+
+    elif args.export_local_copy:
+
+        from PyReconstruct.modules.datatypes.store_recovery import exportMain
+        sys.exit(exportMain(args.export_local_copy))
 
     elif args.update:
 

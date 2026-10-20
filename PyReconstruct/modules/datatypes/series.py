@@ -13,7 +13,7 @@ from copy import copy, deepcopy
 from pathlib import Path
 from typing import Optional, Union
 
-from .log import LogSet, LogSetPair
+from .log import LogSet, LogSetPair, LOG_READ_ERRORS, LOG_WRITE_ERRORS
 from .ztrace import Ztrace
 from .section import Section
 from .trace import Trace, normalizeObjectName, copyObjDefaults
@@ -26,7 +26,7 @@ from .objects import Objects
 from .default_settings import default_settings, default_series_settings
 from .host_tree import HostTree
 from .filters import passesFilters
-from . import local_stores, store_open, store_save
+from . import local_stores, store_open, store_recovery, store_save
 
 from PyReconstruct.modules.calc import traceGeometry
 
@@ -48,6 +48,7 @@ from PyReconstruct.modules.constants import (
     JSER_SCHEMA_VERSION,
     SERIES_KEYS,
     default_traces,
+    EXPORT_ERRORS,
 )
 from PyReconstruct.modules.constants.jser_scan import (
     FileChanged,
@@ -1080,6 +1081,9 @@ class Series():
             series = Series(ser_filepath, sections)
             series.jser_fp = fp
             series.leave_open = True
+            # with the store switch on, the series takes its local store
+            if store_open.enabled():
+                store_recovery.resumed(series, notifier)
             return series
 
         # with the store switch on, through the local store (store_open.py)
@@ -1239,7 +1243,7 @@ class Series():
             # field, deliberately -- see `applyContourRenames` for why.
             log_str = source.log
             existing_log_fp = os.path.join(work_dir, "existing_log.csv")
-            with open(existing_log_fp, "w", encoding="utf-8") as f:
+            with open(existing_log_fp, "w", encoding="utf-8", errors=LOG_WRITE_ERRORS) as f:
                 f.write(log_str)
             if reporter.was_canceled():
                 return None, None, None
@@ -1762,7 +1766,7 @@ class Series():
         # See measurements/log_string_growth.py in the notes repo.
         existing_log_fp = os.path.join(self.hidden_dir, "existing_log.csv")
         if os.path.isfile(existing_log_fp):
-            with open(existing_log_fp, "r", encoding="utf-8", errors="replace") as f:
+            with open(existing_log_fp, "r", encoding="utf-8", errors=LOG_READ_ERRORS) as f:
                 existing_log = ""
                 for line in f.readlines():
                     if line.strip():
@@ -5467,7 +5471,7 @@ class Series():
                 (LogSet): the object containing the full history
         """
         csv_fp = os.path.join(self.hidden_dir, "existing_log.csv")
-        with open(csv_fp, "r", encoding="utf-8", errors="replace") as f:
+        with open(csv_fp, "r", encoding="utf-8", errors=LOG_READ_ERRORS) as f:
             log_list = f.readlines()[1:]
         full_hist = LogSet.fromList(log_list, skip_corrupt=skip_corrupt)
         for log in self.log_set.all_logs:
@@ -6067,7 +6071,7 @@ class Series():
             y = " ".join(str(y) for x, y in trace.points)
             csv_str += ",".join([name, color, fill, tags, x, y]) + "\n"
         
-        with open(fp, "w", encoding="utf-8") as f:
+        with open(fp, "w", encoding="utf-8", errors=EXPORT_ERRORS) as f:
             f.write(csv_str)
     
     def dropEmptyPalettes(self):
@@ -6168,7 +6172,7 @@ class Series():
 
         if output_fp:
 
-            with open(str(output_fp), "w") as f:
+            with open(str(output_fp), "w", errors=EXPORT_ERRORS) as f:
                 f.write(out_str)
 
         if notify:
