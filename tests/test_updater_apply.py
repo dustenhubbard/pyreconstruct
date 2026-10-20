@@ -19,6 +19,7 @@ import errno
 import json
 import os
 import plistlib
+import shutil
 import stat
 import subprocess
 import sys
@@ -1815,3 +1816,132 @@ def test_a_link_that_cannot_be_looked_at_is_never_made_writable(tmp_path, monkey
     finally:
         monkeypatch.undo()
         os.chmod(outside, 0o755)
+
+
+@pytest.mark.skipif(not shutil.rmtree.avoids_symlink_attacks,
+                    reason="shutil.rmtree goes by path here, as on Windows, the same as before")
+def test_a_folder_swapped_for_a_link_during_the_delete_never_empties_what_it_points_to(tmp_path, monkeypatch):
+    # Another program swaps download/sub for a link to an outside folder after the delete has
+    # looked at sub and just before it goes in. The delete must stop there.
+    outside = tmp_path / "outside"
+    _write(outside, "valuable.jser", "the user's series")
+    download = tmp_path / "download"
+    _write(download, "sub/staged.txt", "done with")
+    sub = download / "sub"
+    real_open, real_listdir, swapped = os.open, os.listdir, []
+
+    def swap(path):
+        if os.path.basename(os.fspath(path)) == "sub" and not swapped:
+            swapped.append(path)
+            os.rename(sub, tmp_path / "moved")
+            os.symlink(outside, sub, target_is_directory=True)
+
+    def open_(path, *a, **kw):  # how shutil.rmtree goes into a folder
+        swap(path)
+        return real_open(path, *a, **kw)
+
+    def listdir(path="."):
+        swap(path)
+        return real_listdir(path)
+
+    monkeypatch.setattr(os, "open", open_)
+    monkeypatch.setattr(os, "listdir", listdir)
+    try:
+        A._remove(str(download))
+    except OSError:
+        pass  # stopping at the link is the safe outcome
+    monkeypatch.undo()
+    assert swapped
+    with open(outside / "valuable.jser") as f:
+        assert f.read() == "the user's series"
+
+
+@pytest.mark.skipif(os.chmod not in os.supports_follow_symlinks, reason="this system cannot change a link itself")
+def test_an_item_swapped_for_a_link_before_its_chmod_never_changes_what_it_points_to(tmp_path, monkeypatch):
+    # The delete of a read-only item is refused, the retry looks at it, and then another
+    # program swaps it for a link. Making it writable must change only the link.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    os.chmod(outside, 0o555)
+    before = os.stat(outside).st_mode
+    download = tmp_path / "download"
+    _write(download, "item", "read-only")
+    item = download / "item"
+    real_unlink, real_lstat, refused, swapped = os.unlink, os.lstat, [], []
+
+    def unlink(path, *a, **kw):
+        if os.path.basename(os.fspath(path)) == "item" and not refused:
+            refused.append(path)
+            raise PermissionError(errno.EACCES, "refused", os.fspath(path))
+        return real_unlink(path, *a, **kw)
+
+    def lstat(path, *a, **kw):
+        st = real_lstat(path, *a, **kw)
+        if refused and not swapped and os.path.basename(os.fspath(path)) == "item":
+            swapped.append(path)
+            real_unlink(item)
+            os.symlink(outside, item, target_is_directory=True)
+        return st
+
+    monkeypatch.setattr(os, "unlink", unlink)
+    monkeypatch.setattr(os, "lstat", lstat)
+    try:
+        try:
+            A._remove(str(download))
+        except OSError:
+            pass
+        assert swapped
+        assert os.stat(outside).st_mode == before
+    finally:
+        monkeypatch.undo()
+        os.chmod(outside, 0o755)
+
+
+def test_a_cloud_synced_folder_is_deleted_like_any_folder(tmp_path, monkeypatch):
+    # OneDrive and other sync programs mark a folder as a reparse point that is not a link
+    # (IO_REPARSE_TAG_CLOUD). shutil.rmtree deletes it as a folder, and so must the delete here.
+    download = tmp_path / "download"
+    _write(download, "synced/staged.txt", "done with")
+    synced = os.path.normcase(str(download / "synced"))
+    real_lstat = os.lstat
+
+    class Cloud:
+        """``st`` marked as a cloud-sync reparse point, keeping the fields only some systems have."""
+
+        def __init__(self, st):
+            self.st = st
+            self.st_file_attributes = getattr(st, "st_file_attributes", 0) | stat.FILE_ATTRIBUTE_REPARSE_POINT
+            self.st_reparse_tag = 0x9000001A  # IO_REPARSE_TAG_CLOUD
+
+        def __getattr__(self, name):
+            return getattr(self.st, name)
+
+    def lstat(path, *a, **kw):
+        st = real_lstat(path, *a, **kw)
+        return Cloud(st) if os.path.normcase(os.fspath(path)) == synced else st
+
+    monkeypatch.setattr(os, "lstat", lstat)
+    A._remove(str(download))
+    monkeypatch.undo()
+    assert not os.path.lexists(download)
+
+
+def test_a_file_that_vanishes_during_the_delete_is_not_an_error(tmp_path, monkeypatch):
+    # A virus scanner or a second cleanup can delete a staged file first. As with
+    # Python 3.13's rmtree, the delete carries on.
+    download = tmp_path / "download"
+    _write(download, "payload.tar", "done with")
+    _write(download, "sub/gone.txt", "deleted by another program")
+    real_unlink, gone = os.unlink, []
+
+    def unlink(path, *a, **kw):
+        if os.path.basename(os.fspath(path)) == "gone.txt" and not gone:
+            gone.append(path)
+            real_unlink(path, *a, **kw)  # the other program gets there first
+        return real_unlink(path, *a, **kw)
+
+    monkeypatch.setattr(os, "unlink", unlink)
+    A._remove(str(download))
+    monkeypatch.undo()
+    assert gone
+    assert not os.path.lexists(download)

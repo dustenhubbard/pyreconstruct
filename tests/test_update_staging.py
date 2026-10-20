@@ -253,6 +253,26 @@ def test_a_plan_that_cannot_be_deleted_is_left_unusable(rel, monkeypatch):
     assert snapshot(rel.install) == rel.before
 
 
+def test_a_staged_file_that_vanishes_while_staging_clears_does_not_stop_staging(rel, monkeypatch):
+    # A virus scanner can delete an earlier run's staged file while the next run clears it.
+    rel.stage()
+    new = os.path.join(rel.staging, A.NEW)
+    vanishing = next(os.path.join(top, files[0]) for top, _, files in os.walk(new) if files)
+    unlink, gone = os.unlink, []
+
+    def scanner_first(path, *a, **kw):
+        if os.path.basename(os.fspath(path)) == os.path.basename(vanishing) and not gone:
+            gone.append(path)
+            unlink(path, *a, **kw)
+        return unlink(path, *a, **kw)
+
+    monkeypatch.setattr(os, "unlink", scanner_first)
+    plan = rel.stage()
+    monkeypatch.undo()
+    assert gone
+    assert plan["to_version"] == NEW_V
+
+
 def test_an_unfinished_swap_is_left_for_the_helper(rel):
     old = os.path.join(rel.staging, A.OLD)
     _write(old, "PyReconstruct.exe", "the only copy of the install")

@@ -30,6 +30,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import tarfile
 
@@ -86,6 +87,16 @@ def staging_dir(install, app_name):
     return os.path.join(os.path.dirname(os.path.abspath(install)), f".{app_name}-update")
 
 
+def _is_link(path):
+    """A symlink, or on Windows any reparse point such as a junction, which os.path.islink misses."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    return (stat.S_ISLNK(st.st_mode)
+            or bool(getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT))
+
+
 def _clear(staging):
     """Delete what a staging run writes, plan.json first. Raises StageError if any of it stays.
 
@@ -126,7 +137,7 @@ def stage_update(release, *, install, app_name, flavor, from_version, pid=None,
     version = U._tag_version(release)
     staging = staging_dir(install, app_name)
     created = not os.path.lexists(staging)
-    if A._is_link(staging):
+    if _is_link(staging):
         # a junction to the install would put the lock and every staged file inside it
         raise StageError("the staging folder is a link or a junction")
     os.makedirs(staging, exist_ok=True)
