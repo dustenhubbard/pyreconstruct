@@ -2651,7 +2651,7 @@ class Section():
             radius=0.5,
             traces_in_view : list[Trace] = None,
             include_hidden=False,
-            trace_bounds : np.ndarray = None):
+            trace_bounds : np.ndarray | None = None):
         """Find closest trace/ztrace to field coordinates in a given radius.
 
         (Only meant for GUI use.)
