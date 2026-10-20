@@ -851,6 +851,12 @@ class MacDev:
         macos_tree(self.build, NEW_V, links=os.name != "nt", app_name=MAC_APP, bundle_id=DEV_ID)
         if real:
             _sign_ad_hoc(self.build)
+            # what the release dmg carries: Finder flags on the bundle, which codesign's
+            # strict check refuses, and quarantine, as a downloaded dmg passes it on
+            subprocess.run(["xattr", "-wx", "com.apple.FinderInfo", "00" * 8 + "0400" + "00" * 22,
+                            self.build], check=True, timeout=60)
+            subprocess.run(["xattr", "-w", "com.apple.quarantine", "0081;00000000;Safari;",
+                            os.path.join(self.build, "Contents", "Info.plist")], check=True, timeout=60)
             dmg = tmp_path / "release.dmg"
             subprocess.run(["hdiutil", "create", "-quiet", "-srcfolder", str(build), "-volname", "Update",
                             "-fs", "HFS+", "-format", "UDZO", str(dmg)], check=True, timeout=300)
@@ -1115,7 +1121,7 @@ def test_a_real_dmg_is_attached_copied_checked_and_detached(tmp_path, monkeypatc
     assert plan["exe"] == f"Contents/MacOS/{MAC_APP}"
     assert not os.path.lexists(os.path.join(mac.staging, S.DOWNLOAD))
     assert not os.path.ismount(os.path.join(mac.staging, S.DOWNLOAD, S.MOUNT))
-    xattrs = subprocess.run(["xattr", new], capture_output=True, text=True).stdout.split()
+    xattrs = subprocess.run(["xattr", "-r", new], capture_output=True, text=True).stdout
     assert "com.apple.FinderInfo" not in xattrs and "com.apple.quarantine" not in xattrs
 
 
