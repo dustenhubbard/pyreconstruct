@@ -1686,7 +1686,7 @@ def test_a_link_that_will_not_delete_never_changes_what_it_points_to(tmp_path, m
     try:
         try:
             A._remove(str(link if alone else folder))
-        except PermissionError:
+        except OSError:
             pass  # where the system cannot change a link itself, the delete gives up instead
         assert refused
         assert os.stat(outside).st_mode == before
