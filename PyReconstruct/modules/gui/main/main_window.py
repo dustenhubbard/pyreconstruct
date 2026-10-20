@@ -3134,6 +3134,18 @@ class MainWindow(QMainWindow):
         # double check if user entered a valid backup directory
         if os.path.isdir(self.series.backupFolder(create=True)):
             fp = self.series.getBackupPath(comment)
+            if "\0" in fp:
+                # a NUL in the series code, the user name, the comment or a
+                # name part in Backup Settings: the copy would raise
+                # ValueError on the path
+                message = (
+                    "The backup file name holds a NUL character, so no backup was made.\n"
+                    "Check the name parts in File ▸ Backup ▸ Settings."
+                )
+                if from_saved and self.series.jser_fp:
+                    message += f"\nThe last Save is in {self.series.jser_fp}."
+                notify(message)
+                return
             if (
                 from_saved
                 and self.series.jser_fp
@@ -3262,8 +3274,26 @@ class MainWindow(QMainWindow):
             self.series.saveJser()
         except (OSError, SeriesSaveError):
             return False
-        self.backup(check_auto=True, from_saved=True)
+        self._backupSaved()
         return True
+
+    def _backupSaved(self):
+        """Make the automatic backup of the .jser just written.
+
+        A backup that fails is told and does not raise: the .jser holds the
+        Save, so a close or the turning off of the local copy goes on.
+
+            Returns:
+                (str): the backup file written, or None when none was.
+        """
+        try:
+            return self.backup(check_auto=True, from_saved=True)
+        except (OSError, ValueError) as e:
+            notify(
+                f"The backup could not be written: {e}\n"
+                f"The last Save is in {self.series.jser_fp}."
+            )
+            return None
 
     def _writeStoreSave(self, written=None) -> bool:
         """Write the .jser from the local store if it holds a Save the .jser lacks.
@@ -3274,8 +3304,7 @@ class MainWindow(QMainWindow):
             Params:
                 written (list): when given (turning the local copy off), the
                     files written are added to it: the .jser, then the backup
-                    file. A backup that fails then is told and does not raise:
-                    the .jser holds the Save, and the caller names it.
+                    file. The caller names them.
             Returns:
                 (bool): False if the .jser could not be written. The user was
                     told, and the series keeps its store and working folder,
@@ -3287,20 +3316,11 @@ class MainWindow(QMainWindow):
             store_save.writeJser(self.series)
         except (OSError, SeriesSaveError):
             return False
-        if written is None:
-            self.backup(check_auto=True, from_saved=True)
-            return True
-        written.append(self.series.jser_fp)
-        try:
-            backup = self.backup(check_auto=True, from_saved=True)
-        except OSError as e:
-            notify(
-                f"The backup could not be written: {e}\n"
-                f"The last Save is in {self.series.jser_fp}."
-            )
-            return True
-        if backup:
-            written.append(backup)
+        backup = self._backupSaved()
+        if written is not None:
+            written.append(self.series.jser_fp)
+            if backup:
+                written.append(backup)
         return True
 
     def exportJserNow(self):

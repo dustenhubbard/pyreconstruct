@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 from .helper import BrowseWidget, BorderedWidget
 
 from PyReconstruct.modules.datatypes import Series
+from PyReconstruct.modules.gui.utils import notify
 
 # room for the dialog's frame and the screen's edges
 SCREEN_SHARE = 0.85
@@ -305,6 +306,12 @@ class BackupDialog(QDialog):
         # if not os.path.isdir(bdir):
         #     notify("Please enter a valid directory.")
         #     return False
+        # a NUL in a backup file name would stop every backup
+        texts = [self.delimiter_le.text()]
+        texts += [w.text() for cb, w in self.widgets.values() if isinstance(w, QLineEdit)]
+        if any("\0" in t for t in texts):
+            notify("A backup name part holds a NUL character. Remove it to save these settings.")
+            return False
         if close: super().accept()
         return True
     
