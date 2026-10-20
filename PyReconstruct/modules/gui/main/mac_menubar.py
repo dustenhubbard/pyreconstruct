@@ -123,15 +123,26 @@ def rebuild(mainwindow):
 def claimKeys(mainwindow):
     """Give each new row its key only while no window action has that key.
 
-    A user binding wins: two actions on one key make Qt fire neither. The
-    shortcuts dialog remaps in place (MainWindow.resetShortcuts) with no
-    rebuild, so that calls this too.
+    A user binding wins: two actions on one key make Qt fire neither, and a
+    row key that starts a user sequence (Cmd+M under Cmd+M, A) fires on the
+    first press, so a shared start counts as taken. The shortcuts dialog
+    remaps in place (MainWindow.resetShortcuts) with no rebuild, so that
+    calls this too.
     """
     if _owner is not mainwindow:
         return
     for row, key in _own_keys:
-        taken = any(key in a.shortcuts() for a in mainwindow.actions())
+        taken = any(
+            _overlaps(key, seq)
+            for a in mainwindow.actions() for seq in a.shortcuts()
+        )
         row.setShortcut(QKeySequence() if taken else key)
+
+
+def _overlaps(key, seq) -> bool:
+    """True when one sequence equals the other or starts it."""
+    no = QKeySequence.SequenceMatch.NoMatch
+    return key.matches(seq) != no or seq.matches(key) != no
 
 
 def _hasMenus(mainwindow) -> bool:

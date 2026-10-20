@@ -330,6 +330,58 @@ def test_a_remap_takes_the_bar_keys_at_once(main_window, bar, local_series_setti
         assert row.shortcut() == key, path
 
 
+def test_a_sequence_that_starts_with_a_bar_key_takes_it(
+        main_window, bar, local_series_settings):
+    """The shortcuts dialog saves two-key sequences such as Cmd+M, A."""
+    local_series_settings(main_window)
+    bar = mac_menubar.globalBar()
+    def minimize():
+        return _rows(bar)["Window > Minimize"]
+
+    first = main_window.homeview_act.shortcut().toString()
+    main_window.resetShortcuts({"homeview_act": "Ctrl+M, A"})
+    assert minimize().shortcut().isEmpty()
+    # a rebuild makes new rows; they leave the key alone too
+    main_window.createMenuBar()
+    assert mac_menubar.globalBar() is bar
+    assert minimize().shortcut().isEmpty()
+    main_window.resetShortcuts({"homeview_act": first})
+    assert minimize().shortcut() == QKeySequence("Ctrl+M")
+
+
+def test_a_sequence_that_starts_elsewhere_leaves_the_bar_key(
+        main_window, bar, local_series_settings):
+    local_series_settings(main_window)
+    bar = mac_menubar.globalBar()
+    main_window.resetShortcuts({"homeview_act": "Ctrl+K, M"})
+    assert main_window.homeview_act.shortcut() == QKeySequence("Ctrl+K, M")
+    assert _rows(bar)["Window > Minimize"].shortcut() == QKeySequence("Ctrl+M")
+
+
+def test_cmd_m_a_runs_the_user_action(main_window, bar, qapp, local_series_settings):
+    """On the real window with the bar shown, the user's sequence fires."""
+    local_series_settings(main_window)
+    bar = mac_menubar.globalBar()
+    main_window.resetShortcuts({"homeview_act": "Ctrl+M, A"})
+    fired = []
+    main_window.homeview_act.triggered.connect(lambda *_: fired.append("homeview"))
+    _rows(bar)["Window > Minimize"].triggered.connect(
+        lambda *_: fired.append("minimize"))
+    bar.show()
+    main_window.activateWindow()
+    main_window.field.setFocus()
+    qapp.processEvents()
+    try:
+        QTest.keyClick(main_window.field, Qt.Key_M, Qt.ControlModifier)
+        QTest.keyClick(main_window.field, Qt.Key_A)
+        qapp.processEvents()
+    finally:
+        bar.hide()
+        QTest.keyRelease(main_window, Qt.Key_Control)
+        qapp.processEvents()
+    assert fired == ["homeview"]
+
+
 # --- one trigger per key -------------------------------------------------------
 
 def test_no_two_actions_share_a_key(main_window, bar):
