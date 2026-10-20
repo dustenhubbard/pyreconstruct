@@ -19,8 +19,10 @@ from PySide6.QtGui import (
 from .quick_dialog import QuickDialog
 from .backup import BackupDialog
 from .autoseg_palette import AutosegColorsWidget
+from .local_store_option import LocalStoreOptionWidget
 
 from PyReconstruct.modules.datatypes import Series
+from PyReconstruct.modules.constants import build_flavor
 from PyReconstruct.modules.backend.func.utils import (
     zarr_worker_count, MAX_ZARR_WORKERS,
 )
@@ -173,6 +175,11 @@ class AllOptionsDialog(QDialog):
             "Backup": [
                 ["backup"],
             ],
+            # the local copy is not a backup (cleanup may remove it), so it
+            # gets its own tab, and only a Dev build has one
+            "Files": [
+                ["local_store"],
+            ],
             "Lists": [
                 ["object_columns"],
                 ["trace_columns"],
@@ -181,6 +188,9 @@ class AllOptionsDialog(QDialog):
                 ["flag_columns"],
             ]
         }
+
+        if "local_store" not in self.all_widgets:
+            del tab_structure["Files"]
 
         for tab_name, structure, in tab_structure.items():
             widget = QWidget(self)
@@ -595,6 +605,12 @@ class AllOptionsDialog(QDialog):
         # backup
         backup_widget = BackupDialog(self, self.series, include_confirm=False)
         self.addOptionWidget("backup", backup_widget)
+
+        # the local store's setting and cleanup button, Dev builds only
+        if build_flavor.is_dev_build():
+            self.addOptionWidget(
+                "local_store", LocalStoreOptionWidget(self, self.series, use_defaults)
+            )
     
     def addOptionWidget(self, name : str, structure : list, setOption=None, grid=False):
         """Add a widget to the all_widgets dictionary

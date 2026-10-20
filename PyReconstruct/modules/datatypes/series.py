@@ -26,7 +26,7 @@ from .objects import Objects
 from .default_settings import default_settings, default_series_settings
 from .host_tree import HostTree
 from .filters import passesFilters
-from . import store_open, store_recovery, store_save
+from . import local_stores, store_open, store_recovery, store_save
 
 from PyReconstruct.modules.calc import traceGeometry
 
@@ -1057,6 +1057,11 @@ class Series():
                 (Series): the series object created from the jser, or None if
                     the user declined the object merge
         """
+        use_store = store_open.enabled()
+        if not use_store:
+            # one look for this series' local store: work in it is named
+            local_stores.noteWorkAtOpen(fp, notifier)
+
         # check for existing hidden folder
         sdir = os.path.dirname(fp)
         sname = os.path.basename(fp)
@@ -1082,7 +1087,7 @@ class Series():
             return series
 
         # with the store switch on, through the local store (store_open.py)
-        if store_open.enabled():
+        if use_store:
             return store_open.openJser(fp, progress, notifier)
         return Series._unpackJser(fp, progress, notifier)[0]
 

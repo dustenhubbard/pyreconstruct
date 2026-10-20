@@ -1,8 +1,9 @@
 """Open a series from its local store (hybrid_store.py), behind a switch.
 
-Turned on by ``PYRECON_HYBRID_STORE=1`` and by nothing else; off, no code here
-runs and no store is made. With it on, `Series.openJser` does this when there
-is no working folder to resume:
+Turned on by ``PYRECON_HYBRID_STORE=1``, or, when that is not set, by the
+setting a Dev build shows (local_stores.py); off, no code here runs and no
+store is made. With it on, `Series.openJser` does this when there is no
+working folder to resume:
 
   * The store holds this .jser (the same bytes, by sha256, as when it was
     imported) and the object-list numbers of its last import: the open
@@ -44,10 +45,9 @@ from PyReconstruct.modules.constants.fast_json import stdlib_dumps
 from PyReconstruct.modules.constants.jser_splice import SpliceIndex, _stat_key, section_digest
 
 from . import store_save
-from .hybrid_store import HybridStore, storePaths
+from .hybrid_store import HybridStore, _now, storePaths
+from .local_stores import ENV_SWITCH, META_OPENED, enabled  # noqa: F401  (Series.openJser)
 from .network_folder import networkFileSystem
-
-ENV_SWITCH = "PYRECON_HYBRID_STORE"
 
 ## The object-list numbers of one section, a blob per field. tags and colors:
 ## the section's distinct values (stdlib JSON, which reads back any value a
@@ -80,11 +80,6 @@ HASH_CHUNK = 8 << 20
 
 class StoreUnavailable(Exception):
     """The local store cannot be used for this open; open the .jser as today."""
-
-
-def enabled() -> bool:
-    """True when the store switch is on."""
-    return os.environ.get(ENV_SWITCH) == "1"
 
 
 def log_note(message : str):
@@ -303,6 +298,8 @@ class StoreForOpen():
             raise StoreUnavailable(str(e)) from e
         try:
             store.con.execute(STATS_SCHEMA)
+            # for cleanup, which removes a clean store not opened for a while
+            store.setMeta(META_OPENED, _now())
             return StoreForOpen(store, jser_fp)
         except (OSError, sqlite3.Error) as e:
             _raiseIfBug(e)
