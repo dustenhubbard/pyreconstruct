@@ -315,7 +315,7 @@ def launch(main_window, dev, monkeypatch):  # noqa: F811
     stamp = QSettings(*MW.domain_for("last_update_check_epoch"))
     checks = []
 
-    def run(feed=None, error=None):
+    def run(feed=None, error=None, window=None, last_check=None):
         def check(channel):
             checks.append(channel)
             if error:
@@ -323,8 +323,8 @@ def launch(main_window, dev, monkeypatch):  # noqa: F811
             return feed or {"asset": {"name": "x"}, "release": dev.rel.release(), "status": "newer",
                             "remote_version": NEW_V, "local_version": OLD_V}
         monkeypatch.setattr(MW, "check_for_update", check)
-        stamp.setValue("last_update_check_epoch", time.time())
-        main_window.checkForUpdatesStartup()
+        stamp.setValue("last_update_check_epoch", time.time() if last_check is None else last_check)
+        (window or main_window).checkForUpdatesStartup()
         return checks
 
     yield run
@@ -387,6 +387,100 @@ def test_a_plan_an_earlier_session_staged_never_reaches_the_helper(
     assert os.path.isfile(os.path.join(dev.rel.staging, A.PLAN))  # still on disk, and left alone
     assert main_window.close() is True
     assert dev.started == [] and quit_calls == []
+
+
+@pytest.mark.parametrize("status", ["updated", "interrupted", "rolled_back"])
+def test_a_run_that_was_not_put_off_is_not_staged_again(main_window, dev, quit_calls, launch, status):  # noqa: F811
+    """Only a deferral is staged again. Each result here is the deferral's own record with
+    another status, so only the status tells them apart (rolled_back with no installer offer,
+    which the helper never writes, to test the status alone)."""
+    dev.stage()
+    result = _quit_with_the_install_held(dev)
+    A.atomic_write_json(os.path.join(dev.rel.staging, A.RESULT), dict(result, status=status))
+
+    assert I.deferred_version(dev.install) is None
+    assert launch() == []  # the day's check is done, and nothing bypasses it
+    assert main_window._pending_inplace is None
+    assert main_window.close() is True
+    assert dev.started == [] and quit_calls == []
+
+
+def test_a_deferred_update_is_staged_again_with_startup_checks_off(
+        main_window, dev, quit_calls, launch, local_series_settings):  # noqa: F811
+    """The user already chose that update, so the option does not hold it back."""
+    local_series_settings(main_window).setOption("update_check_on_startup", False)
+    dev.stage()
+    _quit_with_the_install_held(dev)
+
+    assert len(launch()) == 1
+    pending = main_window._pending_inplace
+    assert pending is not None and I.still_staged(pending)
+    assert main_window.close() is True
+    (argv, kw), = dev.started
+    assert argv[:2] == [I.helper_path(pending), pending.staging]
+    assert quit_calls == ["quit"]
+
+
+def test_with_startup_checks_off_a_plain_startup_check_stays_off(
+        main_window, dev, launch, local_series_settings):  # noqa: F811
+    local_series_settings(main_window).setOption("update_check_on_startup", False)
+
+    assert launch(last_check=0) == []  # no deferral, and a check long overdue
+    assert main_window._pending_inplace is None
+
+
+def test_a_quit_while_the_launch_restage_runs_misses_it_and_the_next_launch_installs_it(
+        main_window, series_jser, dev, quit_calls, launch, monkeypatch):  # noqa: F811
+    """The quit does not wait for the restage (a known limit): nothing starts, the deferral
+    stays on disk, a plan the restage writes late never reaches a helper, and the next
+    session stages it again and puts it in at its quit."""
+    import sys
+    from PyReconstruct.modules.gui.main import MainWindow
+    from PyReconstruct.modules.gui.main import main_window as MW
+    pools = []
+
+    def pool():  # the feed check runs at once, the restage after it waits
+        pools.append(HeldPool() if pools else InlinePool())
+        return pools[-1]
+
+    monkeypatch.setattr(MW, "ThreadPool", pool)
+    dev.stage()
+    _quit_with_the_install_held(dev)
+
+    assert len(launch()) == 1
+    _, restage = pools
+    assert restage.started and main_window._updater_pool is restage
+    assert main_window._pending_inplace is None
+    assert main_window.close() is True  # while the restage runs
+    assert dev.started == [] and quit_calls == []
+
+    restage.finish()  # the restage ends after the close: it arms only the closed window
+    late = main_window._pending_inplace
+    assert late is not None and I.still_staged(late)
+    main_window._pending_inplace = None  # the fixture's own close starts nothing
+    assert dev.started == []
+    assert I.deferred_version(dev.install) == NEW_V  # nothing lost
+
+    monkeypatch.setattr(MW, "ThreadPool", InlinePool)
+    hook = sys.excepthook
+    nxt = MainWindow(str(series_jser))
+    nxt._captureListLayout = lambda: None
+    try:
+        assert len(launch(window=nxt)) == 2
+        pending = nxt._pending_inplace
+        assert pending is not None and I.still_staged(pending)
+        assert pending.plan["session"] != late.plan["session"]
+        assert nxt.close() is True
+    finally:
+        sys.excepthook = hook
+        nxt._pending_inplace = None
+        nxt.series.modified = False
+        if nxt.isVisible():
+            nxt.close()
+        nxt.deleteLater()
+    (argv, kw), = dev.started
+    assert argv[:4] == [I.helper_path(pending), pending.staging, "--pid", str(os.getpid())]
+    assert quit_calls == ["quit"]
 
 
 def test_a_pending_installer_still_opens_the_installer(main_window, dev, quit_calls, monkeypatch, tmp_path):  # noqa: F811
@@ -553,6 +647,16 @@ class InlinePool:
             return
         for slot in self.slots["result"]:
             slot(value)
+
+
+class HeldPool(InlinePool):
+    """A thread pool whose one job runs only when the test calls :meth:`finish`."""
+
+    def start(self, worker):
+        self.started = True
+
+    def finish(self):
+        InlinePool.start(self, None)
 
 
 def test_the_download_worker_stages_in_place_and_skips_the_installer(qapp, dev, monkeypatch):  # noqa: F811

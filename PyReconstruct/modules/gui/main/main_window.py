@@ -6072,6 +6072,10 @@ class MainWindow(QMainWindow):
                     if not started:
                         print("Update not installed: the staged update changed after it was staged.")
                 else:
+                    # A launch-time restage still running (_restageDeferred)
+                    # is not waited for: a quit must not hang on a download.
+                    # That update misses this quit, but stays put off on
+                    # disk, and the next launch stages it again.
                     started = inplace.start_recovery(os.getpid())
                 if started:
                     QApplication.quit()
