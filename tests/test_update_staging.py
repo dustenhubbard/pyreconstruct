@@ -1170,3 +1170,36 @@ def test_a_disk_image_that_will_not_detach_is_never_deleted_through(tmp_path, mo
     finally:
         monkeypatch.setattr(subprocess, "run", run)
         run(["hdiutil", "detach", mount, "-force"], capture_output=True, timeout=120)
+
+
+@needs_macos
+def test_a_disk_image_mounted_elsewhere_in_staging_is_never_deleted_through(tmp_path, monkeypatch):
+    # another program's image, not the one staging attaches at download/mnt
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    before = os.stat(outside).st_mode
+    mac = MacDev(tmp_path, monkeypatch, real=True)
+    image = tmp_path / "other.dmg"
+    subprocess.run(["hdiutil", "create", "-quiet", "-size", "2m", "-fs", "HFS+", "-volname", "Other",
+                    "-layout", "NONE", str(image)], check=True, timeout=120)
+    mount = os.path.join(mac.staging, S.DOWNLOAD, "inspection")
+    os.makedirs(mount)
+    subprocess.run(["hdiutil", "attach", "-nobrowse", "-noautoopen", "-mountpoint", mount, str(image)],
+                   check=True, capture_output=True, timeout=120)
+    try:
+        _write(mount, "kept.txt", "on the other disk")
+        os.symlink(outside, os.path.join(mount, "Applications"))
+        with pytest.raises(S.StageError, match="mounted"):
+            S.stage_update(mac.release(), install=mac.install, app_name=MAC_APP, flavor="dev",
+                           from_version=OLD_V, trusted_keys=[TEST_PUB], platform=MAC, bundle_id=DEV_ID,
+                           requirement=f'identifier "{DEV_ID}"')
+        assert os.path.ismount(mount)
+        with open(os.path.join(mount, "kept.txt")) as f:
+            assert f.read() == "on the other disk"
+        assert os.path.islink(os.path.join(mount, "Applications"))
+        assert os.stat(outside).st_mode == before
+        assert not os.path.lexists(os.path.join(mac.staging, A.PLAN))
+        assert not os.path.lexists(os.path.join(mac.staging, A.NEW_APP))
+        assert snapshot(mac.install) == mac.before
+    finally:
+        subprocess.run(["hdiutil", "detach", mount, "-force"], capture_output=True, timeout=120)

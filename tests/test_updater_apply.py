@@ -1693,3 +1693,118 @@ def test_a_link_that_will_not_delete_never_changes_what_it_points_to(tmp_path, m
     finally:
         monkeypatch.undo()
         os.chmod(outside, 0o755)
+
+
+def _another_disk(monkeypatch, at, how):
+    """Make the folder ``at`` look like a disk mounted there: by its device number alone, or as a mount point.
+
+    ``device`` hides every mount point, so it tests the device check on its own
+    (on POSIX ``ismount`` compares device numbers too).
+    """
+    target = os.path.normcase(os.path.abspath(at))
+    real_lstat, real_ismount = os.lstat, os.path.ismount
+
+    def here(path):
+        return os.path.normcase(os.path.abspath(os.fspath(path))) == target
+
+    def lstat(path, *a, **kw):
+        st = real_lstat(path, *a, **kw)
+        if how == "device" and here(path):
+            return os.stat_result((st.st_mode, st.st_ino, st.st_dev + 1) + tuple(st)[3:])
+        return st
+
+    monkeypatch.setattr(os, "lstat", lstat)
+    monkeypatch.setattr(os.path, "ismount", lambda p: how == "mount" and (here(p) or real_ismount(p)))
+
+
+@pytest.mark.parametrize("how,where", [("device", "inside"), ("mount", "inside"), ("mount", "top")])
+def test_a_delete_never_goes_onto_another_disk(tmp_path, monkeypatch, how, where):
+    download = tmp_path / "download"
+    _write(download, "payload.tar", "done with")
+    _write(download, "other/kept.txt", "on the other disk")
+    _another_disk(monkeypatch, download / "other" if where == "inside" else download, how)
+    with pytest.raises(OSError) as e:
+        A._remove(str(download))
+    monkeypatch.undo()
+    assert e.value.errno == errno.EXDEV
+    with open(download / "other" / "kept.txt") as f:
+        assert f.read() == "on the other disk"
+
+
+def test_a_drive_mounted_on_a_link_is_left_mounted(tmp_path, monkeypatch):
+    # On Windows a drive mounted in a folder is a reparse point; removing it would unmount the drive.
+    outside = tmp_path / "outside"
+    _write(outside, "kept.txt", "on the other disk")
+    download = tmp_path / "download"
+    download.mkdir()
+    link = download / "drive"
+    _link_to(outside, link)
+    _another_disk(monkeypatch, link, "mount")
+    try:
+        with pytest.raises(OSError) as e:
+            A._remove(str(download))
+        monkeypatch.undo()
+        assert e.value.errno == errno.EXDEV
+        assert os.path.lexists(link)
+        assert os.path.exists(outside / "kept.txt")
+    finally:
+        monkeypatch.undo()
+        if os.name == "nt" and os.path.lexists(link):
+            os.rmdir(link)  # the junction only
+
+
+@pytest.mark.parametrize("kind", ["symlink", "junction"])
+def test_a_link_in_a_tree_is_deleted_but_never_what_it_points_to(tmp_path, kind):
+    outside = tmp_path / "outside"
+    _write(outside, "kept.txt", "outside staging")
+    folder = tmp_path / "download"
+    folder.mkdir()
+    link = folder / "Applications"
+    if kind == "junction":
+        if os.name != "nt":
+            pytest.skip("junctions are Windows only")
+        import _winapi
+        _winapi.CreateJunction(str(outside), str(link))
+    else:
+        _link_to(outside, link)
+    A._remove(str(folder))
+    assert not os.path.lexists(folder)
+    with open(outside / "kept.txt") as f:
+        assert f.read() == "outside staging"
+
+
+@pytest.mark.parametrize("alone", [False, True], ids=["in-a-folder", "alone"])
+def test_a_link_that_cannot_be_looked_at_is_never_made_writable(tmp_path, monkeypatch, alone):
+    # The delete is refused, and then lstat fails too: with no telling whether it is a link,
+    # a chmod could reach through it to the folder it names.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    os.chmod(outside, 0o555)
+    before = os.stat(outside).st_mode
+    folder = tmp_path / "download"
+    folder.mkdir()
+    link = folder / "Applications"
+    _link_to(outside, link)
+    real_unlink, real_lstat, refused = os.unlink, os.lstat, []
+
+    def unlink(path, *a, **kw):
+        if os.path.basename(os.fspath(path)) == "Applications" and not refused:
+            refused.append(path)
+            raise PermissionError(errno.EACCES, "refused", os.fspath(path))
+        return real_unlink(path, *a, **kw)
+
+    def lstat(path, *a, **kw):
+        if refused and os.path.basename(os.fspath(path)) == "Applications":
+            raise PermissionError(errno.EACCES, "cannot look", os.fspath(path))
+        return real_lstat(path, *a, **kw)
+
+    monkeypatch.setattr(os, "unlink", unlink)
+    monkeypatch.setattr(os, "lstat", lstat)
+    try:
+        with pytest.raises(OSError):
+            A._remove(str(link if alone else folder))
+        assert refused
+        assert os.stat(outside).st_mode == before
+    finally:
+        monkeypatch.undo()
+        os.chmod(outside, 0o755)

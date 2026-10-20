@@ -68,6 +68,7 @@ its bundle moves).
 """
 
 import argparse
+import errno
 import fnmatch
 import hashlib
 import json
@@ -256,14 +257,18 @@ def _sha256(path):
     return h.hexdigest()
 
 
+def _links(st):
+    """Whether the ``os.lstat`` result ``st`` is a symlink, or on Windows any reparse point such as a junction."""
+    return (stat.S_ISLNK(st.st_mode)
+            or bool(getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT))
+
+
 def _is_link(path):
     """A symlink, or on Windows any reparse point such as a junction, which os.path.islink misses."""
     try:
-        st = os.lstat(path)
+        return _links(os.lstat(path))
     except OSError:
         return False
-    return (stat.S_ISLNK(st.st_mode)
-            or bool(getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT))
 
 
 def _make_writable(path):
@@ -271,9 +276,14 @@ def _make_writable(path):
 
     A plain ``os.chmod`` on a link changes what the link points to, which can
     be anywhere (a dmg's ``Applications`` link is ``/Applications``), so a link
-    is changed only where the system can change the link itself.
+    is changed only where the system can change the link itself, and a path
+    that cannot be looked at is not changed at all.
     """
-    if not _is_link(path):
+    try:
+        link = _links(os.lstat(path))
+    except OSError:
+        return False
+    if not link:
         os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
     elif os.chmod in os.supports_follow_symlinks:
         os.chmod(path, stat.S_IWRITE | stat.S_IREAD, follow_symlinks=False)
@@ -282,25 +292,43 @@ def _make_writable(path):
     return True
 
 
+def _retry_writable(func, path):
+    """``func(path)``, once more after making ``path`` writable if it is refused."""
+    try:
+        return func(path)
+    except PermissionError:
+        if not _make_writable(path):
+            raise
+        return func(path)
+
+
 def _remove(path):
-    """Delete a file, a link, or a whole tree. Read-only files on Windows are made writable first."""
+    """Delete a file, a link, or a whole tree. Read-only files on Windows are made writable first.
+
+    A tree is deleted only on the volume it starts on, and no link in it is
+    followed. A disk image or drive mounted anywhere in it, or at ``path``
+    itself, raises OSError and is left as it is, with the folders above it.
+    """
     if not os.path.lexists(path):
         return
+    st = os.lstat(path)
+    _remove_entry(path, st, st.st_dev)
 
-    def _writable_and_retry(func, p, exc_info):
-        if not _make_writable(p):
-            raise exc_info[1]
-        func(p)
 
-    if os.path.isdir(path) and not _is_link(path):
-        shutil.rmtree(path, onerror=_writable_and_retry)
-    else:
-        try:
-            os.unlink(path)
-        except PermissionError:
-            if not _make_writable(path):
-                raise
-            os.unlink(path)
+def _remove_entry(path, st, dev):
+    """Delete ``path``, whose ``os.lstat`` is ``st``, and stop at any folder not on the volume ``dev``."""
+    link = _links(st)
+    folder = stat.S_ISDIR(st.st_mode) and not link
+    # ismount also finds a drive mounted in a folder on Windows, which is a reparse point
+    if (folder and st.st_dev != dev) or ((folder or link) and os.path.ismount(path)):
+        raise OSError(errno.EXDEV, "a disk is mounted here, so it was left", path)
+    if not folder:
+        _retry_writable(os.unlink, path)
+        return
+    for name in _retry_writable(os.listdir, path):
+        p = os.path.join(path, name)
+        _remove_entry(p, os.lstat(p), dev)  # an entry that cannot be looked at stops the delete
+    _retry_writable(os.rmdir, path)
 
 
 def _trim_log(path, limit):
