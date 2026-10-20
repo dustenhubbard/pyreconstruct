@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from datetime import datetime
 
-from PyReconstruct.modules.constants import getDateTime, remove_days_from_today
+from PyReconstruct.modules.constants import EXPORT_ERRORS, getDateTime, remove_days_from_today
 
 from .filters import passesFilters
 
@@ -659,7 +659,7 @@ class LogSet():
 
         # The exported file is for other programs, so a lone surrogate goes
         # there as the text \ud800 and the file stays valid UTF-8.
-        with storage_log.open("a", encoding="utf-8", errors="backslashreplace") as external_store, \
+        with storage_log.open("a", encoding="utf-8", errors=EXPORT_ERRORS) as external_store, \
                 new_log.open("a", encoding="utf-8", errors=LOG_WRITE_ERRORS) as new:
 
             with existing_log.open("r", encoding="utf-8", errors=LOG_READ_ERRORS) as log:

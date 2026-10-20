@@ -9,7 +9,7 @@ from .transform import Transform
 from .points import Points
 
 from PyReconstruct.modules.calc import centroid, distance, feret
-from PyReconstruct.modules.constants import blank_palette_contour
+from PyReconstruct.modules.constants import blank_palette_contour, exportText
 from PyReconstruct.modules.calc import point_list_2_pix
 
 from PyReconstruct.modules.datatypes_legacy import (
@@ -466,8 +466,9 @@ class Trace():
         # element type changed under it halfway through the loop.
         border_color = [c / 255 for c in self.color]
 
+        # lxml encodes the name strictly, so a lone surrogate goes as text
         xml_contour = XMLContour(
-            name = self.name,
+            name = exportText(self.name),
             comment = "",
             hidden = self.hidden,
             closed = self.closed,

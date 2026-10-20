@@ -29,30 +29,32 @@ The markdown bullet itself, exactly as it will appear in `CHANGELOG.md`. There
 is no metadata, no front matter and no reformatting step: the assembler
 concatenates fragments, it does not rewrite them. What you write is what ships.
 
-The house style is a bold lead sentence naming the user-visible effect, then the
-mechanism, then the resolution, in full prose. Hard-wrap at 80 columns and indent
-continuation lines by two spaces. This is a real entry, from
-`## [1.21.0-beta-6]`:
+A note tells someone using PyReconstruct what they see now, briefly, in plain
+words:
+
+- One bold claim of about 12 words, ending in a period, and at most one short
+  plain sentence after it. Two sentences in all.
+- Say what the user sees, not how the code works. Leave out timers, parsers,
+  layouts, exceptions and names from the code. If the cause matters to the
+  user, say it in their words.
+- A fix says what works now, with no "Before, ..." sentence. When the old
+  behavior helps someone recognize the bug, put it in the claim as "no
+  longer ...".
+- A bug that never reached a stable release gets no `fixed` fragment. Fold it
+  into the fragment of the feature it belongs to, or leave it out.
+- Plain words. Write "PyReconstruct", never "the app", and no playful verbs.
+  Give a number only when the number is the point, such as a speed-up.
+- Write a menu path one way: Series ▸ Options ▸ View, with the ▸ sign, no
+  backticks and no "...".
+- One topic, one fragment. If a fragment for the same feature is already
+  waiting here, edit it instead of adding a new one.
+
+Hard-wrap at 80 columns and indent continuation lines by two spaces. This is a
+real entry:
 
 ```markdown
-- **Renaming or deleting the brightness/contrast profile currently on screen no
-  longer raises.** `Series > Brightness/contrast profiles...` rewrote every
-  section's profiles and then reloaded the field before switching profiles, so a
-  rename left `series.bc_profile` naming a key that no longer existed.
-  `Section.brightness` indexes `bc_profiles` by that name and the reload reads it
-  through the brightness/contrast palette, giving `KeyError: '<old name>'` on the
-  forward path, with no undo involved. The displayed profile now follows the
-  rename, and deleting it falls back to `default`.
-```
-
-A fragment can run to several paragraphs. Indent the blank line's neighbors by
-two spaces and the bullet stays one list item:
-
-```markdown
-- **The lead sentence.** The first paragraph.
-
-  The second paragraph, indented by two spaces like everything else under the
-  bullet.
+- **When a Save at close fails, the window and the series stay open.** Free
+  space or fix the file, then save or close again.
 ```
 
 A fragment can also hold more than one bullet, when one change genuinely
