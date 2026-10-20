@@ -262,10 +262,15 @@ def _keepAside(held, notifier) -> tuple:
         return None, db_fp
 
 
-def setAsideStores(jser_fp : str) -> list:
-    """The set-aside stores of a .jser not yet written out, oldest first."""
-    db_fp, _ = storePaths(jser_fp)
-    pattern = glob.escape(db_fp[:-len(STORE_EXT)]) + SET_ASIDE + "*" + STORE_EXT
+def setAsideStores(jser_fp=None) -> list:
+    """The set-aside stores of a .jser not yet written out, oldest first;
+    with None, those of every .jser, in name order (local_stores.turnOff)."""
+    if jser_fp is None:
+        prefix = os.path.join(glob.escape(os.path.abspath(storeRoot())), "*")
+    else:
+        db_fp, _ = storePaths(jser_fp)
+        prefix = glob.escape(db_fp[:-len(STORE_EXT)])
+    pattern = prefix + SET_ASIDE + "*" + STORE_EXT
     out = []
     for fp in sorted(glob.glob(pattern)):
         # one that cannot be read is named all the same

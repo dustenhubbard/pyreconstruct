@@ -16,11 +16,13 @@ What these pin:
 * turning the setting off writes the store this series holds to its .jser
   when it holds a Save the .jser lacks, and lets go of it; a write that fails
   keeps the store, its Save and its hold; every other store with work, and
-  every one another window holds, is named and kept;
+  every one another window holds, is named and kept; so is every set-aside
+  store (store_recovery.py) not written out;
 * with the store off, an open names a store that holds work its .jser lacks,
   and one another window holds (with Save writing the store only it may hold
   a Save the .jser lacks until that window closes), but not this process's
-  cleanup reading it.
+  cleanup reading it; it names the .jser's set-aside stores not written out,
+  as an open with the store on does.
 """
 import os
 import shutil
@@ -37,7 +39,7 @@ from PyReconstruct.modules.backend import settings_store
 from PyReconstruct.modules.backend.progress import NullProgressReporter
 from PyReconstruct.modules.backend.settings_store import DictSettingsStore
 from PyReconstruct.modules.constants import build_flavor
-from PyReconstruct.modules.datatypes import hybrid_store, local_stores, store_open, store_save
+from PyReconstruct.modules.datatypes import hybrid_store, local_stores, store_open, store_recovery, store_save
 from PyReconstruct.modules.datatypes import series as series_module
 from PyReconstruct.modules.datatypes.hybrid_store import HybridStore, storePaths
 from PyReconstruct.modules.datatypes.local_stores import (
@@ -64,6 +66,19 @@ class _Told:
 
     def confirm(self, *a, **k):
         raise AssertionError(f"the open asked: {a}")
+
+
+class _Answers(_Told):
+    """A notifier that records what it is told and asked, and answers."""
+
+    def __init__(self, answer):
+        super().__init__()
+        self.answer = answer
+        self.asked = []
+
+    def confirm(self, message, **k):
+        self.asked.append(message)
+        return self.answer
 
 
 @pytest.fixture
@@ -720,6 +735,64 @@ def test_with_the_store_off_an_open_after_a_close_says_nothing(tmp_path, store_r
     assert told.told == []
 
 
+_ON_WINDOWS_NOT_SET_ASIDE = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="on Windows a store with work is not set aside (store_recovery.setAside)",
+)
+
+
+def _set_aside(fp, db, monkeypatch):
+    """The store with a Save its .jser lacks, set aside by an open with the
+    store on that is told No; the set-aside file."""
+    _dirty(db)
+    with monkeypatch.context() as m:
+        m.setenv(ENV_SWITCH, "1")
+        _open(fp, notifier=_Answers(False)).close()
+    aside = store_recovery.setAsideStores(str(fp))
+    assert len(aside) == 1
+    return aside[0]
+
+
+@_ON_WINDOWS_NOT_SET_ASIDE
+@pytest.mark.parametrize("store", ["there", "removed-by-cleanup"])
+def test_with_the_store_off_an_open_names_a_set_aside_store(store, tmp_path, store_root, settings, dev, no_switch, notes, monkeypatch):  # noqa: F811
+    fp, db = make_store(tmp_path / "s", monkeypatch)
+    aside = _set_aside(fp, db, monkeypatch)
+    before = Path(aside).read_bytes()
+    if store == "removed-by-cleanup":
+        # the store the open made in its place is clean; the set-aside one is never touched
+        assert removeClean().removed == [os.path.basename(db)]
+        assert not os.path.exists(db)
+    told = _Told()
+    _open(fp, notifier=told).close()
+    assert told.told == [store_recovery.setAsideText(str(fp), None, None, others=[aside])]
+    assert aside in told.told[0]
+    assert f'PyReconstruct --export-local-copy "{aside}"' in told.told[0]
+    assert Path(aside).read_bytes() == before
+
+
+@_ON_WINDOWS_NOT_SET_ASIDE
+def test_with_the_store_off_an_open_with_its_store_and_a_set_aside_one_names_both(tmp_path, store_root, settings, dev, no_switch, notes, monkeypatch):  # noqa: F811
+    fp, db = make_store(tmp_path / "s", monkeypatch)
+    aside = _set_aside(fp, db, monkeypatch)
+    _pending(db)
+    told = _Told()
+    _open(fp, notifier=told).close()
+    assert len(told.told) == 1
+    assert told.told[0].startswith("The local copy of parity_series on this computer holds work")
+    assert told.told[0].endswith(store_recovery.setAsideText(str(fp), None, None, others=[aside]))
+
+
+@_ON_WINDOWS_NOT_SET_ASIDE
+def test_with_the_store_off_an_open_says_nothing_of_a_set_aside_store_written_out(tmp_path, store_root, settings, dev, no_switch, monkeypatch):  # noqa: F811
+    fp, db = make_store(tmp_path / "s", monkeypatch)
+    aside = _set_aside(fp, db, monkeypatch)
+    store_recovery.exportStore(aside, str(tmp_path / "out.jser"))
+    told = _Told()
+    _open(fp, notifier=told).close()
+    assert told.told == []
+
+
 def test_with_the_store_off_cleanup_reading_the_store_is_not_another_window(tmp_path, store_root, settings, dev, no_switch, monkeypatch):  # noqa: F811
     fp, db = make_store(tmp_path / "s", monkeypatch)
     read = local_stores._readState
@@ -951,6 +1024,34 @@ def test_turning_it_off_names_every_other_store_with_work_and_keeps_it(tmp_path,
     assert local_stores.readState(*os.path.split(work_db)).work
 
 
+@_ON_WINDOWS_NOT_SET_ASIDE
+def test_turning_it_off_names_a_set_aside_store_and_how_to_write_it_out(tmp_path, setting_on, monkeypatch):
+    fp, series, _ = _on_and_saved(tmp_path, monkeypatch)
+    with monkeypatch.context() as m:
+        m.setenv(ENV_SWITCH, "1")
+        other_fp, other_db = make_store(tmp_path / "o", monkeypatch)
+        done_fp, done_db = make_store(tmp_path / "d", monkeypatch)
+    aside = _set_aside(other_fp, other_db, monkeypatch)
+    # one written out is not named again
+    done = _set_aside(done_fp, done_db, monkeypatch)
+    store_recovery.exportStore(done, str(tmp_path / "out.jser"))
+    before = Path(aside).read_bytes()
+    try:
+        report = local_stores.setSetting(series, False)
+        assert report.written == [str(fp)]
+        assert report.aside == [aside]
+        assert report.work == []
+        assert local_stores.turnOffText(report).endswith(
+            "These local copies were set aside with work no .jser has. They are "
+            "kept, and cleanup never removes them:\n" + aside + "\n\n"
+            "To write it to a new .jser, run:\n"
+            f'  PyReconstruct --export-local-copy "{aside}"'
+        )
+    finally:
+        series.close()
+    assert Path(aside).read_bytes() == before
+
+
 def test_with_the_switch_set_turning_the_setting_off_does_nothing_else(tmp_path, setting_on, monkeypatch):
     fp, series, _ = _on_and_saved(tmp_path, monkeypatch)
     before = fp.read_bytes()
@@ -976,10 +1077,12 @@ def test_turning_it_on_or_leaving_it_off_writes_nothing(tmp_path, settings, dev,
 
 
 def test_with_the_store_on_the_open_does_not_name_it(tmp_path, store_root, monkeypatch):  # noqa: F811
-    """With the store on, the open itself deals with the store (store_open.py)."""
+    """With the store on, the open itself deals with the store (store_recovery.py)."""
     fp, db = make_store(tmp_path / "s", monkeypatch)
     _dirty(db)
     monkeypatch.setenv(ENV_SWITCH, "1")
-    told = _Told()
+    told = _Answers(True)
     _open(fp, notifier=told).close()
+    # the open offers the Save the .jser lacks, and says nothing of the store off
+    assert len(told.asked) == 1
     assert told.told == []

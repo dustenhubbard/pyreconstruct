@@ -11,13 +11,17 @@ about one open:
     store, so the setting a Dev build wrote must not turn the store on there.
   * turning the setting off: the store this window's series holds is written
     out to its .jser when it holds a Save the .jser lacks, and every other
-    store with work is named (`turnOff`).
+    store with work is named (`turnOff`), a set-aside one too.
   * cleanup, at app start in the background and from the Options button. It
     removes clean stores and never any other file.
   * the check at open with the store off: a store that holds work its .jser
     lacks is named, so the work is not silently passed over, and so is one
     another window holds, which may hold a Save its .jser gets only when that
-    window closes (store_save.py).
+    window closes (store_save.py), and every set-aside store of the .jser.
+
+A set-aside store (store_recovery.py, <store>.conflict-<UTC>.pyrstore) holds
+work no .jser has until it is written out. Cleanup never reads or removes
+one: its name is not a store's.
 
 A store is clean when what it records says it holds nothing its .jser lacks:
 
@@ -643,6 +647,7 @@ class TurnOffReport:
     written : list = field(default_factory=list)   # files written: the .jser, its backup
     failed : list = field(default_factory=list)    # .jser files that could not be written
     work : list = field(default_factory=list)      # other stores with work: their .jser
+    aside : list = field(default_factory=list)     # set-aside stores not written out
     in_use : int = 0                               # stores other windows hold
 
 
@@ -655,6 +660,18 @@ def _writeOut(series):
         # the user was told (Series._surfaceSaveError)
         return None
     return [series.jser_fp]
+
+
+def _setAside(jser_fp=None) -> list:
+    """store_recovery.setAsideStores, or none when the folder cannot be read
+    (noted in the log)."""
+    # store_recovery imports store_open, which imports this module
+    from . import store_recovery
+    try:
+        return store_recovery.setAsideStores(jser_fp)
+    except (OSError, ValueError) as e:
+        log_note(f"Could not look for set-aside local copies: {e!r}")
+        return []
 
 
 def turnOff(series, write_out=None) -> TurnOffReport:
@@ -676,7 +693,8 @@ def turnOff(series, write_out=None) -> TurnOffReport:
     Every other store is read under its lock. Writing one out needs its
     series open, so one with work is named and kept, and named again when
     its series opens (`noteWorkAtOpen`); one another window holds is that
-    window's, written when it closes.
+    window's, written when it closes. Set-aside stores not written out are
+    named, with the command that writes one out.
     """
     if write_out is None:
         write_out = _writeOut
@@ -708,6 +726,7 @@ def turnOff(series, write_out=None) -> TurnOffReport:
             report.work.append(state.jser or os.path.join(root, name))
         elif state.why == IN_USE:
             report.in_use += 1
+    report.aside = _setAside()
     for fp in report.written:
         log_note(f"Fast local copy turned off: wrote {fp}")
     return report
@@ -732,6 +751,13 @@ def turnOffText(report : TurnOffReport) -> str:
             "These local copies hold work their .jser does not have. They are kept, "
             "and cleanup never removes them:\n" + "\n".join(report.work)
         )
+    if report.aside:
+        from . import store_recovery
+        parts.append(
+            "These local copies were set aside with work no .jser has. They are "
+            "kept, and cleanup never removes them:\n" + "\n".join(report.aside)
+            + "\n\n" + store_recovery._exportLine(report.aside[0] if len(report.aside) == 1 else "<file>")
+        )
     if report.in_use:
         n = report.in_use
         parts.append(
@@ -752,27 +778,33 @@ def noteWorkAtOpen(jser_fp : str, notifier=None) -> bool:
     One look for the series' store file; only a store that is there is read.
     A store another window holds is that window's, and is not read; it is
     named too, since with Save writing the store only it holds a Save the
-    .jser lacks until that window closes. Returns True when the user was told.
+    .jser lacks until that window closes. The .jser's set-aside stores not
+    written out are named as every open with the store on names them
+    (store_recovery.py), whether or not its store is there. Returns True
+    when the user was told.
     """
+    from . import store_recovery
+
+    name = os.path.splitext(os.path.basename(jser_fp))[0]
+    parts = []
+    # no store file: nothing to tell of it
+    state = StoreState("")
     try:
         db_fp, _ = storePaths(jser_fp)
-        if not os.path.isfile(db_fp):
-            return False
-        # the folder's real, full path, as cleanup reads it (storeFolder)
-        root, store_name = os.path.split(db_fp)
-        root = os.path.realpath(root)
-        db_fp = os.path.join(root, store_name)
-        state = readState(root, store_name)
+        if os.path.isfile(db_fp):
+            # the folder's real, full path, as cleanup reads it (storeFolder)
+            root, store_name = os.path.split(db_fp)
+            root = os.path.realpath(root)
+            db_fp = os.path.join(root, store_name)
+            state = readState(root, store_name)
     except (OSError, ValueError) as e:
         # a notice only: the open goes on whatever happens here
         log_note(f"Could not look for a local copy of {jser_fp}: {e!r}")
-        return False
-    name = os.path.splitext(os.path.basename(jser_fp))[0]
     if state.work:
         log_note(f"Local copy of {name} holds work its .jser lacks; it was not used ({db_fp})")
         # true whichever way the open goes: the .jser, or the working folder
         # (the hidden folder beside it) a session left
-        message = (
+        parts.append(
             f"The local copy of {name} on this computer holds work that "
             f"{name}.jser does not have.\n\n"
             f"Fast local copy is off, so this open does not use it. "
@@ -780,19 +812,23 @@ def noteWorkAtOpen(jser_fp : str, notifier=None) -> bool:
         )
     elif state.why == IN_USE:
         log_note(f"Local copy of {name} is in use by another window; it was not used ({db_fp})")
-        message = (
+        parts.append(
             f"Another PyReconstruct window is using the local copy of {name}. "
             f"A Save made there may not be in {name}.jser yet: that window "
             f"writes it when it closes.\n\n"
             f"Fast local copy is off, so this open does not use it."
         )
-    else:
+    aside = _setAside(jser_fp)
+    if aside:
+        log_note(f"Local copy of {name} has set-aside work not written out: {', '.join(aside)}")
+        parts.append(store_recovery.setAsideText(jser_fp, None, None, others=aside))
+    if not parts:
         return False
     if notifier is None:
         from .series import _default_notifier
         notifier = _default_notifier()
     try:
-        notifier.notify(message)
+        notifier.notify("\n\n".join(parts))
     except Exception as e:
         log_note(f"Could not show the local copy notice: {e!r}")
     return True
