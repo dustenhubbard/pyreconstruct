@@ -5,13 +5,6 @@ native controls: System (stored "default") follows macOS, Light (stored
 "light") and Dark (stored "qdark") force the scheme in-process with
 QStyleHints.setColorScheme. The stable app, Windows and Linux keep Default
 and Dark (qdarkstyle), and read "light" as "default".
-
-Each test picks the platform and the build with the ``build`` fixture, which
-sets the inputs the real predicate reads (sys.platform and the version
-build_flavor reads), so the suite covers every pair on any platform. The offscreen platform the suite runs on ignores the color
-scheme (it reports Unknown and draws Fusion), so the tests read the scheme
-the app asks for; the native look itself is checked on the real screen (PR
-captures). macOS's own setting is never touched.
 """
 import sys
 
