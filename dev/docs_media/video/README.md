@@ -11,8 +11,12 @@ From the repository root, render a scene:
 uv run --frozen --no-default-groups python dev/docs_media/video/render.py /path/to/scene.json --output /path/to/video-1080p.mp4 --width 1920
 ```
 
-Use `--width 3840` for 4K. The height follows the scene's aspect ratio. Both output
-dimensions must be even. The renderer refuses to overwrite an existing video.
+The height follows the scene's aspect ratio, with black padding to the next even
+pixel. Odd widths round up to the next even pixel too. Add `--height 1080` for a
+1920 x 1080 frame, or use `--width 3840 --height 2160` for 4K. With an explicit
+height, the camera view fits inside that frame with centered black padding.
+Padding preserves the view's aspect ratio and keeps the full window visible.
+The renderer refuses to overwrite an existing video.
 It writes a temporary MP4 beside the destination and publishes it only after a
 successful encode. A failed render removes its own temporary files.
 
@@ -71,9 +75,10 @@ the working directory. Every image must match `size`.
 - `states` starts at zero and uses increasing times. An omitted `fade` cuts
   immediately. A fade begins at the state's time and ends after `fade` seconds.
   Fades cannot overlap the next state or run beyond the scene duration.
-- Each move follows a cubic Bezier curve from the previous endpoint through two
-  absolute control points to `to`. The cursor holds still between moves. Moves
-  must be ordered and cannot overlap.
+- A move with `to` and `controls` follows a cubic Bezier curve from the previous
+  endpoint through two absolute control points. A move with `path` follows a
+  polyline, as described below. The cursor holds still between moves. Moves must
+  be ordered and cannot overlap.
 - `clicks` lists increasing cue times. Each pulse remains anchored to the cursor's
   native position at that click. A cue does not change the image automatically.
   Author the corresponding state after the cue.
@@ -82,7 +87,7 @@ the working directory. Every image must match `size`.
   The last camera key holds until the end. Keep camera motion apart from clicks
   when authoring a flow.
 - `cursor_size` is the arrow height at native resolution. It scales with output
-  width, independently of camera zoom. Its tip follows the transformed target.
+  scale, independently of camera zoom. Its tip follows the transformed target.
   Optional `cursor_fade_out` starts a 0.4-second fade. When omitted, the cursor
   stays visible to the end.
 
@@ -93,6 +98,48 @@ These are reconstruction choices, not a pixel-identical recovery of the lost
 renderer. Video encoding uses H.264, CRF 18, the medium preset, `yuv420p`, and
 fast-start metadata at 60 fps with no audio. Zooming a native 4K still in a 4K
 export enlarges captured pixels.
+
+## Polyline moves and drags
+
+A polyline move contains the complete path, including its starting point. This
+point must equal the previous move's endpoint, or `cursor_start` for the first
+move. A path needs at least two points and positive total length. Consecutive
+duplicate points are allowed. A path cannot also have `to` or `controls`.
+
+```json
+{
+  "start": 3.3,
+  "end": 5.3,
+  "path": [[812, 763], [814, 777], [813, 791], [809, 805]],
+  "ease_fraction": 0.1,
+  "stroke": {"color": [255, 128, 63], "width": 2, "until": 5.35}
+}
+```
+
+Speed follows distance along the path. By default, the first and last 10% of
+the move accelerate and brake, with constant speed between them. Vertices do
+not restart the easing. `ease_fraction` sets each ramp's share of the duration,
+from 0 for constant speed throughout to 0.5 for acceleration followed immediately
+by braking. Existing Bezier moves retain their smoothstep timing.
+
+An optional `stroke` draws the traveled path up to the cursor. `color` contains
+three RGB integers from 0 to 255. `width` is a positive integer in native capture
+pixels, so a one-point pen in a 2x capture needs width 2. The stroke scales with
+the still during camera zooms and output resizing. A path without `stroke` only
+moves the cursor.
+
+The stroke stays open and unfilled during the drag, as in PyReconstruct freehand
+tracing. To close a loop, end the path at its first point. The renderer draws
+straight segments with Pillow; Qt rasterization and trace simplification can
+differ by a few pixels. Use captured drag coordinates and check the release cut
+against the finished trace.
+
+At `end`, the cursor holds at the last point. The stroke disappears at `until`,
+which defaults to `end` and cannot precede it or exceed the scene duration.
+Set a cut to the finished still at `until`. Until that cut, the completed stroke
+remains visible. The selection highlight or fill then comes from the still.
+Do not crossfade a finished trace over its temporary stroke. Review the frames
+on both sides of the cut for shifts in geometry, color, or width.
 
 ## Capture handoff
 

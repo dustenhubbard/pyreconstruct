@@ -93,12 +93,181 @@ def test_overlapping_moves_rejected(scene_file):
         validate(data)
 
 
-def test_dimension_mismatch_and_odd_output_rejected(scene_file):
-    with pytest.raises(ValueError, match="even dimensions"):
-        Scene(scene_file, 159)
+def test_dimension_mismatch_rejected(scene_file):
     Image.new("RGB", (80, 45)).save(scene_file.parent / "red.png")
     with pytest.raises(ValueError, match="dimensions differ"):
         Scene(scene_file, 160)
+
+
+def test_exact_aspect_resize_preserves_legacy_sampling(scene_file):
+    data = json.loads(scene_file.read_text())
+    data.update(cursor_fade_out=0, clicks=[],
+                camera=[{"time": 0, "x": 80, "y": 45, "zoom": 2}])
+    scene_file.write_text(json.dumps(data))
+    source = Image.new("RGB", (160, 90))
+    source.putdata([((x * 17) % 256, (y * 31) % 256, (x * y) % 256)
+                    for y in range(90) for x in range(160)])
+    source.save(scene_file.parent / "red.png")
+    expected = source.resize((224, 126), Image.Resampling.BICUBIC, box=(40, 22.5, 120, 67.5))
+    assert ImageChops.difference(Scene(scene_file, 224).frame(.45), expected).getbbox() is None
+
+
+@pytest.fixture
+def drag_file(scene_file):
+    data = json.loads(scene_file.read_text())
+    data.update(cursor_start=[20, 20], clicks=[], cursor_fade_out=0,
+                states=[{"time": 0, "image": "red"}],
+                moves=[{"start": .5, "end": 1.5,
+                        "path": [[20, 20], [40, 20], [40, 60], [100, 60]],
+                        "ease_fraction": 0,
+                        "stroke": {"color": [0, 255, 0], "width": 4, "until": 1.75}}])
+    scene_file.write_text(json.dumps(data))
+    return scene_file
+
+
+def test_polyline_uses_distance_across_unequal_segments_and_holds(drag_file):
+    data = json.loads(drag_file.read_text())
+    assert cursor_position(data, 0) == (20, 20)
+    assert cursor_position(data, .75) == pytest.approx((40, 30))
+    assert cursor_position(data, 1) == pytest.approx((40, 60))
+    assert cursor_position(data, 1.25) == pytest.approx((70, 60))
+    assert cursor_position(data, 1.75) == (100, 60)
+
+
+def test_polyline_eases_only_at_ends_with_constant_middle_speed(drag_file):
+    data = json.loads(drag_file.read_text())
+    move = data["moves"][0]
+    move.pop("ease_fraction")
+    move["path"] = [[20, 20], [30, 20], [70, 20], [120, 20]]
+    # Default ramps occupy the first and last tenth of the move, regardless of vertices.
+    assert cursor_position(data, .55) == pytest.approx((21.3888888889, 20))
+    assert cursor_position(data, 1.45) == pytest.approx((118.6111111111, 20))
+    assert [cursor_position(data, t)[0] for t in (.7, .8, .9, 1, 1.1, 1.2, 1.3)] == pytest.approx(
+        [36.6666666667, 47.7777777778, 58.8888888889, 70, 81.1111111111, 92.2222222222, 103.3333333333])
+
+
+def test_polyline_closed_loop_and_repeated_points(drag_file):
+    data = json.loads(drag_file.read_text())
+    data["moves"][0]["path"] = [[20, 20], [20, 20], [40, 20], [40, 40], [20, 40], [20, 20]]
+    validate(data)
+    assert cursor_position(data, .75) == (40, 20)
+    assert cursor_position(data, 1) == (40, 40)
+    assert cursor_position(data, 1.5) == (20, 20)
+
+
+def test_drag_reveals_only_traveled_line_and_keeps_it_until_cut(drag_file):
+    scene = Scene(drag_file, 160)
+    assert scene.frame(.45).getpixel((30, 20)) == (255, 0, 0)
+    halfway = scene.frame(1)
+    assert halfway.getpixel((30, 20)) == (0, 255, 0)
+    assert halfway.getpixel((40, 45)) == (0, 255, 0)
+    assert halfway.getpixel((70, 60)) == (255, 0, 0)
+    # No closing chord or fill is added during a freehand drag.
+    assert halfway.getpixel((30, 40)) == (255, 0, 0)
+    assert sum(halfway.getpixel((x, 45)) == (0, 255, 0) for x in range(30, 50)) == 4
+    assert scene.frame(1.6).getpixel((70, 60)) == (0, 255, 0)
+    assert scene.frame(1.75).getpixel((70, 60)) == (255, 0, 0)
+
+
+def test_stroke_end_meets_cursor_and_transforms_with_camera_and_padding(drag_file):
+    data = json.loads(drag_file.read_text())
+    data["camera"] = [{"time": 0, "x": 60, "y": 45, "zoom": 2}]
+    drag_file.write_text(json.dumps(data))
+    scene = Scene(drag_file, 160, 130)
+    frame = scene.frame(.75)
+    # Viewport top is 20, crop is (20, 22.5, 100, 67.5), and the cursor is at (40, 30).
+    assert cursor_position(data, .75) == (40, 30)
+    assert frame.getpixel((40, 34)) == (0, 255, 0)
+    assert frame.getpixel((40, 40)) == (255, 0, 0)
+    assert frame.getpixel((40, 10)) == (0, 0, 0)
+    assert sum(frame.getpixel((x, 30)) == (0, 255, 0) for x in range(25, 55)) >= 6
+
+
+def test_completed_stroke_replaced_by_real_still_at_cut(drag_file):
+    data = json.loads(drag_file.read_text())
+    data["states"].append({"time": 1.75, "image": "blue"})
+    drag_file.write_text(json.dumps(data))
+    before = Scene(drag_file, 160).frame(1.6)
+    assert before.getpixel((70, 60)) == (0, 255, 0)
+    before.save(drag_file.parent / "blue.png")
+    scene = Scene(drag_file, 160)
+    assert ImageChops.difference(scene.frame(1.6), scene.frame(1.75)).getbbox() is None
+
+
+def test_stroke_defaults_to_disappearing_at_release(drag_file):
+    data = json.loads(drag_file.read_text())
+    data["moves"][0]["stroke"].pop("until")
+    drag_file.write_text(json.dumps(data))
+    scene = Scene(drag_file, 160)
+    assert scene.frame(1.4).getpixel((70, 60)) == (0, 255, 0)
+    assert scene.frame(1.5).getpixel((70, 60)) == (255, 0, 0)
+
+
+@pytest.mark.parametrize("width,height,expected", [
+    (1920, None, (1920, 1304)), (1919, None, (1920, 1304)),
+    (1, None, (2, 2)), (2240, None, (2240, 1520)),
+    (1920, 1080, (1920, 1080)), (1919, 1079, (1920, 1080)),
+])
+def test_any_width_fits_even_frame_without_aspect_distortion(scene_file, width, height, expected):
+    data = json.loads(scene_file.read_text())
+    data.update(size=[224, 152], cursor_fade_out=0, clicks=[],
+                camera=[{"time": 0, "x": 112, "y": 76, "zoom": 1}])
+    for name in ("red", "blue"):
+        Image.new("RGB", (224, 152), name).save(scene_file.parent / f"{name}.png")
+    scene_file.write_text(json.dumps(data))
+    scene = Scene(scene_file, width, height)
+    assert scene.size == expected
+    assert scene.frame(.45).size == expected
+    if height is not None:
+        frame = scene.frame(.45)
+        assert frame.getpixel((160, 500)) == (0, 0, 0)
+        assert frame.getpixel((165, 500)) == (255, 0, 0)
+        assert frame.getpixel((1754, 500)) == (255, 0, 0)
+        assert frame.getpixel((1760, 500)) == (0, 0, 0)
+
+
+@pytest.mark.parametrize("width,height", [(0, None), (-2, None), (160, 0), (True, 90)])
+def test_invalid_output_dimensions_rejected(scene_file, width, height):
+    with pytest.raises(ValueError, match="positive integers"):
+        Scene(scene_file, width, height)
+
+
+@pytest.mark.parametrize("changes", [
+    {"path": []}, {"path": [[20, 20], [20, 20]]},
+    {"path": [[21, 20], [40, 20]]}, {"path": [[20, 20], [float("nan"), 20]]},
+    {"to": [100, 60]}, {"controls": [[20, 20], [40, 20]]},
+    {"ease_fraction": -.1}, {"ease_fraction": .51},
+    {"stroke": {"color": [256, 0, 0], "width": 2}},
+    {"stroke": {"color": [True, 0, 0], "width": 2}},
+    {"stroke": {"color": [0, 0], "width": 2}},
+    {"stroke": {"color": [0, 255, 0], "width": 0}},
+    {"stroke": {"color": [0, 255, 0], "width": 1.5}},
+    {"stroke": {"color": [0, 255, 0], "width": 2, "until": 1}},
+    {"stroke": {"color": [0, 255, 0], "width": 2, "until": 3}},
+])
+def test_invalid_polyline_or_stroke_rejected(drag_file, changes):
+    data = json.loads(drag_file.read_text())
+    data["moves"][0].update(changes)
+    with pytest.raises(ValueError):
+        validate(data)
+
+
+def test_cli_drag_in_padded_odd_frame(drag_file, tmp_path):
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("FFmpeg and FFprobe are required for the encode/decode integration test")
+    output = tmp_path / "drag.mp4"
+    command = [sys.executable, str(Path(__file__).with_name("render.py")), str(drag_file),
+               "--width", "159", "--height", "129", "--output", str(output)]
+    subprocess.run(command, check=True, capture_output=True)
+    info = measure(output)
+    assert (info["width"], info["height"], info["frames"]) == (160, 130, 120)
+    raw = subprocess.check_output(["ffmpeg", "-v", "error", "-i", str(output),
+                                   "-vf", "select=eq(n\\,60)", "-frames:v", "1",
+                                   "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"])
+    frame = Image.frombytes("RGB", (160, 130), raw)
+    assert max(frame.getpixel((80, 10))) < 10
+    assert frame.getpixel((40, 65))[1] > 220
+    assert frame.getpixel((70, 80))[0] > 220
 
 
 def test_cli_encode_decode_and_no_overwrite(scene_file, tmp_path):

@@ -71,16 +71,48 @@ def validate(data):
         number(key["y"], "camera.y")
         number(key["zoom"], "camera.zoom", 1)
     previous = 0
+    position = data["cursor_start"]
     for move in data["moves"]:
         start = number(move["start"], "move.start")
         end = number(move["end"], "move.end")
         if start < previous or end <= start or end > duration:
             raise ValueError("moves must be ordered, nonoverlapping, and within duration")
-        point(move["to"], "move.to")
-        if len(move["controls"]) != 2:
-            raise ValueError("moves need two cubic Bezier control points")
-        for control in move["controls"]:
-            point(control, "move.controls")
+        if "path" in move:
+            path = move["path"]
+            if "to" in move or "controls" in move:
+                raise ValueError("a move uses either path or to/controls")
+            if not isinstance(path, list) or len(path) < 2:
+                raise ValueError("move.path needs at least two points")
+            for vertex in path:
+                point(vertex, "move.path")
+            if path[0] != position:
+                raise ValueError("move.path must start at the previous cursor position")
+            if not any(a != b for a, b in zip(path, path[1:])):
+                raise ValueError("move.path must have positive length")
+            ramp = number(move.get("ease_fraction", .1), "move.ease_fraction")
+            if ramp > .5:
+                raise ValueError("move.ease_fraction must be between 0 and 0.5")
+            if "stroke" in move:
+                stroke = move["stroke"]
+                color = stroke["color"]
+                if (not isinstance(color, list) or len(color) != 3
+                        or any(type(c) is not int or not 0 <= c <= 255 for c in color)):
+                    raise ValueError("stroke.color must contain three RGB integers from 0 to 255")
+                width = number(stroke["width"], "stroke.width", 1)
+                if int(width) != width:
+                    raise ValueError("stroke.width must be an integer in native pixels")
+                until = number(stroke.get("until", end), "stroke.until")
+                if until < end or until > duration:
+                    raise ValueError("stroke.until must be between move.end and duration")
+        else:
+            if "stroke" in move or "ease_fraction" in move:
+                raise ValueError("stroke and ease_fraction require a polyline path")
+            point(move["to"], "move.to")
+            if len(move["controls"]) != 2:
+                raise ValueError("moves need two cubic Bezier control points")
+            for control in move["controls"]:
+                point(control, "move.controls")
+        position = move["path"][-1] if "path" in move else move["to"]
         previous = end
     previous = -1
     for click in data["clicks"]:
@@ -92,14 +124,43 @@ def validate(data):
         number(data["cursor_fade_out"], "cursor_fade_out")
 
 
+def path_progress(move, time):
+    """Travel at constant speed between equal acceleration and braking ramps."""
+    u = max(0.0, min(1.0, (time - move["start"]) / (move["end"] - move["start"])))
+    ramp = move.get("ease_fraction", .1)
+    if ramp and u < ramp:
+        return u * u / (2 * ramp * (1 - ramp))
+    if ramp and u > 1 - ramp:
+        return 1 - (1 - u)**2 / (2 * ramp * (1 - ramp))
+    return (u - ramp / 2) / (1 - ramp)
+
+
+def polyline_prefix(path, progress):
+    """Return the traveled vertices and the exact endpoint by arc length."""
+    lengths = [math.dist(a, b) for a, b in zip(path, path[1:])]
+    remaining = sum(lengths) * progress
+    points = [tuple(path[0])]
+    for a, b, length in zip(path, path[1:], lengths):
+        if not length:
+            continue
+        if remaining < length:
+            points.append(tuple(a[i] + (b[i] - a[i]) * remaining / length for i in (0, 1)))
+            return points
+        points.append(tuple(b))
+        remaining -= length
+    return points
+
+
 def cursor_position(data, time):
     start = data["cursor_start"]
     for move in data["moves"]:
         if time < move["start"]:
             break
         if time >= move["end"]:
-            start = move["to"]
+            start = move["path"][-1] if "path" in move else move["to"]
             continue
+        if "path" in move:
+            return polyline_prefix(move["path"], path_progress(move, time))[-1]
         u = ease((time - move["start"]) / (move["end"] - move["start"]))
         points = [start, *move["controls"], move["to"]]
         weights = [(1-u)**3, 3*(1-u)**2*u, 3*(1-u)*u*u, u**3]
@@ -146,14 +207,23 @@ def pointer_sprite(height):
 
 
 class Scene:
-    def __init__(self, path, width):
+    def __init__(self, path, width, height=None):
         path = Path(path)
         self.data = json.loads(path.read_text())
         validate(self.data)
-        height = width * self.data["size"][1] / self.data["size"][0]
-        if width < 2 or width % 2 or not height.is_integer() or int(height) % 2:
-            raise ValueError("output must have even dimensions and preserve the scene aspect ratio")
-        self.size = (width, int(height))
+        for value in (width, height):
+            if value is not None and (type(value) is not int or value < 1):
+                raise ValueError("output dimensions must be positive integers")
+        width += width % 2
+        native_w, native_h = self.data["size"]
+        height = height if height is not None else math.ceil(width * native_h / native_w)
+        height += height % 2
+        self.size = (width, height)
+        self.scale = min(width / native_w, height / native_h)
+        self.offset = ((width - native_w * self.scale) / 2,
+                       (height - native_h * self.scale) / 2)
+        if width * native_h == height * native_w:
+            self.offset = (0, 0)
         self.frames = round(self.data["duration"] * FPS)
         self.images = {}
         for name, relative in self.data["images"].items():
@@ -161,7 +231,7 @@ class Scene:
                 if source.size != tuple(self.data["size"]):
                     raise ValueError(f"{relative}: dimensions differ from scene size")
                 self.images[name] = source.convert("RGB")
-        self.pointer_height = width / self.data["size"][0] * self.data["cursor_size"]
+        self.pointer_height = self.scale * self.data["cursor_size"]
         self.pointer, self.pointer_pad = pointer_sprite(self.pointer_height)
 
     def frame(self, time):
@@ -173,20 +243,42 @@ class Scene:
                 break
             index = i
         state = data["states"][index]
+        zoom_scale = (self.size[0] - 2 * self.offset[0]) / (box[2] - box[0])
+        strokes = []
+        for move in data["moves"]:
+            stroke = move.get("stroke")
+            if stroke and move["start"] <= time < stroke.get("until", move["end"]):
+                strokes.append((stroke, polyline_prefix(move["path"], path_progress(move, time))))
 
         def crop(name):
-            return self.images[name].resize(self.size, Image.Resampling.BICUBIC, box=box)
+            source = self.images[name]
+            if strokes:
+                source = source.copy()
+                draw = ImageDraw.Draw(source)
+                for stroke, points in strokes:
+                    draw.line(points, fill=tuple(stroke["color"]), width=int(stroke["width"]))
+            if self.offset == (0, 0):
+                return source.resize(self.size, Image.Resampling.BICUBIC, box=box)
+            # One scale keeps the still, stroke, cursor, and click cues aligned.
+            x, y = self.offset
+            transformed = source.transform(
+                self.size, Image.Transform.AFFINE,
+                (1 / zoom_scale, 0, box[0] - x / zoom_scale,
+                 0, 1 / zoom_scale, box[1] - y / zoom_scale),
+                Image.Resampling.BICUBIC)
+            viewport = (round(x), round(y), round(self.size[0] - x), round(self.size[1] - y))
+            padded = Image.new("RGB", self.size)
+            padded.paste(transformed.crop(viewport), viewport)
+            return padded
 
         frame = crop(state["image"])
         fade = state.get("fade", 0)
         if fade and time < state["time"] + fade:
             frame = Image.blend(crop(data["states"][index - 1]["image"]), frame,
                                 ease((time - state["time"]) / fade))
-        zoom_scale = self.size[0] / (box[2] - box[0])
-
         def screen(position):
-            return ((position[0] - box[0]) * zoom_scale,
-                    (position[1] - box[1]) * zoom_scale)
+            return ((position[0] - box[0]) * zoom_scale + self.offset[0],
+                    (position[1] - box[1]) * zoom_scale + self.offset[1])
 
         for click in data["clicks"]:
             age = time - click
@@ -247,10 +339,11 @@ def main():
     parser.add_argument("scene", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--width", type=int, default=1920)
+    parser.add_argument("--height", type=int, help="fit inside this height with black padding")
     parser.add_argument("--ffmpeg", default="ffmpeg")
     args = parser.parse_args()
     try:
-        render(Scene(args.scene, args.width), args.output, args.ffmpeg)
+        render(Scene(args.scene, args.width, args.height), args.output, args.ffmpeg)
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
         parser.exit(1, f"Render failed: {error}\n")
 
