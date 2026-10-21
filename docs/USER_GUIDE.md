@@ -195,6 +195,8 @@ changes since the previous nightly.
 
 ### Checking for updates
 
+![The update rows of the Help menu: Check for updates..., Automatically check for updates, which is checked, and Download PyReconstruct Dev (nightly)....](assets/images/user-guide/02-help-menu-updates.png)
+
 Choose **Help ▸ Check for updates…**. On an installed build, PyReconstruct checks
 GitHub Releases on the app's channel (off the main thread, so the UI stays
 responsive). If a newer build is found, an update dialog opens showing the new
@@ -207,7 +209,9 @@ the installation.
 If you are already current, you'll see a brief "You're already up to date"
 message; if no installer exists for your platform on that channel, it tells you so.
 
-> 📸 *Screenshot: the update dialog with its release-notes link and Download & Install button.*
+![The update dialog offering 9.9.9, an example version that does not exist: You have 1.25.0, channel Stable, download 178.7 MB, a Release notes for 9.9.9 link, and Later and Download & Install buttons.](assets/images/user-guide/02-update-dialog.png)
+
+The picture shows an example offer. Version 9.9.9 does not exist.
 
 ### Checking automatically on startup
 
@@ -218,6 +222,8 @@ background check at most **once per day**; if an upgrade is available,
 notice stays, across launches too, until you click it; clicking it opens the
 update just like **Help ▸ Check for updates…**. Turning the automatic check off
 also removes the notice.
+
+![The Update available notice on the right of the status bar, for the example version 9.9.9.](assets/images/user-guide/02-update-notice.png)
 
 ### Source / `pip` installs
 
@@ -465,7 +471,7 @@ In every tool except Pan/Zoom, **right-clicking the field** opens a context menu
 (for the selected traces, or for the field). The mouse wheel changes sections, and
 middle-click pans, regardless of the active tool.
 
-![The tool palette column, each button labeled with its tool: Pointer, Pan/Zoom, Knife, Scissors, Closed Trace, Open Trace, Stamp, Grid, Flag, Host and Ztool.](assets/images/user-guide/06-tool-palette-labeled.png)
+![The tool palette column, each button labeled with its tool and default shortcut: Pointer P, Pan/Zoom Z, Knife K, Scissors Shift+K, Closed Trace C, Open Trace O, Stamp S, Grid G, Flag F, Host Q, and Ztool, which has no shortcut.](assets/images/user-guide/06-tool-palette-labeled.png)
 
 The palette has eleven tools:
 
@@ -582,8 +588,8 @@ object list and can be set from the object list's context menu.
 
 ### Z-trace tool
 
-Creates a [z-trace](#3-core-concepts), a curve through the stack. Select the
-tool, then **click** points (changing sections between clicks as needed with the
+Creates a [z-trace](#3-core-concepts), a curve through the stack. The palette
+names this tool **Ztool**. Select the tool, then **click** points (changing sections between clicks as needed with the
 mouse wheel); **right-click to finish**. The new z-trace takes the current
 preset's name and color. (This tool is selected from the palette; it has no default
 keyboard shortcut.)
