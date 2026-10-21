@@ -1,8 +1,7 @@
 """Help > PyReconstruct user guide opens the website guide, not the GitHub wiki.
 
-The row is built once in ``main/menubar.py``; the macOS menu bar reuses the same
-``openwiki_act`` action (``mac_menubar.HELP_ROWS``), so pinning the callback here
-covers every platform's menu bar.
+The row is built once in ``main/menubar.py``. The macOS menu bar reuses the same
+``openwiki_act`` action (``mac_menubar.HELP_ROWS``).
 """
 
 from PyReconstruct.modules.gui.main.menubar import return_menubar
