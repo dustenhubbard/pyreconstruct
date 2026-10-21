@@ -1,6 +1,6 @@
 """Shoot the User Guide stills from the real app, in one command.
 
-    uv run --no-default-groups --extra test python dev/docs_media/capture/capture.py --out <folder>
+    uv run --no-default-groups --extra test python dev/docs_media/capture/capture.py --out <folder> --guide
 
 What this makes, in <folder>:
 
@@ -11,6 +11,9 @@ What this makes, in <folder>:
     FLOWS, for the video renderer (dev/docs_media/video/);
   * verification.json, the size and sha256 of every file, the pinned inputs,
     and the settings tripwire read before and after the run.
+
+With --guide, the shots docs/USER_GUIDE.md shows are also copied over the
+ones in docs/assets/images/user-guide/, so one command reshoots the guide.
 
 How it shoots. Each frame is `QWidget.grab()` of the live window, not a
 screen capture: it needs no Screen Recording permission, has no desktop,
@@ -37,6 +40,7 @@ Fixture series only. No lab data, no file dialog, no recent-files list.
 """
 
 import argparse
+import datetime
 import hashlib
 import json
 import os
@@ -53,17 +57,29 @@ FIXTURE_DIR = REPO / "dev" / "assets" / "checker" / "files"
 FIXTURE = "shapes1.jser"
 
 # logical pixels; 2240 x 1520 native on a 2x screen. Tall enough that the tool
-# column (twelve buttons) clears the section buttons; below about 700 the two
-# overlap. That is taller than the mini's 1280 x 800 screen leaves a titled
+# column clears the section buttons; with twelve buttons, below about 700 the
+# two overlap. That is taller than the mini's 1280 x 800 screen leaves a titled
 # window, so the window is frameless (macOS does not clamp those), and may run
 # past the bottom of the screen: grab() draws the whole widget regardless.
 WINDOW_SIZE = (1120, 760)
 WINDOW_POS = (40, 40)
+# the 3D scene window, logical pixels
+SCENE_SIZE = (900, 640)
+SCALE_CUBE_SHIFT = (2.6, 1.4, 0)  # microns
+SCENE_ELEVATION, SCENE_AZIMUTH = -40, -15  # degrees from the top-down view
+SCENE_ZOOM = 1.4
 # where the pointer waits, beside the window, so no hover state is drawn
 POINTER_PARK = (1240, 400)
 EXPECTED_DPR = 2.0
 USERNAME = "docs"
+# the time the Backup Settings filename preview shows (see shoot)
+BACKUP_PREVIEW_TIME = datetime.datetime(2026, 1, 15, 9, 30)
 SERIES_CODE = "shapes1"
+
+# where --guide puts the images docs/USER_GUIDE.md shows; the frames in
+# FLOW_ONLY are for the video flows, and the guide does not use them
+GUIDE_IMAGES = REPO / "docs" / "assets" / "images" / "user-guide"
+FLOW_ONLY = {"05-next-section", "06-closed-trace-selected", "06-flag-placed"}
 
 REAL_DOMAIN = "com.khlab.PyReconstruct"
 REAL_PLIST = Path.home() / "Library" / "Preferences" / f"{REAL_DOMAIN}.plist"
@@ -97,6 +113,7 @@ def tripwire():
 def isolate_settings():
     """Redirect every QSettings before the app is imported; stop if it fails."""
     os.environ["PYRECON_HYBRID_STORE"] = "0"  # no local store under ~/Library
+    os.environ.pop("PYRECON_ROI_MODE", None)  # held features stay hidden
     sys.path.insert(0, str(REPO / "tests"))
     import qsettings_isolation  # noqa: F401  (rebinds QSettings on import)
 
@@ -118,11 +135,15 @@ def settle(app, seconds=0.4):
     app.processEvents()
 
 
-def grab(widget):
-    """The widget's own pixels at native density, as a QImage."""
+def grab(widget, check_active=True):
+    """The widget's own pixels at native density, as a QImage.
+
+    `check_active` is off only for a popup menu, which is never the active
+    window itself.
+    """
     from PySide6.QtGui import QImage
 
-    if not widget.isActiveWindow():
+    if check_active and not widget.isActiveWindow():
         sys.exit(f"{widget.windowTitle()!r} is not the active window; its frame would "
                  "be drawn inactive. Is someone using the Mac?")
 
@@ -297,8 +318,13 @@ def start_watchdog(app):
     return timer
 
 
-def grab_modal(app, trigger):
-    """Run `trigger`, which opens a modal dialog; grab the dialog and cancel it."""
+def grab_modal(app, trigger, accept=False, prepare=None):
+    """Run `trigger`, which opens a modal dialog; grab the dialog and cancel it.
+
+    `accept` presses OK instead, for a dialog whose result a later shot needs.
+    `prepare(dialog)` runs before the grab, to pin a value the dialog would
+    otherwise fill from the machine.
+    """
     from PySide6.QtCore import QTimer
 
     global _expecting_modal
@@ -309,9 +335,19 @@ def grab_modal(app, trigger):
         if dialog is None:
             QTimer.singleShot(50, poll)
             return
-        settle(app, 0.5)
-        found["image"] = grab(dialog)
-        dialog.reject()
+        try:
+            if prepare:
+                prepare(dialog)
+            dialog.activateWindow()
+            settle(app, 0.5)
+            found["image"] = grab(dialog)
+        except BaseException as error:
+            # raised inside a Qt slot it would be swallowed, and the open
+            # dialog would hang the run
+            text = getattr(dialog, "text", lambda: "")()
+            print(f"While grabbing {dialog.windowTitle() or text[:200]!r}: {error}", file=sys.stderr)
+            os._exit(4)
+        dialog.accept() if accept else dialog.reject()
 
     _expecting_modal = True
     QTimer.singleShot(0, poll)
@@ -322,6 +358,48 @@ def grab_modal(app, trigger):
     if "image" not in found:
         sys.exit("The dialog did not open.")
     return found["image"]
+
+
+def grab_with_menu(app, window, menu, at):
+    """The window with `menu` popped up at `at` (window logical coordinates)."""
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QPainter
+
+    menu.popup(window.mapToGlobal(QPoint(*at)))
+    settle(app, 0.6)
+    image = grab(window, check_active=False)
+    menu_image = grab(menu, check_active=False)
+    corner = menu.mapToGlobal(QPoint(0, 0)) - window.mapToGlobal(QPoint(0, 0))
+    p = QPainter(image)
+    p.drawImage(round(corner.x() * EXPECTED_DPR), round(corner.y() * EXPECTED_DPR), menu_image)
+    p.end()
+    menu.hide()
+    settle(app, 0.3)
+    return image
+
+
+def grab_scene(app, scene, viewer):
+    """The 3D window: its menu bar from grab(), the scene from VTK itself.
+
+    grab() of the render widget returns its framebuffer at the wrong row
+    stride (stripes), so the scene pixels are read back from VTK's own
+    render window and drawn into the widget's place.
+    """
+    from PySide6.QtGui import QImage, QPainter
+
+    image = grab(scene)
+    viewer._syncRenderWindowSize()
+    viewer.plt.render()
+    pixels = viewer.plt.screenshot(asarray=True)
+    h, w = pixels.shape[:2]
+    rect = native_rect(viewer, scene)
+    if (w, h) != (rect.width(), rect.height()):
+        sys.exit(f"The 3D render is {w} x {h}, not the widget's {rect.width()} x {rect.height()}.")
+    rgb = QImage(pixels.tobytes(), w, h, 3 * w, QImage.Format_RGB888).copy()
+    p = QPainter(image)
+    p.drawImage(rect.topLeft(), rgb)
+    p.end()
+    return image
 
 
 def field_event(field, kind, x, y, buttons):
@@ -356,7 +434,7 @@ def blob(cx, cy, rx, ry, n=48):
 
 def shoot(out, app):
     """Make every frame; return (shots, flows)."""
-    from PySide6.QtCore import QRect, QSettings
+    from PySide6.QtCore import QRect, QSettings, Qt
     from PySide6.QtGui import QColor, QImage
 
     from PyReconstruct.modules.gui.dialog.whats_new import APP, ORG, current_version_str
@@ -401,6 +479,11 @@ def shoot(out, app):
     window = build_window(app, str(series_dir / FIXTURE))
     palette = window.mouse_palette
     field = window.field
+    # ROI mode is held out of every user build until it is ready, so the
+    # guide does not show it (constants/roi_mode.py)
+    if "ROI mode" in palette.mode_buttons:
+        sys.exit("The tool palette shows ROI mode, which the guide must not show. "
+                 "Shoot on a tree that hides it, with PYRECON_ROI_MODE unset.")
 
     # 4. Opening an existing series; also frame 1 of both flows
     opened = grab(window)
@@ -492,6 +575,143 @@ def shoot(out, app):
     save(grab(window), "05-dark-theme", "5. Theme", "The same window in the Dark theme.")
     window.setTheme("default")
     settle(app, 0.3)
+
+    # back to section 0, where the trace drawn above is
+    palette.down_bttn.click()
+    settle(app, 1.2)
+
+    # 6. The right-click settings of the other tools
+    for name, heading, trigger, purpose in (
+        ("06-pointer-options", "6. Pointer (P)", window.modifyPointer,
+         "Right-click on the Pointer button: selection shape and what it selects."),
+        ("06-knife-options", "6. Knife (K)", window.modifyKnife,
+         "Right-click on the Knife button: % original trace, smooth cuts, other buttons."),
+        ("06-grid-options", "6. Grid (G)", window.modifyGrid,
+         "Right-click on the Grid button: element size, spacing, columns, rows, sampling frame."),
+        ("06-flag-options", "6. Flag (F)", palette.modifyFlag,
+         "Right-click on the Flag button: default name, color, size, which flags show."),
+    ):
+        save(grab_modal(app, trigger), name, heading, purpose)
+
+    # 6. Flag: the Flag tool's own dialog on a click in the field; OK places
+    # the flag the Flag list shows below
+    palette.mode_buttons["Flag"][0].click()
+    settle(app, 0.3)
+    fx, fy = field.width() * 0.72, field.height() * 0.30
+
+    def click_flag():
+        field_event(field, "press", fx, fy, buttons=_left())
+        field_event(field, "release", fx, fy, buttons=_none())
+
+    save(grab_modal(app, click_flag, accept=True), "06-flag-new", "6. Flag (F)",
+         "A click with the Flag tool: name, color and an optional comment.")
+    settle(app, 0.5)
+    palette.mode_buttons["Pointer"][0].click()
+    settle(app, 0.3)
+    save(grab(window), "06-flag-placed", "6. Flag (F)", "The flag just placed on the section.")
+
+    # 7. The trace palette: the row alone, then a preset's right-click dialog
+    trace_crop = opened.copy(trace_rect.adjusted(-24, -24, 24, 24).intersected(bounds))
+    save(trace_crop, "07-trace-palette", "7. The trace palette",
+         "The trace palette: twenty presets in two rows, the active name above them.")
+    first = palette.palette_buttons[0]
+    save(grab_modal(app, first.openDialog), "07-trace-palette-edit", "7. The trace palette",
+         "Right-click on a preset: name, color, fill, tags, shape and stamp radius.")
+
+    # 8. The field context menu on a selected trace
+    field.deselectAllTraces()
+    star = next(t for t in field.section.contours["star"])
+    field.selectTrace(star)
+    window.checkActions()
+    settle(app, 0.4)
+    at = native_point(field, window, field.width() * 0.52, field.height() * 0.42)
+    menu_at = (round(at[0] / EXPECTED_DPR), round(at[1] / EXPECTED_DPR))
+    save(grab_with_menu(app, window, window.field_menu, menu_at), "08-field-context-menu",
+         "8. Working with traces", "Right-click on a selected trace: the field context menu.")
+    field.deselectAllTraces()
+    settle(app, 0.3)
+
+    # 9. The data lists, each docked beside the field by itself
+    for kind, name, heading, purpose in (
+        ("object", "09-object-list", "9. Object list",
+         "The Object list docked beside the field, with its menus."),
+        ("trace", "09-trace-list", "9. Trace list", "The Trace list for the current section."),
+        ("section", "09-section-list", "9. Section list", "The Section list."),
+        ("ztrace", "09-ztrace-list", "9. Z-trace list", "The Z-trace list."),
+        ("flag", "09-flag-list", "9. Flag list", "The Flag list, with the flag placed above."),
+    ):
+        field.openList(list_type=kind)
+        settle(app, 1.0)
+        window.activateWindow()
+        settle(app, 0.3)
+        save(grab(window), name, heading, purpose)
+        field.table_manager.closeAll()
+        settle(app, 0.5)
+
+    # 10. Alignment dialogs
+    save(grab_modal(app, window.modifyAlignments), "10-edit-alignments",
+         "10. Switching and managing alignments",
+         "Alignments > Edit alignments: new, rename, remove.")
+    # the transform dialog opens only on an unlocked section: the app's own
+    # Alignments > Unlock current section
+    was_locked = field.section.align_locked
+    if was_locked:
+        field.unlockSection()
+        settle(app, 0.3)
+    save(grab_modal(app, window.changeTform), "10-edit-transformation",
+         "10. Adjusting a section's transform",
+         "Alignments > Edit transformation: the six numbers a b c d e f.")
+
+    # 12. Backup settings
+    # The filename preview shows today's date and time; it is pinned to
+    # BACKUP_PREVIEW_TIME so a rerun on another day gives the same frame.
+    def pin_preview_time(dialog):
+        dialog.now = BACKUP_PREVIEW_TIME
+        dialog.updateWidgets()
+
+    save(grab_modal(app, window.setBackup, prepare=pin_preview_time),
+         "12-backup-settings", "12. Backups",
+         "File > Backup > Settings: folder, auto-backup and the filename template.")
+
+    # 13. The shortcuts list
+    save(grab_modal(app, window.displayShortcuts), "13-shortcuts-list", "13. Keyboard shortcuts",
+         "Help > Shortcuts list, where every shortcut can be rebound.")
+
+    # 11. The 3D scene: the fixture's four objects as surfaces, with the
+    # scale cube, the way Object list > 3D > Add to scene opens it
+    window.activateWindow()
+    settle(app, 0.3)
+    window.addTo3D(["circle2", "square", "star", "triangle"])
+    viewer = window.viewer
+    scene = viewer.container
+    scene.setWindowFlag(Qt.FramelessWindowHint, True)
+    scene.showNormal()
+    scene.resize(*SCENE_SIZE)
+    scene.move(*WINDOW_POS)
+    settle(app, 1.0)
+    viewer.togglesc_act.setChecked(True)
+    viewer.toggleScaleCube()
+    # the cube appears at the scene center, over the star: move it to the
+    # empty upper right (the arrow keys do the same), then tilt the camera
+    # so the objects read as solids
+    cube = viewer.plt.objs.getType("scale_cube")[0]
+    cube.translate(*SCALE_CUBE_SHIFT)
+    viewer.plt.show(*viewer.plt.actors, resetcam=True)
+    camera = viewer.plt.camera
+    camera.Elevation(SCENE_ELEVATION)
+    camera.Azimuth(SCENE_AZIMUTH)
+    camera.OrthogonalizeViewUp()
+    viewer.plt.reset_camera()
+    camera.Zoom(SCENE_ZOOM)
+    viewer.plt.render()
+    scene.raise_()
+    scene.activateWindow()
+    settle(app, 1.5)
+    save(grab_scene(app, scene, viewer), "11-3d-scene", "11. Generating a 3D object",
+         "The 3D scene with the fixture's four objects and the scale cube.")
+    scene.close()
+    settle(app, 0.5)
+
     close_window(app, window)
     shutil.rmtree(series_dir, ignore_errors=True)
 
@@ -596,6 +816,8 @@ def commit_of_tree():
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--out", required=True, type=Path, help="folder for the frames")
+    parser.add_argument("--guide", action="store_true",
+                        help=f"also replace the User Guide's images in {GUIDE_IMAGES.relative_to(REPO)}")
     args = parser.parse_args()
     out = args.out.expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -655,6 +877,20 @@ def main():
     print(json.dumps({"out": str(out), "shots": len(shots), "tripwire_unchanged": before == after}))
     if before != after:
         sys.exit("The real settings changed during the run. Find the writer before using these frames.")
+    if args.guide:
+        copy_to_guide(out, shots)
+
+
+def copy_to_guide(out, shots):
+    """Replace the guide's images with this run's, leaving out the flow-only frames."""
+    GUIDE_IMAGES.mkdir(parents=True, exist_ok=True)
+    keep = {s["file"] for s in shots if Path(s["file"]).stem not in FLOW_ONLY}
+    for old in GUIDE_IMAGES.glob("*.png"):
+        if old.name not in keep:
+            old.unlink()
+    for name in sorted(keep):
+        shutil.copyfile(out / name, GUIDE_IMAGES / name)
+    print(f"{len(keep)} images in {GUIDE_IMAGES.relative_to(REPO)}")
 
 
 def _png_size(path):
