@@ -5,7 +5,7 @@ from PyReconstruct.modules.constants import (
     kh_web,
     kh_atlas,
     gh_repo,
-    gh_wiki,
+    user_guide,
     gh_issues,
     gh_bug_form,
     gh_feature_form,
@@ -560,7 +560,7 @@ def return_help_menu(self):
                 "attr_name": "onlinemenu",
                 "text": "Online resources",
                 "opts": [
-                    ("openwiki_act", "PyReconstruct user guide", "", lambda : self.openWebsite(gh_wiki)),
+                    ("openwiki_act", "PyReconstruct user guide", "", lambda : self.openWebsite(user_guide)),
                     ("openrepo_act", "PyReconstruct source code", "", lambda : self.openWebsite(gh_repo)),
                     ("openkhlab_act", "KH lab website", "", lambda : self.openWebsite(kh_web)),
                     ("openkhatlast_act", "Atlas of Ultrastructural Neurocytology", "", lambda : self.openWebsite(kh_atlas)),

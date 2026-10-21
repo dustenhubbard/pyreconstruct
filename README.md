@@ -149,10 +149,10 @@ and in-app under **Help ▸ Online resources**.
 
 ## Documentation
 
-- **[Wiki](https://github.com/dustenhubbard/PyReconstruct/wiki)**: the full user guide, browsable by topic.
-- **[User guide](docs/USER_GUIDE.md)**: installing and updating, opening and
+- **[User guide](https://pyreconstruct.org/USER_GUIDE/)**: installing and updating, opening and
   building a series, the tracing tools, the data lists, alignment, 3D
   reconstruction, and backups.
+- **[Wiki](https://github.com/dustenhubbard/PyReconstruct/wiki)**: older pages on GitHub.
 - **[Contributing guide](CONTRIBUTING.md)**: development setup, running the
   tests, the code layout, and the branch/PR conventions.
 

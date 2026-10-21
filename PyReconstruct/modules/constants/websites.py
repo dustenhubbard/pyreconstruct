@@ -6,8 +6,10 @@ kh_atlas = "https://synapseweb.clm.utexas.edu/atlas"
 fork_repo = "https://github.com/dustenhubbard/PyReconstruct"
 # Source-code menu link (Help > Online resources > "PyReconstruct source code").
 gh_repo = fork_repo
-# User-guide menu link (Help > Online resources > "PyReconstruct user guide").
-gh_wiki = fork_repo + "/wiki"
+# User-guide menu link (Help > Online resources > "PyReconstruct user guide";
+# Help > "PyReconstruct user guide" on macOS). The website guide, built from
+# docs/USER_GUIDE.md, replaces the older GitHub wiki pages.
+user_guide = "https://pyreconstruct.org/USER_GUIDE/"
 gh_issues = fork_repo + "/issues"
 # The two issue forms (.github/ISSUE_TEMPLATE/*.yml), opened by their own Help
 # rows. Each URL names its form directly rather than going through GitHub's

@@ -1,0 +1,1 @@
+- **Help ▸ PyReconstruct user guide now opens the guide on pyreconstruct.org.** The older GitHub wiki pages stay online.
