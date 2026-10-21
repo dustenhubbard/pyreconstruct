@@ -12,7 +12,6 @@ from PySide6.QtGui import (
     QColor,
     QPainter,
     QBrush,
-    QFont,
     QPolygon
 )
 from PyReconstruct.modules.datatypes import (
@@ -33,6 +32,7 @@ from PyReconstruct.modules.calc import (
 from PyReconstruct.modules.calc.nesting import islandCuts
 from PyReconstruct.modules.datatypes.default_settings import MAX_SELECTION_GLOW_OPACITY
 from PyReconstruct.modules.gui.utils import drawOutlinedText
+from PyReconstruct.modules.gui.utils.fonts import monoFont
 
 # The looks a selected trace can have, set by the selected_trace_style option.
 # "standard" is drawn inline in _drawTrace: the trace's 1 px line, then the same
@@ -614,7 +614,7 @@ class TraceLayer():
             painter.setOpacity(1)
             painter.setBrush(Qt.transparent)
             lbl = QLabel(text="⚑")
-            lbl.setFont(QFont("Courier New", flag_size, QFont.Bold))
+            lbl.setFont(monoFont(flag_size))
             lbl.adjustSize()
             w, h = lbl.width(), lbl.height() * 3/4
             x += -w/2 - (h - w)

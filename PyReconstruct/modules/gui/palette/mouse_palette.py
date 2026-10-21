@@ -113,6 +113,7 @@ from PyReconstruct.modules.gui.dialog import TracePaletteDialog, QuickDialog
 from PyReconstruct.modules.gui.dialog.scale_bar_settings import ScaleBarSettingsDialog
 from PyReconstruct.modules.gui.popup import TextWidget
 from PyReconstruct.modules.gui.utils import notify
+from PyReconstruct.modules.gui.utils.fonts import uiFamily, uiFont
 
 
 class MousePalette():
@@ -189,8 +190,8 @@ class MousePalette():
         # create label
         self.label = OutlinedLabel(self.mainwindow)
         font = self.label.font()
-        font.setFamily("Courier New")
-        font.setBold(True)
+        font.setFamily(uiFamily())
+        font.setWeight(uiFont().weight())
         font.setPointSize(16)
         self.label.setFont(font)
         self.updateLabel()

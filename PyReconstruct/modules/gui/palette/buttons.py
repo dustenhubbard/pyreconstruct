@@ -8,12 +8,20 @@ from PySide6.QtGui import (
     QPen, 
     QColor,
     QBrush,
-    QAction
+    QAction,
+    QPalette
 )
-from PySide6.QtCore import QPoint, QRect, Qt
+from PySide6.QtCore import QPoint, QRect, QRectF, Qt
 
 from PyReconstruct.modules.datatypes import Trace
 from PyReconstruct.modules.gui.dialog import TraceDialog
+from PyReconstruct.modules.gui.utils.fonts import macLook
+
+# The selected trace button on the Mac look: ring width and corner radius in
+# pixels, and how strongly the accent tints the button behind the trace.
+ACCENT_RING_WIDTH = 2
+ACCENT_RING_RADIUS = 5
+ACCENT_TINT_ALPHA = 0.18
 
 class MoveableButton(QPushButton):
 
@@ -100,6 +108,30 @@ class PaletteButton(MoveableButton):
         super().__init__(parent, manager, "trace")
         self.setRightClickEvent(self.openDialog)
     
+    def highlightButton(self):
+        """On the Mac look, mark the selected trace in the macOS accent color:
+        a rounded accent ring over a light accent tint, under the trace. The
+        palette is read at paint time, so a new accent in System Settings
+        shows on the next repaint."""
+        if not macLook():
+            super().highlightButton()
+            return
+        if not self.isChecked():
+            return
+        accent = self.palette().color(QPalette.Accent)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        tint = QColor(accent)
+        tint.setAlphaF(ACCENT_TINT_ALPHA)
+        painter.setBrush(QBrush(tint))
+        painter.setPen(QPen(accent, ACCENT_RING_WIDTH))
+        inset = ACCENT_RING_WIDTH / 2
+        painter.drawRoundedRect(
+            QRectF(self.rect()).adjusted(inset, inset, -inset, -inset),
+            ACCENT_RING_RADIUS, ACCENT_RING_RADIUS
+        )
+        painter.end()
+
     def paintEvent(self, event):
         """Draw the trace on the button."""
         super().paintEvent(event)
