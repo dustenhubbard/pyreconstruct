@@ -122,6 +122,10 @@ def validate(data):
         previous = click
     if "cursor_fade_out" in data:
         number(data["cursor_fade_out"], "cursor_fade_out")
+    if "cursor_fade_in" in data:
+        fade_in = number(data["cursor_fade_in"], "cursor_fade_in")
+        if fade_in + .4 > data.get("cursor_fade_out", duration):
+            raise ValueError("cursor_fade_in must finish before cursor_fade_out")
 
 
 def path_progress(move, time):
@@ -294,6 +298,8 @@ class Scene:
                 x, y = screen(cursor_position(data, click))
                 frame.paste(pulse, (round(x - side / 2), round(y - side / 2)), pulse)
         opacity = 1 - ease((time - data.get("cursor_fade_out", data["duration"])) / .4)
+        if "cursor_fade_in" in data:
+            opacity *= ease((time - data["cursor_fade_in"]) / .4)
         if opacity:
             pointer = self.pointer
             if opacity < 1:
@@ -304,7 +310,10 @@ class Scene:
         return frame
 
 
-def render(scene, output, ffmpeg):
+def render(scene, output, ffmpeg, crf=18, threads=None):
+    """Encode `scene` to `output`. `threads` pins x264's thread count, which
+    its output depends on, so the same frames give the same bytes on any
+    machine with the same FFmpeg."""
     output = Path(output).resolve()
     if output.exists():
         raise FileExistsError(f"refusing to overwrite {output}")
@@ -315,7 +324,8 @@ def render(scene, output, ffmpeg):
                    "-f", "rawvideo", "-pixel_format", "rgb24", "-video_size",
                    f"{scene.size[0]}x{scene.size[1]}", "-framerate", str(FPS),
                    "-i", "pipe:0", "-an", "-c:v", "libx264", "-preset", "medium",
-                   "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                   "-crf", str(crf), "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                   *(["-threads", str(threads)] if threads else []),
                    str(temporary)]
         with subprocess.Popen(command, stdin=subprocess.PIPE) as encoder:
             try:
@@ -341,9 +351,12 @@ def main():
     parser.add_argument("--width", type=int, default=1920)
     parser.add_argument("--height", type=int, help="fit inside this height with black padding")
     parser.add_argument("--ffmpeg", default="ffmpeg")
+    parser.add_argument("--crf", type=int, default=18, help="H.264 quality; higher is smaller")
+    parser.add_argument("--threads", type=int, help="pin the encoder's thread count")
     args = parser.parse_args()
     try:
-        render(Scene(args.scene, args.width, args.height), args.output, args.ffmpeg)
+        render(Scene(args.scene, args.width, args.height), args.output, args.ffmpeg,
+               args.crf, args.threads)
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
         parser.exit(1, f"Render failed: {error}\n")
 

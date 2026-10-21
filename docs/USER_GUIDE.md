@@ -320,6 +320,15 @@ that no longer exist, and can be emptied with **Clear recents** at the bottom of
 that submenu. **File ▸ Close series** returns to the welcome series (it does not
 quit the app).
 
+<figure class="clip" markdown>
+
+![Clip: over the welcome series, the pointer opens the File menu and clicks Open series..., and the shapes1 test series opens on section 0.](assets/images/user-guide/04-welcome-series.png)
+
+[▶ 6 s · loops](assets/videos/user-guide/04-open-series.mp4){ .clip-src }
+
+<figcaption markdown>**File ▸ Open series…**, then pick the `.jser` file. The file dialog is left out here.</figcaption>
+</figure>
+
 ![A small test series open on section 0: a star, a circle, a triangle, a diamond and a rectangle traced over a gray image.](assets/images/user-guide/04-series-open.png)
 
 If a series' image files can't be found when it opens, PyReconstruct asks whether
@@ -429,6 +438,15 @@ sliders, and a scale bar. Each overlay group can be dragged to reposition it, an
 - **Go to section** (`Ctrl+G`): jump to a section number.
 - The section-increment buttons (▲/▼) in the corner do the same as PgUp/PgDown
   (handy on tablets).
+
+<figure class="clip" markdown>
+
+![Clip: the pointer clicks the up arrow button at the bottom right and section 1 shows, then clicks the down arrow and section 0 is back.](assets/images/user-guide/04-series-open.png)
+
+[▶ 5 s · loops](assets/videos/user-guide/05-move-between-sections.mp4){ .clip-src }
+
+<figcaption markdown>**Click ▲ for the next section and ▼ for the previous one.**</figcaption>
+</figure>
 
 ### Panning and zooming (in any tool)
 
@@ -542,6 +560,15 @@ finish. Useful for fixing part of a contour without redrawing the whole thing.
 Draw new traces with the current trace-palette preset's name and color. **Closed
 Trace** makes outlines that enclose area; **Open Trace** makes curves with length
 only.
+
+<figure class="clip" markdown>
+
+![Clip: the pointer clicks the Closed Trace button, drags a loop beside the star and lets go, and the new orange trace stays selected.](assets/images/user-guide/04-series-open.png)
+
+[▶ 8 s · loops](assets/videos/user-guide/06-draw-closed-trace.mp4){ .clip-src }
+
+<figcaption markdown>**Click Closed Trace (or press `C`), then drag a loop and let go.** The trace takes the selected preset's name and color.</figcaption>
+</figure>
 
 Right-click either button to choose the drawing **mode**:
 
@@ -738,6 +765,15 @@ allowed), and several can be open at once.
 ![The Object list docked to the left of the field, with its List, Selection, Filter, Find, Groups and Columns menus, and one row per object.](assets/images/user-guide/09-object-list.png)
 
 ### Object list
+
+<figure class="clip" markdown>
+
+![Clip: the pointer opens the Lists menu and clicks Object list, the list docks to the left of the field, and its close button puts it away.](assets/images/user-guide/04-series-open.png)
+
+[▶ 6 s · loops](assets/videos/user-guide/09-open-object-list.mp4){ .clip-src }
+
+<figcaption markdown>**Lists ▸ Object list** docks the list beside the field. Its close button puts it away.</figcaption>
+</figure>
 
 Double-click an object to jump to its first occurrence; **Shift+double-click** adds
 it to the 3D scene. Columns include **Name**, **Start/End** (first/last section),

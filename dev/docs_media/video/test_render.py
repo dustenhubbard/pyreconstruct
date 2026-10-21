@@ -297,3 +297,38 @@ def test_failed_encoder_publishes_nothing(scene_file, tmp_path):
         render(Scene(scene_file, 160), output, str(tmp_path / "missing-ffmpeg"))
     assert not output.exists()
     assert not list(tmp_path.glob(".cursor-render-*"))
+
+
+def test_cursor_fades_in_from_nothing(scene_file):
+    data = json.loads(scene_file.read_text())
+    data.update(clicks=[], cursor_fade_in=0)
+    scene_file.write_text(json.dumps(data))
+    scene = Scene(scene_file, 160)
+    red = Image.new("RGB", (160, 90), "red")
+    assert ImageChops.difference(scene.frame(0), red).getbbox() is None
+    assert ImageChops.difference(scene.frame(.45), red).getbbox() is not None
+
+
+def test_cursor_fade_in_must_finish_before_fade_out(scene_file):
+    data = json.loads(scene_file.read_text())
+    data["cursor_fade_in"] = 1.4
+    with pytest.raises(ValueError, match="cursor_fade_in"):
+        validate(data)
+
+
+def test_crf_and_threads_reach_the_encoder(scene_file, tmp_path):
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("FFmpeg and FFprobe are required for the encode/decode integration test")
+    data = json.loads(scene_file.read_text())
+    data["images"]["red"] = "noise.png"
+    Image.effect_noise((160, 90), 80).convert("RGB").save(tmp_path / "noise.png")
+    scene_file.write_text(json.dumps(data))
+    scene = Scene(scene_file, 160)
+    fine, coarse, pinned = (tmp_path / f"{n}.mp4" for n in ("fine", "coarse", "pinned"))
+    render(scene, fine, "ffmpeg")
+    render(scene, coarse, "ffmpeg", crf=40)
+    render(scene, pinned, "ffmpeg", crf=40, threads=2)
+    assert coarse.stat().st_size < fine.stat().st_size
+    # x264 writes its settings into the stream
+    assert b"crf=40.0" in coarse.read_bytes()
+    assert b" threads=2 " in pinned.read_bytes()

@@ -89,14 +89,18 @@ the working directory. Every image must match `size`.
 - `cursor_size` is the arrow height at native resolution. It scales with output
   scale, independently of camera zoom. Its tip follows the transformed target.
   Optional `cursor_fade_out` starts a 0.4-second fade. When omitted, the cursor
-  stays visible to the end.
+  stays visible to the end. Optional `cursor_fade_in` hides the cursor until
+  that time, then fades it in over 0.4 seconds; it must finish before the
+  fade-out starts.
 
 The original scene does not specify easing or decorative details. This renderer
 uses smoothstep easing for moves, camera keys, and state fades, a dark arrow with
 a white outline and blurred shadow, and a 0.45-second expanding blue-gray pulse.
 These are reconstruction choices, not a pixel-identical recovery of the lost
-renderer. Video encoding uses H.264, CRF 18, the medium preset, `yuv420p`, and
-fast-start metadata at 60 fps with no audio. Zooming a native 4K still in a 4K
+renderer. Video encoding uses H.264, CRF 18 (`--crf` to change it), the medium
+preset, `yuv420p`, and fast-start metadata at 60 fps with no audio. x264's
+output depends on its thread count, so `--threads` pins it when the same frames
+must give the same bytes on another machine. Zooming a native 4K still in a 4K
 export enlarges captured pixels.
 
 ## Polyline moves and drags
@@ -140,6 +144,28 @@ Set a cut to the finished still at `until`. Until that cut, the completed stroke
 remains visible. The selection highlight or fill then comes from the still.
 Do not crossfade a finished trace over its temporary stroke. Review the frames
 on both sides of the cut for shifts in geometry, color, or width.
+
+## The User Guide clips
+
+`clips.py` authors and renders the clips in `docs/USER_GUIDE.md` from one run
+of the capture script (`dev/docs_media/capture/capture.py`):
+
+```sh
+uv run --no-default-groups --extra test python dev/docs_media/capture/capture.py --out /path/to/run --guide --clips
+```
+
+That reshoots the stills, then writes each clip's scene and MP4 into
+`/path/to/run/clips/` and copies the MP4s into `docs/assets/videos/user-guide/`.
+To render again from an existing run without reshooting:
+
+```sh
+uv run --frozen --no-default-groups python dev/docs_media/video/clips.py /path/to/run --guide
+```
+
+Each clip is a function in `clips.py` that places its moves and clicks on the
+run's `targets.json`, so a reshoot that moves a button moves the pointer with
+it. The clips render at 1904 x 1292, the stills' own aspect ratio, at CRF 23
+with four encoder threads. Rerunning on the same stills gives the same bytes.
 
 ## Capture handoff
 
