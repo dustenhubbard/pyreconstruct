@@ -75,13 +75,61 @@ def test_settings_keys_stay_in_the_defaults():
     assert default_settings["useroi_act"] == "B"
 
 
-def test_startup_migration_writes_nothing_while_hidden(main_window):
+def _launch(series_jser):
+    """Build a real `MainWindow`, menus and all, on the store already set."""
+    import sys
+
+    from PyReconstruct.modules.gui.main import MainWindow
+
+    excepthook = sys.excepthook
+    window = MainWindow(str(series_jser))
+    window._captureListLayout = lambda: None
+    return window, excepthook
+
+
+def _close(window, excepthook):
+    import sys
+
+    sys.excepthook = excepthook
+    window.series.modified = False
+    window.close()
+    window.deleteLater()
+    QApplication.processEvents()
+
+
+def test_a_hidden_launch_then_a_shown_one_leaves_b_on_the_tool(
+    qapp, series_jser, main_window_dialogs, monkeypatch
+):
+    """Settings an older Dev build left (B on Toggle ROI mode, no tool key):
+    a hidden launch writes neither ROI key, and the next launch with the
+    switch set settles B onto the tool, so a real B press picks it."""
+    from PySide6.QtCore import QSettings
+
+    from PyReconstruct.modules.gui.dialog.whats_new import current_version_str
+    from PyReconstruct.modules.gui.main.first_launch import WHATSNEW_KEY
+    from PyReconstruct.modules.gui.main.field_widget_5_mouse import ROI_BOX
+
+    QSettings("KHLab", "PyReconstruct").setValue(WHATSNEW_KEY, current_version_str())
     store = DictSettingsStore()
     store.set_value(None, "roibox_act", "B")
     set_default_settings_store(store)
     try:
-        main_window.settleLegacyRoiShortcutStartup()
+        window, hook = _launch(series_jser)
+        _close(window, hook)
         assert store.value(None, "roibox_act", str) == "B"
         assert not store.contains(None, "useroi_act")
+
+        monkeypatch.setenv(ENV_SWITCH, "1")
+        window, hook = _launch(series_jser)
+        try:
+            assert store.value(None, "roibox_act", str) == ""
+            assert store.value(None, "useroi_act", str) == "B"
+            window.activateWindow()
+            QApplication.processEvents()
+            QTest.keyClick(window.field, Qt.Key_B)
+            qapp.processEvents()
+            assert window.field.mouse_mode == ROI_BOX
+        finally:
+            _close(window, hook)
     finally:
         set_default_settings_store(None)
