@@ -6,17 +6,21 @@ native controls: System (stored "default") follows macOS, Light (stored
 QStyleHints.setColorScheme. The stable app, Windows and Linux keep Default
 and Dark (qdarkstyle), and read "light" as "default".
 
-Each test picks the build with the ``build`` fixture, so the suite covers both
-on any platform. The offscreen platform the suite runs on ignores the color
+Each test picks the platform and the build with the ``build`` fixture, which
+sets the inputs the real predicate reads (sys.platform and the version
+build_flavor reads), so the suite covers every pair on any platform. The offscreen platform the suite runs on ignores the color
 scheme (it reports Unknown and draws Fusion), so the tests read the scheme
 the app asks for; the native look itself is checked on the real screen (PR
 captures). macOS's own setting is never touched.
 """
+import sys
+
 import pytest
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
+from PyReconstruct.modules.constants import build_flavor
 from PyReconstruct.modules.gui.utils import appearance
 
 from test_list_dock_sizing import settle
@@ -35,9 +39,17 @@ def restore_look(qapp):
     assert hints.colorScheme() == scheme
 
 
+MAC_DEV = ("darwin", True)
+# every other pair of platform and build: these keep Default and Dark
+OTHER_BUILDS = [
+    ("darwin", False), ("win32", True), ("win32", False),
+    ("linux", True), ("linux", False),
+]
+
+
 @pytest.fixture
 def build(monkeypatch, restore_look):
-    """Call with True for the macOS Dev app, False for every other build.
+    """Call with (platform, dev) to run as that build; native() decides.
 
     Returns the list of themes setColorScheme was asked for."""
     asked = []
@@ -48,9 +60,12 @@ def build(monkeypatch, restore_look):
         real(theme)
 
     monkeypatch.setattr(appearance, "setColorScheme", record)
+    monkeypatch.delenv("PYRECON_APP_NAME", raising=False)
 
-    def pick(mac_dev):
-        monkeypatch.setattr(appearance, "native", lambda: mac_dev)
+    def pick(platform, dev):
+        monkeypatch.setattr(sys, "platform", platform)
+        version = "1.25.0.dev5+g0123abc" if dev else "1.24.0"
+        monkeypatch.setattr(build_flavor, "running_version", lambda: version)
         return asked
     return pick
 
@@ -61,32 +76,39 @@ def window(main_window, local_series_settings):
     return main_window
 
 
-def test_choices_per_build(build):
-    build(True)
+def test_mac_dev_offers_three(build):
+    build(*MAC_DEV)
+    assert appearance.native()
     assert appearance.choices() == [
         ("System", "default"), ("Light", "light"), ("Dark", "qdark")
     ]
-    build(False)
+
+
+@pytest.mark.parametrize("platform, dev", OTHER_BUILDS)
+def test_other_builds_offer_default_and_dark(build, platform, dev):
+    build(platform, dev)
+    assert not appearance.native()
     assert appearance.choices() == [("Default", "default"), ("Dark", "qdark")]
     assert appearance.choices(("default", "dark")) == [
         ("default", "default"), ("dark", "qdark")
     ]
 
 
-def test_unknown_values_resolve_to_default(build):
-    build(False)
+@pytest.mark.parametrize("platform, dev", OTHER_BUILDS)
+def test_unknown_values_resolve_to_default(build, platform, dev):
+    build(platform, dev)
     assert appearance.resolve("light") == "default"
     assert appearance.resolve("bogus") == "default"
     assert appearance.resolve(None) == "default"
     assert appearance.resolve("qdark") == "qdark"
-    build(True)
+    build(*MAC_DEV)
     assert appearance.resolve("light") == "light"
 
 
 def test_mac_dev_switches_live_with_native_controls(qapp, window, build):
     """Dark, Light and System switch in place with no sheet, each asking for
     its scheme; System hands the scheme back to the OS."""
-    asked = build(True)
+    asked = build(*MAC_DEV)
 
     window.setTheme("qdark")
     assert asked == ["qdark"]
@@ -118,8 +140,9 @@ def test_set_color_scheme_forces_and_releases(qapp, restore_look, monkeypatch):
     assert calls == [Qt.ColorScheme.Light, Qt.ColorScheme.Dark, "unset"]
 
 
-def test_other_builds_keep_qdarkstyle(qapp, window, build):
-    asked = build(False)
+@pytest.mark.parametrize("platform, dev", OTHER_BUILDS)
+def test_other_builds_keep_qdarkstyle(qapp, window, build, platform, dev):
+    asked = build(platform, dev)
     window.setTheme("qdark")
     assert "QWidget" in qapp.styleSheet()
     assert appearance.qdarkstyleApplied()
@@ -129,10 +152,12 @@ def test_other_builds_keep_qdarkstyle(qapp, window, build):
     assert asked == []
 
 
-def test_stable_build_draws_a_stored_light_as_default(qapp, window, build):
-    """A stable build that meets the Dev app's "light" draws the default look,
+@pytest.mark.parametrize("platform, dev", OTHER_BUILDS)
+def test_stable_build_draws_a_stored_light_as_default(
+        qapp, window, build, platform, dev):
+    """A build that meets the macOS Dev app's "light" draws the default look,
     and leaves the value stored for the Dev app."""
-    build(False)
+    build(platform, dev)
     window.series.setOption("theme", "light")
     window.setTheme(window.series.getOption("theme"))
     assert qapp.styleSheet() == ""
@@ -142,7 +167,7 @@ def test_stable_build_draws_a_stored_light_as_default(qapp, window, build):
 
 def test_change_theme_dialog_offers_three_on_mac_dev(qapp, window, build, monkeypatch):
     from PyReconstruct.modules.gui.main import main_window as mw
-    asked = build(True)
+    asked = build(*MAC_DEV)
     seen = {}
 
     def pick_light(parent, structure, title, *args, **kwargs):
@@ -166,7 +191,7 @@ def _theme_widget(series):
 
 
 def test_options_offers_three_on_mac_dev_and_stores_light(qapp, window, build):
-    build(True)
+    build(*MAC_DEV)
     dlg, w = _theme_widget(window.series)
     try:
         assert w.accept(close=False)
@@ -177,8 +202,10 @@ def test_options_offers_three_on_mac_dev_and_stores_light(qapp, window, build):
         dlg.deleteLater()
 
 
-def test_options_on_stable_shows_a_stored_light_as_default(qapp, window, build):
-    build(False)
+@pytest.mark.parametrize("platform, dev", OTHER_BUILDS)
+def test_options_on_stable_shows_a_stored_light_as_default(
+        qapp, window, build, platform, dev):
+    build(platform, dev)
     window.series.setOption("theme", "light")
     dlg, w = _theme_widget(window.series)
     try:
@@ -199,7 +226,7 @@ def _object_widths(qapp, window):
 def test_native_dark_gets_no_qdarkstyle_padding(qapp, window, build):
     """Native Dark is stored as "qdark" but draws no qdarkstyle cell padding,
     so the lists measure as in Light."""
-    build(True)
+    build(*MAC_DEV)
     window.setTheme("light")
     light = _object_widths(qapp, window)
     window.setTheme("qdark")
@@ -209,7 +236,7 @@ def test_native_dark_gets_no_qdarkstyle_padding(qapp, window, build):
 
 
 def test_qdarkstyle_still_pads_columns(qapp, window, build):
-    build(False)
+    build("darwin", False)
     window.setTheme("qdark")
     settle(qapp, rounds=6)
     mgr = window.field.table_manager

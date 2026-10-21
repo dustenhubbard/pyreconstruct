@@ -1,1 +1,2 @@
-- **On the Mac Dev build, the theme choices are System, Light and Dark, like macOS's own Appearance setting.** All three keep the native Mac controls and switch at once. System follows macOS. The stable build, Windows and Linux keep Default and Dark as before.
+- **PyReconstruct Dev on macOS offers System, Light and Dark themes, like macOS.**
+  System follows your Mac, and all three keep the native Mac look.
