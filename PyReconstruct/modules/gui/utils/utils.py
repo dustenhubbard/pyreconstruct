@@ -23,12 +23,12 @@ from PySide6.QtGui import (
     QPen,
     QBrush,
     QColor,
-    QFont,
     QScreen
 )
 from PySide6.QtCore import Qt, QEvent, QObject, QEventLoop
 
 from PyReconstruct.modules.constants import welcome_series_dir
+from .fonts import monoFont
 
 
 mainwindow = None
@@ -876,7 +876,7 @@ def drawOutlinedText(
     """
     # create the font
     if not size: size = painter.font().pixelSize()
-    font = QFont("Courier New", size, QFont.Bold)
+    font = monoFont(size)
 
     if right_justify:
         l = QLabel(text=text)

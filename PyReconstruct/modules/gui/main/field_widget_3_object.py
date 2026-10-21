@@ -21,6 +21,7 @@ from PyReconstruct.modules.gui.utils import (
     notify,
     notifyConfirm,
 )
+from PyReconstruct.modules.gui.utils.fonts import monoFamily
 from PyReconstruct.modules.gui.table import (
     HistoryTableWidget,
     ObjectTableWidget,
@@ -1388,7 +1389,7 @@ class FieldWidgetObject(FieldWidgetTrace):
             self.series.host_tree.getASCII(name, hosts),
             "Host Tree" if hosts else "Inhabitant Tree",
         )
-        t.output.setFont("Courier New")
+        t.output.setFont(monoFamily())
 
         return True
     
