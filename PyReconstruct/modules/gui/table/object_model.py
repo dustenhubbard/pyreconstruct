@@ -21,6 +21,7 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtWidgets import QTableView, QApplication, QHeaderView
 
 from PyReconstruct.modules.gui.utils.str_helper import SortStr
+from PyReconstruct.modules.gui.utils import appearance
 from PyReconstruct.modules.backend.func import make_unique_id
 from .copy_table_widget import claimsArrowKey
 
@@ -293,11 +294,7 @@ class ObjectTableView(QTableView):
         vheader.setDefaultSectionSize(row_h)
 
     def _applyQDarkPadding(self):
-        try:
-            series = getattr(self.parent().parent(), "series")
-        except AttributeError:
-            return
-        if series.getOption("theme") == "qdark":
+        if appearance.qdarkstyleApplied():
             for c in range(self.model().columnCount()):
                 self.setColumnWidth(c, self.columnWidth(c) + 8)
 
@@ -323,13 +320,9 @@ class ObjectTableView(QTableView):
         if model is None or not (0 <= row < model.rowCount()):
             return False
         grew = False
-        # qdark adds 8px of padding to each column width in resizeColumnsToContents;
+        # qdarkstyle adds 8px of padding to each column width in resizeColumnsToContents;
         # match it here so a grown column lines up with a full-rebuild width.
-        try:
-            series = getattr(self.parent().parent(), "series")
-            pad = 8 if series.getOption("theme") == "qdark" else 0
-        except AttributeError:
-            pad = 0
+        pad = 8 if appearance.qdarkstyleApplied() else 0
         for c in range(model.columnCount()):
             hint = self.sizeHintForIndex(model.index(row, c)).width()
             if hint <= 0:

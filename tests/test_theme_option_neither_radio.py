@@ -49,6 +49,13 @@ class _ThemeStub:
         self._theme = value
 
 
+def _radios(picked):
+    """The radio row with only ``picked`` (a stored value) on: two radios, or
+    three in the macOS Dev app (gui/utils/appearance.py)."""
+    from PyReconstruct.modules.gui.utils import appearance
+    return [(label, value == picked) for label, value in appearance.choices()]
+
+
 def _theme_widget(qapp, tmp_path):
     if not os.path.exists(FIXTURE):
         pytest.skip("fixture shapes1.jser not found")
@@ -63,7 +70,7 @@ def test_neither_radio_selected_preserves_current_theme(qapp, tmp_path):
     dlg, w = _theme_widget(qapp, tmp_path)
     try:
         dlg.series = _ThemeStub("studio")     # a theme the dialog doesn't know
-        w.responses = ([("default", False), ("dark", False)],)  # neither radio on
+        w.responses = (_radios(None),)         # neither radio on
         w.set()                                # must not raise UnboundLocalError
         assert dlg.series.writes == ["studio"]  # current theme kept, not clobbered
     finally:
@@ -75,7 +82,7 @@ def test_selecting_a_radio_still_sets_that_theme(qapp, tmp_path):
     dlg, w = _theme_widget(qapp, tmp_path)
     try:
         dlg.series = _ThemeStub("default")
-        w.responses = ([("default", False), ("dark", True)],)   # dark selected
+        w.responses = (_radios("qdark"),)      # dark selected
         w.set()
         assert dlg.series.writes == ["qdark"]
     finally:

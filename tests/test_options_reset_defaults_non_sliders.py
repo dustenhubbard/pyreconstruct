@@ -96,14 +96,16 @@ def _screenshot_res_response(dlg):
 
 
 def _theme_response(dlg):
-    """Return the selected theme label from the theme widget."""
+    """Return the stored value of the selected theme in the theme widget."""
+    from PyReconstruct.modules.gui.utils import appearance
     w = dlg.all_widgets["theme"]
     assert w.accept(close=False)
-    # response[0] is the radio row: [("default", bool), ("dark", bool)]
+    # response[0] is the radio row, one (label, bool) per choice: "default"
+    # and "dark", or System, Light and Dark in the macOS Dev app
     radios = w.responses[0]
-    for label, checked in radios:
+    for (_, value), (_, checked) in zip(appearance.choices(), radios):
         if checked:
-            return label
+            return value
     return None
 
 

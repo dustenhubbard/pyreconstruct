@@ -30,7 +30,7 @@ from PyReconstruct.modules.datatypes.default_settings import (
     MAX_SELECTION_GLOW_OPACITY,
 )
 from PyReconstruct.modules.backend.view.trace_layer import SELECTED_TRACE_STYLES
-from PyReconstruct.modules.gui.utils import notify
+from PyReconstruct.modules.gui.utils import notify, appearance
 from .scale_bar_settings import (
     scaleBarStructure,
     storeScaleBarResponse,
@@ -357,21 +357,19 @@ class AllOptionsDialog(QDialog):
 
         ## Theme opts
 
-        theme = self.series.getOption("theme", use_defaults)
-        
+        theme = appearance.resolve(self.series.getOption("theme", use_defaults))
+        theme_options = appearance.choices(("default", "dark"))
+
         structure = [
             ["Theme:"],
-            [("radio", 
-              ("default", theme == "default"),
-              ("dark", theme == "qdark"),
-            )],
+            [("radio", *[(label, theme == value) for label, value in theme_options])],
         ]
-        
+
         def setOption(response):
 
-            theme = self.series.getOption("theme")  # keep current if neither radio matched
-            if response[0][0][1]: theme = "default"
-            elif response[0][1][1]: theme = "qdark"
+            theme = self.series.getOption("theme")  # keep current if no radio matched
+            for (_, value), (_, checked) in zip(theme_options, response[0]):
+                if checked: theme = value
             self.series.setOption("theme", theme)
             
         self.addOptionWidget("theme", structure, setOption)
