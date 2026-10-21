@@ -38,6 +38,12 @@ from PyReconstruct.modules.gui.main.field_widget_5_mouse import (
 
 pytestmark = pytest.mark.gui
 
+
+@pytest.fixture(autouse=True)
+def roi_mode_shown(monkeypatch):
+    """ROI mode is hidden unless PYRECON_ROI_MODE=1; these tests drive it."""
+    monkeypatch.setenv("PYRECON_ROI_MODE", "1")
+
 # a box over the west part of d03, clear of d03p14 and d03sp14
 CENTER = (13.5, 23.7)
 SIZE = (0.4, 0.4)

@@ -330,14 +330,21 @@ def applySeriesShortcut(action, act_name: str, series):
     from PyReconstruct.modules.datatypes.default_settings import (
         LEGACY_SHORTCUT_ALIASES, default_settings,
     )
+    from PyReconstruct.modules.constants.roi_mode import (
+        ACTION_KEYS as ROI_ACTION_KEYS, roi_mode_enabled,
+    )
     primary = series.getOption(act_name)
     sequences = [primary] if primary else []
     alias = LEGACY_SHORTCUT_ALIASES.get(act_name)
     if alias and alias != primary:
+        # a hidden ROI mode has no actions to claim a chord, and reading its
+        # keys would store their defaults, which the startup B fix reads as
+        # "already ran" once ROI mode is shown
+        skip = () if roi_mode_enabled() else ROI_ACTION_KEYS
         claimed = any(
             name != act_name and series.getOption(name) == alias
             for name in default_settings
-            if name.endswith("_act")
+            if name.endswith("_act") and name not in skip
         )
         if not claimed:
             sequences.append(alias)

@@ -31,6 +31,12 @@ TOGGLE = M.ROI_TOGGLE_KEY
 TOOL = M.ROI_TOOL_KEY
 
 
+@pytest.fixture(autouse=True)
+def roi_mode_shown(monkeypatch):
+    """ROI mode is hidden unless PYRECON_ROI_MODE=1; these tests drive it."""
+    monkeypatch.setenv("PYRECON_ROI_MODE", "1")
+
+
 # --- the migration on its own -------------------------------------------------
 
 def _store(**values):
