@@ -15,6 +15,7 @@ publisher" SmartScreen warning (click *More info → Run anyway*).
 | `PyReconstruct.spec` | PyInstaller build recipe (one-folder) |
 | `rthook_qt.py` | Runtime hook: clears a stale Qt plugin path |
 | `smoke_test.py` | Headless import + offscreen VTK render check |
+| `make_cli_shims.py` | The `pyrecon` and `pyreconstruct` terminal commands, written into the frozen app after the freeze |
 | `windows/PyReconstruct.iss` | Inno Setup installer script *(to be added)* |
 | `macos/make_icns.sh`, `macos/make_dmg.sh` | macOS icon + dmg |
 | `macos/sign_app.sh`, `macos/entitlements.plist` | Developer ID signing with the hardened runtime |
@@ -40,6 +41,8 @@ set QT_QPA_PLATFORM=offscreen
 python packaging\smoke_test.py
 pyinstaller --noconfirm packaging\PyReconstruct.spec
 :: -> dist\PyReconstruct\PyReconstruct.exe
+python packaging\make_cli_shims.py dist\PyReconstruct --version 1.24.0
+:: -> dist\PyReconstruct\bin\pyrecon.cmd, pyreconstruct.cmd
 ```
 
 Then sanity-check the build by launching `dist\PyReconstruct\PyReconstruct.exe`:
@@ -55,6 +58,7 @@ Measure the bundle size before quoting it to anyone:
 bash packaging/macos/make_icns.sh        # copies the flavor's icon to packaging/PyReconstruct.icns
 pyinstaller --noconfirm packaging/PyReconstruct.spec
 # -> dist/PyReconstruct.app
+python packaging/make_cli_shims.py "dist/PyReconstruct.app"   # before signing
 python -m pip install --require-hashes --only-binary :all: -r packaging/macos/dmg-requirements.txt
 bash packaging/macos/make_dmg.sh
 ```

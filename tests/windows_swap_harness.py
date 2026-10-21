@@ -127,6 +127,22 @@ def uninstall_entry(app_name):
                 return f"{UNINSTALL}\\{name}", location
 
 
+def user_path_entries():
+    """The entries of HKCU\\Environment\\Path, as written."""
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as k:
+            value = winreg.QueryValueEx(k, "Path")[0]
+    except OSError:
+        return []
+    return [part for part in value.split(";") if part]
+
+
+def count_entry(entries, folder):
+    want = str(folder).rstrip("\\").lower()
+    return sum(1 for e in entries if e.strip().strip('"').rstrip("\\").lower() == want)
+
+
 def display_version(key):
     import winreg
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as k:
@@ -229,6 +245,14 @@ def run(artifacts, workdir):
     check(display_version(key) == version, f"DisplayVersion is {version}")
     carried = check_matches_tree(install, tree, "the installed folder")
     check("unins000.exe" in carried and "unins000.dat" in carried, f"the uninstaller is in place: {carried}")
+    path_before = [e for e in user_path_entries() if count_entry([e], install / "bin") == 0]
+    check(count_entry(user_path_entries(), install / "bin") == 1, f"{install / 'bin'} is on the user's PATH once")
+    commands = sorted((install / "bin").glob("*.cmd"))
+    check(len(commands) == 2, f"two terminal commands: {[c.name for c in commands]}")
+    for command in commands:
+        out = subprocess.run([str(command), "--version"], capture_output=True, text=True, timeout=60)
+        check(out.returncode == 0 and out.stdout.strip() == f"{name} {version}",
+              f"{command.name} --version prints {name} {version} ({out.returncode}, {out.stdout.strip()!r})")
 
     empty = workdir / f".{name}-update"
     empty.mkdir()
@@ -315,6 +339,8 @@ def run(artifacts, workdir):
         left = [str(p) for base in (install, staging) if base.exists() for p in base.rglob("*")][:20]
         raise Failed(f"the uninstall left {left or 'the registry entry'} behind")
     log("ok: the uninstall removed the install, the staging folder, and the registry entry")
+    check(user_path_entries() == path_before,
+          f"the uninstall took {install / 'bin'} off the user's PATH and kept every other entry")
 
 
 def main(argv=None):

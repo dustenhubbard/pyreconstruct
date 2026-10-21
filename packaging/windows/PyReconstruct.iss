@@ -51,6 +51,9 @@ CloseApplications=yes
 RestartApplications=no
 ; The .jser association below; tells Explorer to refresh its file-type cache.
 ChangesAssociations=yes
+; {app}\bin goes on the user's PATH ([Code] below); tells Explorer so a new
+; terminal finds the commands without a sign-out.
+ChangesEnvironment=yes
 
 [InstallDelete]
 ; In-place upgrades (fixed AppId) copy the new onedir tree over the old one.
@@ -69,6 +72,7 @@ Type: files; Name: "{app}\*.dll"
 ; updater's own folder so an uninstall leaves nothing behind.
 Type: filesandordirs; Name: "{app}\_internal"
 Type: filesandordirs; Name: "{app}\_updater"
+Type: filesandordirs; Name: "{app}\bin"
 ; The in-place updater's staging folder sits beside the install, not in it.
 ; It is not removed here: an entry here deletes whatever has that name. The
 ; [Code] section below removes it after checking it is the updater's.
@@ -147,10 +151,121 @@ begin
     or FileExists(Dir + '\helper.log');
 end;
 
+// The terminal commands (pyrecon and pyreconstruct, or the -dev pair) are in
+// {app}\bin, and that folder alone goes on the per-user PATH. Install adds
+// the one entry if it is missing; uninstall removes exactly that entry and
+// keeps every other one as it was. Entries compare without case and without
+// a trailing backslash. The value is never deleted: it belongs to the user.
+
+const
+  EnvKey = 'Environment';
+
+function CommandsDir(): String;
+begin
+  Result := AddBackslash(RemoveBackslashUnlessRoot(ExpandConstant('{app}'))) + 'bin';
+end;
+
+function SamePathEntry(A, B: String): Boolean;
+begin
+  A := RemoveBackslashUnlessRoot(RemoveQuotes(Trim(A)));
+  B := RemoveBackslashUnlessRoot(RemoveQuotes(Trim(B)));
+  Result := (A <> '') and (CompareText(A, B) = 0);
+end;
+
+// Splits on ';' into Parts; returns the count.
+function SplitPath(const Value: String; var Parts: TArrayOfString): Integer;
+var
+  Rest: String;
+  P: Integer;
+begin
+  Result := 0;
+  SetArrayLength(Parts, 0);
+  if Value = '' then
+    exit;
+  Rest := Value;
+  repeat
+    P := Pos(';', Rest);
+    SetArrayLength(Parts, Result + 1);
+    if P = 0 then
+    begin
+      Parts[Result] := Rest;
+      Rest := '';
+      P := -1;
+    end
+    else
+    begin
+      Parts[Result] := Copy(Rest, 1, P - 1);
+      Delete(Rest, 1, P);
+    end;
+    Result := Result + 1;
+  until P = -1;
+end;
+
+function PathHasEntry(const Value, Entry: String): Boolean;
+var
+  Parts: TArrayOfString;
+  I, N: Integer;
+begin
+  Result := False;
+  N := SplitPath(Value, Parts);
+  for I := 0 to N - 1 do
+    if SamePathEntry(Parts[I], Entry) then
+    begin
+      Result := True;
+      exit;
+    end;
+end;
+
+procedure AddCommandsToPath();
+var
+  Value: String;
+begin
+  if not RegQueryStringValue(HKCU, EnvKey, 'Path', Value) then
+    Value := '';
+  if PathHasEntry(Value, CommandsDir()) then
+    exit;
+  if (Value <> '') and (Copy(Value, Length(Value), 1) <> ';') then
+    Value := Value + ';';
+  RegWriteExpandStringValue(HKCU, EnvKey, 'Path', Value + CommandsDir());
+end;
+
+procedure RemoveCommandsFromPath();
+var
+  Value, Kept: String;
+  Parts: TArrayOfString;
+  I, N: Integer;
+  First: Boolean;
+begin
+  if not RegQueryStringValue(HKCU, EnvKey, 'Path', Value) then
+    exit;
+  if not PathHasEntry(Value, CommandsDir()) then
+    exit;
+  Kept := '';
+  First := True;
+  N := SplitPath(Value, Parts);
+  for I := 0 to N - 1 do
+    if not SamePathEntry(Parts[I], CommandsDir()) then
+    begin
+      if not First then
+        Kept := Kept + ';';
+      Kept := Kept + Parts[I];
+      First := False;
+    end;
+  RegWriteExpandStringValue(HKCU, EnvKey, 'Path', Kept);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    AddCommandsToPath();
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Dir: String;
 begin
+  if CurUninstallStep = usUninstall then
+    RemoveCommandsFromPath();
   if CurUninstallStep = usPostUninstall then
   begin
     Dir := UpdateStagingDir();

@@ -88,13 +88,16 @@ def paths(env, flavor):
     share = home / ".local" / "share"
     if flavor == "dev":
         name, app_id, cmd, local = "PyReconstruct Dev", DEV_ID, "pyreconstruct-dev", "PyReconstruct-Dev.AppImage"
+        short = "pyrecon-dev"
     else:
         name, app_id, cmd, local = "PyReconstruct", STABLE_ID, "pyreconstruct", "PyReconstruct.AppImage"
+        short = "pyrecon"
     return {
         "root": share / name,
         "appimage": share / name / local,
         "marker": share / name / ".appimage-install",
         "launcher": home / ".local" / "bin" / cmd,
+        "short": home / ".local" / "bin" / short,
         "desktop": share / "applications" / f"{app_id}.desktop",
         "icon": share / "icons" / "hicolor" / "512x512" / "apps" / f"{app_id}.png",
         "mime": share / "mime" / "packages" / f"{app_id}.xml",
@@ -295,6 +298,66 @@ def test_rerun_upgrades_and_a_current_install_downloads_nothing(env):
     assert any(r.endswith(".AppImage") for r in first)
     assert not any(r.endswith(".AppImage") for r in second)
     assert "already installed" in p.stderr
+
+
+# ---- the short command ------------------------------------------------------------
+@pytest.mark.parametrize("shell", SHELLS)
+def test_the_short_command_is_a_link_to_the_launcher(env, shell):
+    with FakeGitHub([stable_release("v1.24.0")]) as gh:
+        p = run(env, gh, shell=shell)
+        f = paths(env, "stable")
+        assert os.readlink(f["short"]) == "pyreconstruct"
+        assert "run: pyrecon" in p.stderr
+        # a re-run leaves the link as it is
+        run(env, gh, shell=shell)
+    assert os.readlink(f["short"]) == "pyreconstruct"
+    subprocess.run([str(f["short"]), "/data/a b.jser"], env=env, check=True)
+    label, _, argv = launches(env)[-1].split("|")
+    assert (label, argv) == ("v1.24.0", "/data/a b.jser")
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_dev_and_stable_each_get_their_own_short_command(env, shell):
+    with FakeGitHub([dev_release("v1.25.0.dev20261001"), stable_release("v1.24.0")]) as gh:
+        run(env, gh, shell=shell)
+        run(env, gh, "--dev", shell=shell)
+    assert os.readlink(paths(env, "stable")["short"]) == "pyreconstruct"
+    assert os.readlink(paths(env, "dev")["short"]) == "pyreconstruct-dev"
+    subprocess.run([str(paths(env, "dev")["short"]), "x.jser"], env=env, check=True)
+    assert launches(env)[-1].split("|")[0] == "v1.25.0.dev20261001"
+
+
+@pytest.mark.parametrize("foreign", ["file", "link"])
+def test_a_short_name_someone_else_has_is_kept(env, foreign):
+    short = paths(env, "stable")["short"]
+    short.parent.mkdir(parents=True)
+    if foreign == "file":
+        short.write_text("#!/bin/sh\necho mine\n")
+    else:
+        os.symlink("/usr/bin/true", short)
+    with FakeGitHub([stable_release("v1.24.0")]) as gh:
+        p = run(env, gh)
+        assert paths(env, "stable")["launcher"].exists()
+        assert "did not write it, so use pyreconstruct" in p.stderr
+        assert "run: pyreconstruct" in p.stderr
+        u = run(env, gh, "--uninstall")
+    if foreign == "file":
+        assert short.read_text() == "#!/bin/sh\necho mine\n"
+    else:
+        assert os.readlink(short) == "/usr/bin/true"
+    assert f"left {short} in place" in u.stderr
+
+
+def test_uninstall_removes_a_short_link_made_with_the_full_path(env):
+    """PyReconstruct itself makes the link by name; a link by full path to the
+    same launcher is ours too."""
+    with FakeGitHub([stable_release("v1.24.0")]) as gh:
+        run(env, gh)
+        f = paths(env, "stable")
+        f["short"].unlink()
+        os.symlink(f["launcher"], f["short"])
+        run(env, gh, "--uninstall")
+    assert not os.path.lexists(f["short"])
 
 
 # ---- uninstall -----------------------------------------------------------------
