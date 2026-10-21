@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Report a pull request that changes what a user sees without touching the docs.
 
-The User Guide on main listed five wrong shortcuts (``Ctrl+M`` for merge
-traces; the app binds ``Shift+M``) and left out nine newer keys. Every one of
-those keys was changed or added by a reviewed pull request, and nothing asked
-the author whether the guide still matched. This check asks.
+A change to a menu, a dialog, a tool or a shortcut can leave the User Guide
+out of date with nothing to show it. This check asks the author whether the
+guide still matches PyReconstruct.
 
 The rule is narrow on purpose: a pull request that touches a user-facing path
 (listed in ``USER_FACING`` below) should also change something under ``docs/``
@@ -67,6 +66,8 @@ USER_FACING = (
     _MODULES + "gui/main/menubar.py",
     _MODULES + "gui/main/mac_menubar.py",
     _MODULES + "gui/main/context_menu_list.py",
+    # Context-menu behavior and the tool shortcuts are defined here.
+    _MODULES + "gui/main/main_window.py",
     _MODULES + "gui/dialog/",
     _MODULES + "gui/palette/",
     _MODULES + "gui/popup/",
@@ -93,7 +94,7 @@ OPT_OUT_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
-OPT_OUT_EXAMPLE = "No docs change: <why the docs still match the app>"
+OPT_OUT_EXAMPLE = "No docs change: <why the docs still match PyReconstruct>"
 
 
 def _matches(path, entry):
@@ -194,8 +195,8 @@ def _message(changed_files):
         "Update the User Guide section for that screen in docs/USER_GUIDE.md "
         f"(or {README}, if that is where it is described) in this pull request.",
         "",
-        "Or, if the docs still match the app, put this line in the pull request "
-        "body:",
+        "Or, if the docs still match PyReconstruct, put this line in the pull "
+        "request body:",
         f"  {OPT_OUT_EXAMPLE}",
     ]
     return "\n".join(lines)

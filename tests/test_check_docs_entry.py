@@ -41,6 +41,7 @@ def test_user_facing_change_without_docs_is_the_finding():
         "PyReconstruct/modules/gui/main/menubar.py",
         "PyReconstruct/modules/gui/main/mac_menubar.py",
         "PyReconstruct/modules/gui/main/context_menu_list.py",
+        "PyReconstruct/modules/gui/main/main_window.py",
         "PyReconstruct/modules/gui/dialog/knife.py",
         "PyReconstruct/modules/gui/palette/mouse_palette.py",
         "PyReconstruct/modules/gui/popup/about.py",
@@ -53,6 +54,17 @@ def test_user_facing_change_without_docs_is_the_finding():
 )
 def test_each_kind_of_user_facing_path_is_in_scope(path):
     status, _ = check.evaluate([path], "")
+    assert status == "missing"
+
+
+def test_a_change_only_to_the_main_window_is_in_scope():
+    """Context-menu behavior and tool shortcuts live in main_window.py, so a
+    change to that file alone still asks about the docs."""
+    files = [
+        "PyReconstruct/modules/gui/main/main_window.py",
+        "PyReconstruct/modules/datatypes/series.py",
+    ]
+    status, _ = check.evaluate(files, "Changes a shortcut.")
     assert status == "missing"
 
 
