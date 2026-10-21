@@ -26,6 +26,7 @@ these:
 
 
 from PyReconstruct.modules.gui.utils import getUserColsMenu, getAlignmentsMenu
+from PyReconstruct.modules.constants.roi_mode import roi_mode_enabled
 
 
 def collada_menu_label(available=None):
@@ -113,9 +114,12 @@ def get_field_menu_list(self):
                 ("showall_act", "Toggle show all", self.series, self.field.toggleShowAllTraces),
                 None,
                 # view-only: shows just the traces inside a box drawn with the
-                # ROI mode tool; nothing is saved and nothing is undone
-                ("roibox_act", "Toggle ROI mode", self.series, self.field.toggleRoiBox),
-                None,
+                # ROI mode tool; nothing is saved and nothing is undone. Held:
+                # shown only with PYRECON_ROI_MODE=1 (constants/roi_mode.py)
+                *([
+                    ("roibox_act", "Toggle ROI mode", self.series, self.field.toggleRoiBox),
+                    None,
+                ] if roi_mode_enabled() else []),
                 ("hideimage_act", "Toggle hide image", self.series, self.field.toggleHideImage),
                 ("blend_act", "Toggle section blend", self.series, self.field.toggleBlend),
             ]

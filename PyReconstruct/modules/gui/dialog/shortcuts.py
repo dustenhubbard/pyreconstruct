@@ -15,6 +15,9 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QKeySequence, QAction
 
 from PyReconstruct.modules.datatypes import Series
+from PyReconstruct.modules.constants.roi_mode import (
+    ACTION_KEYS as ROI_ACTION_KEYS, roi_mode_enabled,
+)
 from PyReconstruct.modules.gui.modifiers import (
     MODIFIER_KEYS,
     canonical,
@@ -158,7 +161,7 @@ class ShortcutsDialog(QDialog):
         self.act_widgets = {}
         self.modifier_widgets = {}
 
-        for row, item in enumerate(help_shortcuts):
+        for row, item in enumerate(shownShortcuts()):
             if item is None:  # spacer
                 grid.addWidget(QLabel(self, text=" "), row, 0)
             elif type(item) is str:  # header
@@ -293,6 +296,16 @@ class ShortcutsDialog(QDialog):
             return shortcuts_dict, True
         else:
             return None, False
+
+
+def shownShortcuts() -> list:
+    """The `help_shortcuts` rows the dialog shows: ROI mode is held, so its
+    rows show only with PYRECON_ROI_MODE=1 (constants/roi_mode.py)."""
+    return [
+        item for item in help_shortcuts
+        if roi_mode_enabled()
+        or not (isinstance(item, tuple) and item[0] in ROI_ACTION_KEYS)
+    ]
 
 
 def getStaticShortcuts(w : QWidget) -> list[QKeySequence]:
