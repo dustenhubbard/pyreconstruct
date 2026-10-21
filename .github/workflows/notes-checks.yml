@@ -1,14 +1,24 @@
 name: notes
 
-# Reports a pull request that changes the application without recording it,
-# either as a fragment under changelog.d/ or as a change to CHANGELOG.md. See
-# scripts/check_changelog_entry.py for the rule, the two automatic exemptions,
-# and the opt-out, and changelog.d/README.md for what an author writes.
+# Two report-only checks on what a pull request records about itself.
 #
-# REPORT-ONLY. This workflow always exits 0. The finding arrives as a warning
-# annotation and a job summary, not as a failed check. To make it a gate, set
-# BLOCKING = True in scripts/check_changelog_entry.py; nothing in this file
-# needs to change.
+# `changelog-entry` reports a pull request that changes the application without
+# recording it, either as a fragment under changelog.d/ or as a change to
+# CHANGELOG.md. See scripts/check_changelog_entry.py for the rule, the two
+# automatic exemptions, and the opt-out, and changelog.d/README.md for what an
+# author writes.
+#
+# `docs-entry` reports a pull request that changes a menu, dialog, tool,
+# shortcut, the updater or an installer without changing docs/ or README.md,
+# and with no `No docs change: <reason>` line in the body. It also lists guide
+# images that show a changed file, once docs/assets/images/user-guide/sources.json
+# exists. See scripts/check_docs_entry.py for the path list and the rule.
+#
+# REPORT-ONLY. Both jobs always exit 0. A finding arrives as a warning
+# annotation and a job summary, not as a failed check. To make either a gate,
+# set BLOCKING = True in its script; nothing in this file needs to change. A
+# gate also needs its job name added to the required checks in branch
+# protection.
 #
 # No `branches:` filter, deliberately: a pull request changes the application
 # exactly as much whatever branch it targets, so a base-branch filter here would
@@ -30,7 +40,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Least privilege. The check reads the changed-file list from git and the body
+# Least privilege. Each check reads the changed-file list from git and the body
 # from the event payload, and writes only a job summary.
 permissions:
   contents: read
@@ -63,3 +73,31 @@ jobs:
           python3 scripts/check_changelog_entry.py \
             --changed-files "${RUNNER_TEMP}/changed-files.txt" \
             --body "${RUNNER_TEMP}/pr-body.txt"
+
+  # The same shape as changelog-entry above, and the same care with the body.
+  docs-entry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 2
+
+      - name: Collect the changed files
+        run: git diff --name-only HEAD^1 HEAD > "${RUNNER_TEMP}/changed-files.txt"
+
+      # Through a file and an environment variable, never interpolated into the
+      # shell: a pull request body is attacker-controlled text.
+      - name: Collect the pull request body
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s' "$PR_BODY" > "${RUNNER_TEMP}/pr-body.txt"
+
+      # The image map may not exist yet; the script skips the stale-shot list
+      # and says so when it is missing.
+      - name: Docs change recorded
+        run: |
+          python3 scripts/check_docs_entry.py \
+            --changed-files "${RUNNER_TEMP}/changed-files.txt" \
+            --body "${RUNNER_TEMP}/pr-body.txt" \
+            --shot-sources docs/assets/images/user-guide/sources.json
