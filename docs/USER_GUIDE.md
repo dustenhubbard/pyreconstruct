@@ -22,8 +22,9 @@ The University of Texas at Austin) and the in-app **Help ▸ Shortcuts list**.
 
 > **Shortcuts.** Key combinations shown here are the **defaults**. Almost all of
 > them are rebindable under **Help ▸ Shortcuts list** (press `?`). A few menu
-> shortcuts are fixed: `PgUp`/`PgDown` (section navigation), `Ctrl+\` (align by
-> correlation), and `?` (the shortcuts list itself).
+> shortcuts are fixed: `PgUp`/`PgDown` (section navigation) and `?` (the shortcuts
+> list itself). This guide writes `Ctrl` and `Alt`; on macOS press `Cmd` and
+> `Option`. [Keyboard shortcuts](#13-keyboard-shortcuts) lists both forms.
 
 ---
 
@@ -473,7 +474,23 @@ middle-click pans, regardless of the active tool.
 
 ![The tool palette column, each button labeled with its tool and default shortcut: Pointer P, Pan/Zoom Z, Knife K, Scissors Shift+K, Closed Trace C, Open Trace O, Stamp S, Grid G, Flag F, Host Q, and Ztool, which has no shortcut.](assets/images/user-guide/06-tool-palette-labeled.png)
 
-The palette has eleven tools:
+<!-- generated: tools (from PyReconstruct's source; to update, run: python3 scripts/docs_tables.py --write) -->
+The palette has eleven tools, top to bottom:
+
+| Tool | Key |
+|---|---|
+| Pointer | `P` |
+| Pan/Zoom | `Z` |
+| Knife | `K` |
+| Scissors | `Shift+K` |
+| Closed Trace | `C` |
+| Open Trace | `O` |
+| Stamp | `S` |
+| Grid | `G` |
+| Flag | `F` |
+| Host | `Q` |
+| Ztool | (none) |
+<!-- /generated: tools -->
 
 ### Pointer (`P`)
 
@@ -637,14 +654,15 @@ traces are selected and **Edit z-trace attributes...** when z-traces are, so the
 most-used edit is one click away above the per-entity submenus.
 
 - **Edit attributes** (`Ctrl+E`): change name, color, tags, and fill mode.
-- **Merge traces** (`Ctrl+M`): merge the exteriors of selected traces (they must
+- **Merge traces** (`Shift+M`): merge the exteriors of selected traces (they must
   share a name).
-- **Hide** (`Ctrl+H`) / **Unhide all** (`Ctrl+U`). Hidden traces can't be edited
+- **Hide** (`Shift+H`) / **Unhide all** (`Ctrl+U`). Hidden traces can't be edited
   until unhidden.
 - **Make negative / positive**. Negative traces subtract from (cut into) the area
   of same-named traces, e.g. to carve a hole; this matters for area and 3D volume.
 - **Cut / Copy / Paste** (`Ctrl+X` / `Ctrl+C` / `Ctrl+V`) and **Paste attributes**
-  (`Ctrl+B`), which copies a trace's name/color/tags onto selected traces.
+  (`Ctrl+Shift+V`; the older `Ctrl+B` still works), which copies a trace's
+  name/color/tags onto selected traces.
 - **Delete** (`Delete` or `Backspace`): delete the selected traces.
 
 ![The field context menu, opened on a selected star: Trace, Object, Ztrace, View and Series alignment submenus, then Cut, Copy, Copy to sections, Delete from sections, Paste, Paste attributes, Select all traces, Deselect all traces, Invert selection and Delete.](assets/images/user-guide/08-field-context-menu.png)
@@ -665,11 +683,9 @@ On the field (right-click empty space, or use the shortcuts):
 In **Focus mode**, a **Ctrl-click** (`Cmd`-click on macOS) on a trace edits which
 object it belongs to: clicking a trace of the focused object splits that trace out
 into a new `<object>_split` contour, and clicking a trace of any *other* object
-incorporates it into the focused one. Both are undoable. The modifier is Ctrl so
-that it sits on the same key as **Merge traces** (`Ctrl+M`), which is the other
-half of a proofreading pass. **This was Shift-click before 1.21.0**, and Shift no
-longer performs the edit; the modifier is fixed for now, and being able to remap it
-is planned. Clicking a trace *without* a modifier does nothing in focus mode. The ordinary
+incorporates it into the focused one. Both are undoable. **This was Shift-click
+before 1.21.0**, and Shift no longer performs the edit. Choose another modifier, or
+none, under **Help ▸ Shortcuts list**. Clicking a trace *without* a modifier does nothing in focus mode. The ordinary
 click-to-select is suppressed outright while focus mode is on, so an unmodified
 click neither selects another object's trace nor deselects one of the focused
 object's own.
@@ -699,7 +715,7 @@ allowed), and several can be open at once.
 | **Object list of selected traces** | (no shortcut) | the objects with a trace selected in the field, with the same columns |
 | **Trace list** | `Ctrl+Shift+T` | traces on the **current section** |
 | **Section list** | `Ctrl+Shift+S` | every section |
-| **Z-trace list** | `Ctrl+Shift+Z` | every z-trace |
+| **Z-trace list** | `Ctrl+Alt+Z` | every z-trace |
 | **Flag list** | `Ctrl+Shift+F` | flags across the series |
 | **Series history** | (no shortcut) | the full edit log |
 
@@ -1047,84 +1063,149 @@ disables auto-backup until you do.
 
 ## 13. Keyboard shortcuts
 
-These are the defaults; rebind them under **Help ▸ Shortcuts list** (`?`).
+These are the defaults, in the groups and words of **Help ▸ Shortcuts list** (`?`),
+where you can rebind them. A key with `Cmd` or `Option` is written for macOS first;
+on Windows and Linux it is `Ctrl` or `Alt`, shown after it.
 
 ![The Shortcuts list: each action with its shortcut in a box that can be edited or cleared, and Reset Defaults, Cancel and OK buttons.](assets/images/user-guide/13-shortcuts-list.png)
 
-### Tools
-
-| Key | Tool |
-|---|---|
-| `P` | Pointer |
-| `Z` | Pan/Zoom |
-| `K` | Knife |
-| `Shift+K` | Scissors |
-| `C` | Closed Trace |
-| `O` | Open Trace |
-| `S` | Stamp |
-| `G` | Grid |
-| `F` | Flag |
-| `Q` | Host |
-
-(The Z-trace tool is selected from the palette.)
-
-### Files and series
+<!-- generated: shortcuts (from PyReconstruct's source; to update, run: python3 scripts/docs_tables.py --write) -->
+### General
 
 | Key | Action |
 |---|---|
-| `Ctrl+N` | New series from images |
-| `Ctrl+O` | Open series |
-| `Ctrl+S` | Save |
-| `Ctrl+Shift+B` | Backup now |
-| `Ctrl+R` | Restart PyReconstruct |
-| `Ctrl+Q` | Quit |
-| `Shift+O` | Series options |
+| `Delete/Backspace` | Delete selected traces. Remove last point when polyline tracing or using scissors. Delete selected entry in lists. |
+| `? (Shift+/)` | Display keyboard shortcuts |
+| `Cmd+,` (`Ctrl+,` on Windows/Linux) | View all options |
+| `Page Up` | Display the next (higher) section |
+| `Page Down` | Display the preceding (lower) section |
+| `/` | Switch between current and last viewed section |
 
-### Sections and view
-
-| Key | Action |
-|---|---|
-| `PgUp` / `PgDown` | Next / previous section |
-| `Ctrl+G` | Go to section |
-| `/` | Flicker between two sections |
-| `Home` | Fit view to image |
-| `Space` | Blend current and last section |
-| `Shift+F` | Find contour on this section |
-| `Ctrl+F` | Find an object's first contour |
-
-### Editing traces
+### View
 
 | Key | Action |
 |---|---|
-| `Ctrl+Z` / `Ctrl+Y` | Undo / Redo |
-| `Ctrl+X` / `Ctrl+C` / `Ctrl+V` | Cut / Copy / Paste |
-| `Ctrl+B` | Paste attributes |
-| `Ctrl+E` | Edit trace attributes |
-| `Ctrl+M` | Merge traces |
-| `Ctrl+H` / `Ctrl+U` | Hide selected / Unhide all |
-| `Ctrl+A` / `Ctrl+D` | Select all / Deselect |
-| `H` / `A` | Hide trace layer / Show all traces (ignore hidden) |
-| `I` | Hide image |
-| `Space` | Section blend |
 | `X` | Focus mode |
-| `Delete` / `Backspace` | Delete selected (or remove last point while tracing) |
+| `Cmd` (`Ctrl` on Windows/Linux) | Hold and click in focus mode to split or incorporate a trace |
+| `H` | Hide trace layer |
+| `A` | Show all traces (ignore hidden) |
+| `I` | Hide image |
+| `-` | Decrease brightness |
+| `=` | Increase brightness |
+| `[` | Decrease contrast |
+| `]` | Increase contrast |
+| `Space` | Section blend |
+| `Home` | Set view to image |
 
-### Lists and alignment
+### Field Interactions
 
 | Key | Action |
 |---|---|
-| `Ctrl+Shift+O` | Object list |
-| `Ctrl+Shift+T` | Trace list |
-| `Ctrl+Shift+S` | Section list |
-| `Ctrl+Shift+Z` | Z-trace list |
-| `Ctrl+Shift+F` | Flag list |
-| `Ctrl+Shift+A` | Modify / switch alignments |
-| `Ctrl+T` | Edit current section transform |
-| `Ctrl+Shift+U` | Unlock current section |
-| `Ctrl+\` | Align by correlation |
+| `Cmd+A` (`Ctrl+A` on Windows/Linux) | Select all traces on section, or all rows in a focused data list |
+| `Cmd+D` (`Ctrl+D` on Windows/Linux) | Deselect all traces on section, or all rows in a focused data list |
+| `Cmd+Shift+I` (`Ctrl+Shift+I` on Windows/Linux) | Invert which traces are selected on section, or which rows in a focused data list |
+| `Cmd+E` (`Ctrl+E` on Windows/Linux) | Edit attributes of selected trace(s) |
+| `Cmd+Shift+R` (`Ctrl+Shift+R` on Windows/Linux) | Smooth selection (traces, or objects over the object list) |
+| `Shift+M` | Merge selected traces |
+| `Cmd+Shift+M` (`Ctrl+Shift+M` on Windows/Linux) | Merge attributes of selected traces |
+| `Shift+H` | Hide selected traces |
+| `Cmd+U` (`Ctrl+U` on Windows/Linux) | Unhide all hidden traces on current section |
+| `Shift+G` | Modify current palette button to match attributes of first selected trace |
+| `Cmd+Shift+G` (`Ctrl+Shift+G` on Windows/Linux) | Modify current palette button to match attributes and shape of first selected trace |
+| `Cmd+Shift+U` (`Ctrl+Shift+U` on Windows/Linux) | Unlock current section |
+| `Cmd+T` (`Ctrl+T` on Windows/Linux) | Modify transform on current section |
+| `Cmd+\` (`Ctrl+\` on Windows/Linux) | Align by correlation |
+| `Cmd+Shift+H` (`Ctrl+Shift+H` on Windows/Linux) | Set host(s) for selected trace(s) |
 
-For the complete, current list (including 3D-scene shortcuts and palette
-shortcuts), open **Help ▸ Shortcuts list**.
+### Edit
+
+| Key | Action |
+|---|---|
+| `Cmd+Z` (`Ctrl+Z` on Windows/Linux) | Undo |
+| `Cmd+Y` (`Ctrl+Y` on Windows/Linux) | Redo |
+| `Cmd+C` (`Ctrl+C` on Windows/Linux) | Copy selected traces to clipboard |
+| `Cmd+Option+C` (`Ctrl+Alt+C` on Windows/Linux) | Copy selected traces onto other sections |
+| `Cmd+Option+X` (`Ctrl+Alt+X` on Windows/Linux) | Delete selected trace name(s) from chosen sections |
+| `Cmd+Shift+D` (`Ctrl+Shift+D` on Windows/Linux) | Add selected object(s) to the 3D scene |
+| `Cmd+X` (`Ctrl+X` on Windows/Linux) | Cut selected traces to clipboard |
+| `Cmd+V` (`Ctrl+V` on Windows/Linux) | Paste clipboard traces into section |
+| `Cmd+Shift+V` (`Ctrl+Shift+V` on Windows/Linux) | Apply attributes of copied traces to selected trace(s) |
+
+### Navigate
+
+| Key | Action |
+|---|---|
+| `Cmd+F` (`Ctrl+F` on Windows/Linux) | Find first instance of a trace in the series |
+| `Shift+F` | Find a trace on the current section |
+| `Cmd+G` (`Ctrl+G` on Windows/Linux) | Go to a specific section number |
+| `Cmd+K` (`Ctrl+K` on Windows/Linux) | Search the menus for a command |
+
+### File
+
+| Key | Action |
+|---|---|
+| `Cmd+O` (`Ctrl+O` on Windows/Linux) | Open a series file |
+| `Cmd+S` (`Ctrl+S` on Windows/Linux) | Save |
+| `Cmd+Shift+B` (`Ctrl+Shift+B` on Windows/Linux) | Backup series |
+| `Cmd+N` (`Ctrl+N` on Windows/Linux) | New series |
+| `Cmd+Option+R` (`Ctrl+Alt+R` on Windows/Linux) | Restart |
+| `Cmd+Q` (`Ctrl+Q` on Windows/Linux) | Quit |
+
+### Lists
+
+| Key | Action |
+|---|---|
+| `Cmd+Option+S` (`Ctrl+Alt+S` on Windows/Linux) | Show or hide the lists |
+| `Cmd+Shift+O` (`Ctrl+Shift+O` on Windows/Linux) | Open Object List |
+| `Cmd+Shift+C` (`Ctrl+Shift+C` on Windows/Linux) | Toggle curation columns in object list |
+| `Cmd+Shift+T` (`Ctrl+Shift+T` on Windows/Linux) | Open Trace List |
+| `Cmd+Option+Z` (`Ctrl+Alt+Z` on Windows/Linux) | Open Z-trace List |
+| `Cmd+Shift+S` (`Ctrl+Shift+S` on Windows/Linux) | Open Section List |
+| `Cmd+Shift+F` (`Ctrl+Shift+F` on Windows/Linux) | Open Flag List |
+| `Cmd+Shift+A` (`Ctrl+Shift+A` on Windows/Linux) | Switch/modify alignments |
+
+### Trace Palette
+
+| Key | Action |
+|---|---|
+| `#, Shift+#` | Select a trace on the palette |
+| `Cmd+#, Cmd+Shift+#` (`Ctrl+#, Ctrl+Shift+#` on Windows/Linux) | Edit attributes of a single trace on the palette |
+| `Cmd+Shift+P` (`Ctrl+Shift+P` on Windows/Linux) | Switch/modify palettes |
+| `Cmd+]` (`Ctrl+]` on Windows/Linux) | Increment palette {#} up |
+| `Cmd+[` (`Ctrl+[` on Windows/Linux) | Increment palette {#} down |
+
+### Movements
+
+| Key | Action |
+|---|---|
+| `Left/Right/Up/Down` | Translate selected traces or image (when no trace selected) |
+| `Cmd+Left/Right/Up/Down` (`Ctrl+Left/Right/Up/Down` on Windows/Linux) | Translate traces or image by small step |
+| `Shift+Left/Right/Up/Down` | Translate trace or image by large step |
+| `Cmd+Shift+Left/Right/Up/Down` (`Ctrl+Shift+Left/Right/Up/Down` on Windows/Linux) | Rotate image around the mouse |
+| `F1, Shift+F1, F2, Shift+F2` | Scale image in X and Y |
+| `F3, Shift+F3, F4, Shift+F4` | Shear image in X and Y |
+
+### Tool Palette
+
+| Key | Action |
+|---|---|
+| `P` | Use pointer tool |
+| `Z` | Use pan/zoom tool |
+| `K` | Use knife tool |
+| `Shift+K` | Use scissors tool |
+| `C` | Use closed trace tool |
+| `O` | Use open trace tool |
+| `S` | Use stamp tool |
+| `G` | Use grid tool |
+| `F` | Use flag tool |
+| `Q` | Use host tool |
+
+### 3D Scene
+
+| Key | Action |
+|---|---|
+| `? (Shift+/)` | Display shortcuts in 3D scene |
+<!-- /generated: shortcuts -->
 
 ---
 
