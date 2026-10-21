@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import QTableWidget, QApplication
 from PySide6.QtCore import Qt, QEvent
 
-from PyReconstruct.modules.gui.utils import lessThan
+from PyReconstruct.modules.gui.utils import lessThan, appearance
 from PyReconstruct.modules.backend.func import make_unique_id
     
 ARROW_KEYS = (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down)
@@ -91,24 +91,14 @@ class CopyTableWidget(QTableWidget):
     def resizeColumnToContents(self, c : int):
         super().resizeColumnToContents(c)
 
-        try:
-            series = getattr(self.parent().parent(), "series")
-        except AttributeError:
-            return
-        
-        if series.getOption("theme") == "qdark":
+        if appearance.qdarkstyleApplied():
             w = self.columnWidth(c)
             self.setColumnWidth(c, w + 8)
     
     def resizeColumnsToContents(self):
         super().resizeColumnsToContents()
 
-        try:
-            series = getattr(self.parent().parent(), "series")
-        except AttributeError:
-            return
-        
-        if series.getOption("theme") == "qdark":
+        if appearance.qdarkstyleApplied():
             for c in range(self.columnCount()):
                 w = self.columnWidth(c)
                 self.setColumnWidth(c, w + 8)
