@@ -29,12 +29,16 @@ the run stops if macOS is in dark mode), the username ("docs"), and an empty
 settings store. A run on a different screen density stops rather than give
 frames of a different size.
 
-His real settings are never touched. Before anything imports the app, every
-`QSettings` is redirected to a throwaway folder by tests/qsettings_isolation.py,
-the same mechanism the test suite runs under, and the run stops if the
-redirect does not hold. The tripwire (CODING_STANDARDS.md, "His real
-settings") is read before and after and written to verification.json; the run
-exits non-zero if it moved.
+The settings of the PyReconstruct you use day to day are never touched.
+Before anything imports the app, every `QSettings` is redirected to a
+throwaway folder by tests/qsettings_isolation.py, the same mechanism the test
+suite runs under, and the run stops if the redirect does not hold. A tripwire
+on the real settings file (its digest, key count and username) is read before
+and after and written to verification.json; the run exits non-zero if it moved.
+
+To add a shot, add a block to `shoot` that calls `save`; give it a file name
+that starts with its guide section number. A frame that only a video or an
+animation uses goes in FLOW_ONLY, so --guide leaves it out of the guide.
 
 Fixture series only. No lab data, no file dialog, no recent-files list.
 """
@@ -58,7 +62,7 @@ FIXTURE = "shapes1.jser"
 
 # logical pixels; 2240 x 1520 native on a 2x screen. Tall enough that the tool
 # column clears the section buttons; with twelve buttons, below about 700 the
-# two overlap. That is taller than the mini's 1280 x 800 screen leaves a titled
+# two overlap. That is taller than a 1280 x 800 screen leaves a titled
 # window, so the window is frameless (macOS does not clamp those), and may run
 # past the bottom of the screen: grab() draws the whole widget regardless.
 WINDOW_SIZE = (1120, 760)
@@ -82,7 +86,38 @@ GUIDE_IMAGES = REPO / "docs" / "assets" / "images" / "user-guide"
 FLOW_ONLY = {"05-next-section", "06-closed-trace-selected", "06-flag-placed"}
 
 REAL_DOMAIN = "com.khlab.PyReconstruct"
-REAL_PLIST = Path.home() / "Library" / "Preferences" / f"{REAL_DOMAIN}.plist"
+REAL_PREFS = Path.home() / "Library" / "Preferences"
+REAL_PLIST = REAL_PREFS / f"{REAL_DOMAIN}.plist"
+
+# the tool palette buttons, by tooltip, and the MainWindow actions that hold
+# their shortcuts (main_window.py, mode_shortcuts); the shot reads each key
+# from the live action, so a rebound default shows up in the next run
+TOOL_ACTIONS = {
+    "Pointer": "usepointer_act",
+    "Pan/Zoom": "usepanzoom_act",
+    "Knife": "useknife_act",
+    "Scissors": "usescissors_act",
+    "Closed Trace": "usectrace_act",
+    "Open Trace": "useotrace_act",
+    "Stamp": "usestamp_act",
+    "Grid": "usegrid_act",
+    "Flag": "useflag_act",
+    "Host": "usehost_act",
+}
+NO_SHORTCUT = {"Ztool"}
+
+# section 2: an update offer for a version that does not exist, from data
+# made up here; no network, nothing is downloaded
+EXAMPLE_VERSION = "9.9.9"
+EXAMPLE_LOCAL_VERSION = "1.25.0"
+EXAMPLE_UPDATE = {
+    "status": "newer",
+    "remote_version": EXAMPLE_VERSION,
+    "local_version": EXAMPLE_LOCAL_VERSION,
+    "asset": {"name": f"PyReconstruct-{EXAMPLE_VERSION}-macOS-arm64.dmg",
+              "size": 187_400_000, "browser_download_url": ""},
+    "release": {},
+}
 
 # label style, in native pixels at 2x
 LABEL_BG = "#1f2937"
@@ -90,11 +125,11 @@ LABEL_FG = "#ffffff"
 ACCENT = "#f59e0b"
 
 
-# --- his real settings ------------------------------------------------------
+# --- the real settings ------------------------------------------------------
 
 
 def tripwire():
-    """The three tripwire values, measured here, never taken from a brief."""
+    """The three tripwire values, measured on this machine at run time."""
     digest = hashlib.sha256(REAL_PLIST.read_bytes()).hexdigest() if REAL_PLIST.exists() else None
     exported = subprocess.run(
         ["defaults", "export", REAL_DOMAIN, "-"], capture_output=True, check=False
@@ -120,7 +155,71 @@ def isolate_settings():
     if not qsettings_isolation.installed:
         sys.exit("QSettings isolation did not install; refusing to run.")
     qsettings_isolation.verify_isolated()
+    # and a check of its own: where the app's global and per-series settings
+    # would be written now
+    from PySide6.QtCore import QSettings
+
+    org, app = qsettings_isolation.ORG, qsettings_isolation.APP
+    for application in (app, f"{app}-{SERIES_CODE}"):
+        check_settings_path(QSettings(org, application).fileName())
     return qsettings_isolation
+
+
+def check_settings_path(path, real_dir=REAL_PREFS):
+    """Stop unless `path`, a settings file, is outside the real settings folder."""
+    resolved = Path(path).expanduser().resolve()
+    real = Path(real_dir).expanduser().resolve()
+    if resolved == real or real in resolved.parents:
+        sys.exit(f"Settings would be written to {resolved}, in {real}; refusing to run.")
+    return resolved
+
+
+def check_no_roi(mode_names):
+    """Stop if the tool palette shows ROI mode, which the guide must not show.
+
+    ROI mode is held out of every user build until it is ready
+    (constants/roi_mode.py).
+    """
+    if "ROI mode" in mode_names:
+        sys.exit("The tool palette shows ROI mode, which the guide must not show. "
+                 "Shoot on a tree that hides it, with PYRECON_ROI_MODE unset.")
+
+
+# --- shortcuts --------------------------------------------------------------
+
+
+def shortcut_text(portable):
+    """A shortcut the way the guide writes it, macOS first.
+
+    `portable` is QKeySequence.PortableText, where Ctrl is the Command key on
+    a Mac and Meta is Control: "Shift+K" stays as it is, and "Ctrl+Shift+V"
+    becomes "Cmd+Shift+V (Ctrl+Shift+V on Windows/Linux)".
+    """
+    if not portable:
+        return ""
+    mac = portable.replace("Meta+", "\0").replace("Ctrl+", "Cmd+").replace("\0", "Ctrl+")
+    return mac if mac == portable else f"{mac} ({portable} on Windows/Linux)"
+
+
+def tool_label(name, shortcut):
+    """One tool palette label: the tool's name, then its shortcut if it has one."""
+    return f"{name}  {shortcut}" if shortcut else name
+
+
+def tool_shortcuts(window, names):
+    """Each tool's shortcut, read from the live window's action."""
+    from PySide6.QtGui import QKeySequence
+
+    out = {}
+    for name in names:
+        if name in NO_SHORTCUT:
+            out[name] = ""
+            continue
+        if name not in TOOL_ACTIONS:
+            sys.exit(f"The tool {name!r} is not in TOOL_ACTIONS or NO_SHORTCUT; add it.")
+        key = getattr(window, TOOL_ACTIONS[name]).shortcut()
+        out[name] = shortcut_text(key.toString(QKeySequence.PortableText))
+    return out
 
 
 # --- frames -----------------------------------------------------------------
@@ -237,16 +336,22 @@ def outline(painter, rect, margin=8):
     painter.drawRoundedRect(rect.adjusted(-margin, -margin, margin, margin), 12, 12)
 
 
+def label_font(base):
+    from PySide6.QtGui import QFont
+
+    font = QFont(base)
+    font.setPixelSize(26)
+    font.setBold(True)
+    return font
+
+
 def label_painter(image):
-    from PySide6.QtGui import QFont, QPainter
+    from PySide6.QtGui import QPainter
 
     painter = QPainter(image)
     painter.setRenderHint(QPainter.Antialiasing)
     painter.setRenderHint(QPainter.TextAntialiasing)
-    font = QFont(painter.font())
-    font.setPixelSize(26)
-    font.setBold(True)
-    painter.setFont(font)
+    painter.setFont(label_font(painter.font()))
     return painter
 
 
@@ -434,9 +539,13 @@ def blob(cx, cy, rx, ry, n=48):
 
 def shoot(out, app):
     """Make every frame; return (shots, flows)."""
-    from PySide6.QtCore import QRect, QSettings, Qt
-    from PySide6.QtGui import QColor, QImage
+    import math
 
+    from PySide6.QtCore import QRect, QSettings, Qt
+    from PySide6.QtGui import QColor, QFontMetricsF, QImage
+    from PySide6.QtWidgets import QApplication
+
+    from PyReconstruct.modules.gui.dialog.update_dialog import UpdateDialog
     from PyReconstruct.modules.gui.dialog.whats_new import APP, ORG, current_version_str
     from PyReconstruct.modules.gui.main.first_launch import WHATSNEW_KEY
 
@@ -479,11 +588,7 @@ def shoot(out, app):
     window = build_window(app, str(series_dir / FIXTURE))
     palette = window.mouse_palette
     field = window.field
-    # ROI mode is held out of every user build until it is ready, so the
-    # guide does not show it (constants/roi_mode.py)
-    if "ROI mode" in palette.mode_buttons:
-        sys.exit("The tool palette shows ROI mode, which the guide must not show. "
-                 "Shoot on a tree that hides it, with PYRECON_ROI_MODE unset.")
+    check_no_roi(palette.mode_buttons)
 
     # 4. Opening an existing series; also frame 1 of both flows
     opened = grab(window)
@@ -517,10 +622,15 @@ def shoot(out, app):
          "The field and its floating overlays, labeled.")
 
     # 6. The tool palette: the column alone, on a light panel, each button
-    # named by its own tooltip so the names follow the app
+    # named by its own tooltip and its shortcut, so both follow the app
     bounds = QRect(0, 0, opened.width(), opened.height())
     column = opened.copy(mode_rect.adjusted(-6, -16, 6, 16).intersected(bounds))
-    label_w = 300
+    keys = tool_shortcuts(window, palette.mode_buttons)
+    labels = {name: tool_label(button.toolTip() or name, keys[name])
+              for name, (button, _, _) in palette.mode_buttons.items()}
+    metrics = QFontMetricsF(label_font(QApplication.font()))
+    # the widest label, its box padding and gap (draw_label), and a margin
+    label_w = max(300, math.ceil(max(metrics.horizontalAdvance(t) for t in labels.values())) + 96)
     panel = QImage(column.width() + label_w, column.height(), QImage.Format_RGB32)
     panel.fill(QColor("#f3f4f6"))
     p = label_painter(panel)
@@ -529,10 +639,10 @@ def shoot(out, app):
     shift_y = -(mode_rect.top() - 16)
     for name, (button, _, _) in palette.mode_buttons.items():
         r = native_rect(button, window).translated(shift_x, shift_y)
-        draw_label(p, button.toolTip() or name, (r.left() - 10, r.center().y()), "left")
+        draw_label(p, labels[name], (r.left() - 10, r.center().y()), "left")
     p.end()
     save(panel, "06-tool-palette-labeled", "6. The tool palette",
-         "The tool palette column with each tool's name, as its tooltip gives it.")
+         "The tool palette column with each tool's name and default shortcut.")
 
     # 6. Closed Trace: the mode and shape dialog its right-click opens
     dialog = grab_modal(app, window.changeTraceMode)
@@ -712,6 +822,45 @@ def shoot(out, app):
     scene.close()
     settle(app, 0.5)
 
+    # 2. Updates, last, so nothing they open is in an earlier frame
+    window.activateWindow()
+    settle(app, 0.3)
+    menu = window.helpmenu
+    menu.popup(window.mapToGlobal(window.rect().center()))
+    settle(app, 0.6)
+    rows = [menu.actionGeometry(a) for a in
+            (window.checkupdates_act, window.toggleupdatecheck_act, window.getotherflavor_act)]
+    menu_image = grab(menu, check_active=False)
+    top, bottom = rows[0].top(), rows[-1].bottom()
+    crop = QRect(0, round((top - 6) * EXPECTED_DPR), menu_image.width(),
+                 round((bottom - top + 13) * EXPECTED_DPR))
+    menu.hide()
+    settle(app, 0.3)
+    save(menu_image.copy(crop.intersected(menu_image.rect())), "02-help-menu-updates",
+         "2. Checking for updates",
+         "The update rows of the Help menu: check now, check on startup, the other app.")
+
+    # The real dialog, on EXAMPLE_UPDATE; Later closes it
+    window.activateWindow()
+    settle(app, 0.3)
+    offer = UpdateDialog(window, EXAMPLE_UPDATE, "stable")
+    save(grab_modal(app, offer.exec), "02-update-dialog", "2. Checking for updates",
+         f"The update dialog, offering {EXAMPLE_VERSION}, an example version that does not exist.")
+    offer.deleteLater()
+
+    # The status bar notice; _setUpdateNotice only shows it, where
+    # showUpdateNotice would also store the version
+    window.activateWindow()
+    window._setUpdateNotice(EXAMPLE_VERSION)
+    settle(app, 0.5)
+    status = native_rect(window.statusbar, window)
+    notice = native_rect(window.update_notice, window)
+    status.setLeft(max(status.left(), notice.left() - 360))
+    save(grab(window).copy(status), "02-update-notice", "2. Checking automatically on startup",
+         f"The Update available notice in the status bar, for the example version {EXAMPLE_VERSION}.")
+    window._setUpdateNotice(None)
+    settle(app, 0.3)
+
     close_window(app, window)
     shutil.rmtree(series_dir, ignore_errors=True)
 
@@ -845,7 +994,7 @@ def main():
     watchdog.stop()
     if QCursor.pos() != parked:
         sys.exit("The pointer moved during the run, so a hover state may be in a frame. Rerun.")
-    contact_sheet(out, shots)
+    contact_sheet(out, sorted(shots, key=lambda s: s["file"]))
     target_check(out, targets)
 
     files = [s["file"] for s in shots] + ["contact-sheet.png", "target-check.png"]
@@ -878,19 +1027,25 @@ def main():
     if before != after:
         sys.exit("The real settings changed during the run. Find the writer before using these frames.")
     if args.guide:
-        copy_to_guide(out, shots)
+        kept = copy_to_guide(out, shots)
+        print(f"{len(kept)} images in {GUIDE_IMAGES.relative_to(REPO)}")
 
 
-def copy_to_guide(out, shots):
-    """Replace the guide's images with this run's, leaving out the flow-only frames."""
-    GUIDE_IMAGES.mkdir(parents=True, exist_ok=True)
-    keep = {s["file"] for s in shots if Path(s["file"]).stem not in FLOW_ONLY}
-    for old in GUIDE_IMAGES.glob("*.png"):
+def copy_to_guide(out, shots, guide=GUIDE_IMAGES):
+    """Replace the guide's images with this run's, leaving out the flow-only frames.
+
+    A PNG in `guide` that this run did not make is removed, so a renamed shot
+    leaves no stale copy; other files there are left alone. Returns the names
+    copied.
+    """
+    guide.mkdir(parents=True, exist_ok=True)
+    keep = sorted(s["file"] for s in shots if Path(s["file"]).stem not in FLOW_ONLY)
+    for old in guide.glob("*.png"):
         if old.name not in keep:
             old.unlink()
-    for name in sorted(keep):
-        shutil.copyfile(out / name, GUIDE_IMAGES / name)
-    print(f"{len(keep)} images in {GUIDE_IMAGES.relative_to(REPO)}")
+    for name in keep:
+        shutil.copyfile(out / name, guide / name)
+    return keep
 
 
 def _png_size(path):
