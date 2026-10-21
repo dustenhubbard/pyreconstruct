@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
-"""Write the User Guide's tool and shortcut tables from PyReconstruct's own data.
+"""Write the User Guide's tool and shortcut tables from PyReconstruct's source.
 
-The guide's hand-written shortcut table drifted from the app: it said Ctrl+M
-for Merge traces after the default became Shift+M, and it never listed nine
-keys added later. Every one of those changes went through review; nothing
-asked about the guide. So the tables are now generated, and
-``tests/test_docs_tables_fresh.py`` fails the moment the committed guide and
-the app disagree.
+The tool palette table, the tool headings in section 6 and the shortcut
+tables in docs/USER_GUIDE.md sit between ``<!-- generated: ... -->`` markers.
+This script rewrites them from the shipped defaults and the shortcut list, and
+``tests/test_docs_tables_fresh.py`` fails when the committed guide differs.
 
 Sources, all read without importing Qt, so this runs on a bare ``python3``:
 
-  * ``datatypes/default_settings.py``, the default key of every action. Run
+  * ``datatypes/default_settings.py``, the default key of each action. Run
     as a file: it imports only the standard library.
   * ``gui/dialog/shortcuts.py``, ``help_shortcuts``: the headings, order and
     descriptions the in-app Help > Shortcuts list shows. Read as a literal.
@@ -25,7 +23,7 @@ calls are read, so a tool added behind any switch stays out until it is
 unconditional. The shortcut rows drop the ROI action keys. The environment is
 never consulted: launching with the switch set does not change the guide.
 
-Keys are written the way the app writes them on each platform: on macOS Qt
+Keys are written the way PyReconstruct shows them on each platform: on macOS Qt
 reads Ctrl as Command, Alt as Option and Meta as Control (the same names
 ``gui/modifiers.display_label`` uses), so a key with any of those shows the
 macOS form first, e.g. ``Cmd+Shift+V`` (``Ctrl+Shift+V`` on Windows/Linux).
@@ -87,7 +85,7 @@ def help_rows(root: Path = ROOT) -> list:
 
 
 def _unconditional(node: ast.AST):
-    """Every node under ``node`` that no ``if`` guards."""
+    """The nodes under ``node`` that no ``if`` guards."""
     for child in ast.iter_child_nodes(node):
         if isinstance(child, (ast.If, ast.IfExp)):
             continue
@@ -210,7 +208,7 @@ def shortcut_rows(root: Path = ROOT) -> list:
 
 
 def render_shortcuts(root: Path = ROOT) -> str:
-    """Every default shortcut, grouped as Help > Shortcuts list groups them."""
+    """The default shortcuts, grouped as Help > Shortcuts list groups them."""
     lines = []
     for heading, rows in shortcut_rows(root):
         lines += [f"### {heading}", "", "| Key | Action |", "|---|---|"]
@@ -233,7 +231,7 @@ def _block_re(name: str) -> re.Pattern:
 
 
 def _tool_headings(text: str, root: Path) -> str:
-    """Section 6's tool headings, ``### Knife (`K`)``, with the app's keys."""
+    """Section 6's tool headings, ``### Knife (`K`)``, with the default keys."""
     start = text.index("\n## 6. ")
     end = text.index("\n## 7. ", start)
     keys = defaults(root)
@@ -261,7 +259,7 @@ def render_parts(text: str, root: Path = ROOT) -> dict:
 
 
 def render_guide(text: str, root: Path = ROOT) -> str:
-    """The guide text with every generated part rewritten from the app."""
+    """The guide text with each generated part rewritten from the source."""
     for name, render in BLOCKS.items():
         body = render(root) + "\n"
         text = _block_re(name).sub(lambda m: m.group(1) + body + m.group(3), text)
@@ -269,7 +267,7 @@ def render_guide(text: str, root: Path = ROOT) -> str:
 
 
 def stale_parts(text: str, root: Path = ROOT) -> list:
-    """Names of the generated parts whose committed text differs from the app."""
+    """Names of the generated parts whose committed text differs from the source."""
     return [name for name, fresh in render_parts(text, root).items() if fresh != text]
 
 

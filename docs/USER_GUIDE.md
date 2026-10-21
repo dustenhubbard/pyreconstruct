@@ -474,7 +474,7 @@ middle-click pans, regardless of the active tool.
 
 ![The tool palette column, each button labeled with its tool and default shortcut: Pointer P, Pan/Zoom Z, Knife K, Scissors Shift+K, Closed Trace C, Open Trace O, Stamp S, Grid G, Flag F, Host Q, and Ztool, which has no shortcut.](assets/images/user-guide/06-tool-palette-labeled.png)
 
-<!-- generated: tools (edit the app, then run: python3 scripts/docs_tables.py --write) -->
+<!-- generated: tools (from PyReconstruct's source; to update, run: python3 scripts/docs_tables.py --write) -->
 The palette has eleven tools, top to bottom:
 
 | Tool | Key |
@@ -1069,7 +1069,7 @@ on Windows and Linux it is `Ctrl` or `Alt`, shown after it.
 
 ![The Shortcuts list: each action with its shortcut in a box that can be edited or cleared, and Reset Defaults, Cancel and OK buttons.](assets/images/user-guide/13-shortcuts-list.png)
 
-<!-- generated: shortcuts (edit the app, then run: python3 scripts/docs_tables.py --write) -->
+<!-- generated: shortcuts (from PyReconstruct's source; to update, run: python3 scripts/docs_tables.py --write) -->
 ### General
 
 | Key | Action |
