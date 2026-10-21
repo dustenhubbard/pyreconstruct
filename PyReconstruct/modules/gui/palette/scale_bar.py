@@ -10,6 +10,7 @@ from PyReconstruct.modules.datatypes.default_settings import (
     validPinnedLength,
 )
 from PyReconstruct.modules.gui.utils import drawOutlinedText
+from PyReconstruct.modules.gui.utils.fonts import monoFamily, monoFont
 
 from .buttons import MoveableButton
 
@@ -293,7 +294,7 @@ def outlinedFont(size):
     """The font `drawOutlinedText` draws in for a painter font of pixel size
     `size`. It reads the pixel size back as a point size.  Text is measured in
     this, so a width worked out here is the width that is drawn."""
-    return QFont("Courier New", size, QFont.Bold)
+    return monoFont(size)
 
 
 def barLayout(thickness, draw_text, draw_ticks, label_size=LABEL_SIZE,
@@ -388,7 +389,7 @@ def paintScaleBar(painter, real_len, subdivs, units_per_pixel, thickness,
 
     # draw text
     if draw_text:
-        font = QFont("Courier New")
+        font = QFont(monoFamily())
         font.setPixelSize(label_size)
         font.setBold(True)
         painter.setFont(font)
@@ -405,7 +406,7 @@ def paintScaleBar(painter, real_len, subdivs, units_per_pixel, thickness,
     # with a white edge like the bar, and its label is outlined like the
     # main one
     if draw_ticks:
-        small_font = QFont("Courier New")  # used for ticks
+        small_font = QFont(monoFamily())  # used for ticks
         small_font.setPixelSize(tick_label_size)
         small_font.setBold(True)
         # on a short bar the tick labels would overlap, so only every

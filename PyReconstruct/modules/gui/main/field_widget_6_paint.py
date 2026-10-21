@@ -12,13 +12,13 @@ from PySide6.QtGui import (
     QPen,
     QColor,
     QPainter, 
-    QFont,
     QFontMetrics,
 )
 
 from PyReconstruct.modules.backend.autoseg.palette import palette_color
 from PyReconstruct.modules.backend.view import drawArrow
 from PyReconstruct.modules.gui.utils import drawOutlinedText
+from PyReconstruct.modules.gui.utils.fonts import monoFont
 from PyReconstruct.modules.datatypes import Flag, Trace
 from PyReconstruct.modules.calc import fieldPointToPixmap
 
@@ -273,7 +273,7 @@ class FieldWidgetPaint(FieldWidgetMouse):
             # redraw flag with translation
             # (settings-backed option: read once, not per flag)
             if self.moving_flags:
-                flag_font = QFont("Courier New", self.series.getOption("flag_size"), QFont.Bold)
+                flag_font = monoFont(self.series.getOption("flag_size"))
             for (x, y), color in self.moving_flags:
                 field_painter.setPen(QPen(QColor(*color), 6))
                 field_painter.setFont(flag_font)
@@ -517,7 +517,7 @@ class FieldWidgetPaint(FieldWidgetMouse):
             self, "corner_text", ([], 0, 0, False, 0))
         if not lines:
             return None
-        metrics = QFontMetrics(QFont("Courier New", size, QFont.Bold))
+        metrics = QFontMetrics(monoFont(size))
         width = max(metrics.horizontalAdvance(line) for line in lines)
         left = x - width if right_justified else x
         pad = 2   # the text's outline

@@ -21,6 +21,7 @@ from PySide6.QtGui import QImage, QPainter
 from PySide6.QtWidgets import QApplication
 
 from PyReconstruct.modules.gui.palette import scale_bar as sb_mod
+from PyReconstruct.modules.gui.utils import fonts
 from PyReconstruct.modules.gui.palette.scale_bar import (
     ScaleBar,
     barLayout,
@@ -102,7 +103,12 @@ def _opaque(image, x, y):
 
 @pytest.mark.parametrize("state", STATES)
 @pytest.mark.parametrize("text,ticks", [(True, True), (False, False)])
-def test_the_widget_draws_exactly_as_it_did_on_main(app, state, text, ticks):
+def test_the_widget_draws_exactly_as_it_did_on_main(app, monkeypatch, state,
+                                                     text, ticks):
+    # the frozen copy draws in Courier New; a macOS Dev checkout sets the bar
+    # in the Mac look's monospace (tests/test_mac_system_fonts.py), so compare
+    # the two with that look off
+    monkeypatch.setattr(fonts, "macLook", lambda: False)
     before = _widget_image(main_sb.ScaleBar, state, text, ticks)
     after = _widget_image(ScaleBar, state, text, ticks)
     assert after.size() == before.size()

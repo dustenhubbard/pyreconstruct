@@ -29,6 +29,7 @@ from PySide6.QtCore import Qt, QSettings, QEvent, QRect
 from functools import partial
 
 from PyReconstruct.modules.backend.updater.install_info import current_version_str
+from PyReconstruct.modules.gui.utils.fonts import CODE_FAMILIES
 from PyReconstruct.modules.gui.main.first_launch import (
     whats_new_due, whats_new_content, github_release_url, WHATSNEW_KEY,
     WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT, whats_new_suppressed,
@@ -211,12 +212,8 @@ VERSION_HEADING_STEP = 4
 # reader sets code in the system fixed font at its own size and normal weight,
 # which next to the body reads too large and too light, more so inside a bold
 # claim. ``restyle_code_runs`` resizes it so its x-height matches the body's
-# and gives it the weight of the text around it.
-CODE_FAMILIES = {
-    "darwin": ("SF Mono", "Menlo", "Monaco"),
-    "win32": ("Consolas", "Cascadia Mono", "Courier New"),
-    "linux": ("DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono"),
-}
+# and gives it the weight of the text around it. The families are
+# ``CODE_FAMILIES`` in gui/utils/fonts.py, shared with the Mac look's numbers.
 
 # How close, in pixels, a monospace's x-height has to land to the body's once
 # resized. A family whose x-height rounds to whole pixels can still miss a

@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import QWidget, QPushButton, QComboBox
-from PySide6.QtGui import QFont
 
 from .outlined_label import OutlinedLabel
+from PyReconstruct.modules.gui.utils.fonts import uiFont
 
 class ZarrPalette():
 
@@ -19,7 +19,7 @@ class ZarrPalette():
         
         self.lbl = OutlinedLabel(self.mainwindow)
         self.lbl.setText("Zarr Groups")
-        self.lbl.setFont(QFont("Courier New", 16, QFont.Bold))
+        self.lbl.setFont(uiFont(16))
         
         self.lbl.resize(self.lbl.sizeHint())
         self.lbl.show()
@@ -42,7 +42,7 @@ class ZarrPalette():
 
         self.caption = OutlinedLabel(self.mainwindow)
         self.caption.setText("Shuffle recolors the preview; import keeps what you see.")
-        self.caption.setFont(QFont("Courier New", 10))
+        self.caption.setFont(uiFont(10, bold=False))
         self.caption.resize(self.caption.sizeHint())
         self.caption.hide()
 
