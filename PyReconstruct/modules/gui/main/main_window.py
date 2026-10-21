@@ -33,6 +33,7 @@ from . import mac_menubar
 from PyReconstruct.modules.gui.table.history import setAsideText
 from .wheel_steps import WheelSteps, zoom_factor
 from PyReconstruct.modules.constants import removeSeriesFiles
+from PyReconstruct.modules.constants.roi_mode import roi_mode_enabled
 from PyReconstruct.modules.constants.settings_domain import (
     domain_for, fold_series_settings_once,
 )
@@ -933,8 +934,12 @@ class MainWindow(QMainWindow):
             ("usegrid_act", lambda : self.mouse_palette.activateModeButton("Grid")),
             ("useflag_act", lambda : self.mouse_palette.activateModeButton("Flag")),
             ("usehost_act", lambda : self.mouse_palette.activateModeButton("Host")),
-            ("useroi_act", lambda : self.mouse_palette.activateModeButton("ROI mode")),
         ]
+        # held: B picks ROI mode only with PYRECON_ROI_MODE=1
+        if roi_mode_enabled():
+            mode_shortcuts.append(
+                ("useroi_act", lambda : self.mouse_palette.activateModeButton("ROI mode"))
+            )
   
         for act_name, act in mode_shortcuts:
             setattr(
@@ -1276,8 +1281,11 @@ class MainWindow(QMainWindow):
 
         Those builds stored B on Toggle ROI mode; B now picks the ROI mode
         tool, and two actions on one key fire neither. See
-        `settings_migrations.settle_legacy_roi_shortcut`.
+        `settings_migrations.settle_legacy_roi_shortcut`. With ROI mode hidden
+        neither action is built, so nothing is settled and no key is written.
         """
+        if not roi_mode_enabled():
+            return
         from PyReconstruct.modules.backend.settings_migrations import (
             settle_legacy_roi_shortcut,
         )

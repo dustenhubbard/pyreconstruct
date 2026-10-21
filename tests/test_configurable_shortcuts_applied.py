@@ -334,14 +334,18 @@ def test_known_unapplied_registry_is_current(qapp, scoped_series, menu_stub):
 # --------------------------------------------------------------------------- #
 # 3. the palette mode keys, which are bound outside the menus
 # --------------------------------------------------------------------------- #
-def test_palette_mode_shortcuts_are_read_from_settings(qapp, scoped_series, menu_stub):
+def test_palette_mode_shortcuts_are_read_from_settings(
+    qapp, scoped_series, menu_stub, monkeypatch
+):
     """The eleven ``use*_act`` mode keys never appear in a menu tuple.
 
     They are bound in ``MainWindow.createPaletteShortcuts`` via
     ``self.addAction("", self.series.getOption(act_name), act)``, which is a
     different code path from ``newAction`` and so needs its own guard. They are
-    the only configurable rows the menu sweep above cannot see.
+    the only configurable rows the menu sweep above cannot see. ROI mode's key
+    is bound only with PYRECON_ROI_MODE=1, so the switch is set here.
     """
+    monkeypatch.setenv("PYRECON_ROI_MODE", "1")
     from PyReconstruct.modules.gui.main.main_window import MainWindow
 
     modes = [name for name in _configurable() if name.startswith("use")]

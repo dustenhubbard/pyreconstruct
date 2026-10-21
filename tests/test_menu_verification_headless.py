@@ -724,10 +724,10 @@ def test_no_two_actions_on_the_window_share_a_shortcut(main_window):
 
 def _shortcut_rows():
     """The `_act` names `ShortcutsDialog` builds an editable row for."""
-    from PyReconstruct.modules.gui.dialog.shortcuts import help_shortcuts
+    from PyReconstruct.modules.gui.dialog.shortcuts import shownShortcuts
 
     return [
-        tuple(item)[0] for item in help_shortcuts
+        tuple(item)[0] for item in shownShortcuts()
         if item is not None and not isinstance(item, str)
         and tuple(item)[0].endswith("_act")
     ]

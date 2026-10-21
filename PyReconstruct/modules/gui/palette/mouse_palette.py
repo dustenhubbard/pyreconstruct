@@ -102,6 +102,7 @@ from .help import palette_help
 from .default_rows import shownButtonCount
 
 from PyReconstruct.modules.constants import build_flavor
+from PyReconstruct.modules.constants.roi_mode import roi_mode_enabled
 from PyReconstruct.modules.datatypes import Series, Trace
 from PyReconstruct.modules.datatypes.trace import copyObjDefaults
 from PyReconstruct.modules.datatypes.default_settings import pinnedLengthFor
@@ -160,7 +161,9 @@ class MousePalette():
         self.createModeButton("Flag", 8)
         self.createModeButton("Host", 9)
         self.createModeButton("Ztool", 10)
-        self.createModeButton("ROI mode", 11)
+        # held: shown only with PYRECON_ROI_MODE=1 (constants/roi_mode.py)
+        if roi_mode_enabled():
+            self.createModeButton("ROI mode", 11)
         # Placed only now, once every button exists, the z-trace tool's
         # included. The column's bounds shrink by one button height per
         # button already made (getBounds), so placing
