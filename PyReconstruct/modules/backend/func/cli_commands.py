@@ -210,8 +210,8 @@ def shell_profiles(shell, home, env=None, answer=None):
 
     zsh: .zshenv first, from the ZDOTDIR a new Terminal starts with, since
     zsh reads it before any other file can move ZDOTDIR; then .zprofile and
-    .zlogin, which a login zsh reads later, for a setup whose later files
-    reset PATH. Those two come from the ZDOTDIR in ``answer`` (what
+    .zlogin, which a login zsh reads later (.zlogin after .zshrc), for a
+    setup whose later files reset PATH. Those two come from the ZDOTDIR in ``answer`` (what
     login_path() reported) when there is one. bash: the one file a login
     bash reads."""
     env = os.environ if env is None else env
@@ -231,8 +231,9 @@ def shell_profiles(shell, home, env=None, answer=None):
 
 
 def login_path(shell, home, env=None, timeout=10):
-    """(PATH as a list, ZDOTDIR or None when unset) from a new login
-    ``shell``, or None when the shell could not say. Asking the shell itself
+    """(PATH as a list, ZDOTDIR or None when unset) from a new login,
+    interactive ``shell`` (it reads .zshrc too), or None when the shell
+    could not say. Asking the shell itself
     means every way of setting them counts, and a comment or a dead branch
     does not. The answer is framed by a fresh token, so whatever the startup
     files print around it is ignored."""
@@ -244,15 +245,16 @@ def login_path(shell, home, env=None, timeout=10):
     token = f"pyrecon-{os.urandom(8).hex()}"
     query = f'printf "\\n%s\\n%s\\n%s\\n%s\\n" {token} "$PATH" "${{ZDOTDIR+set}}" "${{ZDOTDIR-}}"'
     try:
-        done = subprocess.run([shell, "-l", "-c", query], env=clean,
+        # -l -i: a login, interactive shell, what a new Terminal window opens
+        done = subprocess.run([shell, "-l", "-i", "-c", query], env=clean,
                               stdin=subprocess.DEVNULL, capture_output=True, text=True,
                               timeout=timeout)
     except (OSError, subprocess.SubprocessError) as e:
-        log_problem(f"terminal commands: {shell} -l: {e!r}")
+        log_problem(f"terminal commands: {shell} -l -i: {e!r}")
         return None
     at = done.stdout.rfind(f"\n{token}\n")
     if done.returncode != 0 or at < 0:
-        log_problem(f"terminal commands: {shell} -l exited {done.returncode}")
+        log_problem(f"terminal commands: {shell} -l -i exited {done.returncode}")
         return None
     lines = done.stdout[at + len(token) + 2:].split("\n")
     if len(lines) < 3:

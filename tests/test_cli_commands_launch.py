@@ -265,7 +265,7 @@ def needs(shell):
 @pytest.mark.parametrize("shell", ["zsh", "bash"])
 def test_the_path_line_lands_in_a_working_login_shell(mac, shell):
     ensure(mac, shell=shell)
-    out = subprocess.run([shell, "-lc", "command -v pyrecon"], capture_output=True, text=True,
+    out = subprocess.run([shell, "-lic", "command -v pyrecon"], capture_output=True, text=True, stdin=subprocess.DEVNULL,
                          env={"HOME": str(mac["home"]), "PATH": "/usr/bin:/bin"}, timeout=30)
     assert out.stdout.strip() == str(mac["links"] / "pyrecon")
 
@@ -318,9 +318,11 @@ def test_the_line_goes_after_what_is_there(mac):
 
 
 def found_by(shell, mac, **env):
-    out = subprocess.run([shell, "-lc", "command -v pyrecon"], capture_output=True, text=True,
+    """Whether a new Terminal-like shell (login, interactive) finds pyrecon."""
+    out = subprocess.run([shell, "-lic", "command -v pyrecon"], capture_output=True, text=True,
+                         stdin=subprocess.DEVNULL,
                          env={"HOME": str(mac["home"]), "PATH": "/usr/bin:/bin", **env}, timeout=30)
-    return out.stdout.strip().endswith(str(mac["links"] / "pyrecon"))
+    return str(mac["links"] / "pyrecon") in out.stdout.splitlines()
 
 
 @posix_only
@@ -374,9 +376,9 @@ def test_startup_files_that_print_do_not_confuse_the_answer(mac, shell, name):
     ensure(mac, shell=shell)
     target = ".zshenv" if shell == "zsh" else ".bash_profile"
     assert C.PROFILE_TAG in (mac["home"] / target).read_text()
-    out = subprocess.run([shell, "-lc", "command -v pyrecon"], capture_output=True, text=True,
+    out = subprocess.run([shell, "-lic", "command -v pyrecon"], capture_output=True, text=True, stdin=subprocess.DEVNULL,
                          env={"HOME": str(mac["home"]), "PATH": "/usr/bin:/bin"}, timeout=30)
-    assert out.stdout.strip().endswith(str(mac["links"] / "pyrecon"))
+    assert str(mac["links"] / "pyrecon") in out.stdout.splitlines()
 
 
 @needs("zsh")
@@ -393,6 +395,7 @@ def test_the_answer_reports_an_unset_zdotdir_as_none(mac):
     ({".zshenv": 'export ZDOTDIR="$HOME/z"', "z/.zprofile": "export PATH=/usr/bin:/bin"}, "z/.zprofile"),
     ({".zprofile": "export PATH=/usr/bin:/bin\nreturn"}, ".zlogin"),  # lines after return never run
     ({".zprofile": "export PATH=/usr/bin:/bin\nreturn", ".zlogin": "export EDITOR=vi"}, ".zlogin"),
+    ({".zshrc": "export PATH=/usr/bin:/bin"}, ".zlogin"),  # Terminal reads .zshrc, then .zlogin
 ])
 def test_a_later_file_that_resets_path_moves_the_lines_later(mac, files, used):
     for name, text in files.items():
