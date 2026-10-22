@@ -327,6 +327,19 @@ def test_zdotdir_is_followed(mac, tmp_path):
     assert not (mac["home"] / ".zprofile").exists()
 
 
+@needs("zsh")
+def test_a_zdotdir_set_in_zshenv_is_followed(mac):
+    zdot = mac["home"] / ".config" / "zsh"
+    zdot.mkdir(parents=True)
+    (mac["home"] / ".zshenv").write_text('export ZDOTDIR="$HOME/.config/zsh"\n')
+    ensure(mac)
+    assert C.PROFILE_TAG in (zdot / ".zprofile").read_text()
+    assert not (mac["home"] / ".zprofile").exists()
+    out = subprocess.run(["zsh", "-lc", "command -v pyrecon"], capture_output=True, text=True,
+                         env={"HOME": str(mac["home"]), "PATH": "/usr/bin:/bin"}, timeout=30)
+    assert out.stdout.strip() == str(mac["links"] / "pyrecon")
+
+
 @posix_only
 def test_bash_uses_the_file_a_login_bash_reads(mac):
     (mac["home"] / ".profile").write_text("# mine\n")
