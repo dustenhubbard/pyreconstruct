@@ -30,6 +30,7 @@ from PyReconstruct.modules.backend.func.window_geometry import (
 )
 from .status_readout import FieldStatusReadout, StatusSegment
 from . import mac_menubar
+from PyReconstruct.modules.gui.utils import appearance
 from PyReconstruct.modules.gui.table.history import setAsideText
 from .wheel_steps import WheelSteps, zoom_factor
 from PyReconstruct.modules.constants import removeSeriesFiles
@@ -5767,30 +5768,26 @@ class MainWindow(QMainWindow):
     def setTheme(self, new_theme=None):
         """Change the theme."""
         if new_theme is None:
-            theme = self.series.getOption("theme")
+            theme = appearance.resolve(self.series.getOption("theme"))
+            options = appearance.choices()
             structure = [
                 ["Theme:"],
-                [("radio", ("Default", theme=="default"), ("Dark", theme=="qdark"))]
+                [("radio", *[(label, theme == value) for label, value in options])]
             ]
             response, confirmed = QuickDialog.get(
                 self, structure, "Theme"
             )
             if not confirmed:
                 return
-            
-            if response[0][0][1]:
-                new_theme = "default"
-            elif response[0][1][1]:
-                new_theme = "qdark"
-            else:
+
+            picked = [value for (_, value), (_, checked)
+                      in zip(options, response[0]) if checked]
+            if not picked:
                 return
-        
+            new_theme = picked[0]
+
         app = QApplication.instance()
-        if new_theme == "default":
-            self.series.setOption("theme", "default")
-            app.setStyleSheet("")
-            app.setPalette(app.style().standardPalette())
-        elif new_theme == "qdark":
+        if new_theme == appearance.DARK and not appearance.native():
             try:
                 import qdarkstyle
             except:
@@ -5801,6 +5798,18 @@ class MainWindow(QMainWindow):
                 qdarkstyle.load_stylesheet_pyside6() + 
                 qdark_addon
             )
+            app.setProperty(appearance.QDARKSTYLE_PROPERTY, True)
+        else:
+            # a value this build does not offer (Light, saved by a Dev build)
+            # is drawn as default and left stored as it is
+            shown = appearance.resolve(new_theme)
+            if shown == new_theme:
+                self.series.setOption("theme", new_theme)
+            app.setStyleSheet("")
+            app.setProperty(appearance.QDARKSTYLE_PROPERTY, False)
+            if appearance.native():
+                appearance.setColorScheme(shown)
+            app.setPalette(app.style().standardPalette())
 
         # the lists measured their columns under the old theme's font and
         # padding; re-measure so the new theme's text is not crowded
