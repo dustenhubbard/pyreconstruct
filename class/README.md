@@ -46,8 +46,14 @@ class/
 3. In `class/worker/wrangler.jsonc`, set `CURRENT_TERM` to the new folder name.
 4. In `class/pages/index.md`, point "Current term" at the new folder. Add the old term to
    `class/pages/staff/archive.md`.
-5. Open a pull request into `class`. Once it merges, the site deploys.
-6. Change the student password (below) and give the new one to the class.
+5. Open a pull request into `class`, but do not merge it yet.
+6. Change the student password (below). From here on, last term's password opens
+   nothing, and the new one still shows last term until the next step.
+7. Merge the pull request. The site deploys with the new term in about three minutes.
+   Then give the new password to the class.
+
+The password changes before the new term goes live, so last term's password never
+opens the new term.
 
 To preview before pushing:
 
