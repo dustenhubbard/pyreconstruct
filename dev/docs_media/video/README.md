@@ -26,8 +26,8 @@ Decode the outputs to verify frame counts and generate contact sheets:
 uv run --frozen --no-default-groups python dev/docs_media/video/verify.py /path/to/video-1080p.mp4 /path/to/video-4k.mp4 --output-dir /path/to/review
 ```
 
-Add `--reference-sheet /path/to/old-contact-sheet.jpg` to generate `comparison.jpg`.
-The left panel preserves the old sheet's sampling. The right panel uses the first
+Add `--reference-sheet /path/to/reference-sheet.jpg` to generate `comparison.jpg`.
+The left panel is the reference sheet as it is. The right panel uses the first
 video's decoded frames at exactly 0, 1, 2, and subsequent whole seconds.
 `verification.json` records dimensions, decoded frame counts, duration, audio
 stream count, byte sizes, SHA-256 hashes, and the probe and extraction commands.
@@ -40,10 +40,9 @@ uv run --frozen --no-default-groups --extra test python -m pytest dev/docs_media
 
 ## Scene format
 
-The renderer accepts the original scene format without changes. Times are seconds.
-Coordinates use the native image canvas with the origin at the top left, x to the
-right, and y down. Image paths resolve relative to the scene file, regardless of
-the working directory. Every image must match `size`.
+Times are seconds. Coordinates use the native image canvas with the origin at
+the top left, x to the right, and y down. Image paths resolve relative to the
+scene file, regardless of the working directory. Every image must match `size`.
 
 ```json
 {
@@ -93,12 +92,11 @@ the working directory. Every image must match `size`.
   that time, then fades it in over 0.4 seconds; it must finish before the
   fade-out starts.
 
-The original scene does not specify easing or decorative details. This renderer
-uses smoothstep easing for moves, camera keys, and state fades, a dark arrow with
-a white outline and blurred shadow, and a 0.45-second expanding blue-gray pulse.
-These are reconstruction choices, not a pixel-identical recovery of the lost
-renderer. Video encoding uses H.264, CRF 18 (`--crf` to change it), the medium
-preset, `yuv420p`, and fast-start metadata at 60 fps with no audio. x264's
+The renderer uses smoothstep easing for moves, camera keys, and state fades.
+The cursor is a dark arrow with a white outline and a blurred shadow, and a
+click shows a 0.45-second expanding blue-gray pulse. Video encoding uses
+H.264, CRF 18 (`--crf` to change it), the medium preset, `yuv420p`, and
+fast-start metadata at 60 fps with no audio. x264's
 output depends on its thread count, so `--threads` pins it when the same frames
 must give the same bytes on another machine. Zooming a native 4K still in a 4K
 export enlarges captured pixels.
@@ -167,7 +165,7 @@ run's `targets.json`, so a reshoot that moves a button moves the pointer with
 it. The clips render at 1904 x 1292, the stills' own aspect ratio, at CRF 23
 with four encoder threads. Rerunning on the same stills gives the same bytes.
 
-## Capture handoff
+## Capture inputs
 
 A PyReconstruct flow needs these inputs:
 
@@ -184,4 +182,4 @@ A PyReconstruct flow needs these inputs:
 The renderer consumes the scene and masked stills. Targets and mask lists are
 capture provenance and authoring inputs, not additional renderer arguments.
 It does not apply privacy masks or infer safe regions. Review every output before
-using it in public docs. Internal comparison captures must stay outside the fork.
+using it in public docs.

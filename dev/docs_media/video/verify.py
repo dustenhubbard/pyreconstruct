@@ -88,8 +88,8 @@ def main():
         comparison.paste(reference, (0, 32))
         comparison.paste(first_sheet, (panel_width, 32))
         draw = ImageDraw.Draw(comparison)
-        draw.text((12, 10), "Old contact sheet (original sampling)", fill="black")
-        draw.text((panel_width + 12, 10), "Rebuilt renderer (exact integer seconds)", fill="black")
+        draw.text((12, 10), "Reference sheet", fill="black")
+        draw.text((panel_width + 12, 10), "This video (whole seconds)", fill="black")
         comparison.save(args.output_dir / "comparison.jpg", quality=95)
         report["reference_sheet"] = {"path": str(args.reference_sheet.resolve()),
                                      "sha256": sha256(args.reference_sheet)}
