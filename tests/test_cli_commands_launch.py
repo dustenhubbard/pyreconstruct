@@ -375,6 +375,20 @@ def test_the_answer_reports_an_unset_zdotdir_as_none(mac):
     assert zdotdir is None and "/usr/bin" in entries
 
 
+@needs("zsh")
+def test_a_setup_that_still_lacks_the_folder_is_not_recorded(mac):
+    zdot = mac["home"] / ".config" / "zsh"
+    zdot.mkdir(parents=True)
+    (mac["home"] / ".zshenv").write_text('export ZDOTDIR="$HOME/.config/zsh"\n')
+    (zdot / ".zlogin").write_text("unset ZDOTDIR\n")
+    ensure(mac)
+    for _ in range(2):  # tried again at each launch, never adding the lines twice
+        assert C.ADDED_KEY not in mac["settings"].values
+        assert not ensure(mac)
+    assert sum(C.PROFILE_TAG in p.read_text() for p in (mac["home"] / ".zprofile", zdot / ".zprofile")
+               if p.exists()) == 1
+
+
 @posix_only
 def test_bash_uses_the_file_a_login_bash_reads(mac):
     (mac["home"] / ".profile").write_text("# mine\n")

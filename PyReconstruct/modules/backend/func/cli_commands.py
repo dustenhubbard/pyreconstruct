@@ -253,6 +253,11 @@ def login_path(shell, home, env=None, timeout=10):
     return path.split(":"), (zdotdir if is_set == "set" else None)
 
 
+def has_local_bin(entries, home):
+    local_bin = os.path.realpath(Path(home) / ".local" / "bin")
+    return any(e and os.path.realpath(e) == local_bin for e in entries)
+
+
 def macos_add_to_path(home=None, shell=None, env=None, timeout=10):
     """Put ~/.local/bin on PATH in the login shell's startup file, unless a
     login shell already has it. True when the lines were added."""
@@ -270,8 +275,7 @@ def macos_add_to_path(home=None, shell=None, env=None, timeout=10):
         pass
     if PROFILE_TAG in text:
         return False
-    local_bin = os.path.realpath(home / ".local" / "bin")
-    if entries is not None and any(e and os.path.realpath(e) == local_bin for e in entries):
+    if entries is not None and has_local_bin(entries, home):
         return False
     lead = "\n" if text and not text.endswith("\n") else ""
     with open(target, "a", encoding="utf-8") as f:
@@ -282,7 +286,10 @@ def macos_add_to_path(home=None, shell=None, env=None, timeout=10):
 def macos_ensure(settings, bundle, home=None, shell=None, env=None, timeout=10):
     """The links in ~/.local/bin on every launch, so a moved app gets them
     back; the PATH line once per app, so a user who takes it out keeps it out.
-    True when anything changed."""
+    The step is recorded only once a new login shell has the folder (or
+    cannot say); in a setup PyReconstruct did not foresee it stays open and
+    runs again at the next launch, never adding the lines twice. True when
+    anything changed."""
     if bundle is None or not macos_bundle_is_installed(bundle, home=home):
         return False
     link_dir = macos_link_dir(home)
@@ -292,6 +299,14 @@ def macos_ensure(settings, bundle, home=None, shell=None, env=None, timeout=10):
     if _flag(settings, ADDED_KEY) or not any(s[0] == "ok" for s in states.values()):
         return made > 0
     added = macos_add_to_path(home=home, shell=shell, env=env, timeout=timeout)
+    shell = shell if shell is not None else login_shell()
+    home = home if home is not None else Path.home()
+    if shell_profile(shell, home, env) is not None:
+        check = login_path(shell, home, env, timeout)
+        if check is not None and not has_local_bin(check[0], home):
+            log_problem("terminal commands: a login shell lacks ~/.local/bin after the PATH "
+                        "step; trying again at the next launch")
+            return made > 0 or added
     _set_flag(settings, ADDED_KEY)
     return made > 0 or added
 
