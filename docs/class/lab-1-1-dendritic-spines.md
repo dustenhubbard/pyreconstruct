@@ -27,7 +27,7 @@ Reconstruct 3 dendritic spines (including one branched spine) in adjacent images
 </figure>
 
 <figure class="class-fig" markdown="span">
-  ![The Group Filters dialog with its list open: Assigned, Dend+Spines, Inhibition, Polyribosomes, PSDs, SER, SA, Endo](img/lab-1-1/02.png)
+  ![The Group Filters dialog with its list open: Assigned, Dend+Spines, Inhibition, Polyribosomes, PSDs, SER, SA, Endo](img/lab-1-1/02.png){ width="223" }
   <figcaption>The Group Filters dialog.</figcaption>
 </figure>
 
@@ -95,7 +95,7 @@ These are the spines you will fully trace for "Lab 1.1 - Dendritic Spines."
 </figure>
 
 <figure class="class-fig" markdown="span">
-  ![The Regex Filters dialog](img/lab-1-1/08.png)
+  ![The Regex Filters dialog with d03sp.* typed in](img/lab-1-1/08.png){ width="218" }
   <figcaption>The Regex Filters dialog.</figcaption>
 </figure>
 
