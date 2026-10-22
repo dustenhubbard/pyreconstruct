@@ -77,10 +77,10 @@ dependencies = [
     # only, so not present in a runtime install at all). A bump of
     # scikit-image or vtk silently removes one of them. (cairosvg was a fifth
     # edge until PNG export moved to QtSvg.)
-    # Declaring it costs nothing -- 12.3.0 is the version already resolved, and
+    # Declaring it costs nothing -- the pin is the version already resolved, and
     # pillow ships binary wheels on every supported platform with no native
     # prerequisite of its own -- and it is what makes the import a promise.
-    "pillow==12.3.0",
+    "pillow==13.0.0",
 ]
 
 [project.urls]
