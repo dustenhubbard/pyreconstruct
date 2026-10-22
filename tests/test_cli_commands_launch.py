@@ -340,6 +340,41 @@ def test_a_zdotdir_set_in_zshenv_is_followed(mac):
     assert out.stdout.strip() == str(mac["links"] / "pyrecon")
 
 
+@needs("zsh")
+def test_a_zdotdir_that_zshenv_unsets_is_not_used(mac, tmp_path):
+    old = tmp_path / "old-zdotdir"
+    old.mkdir()
+    (old / ".zshenv").write_text("unset ZDOTDIR\n")
+    C.macos_ensure(mac["settings"], mac["bundle"], home=mac["home"], shell="zsh",
+                   env={"ZDOTDIR": str(old)})
+    assert C.PROFILE_TAG in (mac["home"] / ".zprofile").read_text()
+    assert not (old / ".zprofile").exists()
+
+
+@needs("zsh")
+@needs("bash")
+@pytest.mark.parametrize("shell,name", [
+    ("zsh", ".zprofile"), ("zsh", ".zshenv"), ("zsh", ".zlogout"),
+    ("bash", ".bash_profile"), ("bash", ".bash_logout"),
+])
+def test_startup_files_that_print_do_not_confuse_the_answer(mac, shell, name):
+    mac["home"].mkdir(exist_ok=True)
+    (mac["home"] / name).write_text('printf "Hello\\n/x:/y\\nset\\n/nowhere\\n"\n')
+    ensure(mac, shell=shell)
+    target = ".zprofile" if shell == "zsh" else ".bash_profile"
+    assert C.PROFILE_TAG in (mac["home"] / target).read_text()
+    out = subprocess.run([shell, "-lc", "command -v pyrecon"], capture_output=True, text=True,
+                         env={"HOME": str(mac["home"]), "PATH": "/usr/bin:/bin"}, timeout=30)
+    assert out.stdout.strip().endswith(str(mac["links"] / "pyrecon"))
+
+
+@needs("zsh")
+def test_the_answer_reports_an_unset_zdotdir_as_none(mac):
+    mac["home"].mkdir(exist_ok=True)
+    entries, zdotdir = C.login_path("zsh", mac["home"], env={})
+    assert zdotdir is None and "/usr/bin" in entries
+
+
 @posix_only
 def test_bash_uses_the_file_a_login_bash_reads(mac):
     (mac["home"] / ".profile").write_text("# mine\n")

@@ -204,16 +204,17 @@ def login_shell():
         return os.environ.get("SHELL", "")
 
 
-def shell_profile(shell, home, env=None, zdotdir=None):
+def shell_profile(shell, home, env=None, reported=None):
     """The startup file a login ``shell`` (zsh or bash) reads, or None for a
     shell PyReconstruct does not know (fish and the rest are left alone).
-    ``zdotdir`` is the ZDOTDIR a login zsh reported; .zshenv may set it."""
+    ``reported`` is what login_path() got from the shell; its ZDOTDIR wins
+    over the app's, since .zshenv may set or unset it."""
     env = os.environ if env is None else env
     home = Path(home)
     kind = os.path.basename(shell or "")
     if kind == "zsh":
-        zdot = zdotdir if os.path.isabs(zdotdir or "") else env.get("ZDOTDIR", "")
-        return (Path(zdot) if os.path.isabs(zdot) else home) / ".zprofile"
+        zdot = reported[1] if reported is not None else env.get("ZDOTDIR")
+        return (Path(zdot) if os.path.isabs(zdot or "") else home) / ".zprofile"
     if kind == "bash":
         # a login bash reads only the first of these that exists
         names = (".bash_profile", ".bash_login", ".profile")
@@ -222,26 +223,34 @@ def shell_profile(shell, home, env=None, zdotdir=None):
 
 
 def login_path(shell, home, env=None, timeout=10):
-    """(PATH as a list, ZDOTDIR or "") from a new login ``shell``, or None
-    when the shell could not say. Asking the shell itself means every way of
-    setting them counts, and a comment or a dead branch does not."""
+    """(PATH as a list, ZDOTDIR or None when unset) from a new login
+    ``shell``, or None when the shell could not say. Asking the shell itself
+    means every way of setting them counts, and a comment or a dead branch
+    does not. The answer is framed by a fresh token, so whatever the startup
+    files print around it is ignored."""
     env = os.environ if env is None else env
     clean = {"HOME": str(home), "PATH": SYSTEM_PATH}
     for key in ("USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "ZDOTDIR"):
         if env.get(key):
             clean[key] = env[key]
+    token = f"pyrecon-{os.urandom(8).hex()}"
+    query = f'printf "\\n%s\\n%s\\n%s\\n%s\\n" {token} "$PATH" "${{ZDOTDIR+set}}" "${{ZDOTDIR-}}"'
     try:
-        done = subprocess.run([shell, "-l", "-c", 'printf "%s\\n%s" "$PATH" "$ZDOTDIR"'], env=clean,
+        done = subprocess.run([shell, "-l", "-c", query], env=clean,
                               stdin=subprocess.DEVNULL, capture_output=True, text=True,
                               timeout=timeout)
     except (OSError, subprocess.SubprocessError) as e:
         log_problem(f"terminal commands: {shell} -l: {e!r}")
         return None
-    if done.returncode != 0:
+    at = done.stdout.rfind(f"\n{token}\n")
+    if done.returncode != 0 or at < 0:
         log_problem(f"terminal commands: {shell} -l exited {done.returncode}")
         return None
-    path, _, zdotdir = done.stdout.partition("\n")
-    return path.split(":"), zdotdir
+    lines = done.stdout[at + len(token) + 2:].split("\n")
+    if len(lines) < 3:
+        return None
+    path, is_set, zdotdir = lines[:3]
+    return path.split(":"), (zdotdir if is_set == "set" else None)
 
 
 def macos_add_to_path(home=None, shell=None, env=None, timeout=10):
@@ -252,8 +261,8 @@ def macos_add_to_path(home=None, shell=None, env=None, timeout=10):
     if shell_profile(shell, home, env) is None:
         return False
     found = login_path(shell, home, env, timeout)
-    entries, zdotdir = found if found is not None else (None, None)
-    target = shell_profile(shell, home, env, zdotdir)
+    entries = found[0] if found is not None else None
+    target = shell_profile(shell, home, env, found)
     text = ""
     try:
         text = target.read_text(encoding="utf-8", errors="replace")
