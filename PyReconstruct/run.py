@@ -68,69 +68,6 @@ if __name__ == "__main__":
 import PyReconstruct.modules.gui.main as main
 
 
-def offerTerminalCommands(window):
-    """Make this app's terminal commands reachable (backend/func/cli_commands.py).
-
-    Windows and Linux need no prompt. On macOS the links in /usr/local/bin
-    need an administrator, so the user is asked first, once.
-    """
-    from PyReconstruct.modules.backend.func import cli_commands
-    cli_commands.ensure_silent()
-    askForMacTerminalCommands(window)
-
-
-def askForMacTerminalCommands(window, tries=20):
-    """The macOS question. It waits while another dialog (What's new) is up,
-    looking again every 3 seconds, ``tries`` times. Never raises: this is a
-    convenience and never in the way of a launch."""
-    from PyReconstruct.modules.backend.func import cli_commands
-    try:
-        pending = cli_commands.macos_pending()
-        if pending is None:
-            return
-        from PySide6.QtCore import QTimer
-        from PySide6.QtWidgets import QDialog, QMessageBox
-        busy = QApplication.activeModalWidget() is not None or any(
-            isinstance(w, QDialog) and w.isVisible() for w in QApplication.topLevelWidgets()
-        )
-        if busy:
-            if tries > 1:
-                QTimer.singleShot(3000, window, lambda: askForMacTerminalCommands(window, tries - 1))
-            return
-        bundle, fixes, settings = pending
-        short, long_ = cli_commands.command_names()
-        box = QMessageBox(window)
-        box.setWindowTitle("Terminal commands")
-        box.setIcon(QMessageBox.Question)
-        box.setText(f"Add the {short} and {long_} commands to Terminal?")
-        box.setInformativeText(
-            f"Then {short} file.jser opens that series in PyReconstruct. "
-            f"The commands go in {cli_commands.MACOS_LINK_DIR}, so macOS asks "
-            "for your password once. If you skip this, PyReconstruct will not ask again."
-        )
-        add = box.addButton("Add Commands", QMessageBox.AcceptRole)
-        box.addButton("Skip", QMessageBox.RejectRole)
-        box.setDefaultButton(add)
-        box.exec()
-        if box.clickedButton() is not add:
-            cli_commands.macos_decline(settings)
-            return
-    except Exception as e:
-        cli_commands.log_problem(f"terminal commands: {e!r}")
-        return
-
-    # the password prompt runs off the GUI thread, so the window stays live
-    import threading
-
-    def apply():
-        try:
-            cli_commands.macos_apply(fixes, cli_commands.open_settings())
-        except Exception as e:
-            cli_commands.log_problem(f"terminal commands: {e!r}")
-
-    threading.Thread(target=apply, name="terminal-commands", daemon=True).start()
-
-
 def runPyReconstruct(filename=None):
 
     # Tee stdout/stderr to a per-user log file so the packaged (windowed) app,
@@ -231,10 +168,12 @@ def runPyReconstruct(filename=None):
             from PySide6.QtCore import QTimer
             from PyReconstruct.modules.backend.updater.updater import report_update_started
             QTimer.singleShot(0, report_update_started)
-            # the terminal commands, a few seconds after the window is up.
-            # Packaged builds only: a source run has no commands to offer.
+            # the terminal commands (backend/func/cli_commands.py), a few
+            # seconds after the window is up. Packaged builds only: a source
+            # run has no commands. Nothing is asked on any platform.
             if getattr(sys, "frozen", False):
-                QTimer.singleShot(3000, main_window, lambda w=main_window: offerTerminalCommands(w))
+                from PyReconstruct.modules.backend.func.cli_commands import ensure_silent
+                QTimer.singleShot(3000, main_window, ensure_silent)
             first_window = False
         app.exec()
         file_open_watcher.main_window = None

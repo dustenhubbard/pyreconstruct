@@ -183,8 +183,8 @@ def test_a_folder_is_not_a_series(mac):
 
 @posix_only
 def test_it_follows_links_from_a_folder_on_path(mac):
-    """/usr/local/bin/pyrecon -> <bundle>/.../bin/pyrecon -> pyreconstruct."""
-    link_dir = mac["tmp"] / "usr-local-bin"
+    """~/.local/bin/pyrecon -> <bundle>/.../bin/pyrecon -> pyreconstruct."""
+    link_dir = mac["tmp"] / "local-bin"
     link_dir.mkdir()
     os.symlink(mac["bin"] / "pyrecon", link_dir / "pyrecon")
     # and a relative link, one more hop away

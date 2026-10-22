@@ -11,7 +11,7 @@ returns at once; with no argument the command just starts the app.
 
 * macOS: ``<app>.app/Contents/Resources/bin/<long name>``, a POSIX sh script,
   and ``<short name>`` beside it as a relative symlink. The script finds its
-  own bundle by following symlinks, so a link to it from /usr/local/bin works,
+  own bundle by following symlinks, so a link to it from ~/.local/bin works,
   and hands the file to ``open -a <bundle>``. Written before signing, so the
   scripts are sealed with the bundle's resources.
 * Windows: ``<app folder>\\bin\\<name>.cmd`` for both names. The installer puts
@@ -78,7 +78,7 @@ usage() {
   echo "Opens the series in $app. With no file, starts $app."
 }
 
-# Follow links (one in /usr/local/bin, one beside this file) to the script itself.
+# Follow links (one in ~/.local/bin, one beside this file) to the script itself.
 self=$0
 hops=0
 while [ -L "$self" ]; do

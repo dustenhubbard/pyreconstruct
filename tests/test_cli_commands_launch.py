@@ -1,10 +1,10 @@
 """What a launch does to make the terminal commands reachable.
 
 backend/func/cli_commands.py, with every side effect replaced: a temporary
-folder stands in for /usr/local/bin, the administrator prompt runs the very
-script it was handed with a plain ``sh`` (no prompt, no root), the registry
-is a dictionary behind winreg's names, and the settings store is a
-dictionary too. Nothing here reads or writes the real settings or PATH.
+folder stands in for the home folder (its .local/bin and shell startup
+files), the registry is a dictionary behind winreg's names, and the settings
+store is a dictionary too. Nothing here reads or writes the real settings,
+startup files or PATH.
 """
 
 import os
@@ -208,30 +208,22 @@ def test_windows_ensure_needs_this_flavor_s_commands(dev, tmp_path):
 
 @pytest.fixture
 def mac(tmp_path, stable):
-    """An installed bundle under <home>/Applications and an empty folder
-    standing in for /usr/local/bin."""
+    """An installed bundle under <home>/Applications; <home>/.local/bin does
+    not exist yet."""
     home = tmp_path / "home"
     bundle = home / "Applications" / "PyReconstruct.app"
     bin_dir = bundle / "Contents" / "Resources" / "bin"
     bin_dir.mkdir(parents=True)
     (bin_dir / "pyreconstruct").write_text("#!/bin/sh\n")
+    (bin_dir / "pyreconstruct").chmod(0o755)
     os.symlink("pyreconstruct", bin_dir / "pyrecon")
-    link_dir = tmp_path / "usr-local-bin"
-    link_dir.mkdir()
-    return {"home": home, "bundle": bundle, "bin": bin_dir, "links": link_dir, "settings": FakeSettings()}
+    return {"home": home, "bundle": bundle, "bin": bin_dir, "links": home / ".local" / "bin",
+            "settings": FakeSettings()}
 
 
-def sh_runner(calls):
-    """Run the admin script with plain sh, recording it and the prompt."""
-    def run(script, prompt):
-        calls.append((script, prompt))
-        return subprocess.run(["sh", "-c", script], capture_output=True).returncode == 0
-    return run
-
-
-def offer(mac, admin=True):
-    return C.macos_offer(mac["bundle"], mac["settings"], link_dir=mac["links"],
-                         is_admin=lambda: admin, home=mac["home"])
+def ensure(mac, shell="zsh", bundle=None, settings=None):
+    return C.macos_ensure(settings or mac["settings"], bundle or mac["bundle"], home=mac["home"],
+                          shell=shell, env={})
 
 
 def link_to(mac, name):
@@ -253,77 +245,157 @@ def test_only_an_installed_bundle_gets_links(path, ok):
 
 
 @posix_only
-def test_first_launch_makes_both_links(mac):
-    fixes = offer(mac)
-    assert [Path(link).name for link, _, _ in fixes] == ["pyrecon", "pyreconstruct"]
-    calls = []
-    assert C.macos_apply(fixes, mac["settings"], link_dir=mac["links"], runner=sh_runner(calls))
+def test_first_launch_makes_both_links_and_the_path_line(mac):
+    assert ensure(mac)
     assert link_to(mac, "pyrecon") == str(mac["bin"] / "pyrecon")
     assert link_to(mac, "pyreconstruct") == str(mac["bin"] / "pyreconstruct")
-    assert len(calls) == 1  # one prompt for both
-    assert "pyrecon and pyreconstruct" in calls[0][1]
-    assert C.DECLINED_KEY not in mac["settings"].values
+    profile = (mac["home"] / ".zprofile").read_text()
+    assert C.PROFILE_TAG in profile
+    assert 'export PATH="$HOME/.local/bin:$PATH"' in profile
+    assert mac["settings"].values[C.ADDED_KEY] is True
+
+
+@posix_only
+def test_the_path_line_lands_in_a_working_zsh(mac):
+    if not shutil.which("zsh"):
+        pytest.skip("no zsh")
+    ensure(mac)
+    out = subprocess.run(["zsh", "-lc", "command -v pyrecon"], capture_output=True, text=True,
+                         env={"HOME": str(mac["home"]), "PATH": "/usr/bin:/bin"}, timeout=30)
+    assert out.stdout.strip() == str(mac["links"] / "pyrecon")
+
+
+@posix_only
+def test_a_second_launch_changes_nothing(mac):
+    assert ensure(mac)
+    before = (mac["home"] / ".zprofile").read_text()
+    assert not ensure(mac)
+    assert (mac["home"] / ".zprofile").read_text() == before
+
+
+@posix_only
+def test_a_removed_path_line_stays_removed(mac):
+    ensure(mac)
+    (mac["home"] / ".zprofile").write_text("")
+    assert not ensure(mac)
+    assert (mac["home"] / ".zprofile").read_text() == ""
+
+
+@posix_only
+def test_a_startup_file_that_names_local_bin_is_left_alone(mac):
+    mac["home"].mkdir(exist_ok=True)
+    (mac["home"] / ".zshrc").write_text('path=("$HOME/.local/bin" $path)\n')
+    assert ensure(mac)
+    assert not (mac["home"] / ".zprofile").exists()
+    assert mac["settings"].values[C.ADDED_KEY] is True
+
+
+@posix_only
+def test_the_line_goes_after_what_is_there(mac):
+    (mac["home"] / ".zprofile").write_text("export EDITOR=vi")
+    ensure(mac)
+    lines = (mac["home"] / ".zprofile").read_text().splitlines()
+    assert lines[0] == "export EDITOR=vi" and lines[2] == C.PROFILE_TAG
+
+
+@posix_only
+def test_zdotdir_is_followed(mac, tmp_path):
+    zdot = tmp_path / "zdot"
+    zdot.mkdir()
+    C.macos_ensure(mac["settings"], mac["bundle"], home=mac["home"], shell="zsh",
+                   env={"ZDOTDIR": str(zdot)})
+    assert C.PROFILE_TAG in (zdot / ".zprofile").read_text()
+    assert not (mac["home"] / ".zprofile").exists()
+
+
+@posix_only
+def test_bash_uses_the_file_a_login_bash_reads(mac):
+    (mac["home"] / ".profile").write_text("# mine\n")
+    ensure(mac, shell="bash")
+    assert C.PROFILE_TAG in (mac["home"] / ".profile").read_text()
+    assert not (mac["home"] / ".bash_profile").exists()
+
+
+@posix_only
+def test_bash_with_no_startup_file_gets_a_bash_profile(mac):
+    ensure(mac, shell="bash")
+    assert C.PROFILE_TAG in (mac["home"] / ".bash_profile").read_text()
+
+
+@posix_only
+def test_another_shell_gets_links_but_no_startup_line(mac):
+    assert ensure(mac, shell="fish")
+    assert link_to(mac, "pyrecon") == str(mac["bin"] / "pyrecon")
+    assert not any(p.name.startswith(".") for p in mac["home"].iterdir() if p.is_file())
 
 
 @posix_only
 def test_nothing_to_do_when_the_links_are_right(mac):
+    mac["links"].mkdir(parents=True)
     for name in ("pyrecon", "pyreconstruct"):
         os.symlink(mac["bin"] / name, mac["links"] / name)
-    assert offer(mac) is None
+    mac["settings"].setValue(C.ADDED_KEY, True)
+    assert not ensure(mac)
 
 
 @posix_only
 def test_a_moved_app_gets_its_links_back(mac, tmp_path):
+    mac["links"].mkdir(parents=True)
     old = tmp_path / "gone" / "PyReconstruct.app" / "Contents" / "Resources" / "bin"
     for name in ("pyrecon", "pyreconstruct"):
         os.symlink(old / name, mac["links"] / name)
     states = C.macos_link_states(mac["bundle"], mac["links"])
     assert {n: s[0] for n, s in states.items()} == {"pyrecon": "moved", "pyreconstruct": "moved"}
-    fixes = offer(mac)
-    assert C.macos_apply(fixes, mac["settings"], link_dir=mac["links"], runner=sh_runner([]))
+    mac["settings"].setValue(C.ADDED_KEY, True)
+    assert ensure(mac)
     assert link_to(mac, "pyrecon") == str(mac["bin"] / "pyrecon")
     assert link_to(mac, "pyreconstruct") == str(mac["bin"] / "pyreconstruct")
+    assert not list(mac["links"].glob("*.pyrecon-tmp"))
 
 
 @posix_only
 def test_another_copy_that_still_exists_keeps_its_links(mac, tmp_path):
+    mac["links"].mkdir(parents=True)
     other = tmp_path / "Other" / "PyReconstruct.app" / "Contents" / "Resources" / "bin"
     other.mkdir(parents=True)
     (other / "pyrecon").write_text("")
     os.symlink(other / "pyrecon", mac["links"] / "pyrecon")
-    os.symlink(mac["bin"] / "pyreconstruct", mac["links"] / "pyreconstruct")
     assert C.macos_link_states(mac["bundle"], mac["links"])["pyrecon"][0] == "other"
-    assert offer(mac) is None
+    ensure(mac)
+    assert link_to(mac, "pyrecon") == str(other / "pyrecon")
+    assert link_to(mac, "pyreconstruct") == str(mac["bin"] / "pyreconstruct")
 
 
 @posix_only
 def test_files_that_are_not_ours_are_never_touched(mac):
+    mac["links"].mkdir(parents=True)
     (mac["links"] / "pyrecon").write_text("someone else's pyrecon\n")
     os.symlink("/usr/bin/true", mac["links"] / "pyreconstruct")
     states = C.macos_link_states(mac["bundle"], mac["links"])
     assert {n: s[0] for n, s in states.items()} == {"pyrecon": "foreign", "pyreconstruct": "foreign"}
-    assert offer(mac) is None
+    assert not ensure(mac)
     assert (mac["links"] / "pyrecon").read_text() == "someone else's pyrecon\n"
     assert link_to(mac, "pyreconstruct") == "/usr/bin/true"
+    # no command of ours is there, so the startup files are not touched either
+    assert not (mac["home"] / ".zprofile").exists()
+    assert C.ADDED_KEY not in mac["settings"].values
 
 
 @posix_only
 def test_a_foreign_name_is_skipped_and_the_other_is_made(mac):
-    (mac["links"] / "pyrecon").mkdir()
-    fixes = offer(mac)
-    assert [Path(link).name for link, _, _ in fixes] == ["pyreconstruct"]
-    assert C.macos_apply(fixes, mac["settings"], link_dir=mac["links"], runner=sh_runner([]))
+    (mac["links"] / "pyrecon").mkdir(parents=True)
+    assert ensure(mac)
     assert (mac["links"] / "pyrecon").is_dir() and not (mac["links"] / "pyrecon").is_symlink()
     assert link_to(mac, "pyreconstruct") == str(mac["bin"] / "pyreconstruct")
 
 
 @posix_only
-def test_the_script_refuses_a_name_that_changed_since_the_check(mac, tmp_path):
-    fixes = offer(mac)
+def test_a_name_that_changed_since_the_check_is_skipped(mac, tmp_path):
+    mac["links"].mkdir(parents=True)
+    fixes = C.macos_fixes(C.macos_link_states(mac["bundle"], mac["links"]))
     (mac["links"] / "pyrecon").write_text("arrived meanwhile\n")
-    assert not C.macos_apply(fixes, mac["settings"], link_dir=mac["links"], runner=sh_runner([]))
+    assert C.macos_make_links(fixes) == 1
     assert (mac["links"] / "pyrecon").read_text() == "arrived meanwhile\n"
-    assert mac["settings"].values[C.DECLINED_KEY] is True
 
     # a moved link repointed meanwhile is left as found, too
     os.remove(mac["links"] / "pyrecon")
@@ -332,87 +404,41 @@ def test_the_script_refuses_a_name_that_changed_since_the_check(mac, tmp_path):
     fixes = C.macos_fixes(C.macos_link_states(mac["bundle"], mac["links"]))
     os.remove(mac["links"] / "pyrecon")
     os.symlink("/usr/bin/true", mac["links"] / "pyrecon")
-    assert not C.macos_apply(fixes, mac["settings"], link_dir=mac["links"], runner=sh_runner([]))
+    assert C.macos_make_links(fixes) == 0
     assert link_to(mac, "pyrecon") == "/usr/bin/true"
 
 
 @posix_only
-def test_a_decline_stops_the_asking(mac):
-    assert offer(mac) is not None
-    C.macos_decline(mac["settings"])
-    assert offer(mac) is None
-
-
-@posix_only
-def test_a_canceled_prompt_counts_as_a_decline(mac):
-    fixes = offer(mac)
-    assert not C.macos_apply(fixes, mac["settings"], link_dir=mac["links"], runner=lambda s, p: False)
-    assert offer(mac) is None
-    assert not any(mac["links"].iterdir())
-
-
-@posix_only
-def test_a_prompt_that_raises_counts_as_a_decline(mac):
-    def boom(script, prompt):
-        raise OSError("osascript is missing")
-    fixes = offer(mac)
-    assert not C.macos_apply(fixes, mac["settings"], link_dir=mac["links"], runner=boom)
-    assert offer(mac) is None
-
-
-@posix_only
-def test_a_user_who_is_not_an_administrator_is_not_asked(mac):
-    assert offer(mac, admin=False) is None
-    assert C.DECLINED_KEY not in mac["settings"].values  # asked once they can say yes
-
-
-@posix_only
-def test_a_bundle_outside_applications_is_not_offered(mac, tmp_path):
+def test_a_bundle_outside_applications_gets_nothing(mac, tmp_path):
     loose = tmp_path / "Downloads" / "PyReconstruct.app"
     loose.mkdir(parents=True)
-    assert C.macos_offer(loose, mac["settings"], link_dir=mac["links"], is_admin=lambda: True,
-                         home=mac["home"]) is None
+    assert not ensure(mac, bundle=loose)
+    assert not mac["links"].exists()
+    assert not C.macos_ensure(mac["settings"], None, home=mac["home"], shell="zsh", env={})
 
 
 @posix_only
-def test_dev_uses_its_own_names_beside_stable(mac, monkeypatch, tmp_path):
-    for name in ("pyrecon", "pyreconstruct"):
-        os.symlink(mac["bin"] / name, mac["links"] / name)
+def test_dev_uses_its_own_names_beside_stable(mac, monkeypatch):
+    ensure(mac)
     monkeypatch.setenv("PYRECON_APP_NAME", "PyReconstruct Dev")
     dev_bundle = mac["home"] / "Applications" / "PyReconstruct Dev.app"
-    fixes = C.macos_offer(dev_bundle, FakeSettings(), link_dir=mac["links"], is_admin=lambda: True,
-                          home=mac["home"])
-    assert [Path(link).name for link, _, _ in fixes] == ["pyrecon-dev", "pyreconstruct-dev"]
-    assert C.macos_apply(fixes, FakeSettings(), link_dir=mac["links"], runner=sh_runner([]))
+    dev_bin = dev_bundle / "Contents" / "Resources" / "bin"
+    dev_bin.mkdir(parents=True)
+    assert ensure(mac, bundle=dev_bundle, settings=FakeSettings())
     assert sorted(p.name for p in mac["links"].iterdir()) == [
         "pyrecon", "pyrecon-dev", "pyreconstruct", "pyreconstruct-dev"]
     assert link_to(mac, "pyrecon") == str(mac["bin"] / "pyrecon")
+    assert link_to(mac, "pyrecon-dev") == str(dev_bin / "pyrecon-dev")
+    assert (mac["home"] / ".zprofile").read_text().count(C.PROFILE_TAG) == 1
 
 
 @posix_only
-def test_paths_with_quotes_and_spaces_reach_the_script_intact(mac, tmp_path):
-    odd = tmp_path / "it's \"odd\" $HOME" / "Applications" / "PyReconstruct.app"
+def test_paths_with_quotes_and_spaces_reach_the_link_intact(mac, tmp_path):
+    home = tmp_path / "it's \"odd\" $HOME"
+    odd = home / "Applications" / "PyReconstruct.app"
     shutil.copytree(mac["bundle"], odd, symlinks=True)
-    fixes = C.macos_offer(odd, mac["settings"], link_dir=mac["links"], is_admin=lambda: True,
-                          home=odd.parent.parent)
-    assert C.macos_apply(fixes, mac["settings"], link_dir=mac["links"], runner=sh_runner([]))
-    assert link_to(mac, "pyrecon") == str(odd / "Contents" / "Resources" / "bin" / "pyrecon")
-
-
-@pytest.mark.skipif(sys.platform != "darwin" or not shutil.which("osascript"), reason="macOS osascript")
-def test_the_applescript_string_round_trips():
-    text = 'ln -s \'/a b/it\'"\'"\'s\' "x\\y"\nnext line'
-    out = subprocess.run(["osascript", "-e", f"return {C._applescript_string(text)}"],
-                         capture_output=True, text=True, timeout=30)
-    assert out.returncode == 0, out.stderr
-    assert out.stdout.rstrip("\n").replace("\r", "\n") == text
-
-
-def test_the_admin_command_is_one_osascript_call():
-    argv = C.osascript_argv("true", "PyReconstruct wants to add commands.")
-    assert argv[:2] == ["osascript", "-e"] and len(argv) == 3
-    assert argv[2].startswith('do shell script "true" with administrator privileges')
-    assert argv[2].endswith('with prompt "PyReconstruct wants to add commands."')
+    assert C.macos_ensure(FakeSettings(), odd, home=home, shell="zsh", env={})
+    assert os.readlink(home / ".local" / "bin" / "pyrecon") == str(odd / "Contents" / "Resources" / "bin" / "pyrecon")
 
 
 # ---- Linux AppImage installs -------------------------------------------------------------
@@ -488,123 +514,25 @@ def test_an_unfrozen_run_does_nothing(monkeypatch):
     monkeypatch.delattr(sys, "frozen", raising=False)
     settings = FakeSettings()
     assert C.ensure_silent(settings) is False
-    assert C.macos_pending(settings) is None
     assert settings.values == {}
 
 
-# ---- the macOS question (run.py) --------------------------------------------------------
-
-@pytest.fixture
-def question(qapp, monkeypatch):
-    """askForMacTerminalCommands with a pending offer and a stand-in message box
-    that answers with ``answer['button']``."""
-    import threading
-
-    from PySide6 import QtWidgets
-    from PySide6.QtWidgets import QWidget
-
-    import PyReconstruct.run as run_mod
-
-    answer = {"button": "Add Commands"}
-    shown = []
-    applied = []
-    settings = FakeSettings()
-    fixes = [("/usr/local/bin/pyrecon", "/Applications/PyReconstruct.app/Contents/Resources/bin/pyrecon", None)]
-
-    class Box:
-        Question = QtWidgets.QMessageBox.Question
-        AcceptRole = QtWidgets.QMessageBox.AcceptRole
-        RejectRole = QtWidgets.QMessageBox.RejectRole
-
-        def __init__(self, parent):
-            self.buttons = {}
-            self.clicked = None
-
-        def setWindowTitle(self, t):
-            self.title = t
-
-        def setIcon(self, i):
-            pass
-
-        def setText(self, t):
-            self.text = t
-
-        def setInformativeText(self, t):
-            self.info = t
-
-        def addButton(self, label, role):
-            self.buttons[label] = object()
-            return self.buttons[label]
-
-        def setDefaultButton(self, b):
-            pass
-
-        def exec(self):
-            shown.append(self)
-            self.clicked = self.buttons[answer["button"]]
-
-        def clickedButton(self):
-            return self.clicked
-
-    done = threading.Event()
-
-    def fake_apply(f, s):
-        applied.append(f)
-        done.set()
-
-    monkeypatch.setattr(QtWidgets, "QMessageBox", Box)
-    monkeypatch.setattr(C, "macos_pending", lambda: ("/Applications/PyReconstruct.app", fixes, settings))
-    monkeypatch.setattr(C, "macos_apply", fake_apply)
-    monkeypatch.setattr(C, "open_settings", lambda: settings)
-    window = QWidget()
-    yield {"ask": lambda: run_mod.askForMacTerminalCommands(window), "answer": answer, "shown": shown,
-           "applied": applied, "settings": settings, "fixes": fixes, "done": done}
-    window.deleteLater()
+def test_a_frozen_mac_launch_runs_the_mac_step(monkeypatch):
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    seen = []
+    monkeypatch.setattr(C, "own_macos_bundle", lambda: "/Applications/PyReconstruct.app")
+    monkeypatch.setattr(C, "macos_ensure", lambda s, b: seen.append(b) or True)
+    assert C.ensure_silent(FakeSettings()) is True
+    assert seen == ["/Applications/PyReconstruct.app"]
 
 
-@pytest.mark.gui
-def test_yes_runs_the_admin_step_off_the_gui_thread(question, stable):
-    question["ask"]()
-    assert question["done"].wait(5)
-    assert question["applied"] == [question["fixes"]]
-    box = question["shown"][0]
-    assert box.text == "Add the pyrecon and pyreconstruct commands to Terminal?"
-    assert "PyReconstruct will not ask again" in box.info
-    assert C.DECLINED_KEY not in question["settings"].values
+# ---- run.py ---------------------------------------------------------------------------------
 
-
-@pytest.mark.gui
-def test_skip_records_the_decline(question):
-    question["answer"]["button"] = "Skip"
-    question["ask"]()
-    assert question["settings"].values[C.DECLINED_KEY] is True
-    assert not question["done"].wait(0.2) and question["applied"] == []
-
-
-@pytest.mark.gui
-def test_the_question_waits_for_another_dialog(question, qapp):
-    from PySide6.QtWidgets import QDialog
-    other = QDialog()
-    other.show()
-    try:
-        question["ask"]()
-        assert question["shown"] == []
-    finally:
-        other.close()
-        other.deleteLater()
-
-
-@pytest.mark.gui
-def test_a_failure_in_the_question_never_raises(qapp, monkeypatch):
-    import PyReconstruct.run as run_mod
-
-    def boom():
-        raise RuntimeError("no")
-    monkeypatch.setattr(C, "macos_pending", boom)
-    logged = []
-    monkeypatch.setattr(C, "log_problem", logged.append)
-    run_mod.askForMacTerminalCommands(None)
-    assert logged and "no" in logged[0]
+def test_run_sets_the_commands_up_without_a_question():
+    src = (Path(C.__file__).parents[3] / "run.py").read_text()
+    assert "QTimer.singleShot(3000, main_window, ensure_silent)" in src
+    assert "QMessageBox" not in src.split("def runPyReconstruct")[0]
 
 
 def test_run_hands_over_an_absolute_launch_file():
