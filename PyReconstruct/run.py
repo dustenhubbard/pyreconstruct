@@ -169,11 +169,14 @@ def runPyReconstruct(filename=None):
             from PyReconstruct.modules.backend.updater.updater import report_update_started
             QTimer.singleShot(0, report_update_started)
             # the terminal commands (backend/func/cli_commands.py), a few
-            # seconds after the window is up. Packaged builds only: a source
-            # run has no commands. Nothing is asked on any platform.
+            # seconds after the window is up, off the GUI thread: on macOS it
+            # starts a login shell. Packaged builds only: a source run has no
+            # commands. Nothing is asked on any platform.
             if getattr(sys, "frozen", False):
+                import threading
                 from PyReconstruct.modules.backend.func.cli_commands import ensure_silent
-                QTimer.singleShot(3000, main_window, ensure_silent)
+                QTimer.singleShot(3000, main_window, lambda: threading.Thread(
+                    target=ensure_silent, name="terminal-commands", daemon=True).start())
             first_window = False
         app.exec()
         file_open_watcher.main_window = None

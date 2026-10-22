@@ -9,9 +9,9 @@ module is the part that runs at launch and makes sure they are reachable:
   that folder on PATH in the login shell's startup file (zsh or bash). Only
   for a frozen app in /Applications or ~/Applications. A missing link, or
   one of ours whose target is gone (the app moved), is made at every launch.
-  A file that is not one of our links is never touched. The PATH line is
-  added once per app, and not at all when a startup file already names
-  ~/.local/bin. No prompt and no administrator rights.
+  A file that is not one of our links is never touched. The PATH lines are
+  added once per app, and not at all when a login shell already has the
+  folder on PATH. No prompt and no administrator rights.
 * Windows: the install's ``bin`` folder on the per-user PATH. The installer
   adds it; this covers an install that an in-place update brought up to a
   build with commands. Once per app, no administrator rights.
@@ -24,6 +24,7 @@ all of it against a temporary folder.
 """
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -190,70 +191,83 @@ def macos_make_links(fixes):
 
 
 PROFILE_TAG = "# Added by PyReconstruct: the pyrecon terminal commands live in ~/.local/bin"
+# Adds the folder only when PATH lacks it, so it never doubles an entry.
+PROFILE_LINE = 'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac'
+SYSTEM_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"  # what launchd hands an app
 
 
 def login_shell():
     try:
         import pwd
-        return os.path.basename(pwd.getpwuid(os.getuid()).pw_shell or "")
+        return pwd.getpwuid(os.getuid()).pw_shell or ""
     except Exception:
-        return os.path.basename(os.environ.get("SHELL", ""))
+        return os.environ.get("SHELL", "")
 
 
-def shell_profiles(shell, home, env=None):
-    """(files to look in, file to add to) for ``shell``, or None for a shell
-    PyReconstruct does not know (fish and the rest are left alone)."""
+def shell_profile(shell, home, env=None):
+    """The startup file a login ``shell`` (zsh or bash) reads, or None for a
+    shell PyReconstruct does not know (fish and the rest are left alone)."""
     env = os.environ if env is None else env
     home = Path(home)
-    if shell == "zsh":
+    kind = os.path.basename(shell or "")
+    if kind == "zsh":
         zdot = Path(env["ZDOTDIR"]) if os.path.isabs(env.get("ZDOTDIR", "")) else home
-        look = [zdot / n for n in (".zshenv", ".zprofile", ".zshrc", ".zlogin")]
-        return look, zdot / ".zprofile"
-    if shell == "bash":
+        return zdot / ".zprofile"
+    if kind == "bash":
         # a login bash reads only the first of these that exists
         names = (".bash_profile", ".bash_login", ".profile")
-        first = next((home / n for n in names if (home / n).exists()), home / names[0])
-        return [first], first
+        return next((home / n for n in names if (home / n).exists()), home / names[0])
     return None
 
 
-def _without_comment(line):
-    """A shell line up to its comment: a ``#`` at the start of the line or
-    after a space or tab. A ``#`` inside a word (``$#``, ``a#b``) is kept."""
-    for i, ch in enumerate(line):
-        if ch == "#" and (i == 0 or line[i - 1] in " \t"):
-            return line[:i]
-    return line
+def login_path(shell, home, env=None, timeout=10):
+    """The PATH a new login ``shell`` ends up with, as a list, or None when
+    the shell could not say. Asking the shell itself means every way of
+    setting PATH counts, and a comment or a dead branch does not."""
+    env = os.environ if env is None else env
+    clean = {"HOME": str(home), "PATH": SYSTEM_PATH}
+    for key in ("USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "ZDOTDIR"):
+        if env.get(key):
+            clean[key] = env[key]
+    try:
+        done = subprocess.run([shell, "-l", "-c", 'printf "%s" "$PATH"'], env=clean,
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                              timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as e:
+        log_problem(f"terminal commands: {shell} -l: {e!r}")
+        return None
+    if done.returncode != 0:
+        log_problem(f"terminal commands: {shell} -l exited {done.returncode}")
+        return None
+    return done.stdout.split(":")
 
 
-def macos_add_to_path(home=None, shell=None, env=None):
+def macos_add_to_path(home=None, shell=None, env=None, timeout=10):
     """Put ~/.local/bin on PATH in the login shell's startup file, unless a
-    startup file that shell reads already names it outside a comment. True
-    when a line was added."""
+    login shell already has it. True when the lines were added."""
     home = Path(home if home is not None else Path.home())
-    found = shell_profiles(shell if shell is not None else login_shell(), home, env)
-    if found is None:
+    shell = shell if shell is not None else login_shell()
+    target = shell_profile(shell, home, env)
+    if target is None:
         return False
-    look, target = found
-    for f in look:
-        try:
-            lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            continue
-        if any(".local/bin" in _without_comment(line) for line in lines):
-            return False
     text = ""
     try:
         text = target.read_text(encoding="utf-8", errors="replace")
     except OSError:
         pass
+    if PROFILE_TAG in text:
+        return False
+    local_bin = os.path.realpath(home / ".local" / "bin")
+    entries = login_path(shell, home, env, timeout)
+    if entries is not None and any(e and os.path.realpath(e) == local_bin for e in entries):
+        return False
     lead = "\n" if text and not text.endswith("\n") else ""
     with open(target, "a", encoding="utf-8") as f:
-        f.write(f'{lead}\n{PROFILE_TAG}\nexport PATH="$HOME/.local/bin:$PATH"\n')
+        f.write(f"{lead}\n{PROFILE_TAG}\n{PROFILE_LINE}\n")
     return True
 
 
-def macos_ensure(settings, bundle, home=None, shell=None, env=None):
+def macos_ensure(settings, bundle, home=None, shell=None, env=None, timeout=10):
     """The links in ~/.local/bin on every launch, so a moved app gets them
     back; the PATH line once per app, so a user who takes it out keeps it out.
     True when anything changed."""
@@ -265,7 +279,7 @@ def macos_ensure(settings, bundle, home=None, shell=None, env=None):
     states = macos_link_states(bundle, link_dir)
     if _flag(settings, ADDED_KEY) or not any(s[0] == "ok" for s in states.values()):
         return made > 0
-    added = macos_add_to_path(home=home, shell=shell, env=env)
+    added = macos_add_to_path(home=home, shell=shell, env=env, timeout=timeout)
     _set_flag(settings, ADDED_KEY)
     return made > 0 or added
 

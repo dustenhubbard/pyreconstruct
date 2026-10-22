@@ -255,14 +255,26 @@ def test_first_launch_makes_both_links_and_the_path_line(mac):
     assert mac["settings"].values[C.ADDED_KEY] is True
 
 
-@posix_only
-def test_the_path_line_lands_in_a_working_zsh(mac):
-    if not shutil.which("zsh"):
-        pytest.skip("no zsh")
-    ensure(mac)
-    out = subprocess.run(["zsh", "-lc", "command -v pyrecon"], capture_output=True, text=True,
+def needs(shell):
+    return pytest.mark.skipif(os.name == "nt" or not shutil.which(shell, path=C.SYSTEM_PATH),
+                              reason=f"no {shell}")
+
+
+@needs("zsh")
+@needs("bash")
+@pytest.mark.parametrize("shell", ["zsh", "bash"])
+def test_the_path_line_lands_in_a_working_login_shell(mac, shell):
+    ensure(mac, shell=shell)
+    out = subprocess.run([shell, "-lc", "command -v pyrecon"], capture_output=True, text=True,
                          env={"HOME": str(mac["home"]), "PATH": "/usr/bin:/bin"}, timeout=30)
     assert out.stdout.strip() == str(mac["links"] / "pyrecon")
+
+
+@needs("sh")
+def test_the_path_line_never_doubles_an_entry():
+    script = f'PATH=/bin; HOME=/h; {C.PROFILE_LINE}; {C.PROFILE_LINE}; printf %s "$PATH"'
+    out = subprocess.run(["sh", "-c", script], capture_output=True, text=True, timeout=30)
+    assert out.stdout == "/h/.local/bin:/bin"
 
 
 @posix_only
@@ -281,12 +293,19 @@ def test_a_removed_path_line_stays_removed(mac):
     assert (mac["home"] / ".zprofile").read_text() == ""
 
 
-@posix_only
-def test_a_startup_file_that_names_local_bin_is_left_alone(mac):
+@needs("zsh")
+@needs("bash")
+@pytest.mark.parametrize("shell,name,line,target", [
+    ("zsh", ".zshenv", 'path=("$HOME/.local/bin" $path)', ".zprofile"),
+    ("zsh", ".zprofile", 'export PATH="$HOME/.local/bin:$PATH"', ".zprofile"),
+    ("bash", ".bash_profile", 'PATH=~/.local/bin:$PATH', ".bash_profile"),
+])
+def test_a_login_shell_that_has_local_bin_is_left_alone(mac, shell, name, line, target):
     mac["home"].mkdir(exist_ok=True)
-    (mac["home"] / ".zshrc").write_text('path=("$HOME/.local/bin" $path)\n')
-    assert ensure(mac)
-    assert not (mac["home"] / ".zprofile").exists()
+    (mac["home"] / name).write_text(line + "\n")
+    assert ensure(mac, shell=shell)
+    assert C.PROFILE_TAG not in ((mac["home"] / target).read_text()
+                                 if (mac["home"] / target).exists() else "")
     assert mac["settings"].values[C.ADDED_KEY] is True
 
 
@@ -322,7 +341,7 @@ def test_bash_with_no_startup_file_gets_a_bash_profile(mac):
     assert C.PROFILE_TAG in (mac["home"] / ".bash_profile").read_text()
 
 
-@posix_only
+@needs("bash")
 def test_a_bashrc_a_login_bash_skips_does_not_count(mac):
     mac["home"].mkdir(exist_ok=True)
     (mac["home"] / ".bashrc").write_text('export PATH="$HOME/.local/bin:$PATH"\n')
@@ -330,15 +349,18 @@ def test_a_bashrc_a_login_bash_skips_does_not_count(mac):
     assert C.PROFILE_TAG in (mac["home"] / ".bash_profile").read_text()
 
 
-@posix_only
-@pytest.mark.parametrize("shell,name", [("zsh", ".zshrc"), ("bash", ".bash_profile")])
+@needs("zsh")
+@needs("bash")
+@pytest.mark.parametrize("shell,name", [("zsh", ".zshenv"), ("bash", ".bash_profile")])
 @pytest.mark.parametrize("line", [
     "# someday: ~/.local/bin",
     "   # someday: ~/.local/bin",
     "export EDITOR=vi # someday add ~/.local/bin",
     "export EDITOR=vi\t# ~/.local/bin",
+    "export EDITOR=vi;# ~/.local/bin",
+    'if false; then export PATH="$HOME/.local/bin:$PATH"; fi',
 ])
-def test_a_comment_that_names_local_bin_does_not_count(mac, shell, name, line):
+def test_a_line_that_does_not_set_path_does_not_count(mac, shell, name, line):
     mac["home"].mkdir(exist_ok=True)
     (mac["home"] / name).write_text(line + "\n")
     ensure(mac, shell=shell)
@@ -346,9 +368,17 @@ def test_a_comment_that_names_local_bin_does_not_count(mac, shell, name, line):
     assert C.PROFILE_TAG in (mac["home"] / target).read_text()
 
 
-def test_a_hash_inside_a_word_is_not_a_comment():
-    assert C._without_comment('p=a#b:$HOME/.local/bin') == 'p=a#b:$HOME/.local/bin'
-    assert C._without_comment('x=1 # ~/.local/bin') == 'x=1 '
+@posix_only
+@pytest.mark.parametrize("body", ["exit 1", "sleep 30", None])
+def test_a_shell_that_cannot_say_still_gets_the_lines(mac, tmp_path, body):
+    fake = tmp_path / "fake" / "zsh"
+    fake.parent.mkdir()
+    if body is not None:  # None: the shell is not there at all
+        fake.write_text(f"#!/bin/sh\n{body}\n")
+        fake.chmod(0o755)
+    assert C.macos_ensure(mac["settings"], mac["bundle"], home=mac["home"], shell=str(fake),
+                          env={}, timeout=1)
+    assert C.PROFILE_TAG in (mac["home"] / ".zprofile").read_text()
 
 
 @posix_only
@@ -573,7 +603,7 @@ def test_a_frozen_mac_launch_runs_the_mac_step(monkeypatch):
 
 def test_run_sets_the_commands_up_without_a_question():
     src = (Path(C.__file__).parents[3] / "run.py").read_text()
-    assert "QTimer.singleShot(3000, main_window, ensure_silent)" in src
+    assert "target=ensure_silent" in src
     assert "QMessageBox" not in src.split("def runPyReconstruct")[0]
 
 
