@@ -380,20 +380,42 @@ def test_startup_files_that_print_do_not_confuse_the_answer(mac, shell, name):
 
 
 @needs("zsh")
-def test_the_answer_is_the_login_path(mac):
+def test_the_answer_reports_an_unset_zdotdir_as_none(mac):
     mac["home"].mkdir(exist_ok=True)
-    assert "/usr/bin" in C.login_path("zsh", mac["home"], env={})
+    entries, zdotdir = C.login_path("zsh", mac["home"], env={})
+    assert zdotdir is None and "/usr/bin" in entries
 
 
 @needs("zsh")
-def test_a_setup_that_still_lacks_the_folder_is_not_recorded(mac):
-    mac["home"].mkdir(exist_ok=True)
-    (mac["home"] / ".zprofile").write_text("export PATH=/usr/bin:/bin\n")  # drops it again
+@pytest.mark.parametrize("files,used", [
+    ({".zprofile": "export PATH=/usr/bin:/bin"}, ".zprofile"),
+    ({".zshenv": "export PATH=/usr/bin:/bin", ".zprofile": "export PATH=/usr/bin:/bin"}, ".zprofile"),
+    ({".zshenv": 'export ZDOTDIR="$HOME/z"', "z/.zprofile": "export PATH=/usr/bin:/bin"}, "z/.zprofile"),
+    ({".zprofile": "export PATH=/usr/bin:/bin\nreturn"}, ".zlogin"),  # lines after return never run
+    ({".zprofile": "export PATH=/usr/bin:/bin\nreturn", ".zlogin": "export EDITOR=vi"}, ".zlogin"),
+])
+def test_a_later_file_that_resets_path_moves_the_lines_later(mac, files, used):
+    for name, text in files.items():
+        (mac["home"] / name).parent.mkdir(parents=True, exist_ok=True)
+        (mac["home"] / name).write_text(text + "\n")
     ensure(mac)
-    for _ in range(2):  # tried again at each launch, never adding the lines twice
+    assert C.PROFILE_TAG in (mac["home"] / used).read_text()
+    assert mac["settings"].values[C.ADDED_KEY] is True
+    assert found_by("zsh", mac)
+
+
+@needs("zsh")
+def test_a_setup_where_no_file_works_is_not_recorded(mac):
+    mac["home"].mkdir(exist_ok=True)
+    (mac["home"] / ".zprofile").write_text("export PATH=/usr/bin:/bin\n")
+    (mac["home"] / ".zlogin").write_text("export PATH=/usr/bin:/bin\nreturn\n")  # our lines never run
+    ensure(mac)
+    for _ in range(2):  # checked again at each launch, never adding the lines twice
         assert C.ADDED_KEY not in mac["settings"].values
         assert not ensure(mac)
-    assert (mac["home"] / ".zshenv").read_text().count(C.PROFILE_TAG) == 1
+    for name in (".zshenv", ".zprofile", ".zlogin"):
+        assert (mac["home"] / name).read_text().count(C.PROFILE_TAG) == 1
+    assert not found_by("zsh", mac)
 
 
 @posix_only

@@ -204,38 +204,45 @@ def login_shell():
         return os.environ.get("SHELL", "")
 
 
-def shell_profile(shell, home, env=None):
-    """The startup file for the PATH lines, or None for a shell PyReconstruct
-    does not know (fish and the rest are left alone). For zsh, .zshenv: zsh
-    reads it first, from the ZDOTDIR a new Terminal starts with, before any
-    other startup file can move ZDOTDIR. For bash, the file a login bash
-    reads."""
+def shell_profiles(shell, home, env=None, answer=None):
+    """The startup files to try for the PATH lines, in order, or None for a
+    shell PyReconstruct does not know (fish and the rest are left alone).
+
+    zsh: .zshenv first, from the ZDOTDIR a new Terminal starts with, since
+    zsh reads it before any other file can move ZDOTDIR; then .zprofile and
+    .zlogin, which a login zsh reads later, for a setup whose later files
+    reset PATH. Those two come from the ZDOTDIR in ``answer`` (what
+    login_path() reported) when there is one. bash: the one file a login
+    bash reads."""
     env = os.environ if env is None else env
     home = Path(home)
     kind = os.path.basename(shell or "")
     if kind == "zsh":
-        zdot = env.get("ZDOTDIR", "")
-        return (Path(zdot) if os.path.isabs(zdot) else home) / ".zshenv"
+        start = env.get("ZDOTDIR", "")
+        start = Path(start) if os.path.isabs(start) else home
+        late = answer[1] if answer is not None else None
+        late = Path(late) if os.path.isabs(late or "") else (home if answer is not None else start)
+        files = [start / ".zshenv", late / ".zprofile", late / ".zlogin"]
+        return list(dict.fromkeys(files))
     if kind == "bash":
-        # a login bash reads only the first of these that exists
         names = (".bash_profile", ".bash_login", ".profile")
-        return next((home / n for n in names if (home / n).exists()), home / names[0])
+        return [next((home / n for n in names if (home / n).exists()), home / names[0])]
     return None
 
 
 def login_path(shell, home, env=None, timeout=10):
-    """The PATH a new login ``shell`` ends up with, as a list, or None when
-    the shell could not say. Asking the shell itself means every way of
-    setting PATH counts, and a comment or a dead branch does not. The answer
-    is framed by a fresh token, so whatever the startup files print around
-    it is ignored."""
+    """(PATH as a list, ZDOTDIR or None when unset) from a new login
+    ``shell``, or None when the shell could not say. Asking the shell itself
+    means every way of setting them counts, and a comment or a dead branch
+    does not. The answer is framed by a fresh token, so whatever the startup
+    files print around it is ignored."""
     env = os.environ if env is None else env
     clean = {"HOME": str(home), "PATH": SYSTEM_PATH}
     for key in ("USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "ZDOTDIR"):
         if env.get(key):
             clean[key] = env[key]
     token = f"pyrecon-{os.urandom(8).hex()}"
-    query = f'printf "\\n%s\\n%s\\n" {token} "$PATH"'
+    query = f'printf "\\n%s\\n%s\\n%s\\n%s\\n" {token} "$PATH" "${{ZDOTDIR+set}}" "${{ZDOTDIR-}}"'
     try:
         done = subprocess.run([shell, "-l", "-c", query], env=clean,
                               stdin=subprocess.DEVNULL, capture_output=True, text=True,
@@ -247,7 +254,10 @@ def login_path(shell, home, env=None, timeout=10):
     if done.returncode != 0 or at < 0:
         log_problem(f"terminal commands: {shell} -l exited {done.returncode}")
         return None
-    return done.stdout[at + len(token) + 2:].split("\n", 1)[0].split(":")
+    lines = done.stdout[at + len(token) + 2:].split("\n")
+    if len(lines) < 3:
+        return None
+    return lines[0].split(":"), (lines[2] if lines[1] == "set" else None)
 
 
 def has_local_bin(entries, home):
@@ -255,15 +265,8 @@ def has_local_bin(entries, home):
     return any(e and os.path.realpath(e) == local_bin for e in entries)
 
 
-def macos_add_to_path(home=None, shell=None, env=None, timeout=10):
-    """Put ~/.local/bin on PATH in the login shell's startup file, unless a
-    login shell already has it. True when the lines were added."""
-    home = Path(home if home is not None else Path.home())
-    shell = shell if shell is not None else login_shell()
-    target = shell_profile(shell, home, env)
-    if target is None:
-        return False
-    entries = login_path(shell, home, env, timeout)
+def _append_lines(target):
+    """Add the PATH lines to ``target`` unless they are there. True when added."""
     text = ""
     try:
         text = target.read_text(encoding="utf-8", errors="replace")
@@ -271,21 +274,50 @@ def macos_add_to_path(home=None, shell=None, env=None, timeout=10):
         pass
     if PROFILE_TAG in text:
         return False
-    if entries is not None and has_local_bin(entries, home):
-        return False
     lead = "\n" if text and not text.endswith("\n") else ""
     with open(target, "a", encoding="utf-8") as f:
         f.write(f"{lead}\n{PROFILE_TAG}\n{PROFILE_LINE}\n")
     return True
 
 
+def macos_add_to_path(home=None, shell=None, env=None, timeout=10):
+    """Put ~/.local/bin on PATH for new login shells. Returns (added, found):
+    added is True when lines were written; found is True when a login shell
+    then has the folder, False when it still does not, and None when the
+    shell could not say or is not one PyReconstruct knows.
+
+    The files from shell_profiles() are tried in order, asking the shell
+    again after each, and the first that works ends it. A shell that cannot
+    answer gets the lines in the first file only."""
+    home = Path(home if home is not None else Path.home())
+    shell = shell if shell is not None else login_shell()
+    if shell_profiles(shell, home, env) is None:
+        return False, None
+    answer = login_path(shell, home, env, timeout)
+    if answer is not None and has_local_bin(answer[0], home):
+        return False, True
+    added = False
+    for target in shell_profiles(shell, home, env, answer):
+        if not _append_lines(target):
+            continue
+        added = True
+        if answer is None:
+            return added, None
+        check = login_path(shell, home, env, timeout)
+        if check is None:
+            return added, None
+        if has_local_bin(check[0], home):
+            return added, True
+    return added, False
+
+
 def macos_ensure(settings, bundle, home=None, shell=None, env=None, timeout=10):
     """The links in ~/.local/bin on every launch, so a moved app gets them
-    back; the PATH line once per app, so a user who takes it out keeps it out.
-    The step is recorded only once a new login shell has the folder (or
-    cannot say); in a setup PyReconstruct did not foresee it stays open and
-    runs again at the next launch, never adding the lines twice. True when
-    anything changed."""
+    back; the PATH lines once per app, so a user who takes them out keeps
+    them out. The step is recorded only once a new login shell has the
+    folder (or cannot say); in a setup where no file PyReconstruct tries
+    works, it stays open and is checked again at the next launch, never
+    adding the lines to a file twice. True when anything changed."""
     if bundle is None or not macos_bundle_is_installed(bundle, home=home):
         return False
     link_dir = macos_link_dir(home)
@@ -294,15 +326,11 @@ def macos_ensure(settings, bundle, home=None, shell=None, env=None, timeout=10):
     states = macos_link_states(bundle, link_dir)
     if _flag(settings, ADDED_KEY) or not any(s[0] == "ok" for s in states.values()):
         return made > 0
-    added = macos_add_to_path(home=home, shell=shell, env=env, timeout=timeout)
-    shell = shell if shell is not None else login_shell()
-    home = home if home is not None else Path.home()
-    if shell_profile(shell, home, env) is not None:
-        check = login_path(shell, home, env, timeout)
-        if check is not None and not has_local_bin(check, home):
-            log_problem("terminal commands: a login shell lacks ~/.local/bin after the PATH "
-                        "step; trying again at the next launch")
-            return made > 0 or added
+    added, found = macos_add_to_path(home=home, shell=shell, env=env, timeout=timeout)
+    if found is False:
+        log_problem("terminal commands: a login shell lacks ~/.local/bin after the PATH "
+                    "step; trying again at the next launch")
+        return made > 0 or added
     _set_flag(settings, ADDED_KEY)
     return made > 0 or added
 
