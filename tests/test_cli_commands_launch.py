@@ -249,7 +249,7 @@ def test_first_launch_makes_both_links_and_the_path_line(mac):
     assert ensure(mac)
     assert link_to(mac, "pyrecon") == str(mac["bin"] / "pyrecon")
     assert link_to(mac, "pyreconstruct") == str(mac["bin"] / "pyreconstruct")
-    profile = (mac["home"] / ".zprofile").read_text()
+    profile = (mac["home"] / ".zshenv").read_text()
     assert C.PROFILE_TAG in profile
     assert 'export PATH="$HOME/.local/bin:$PATH"' in profile
     assert mac["settings"].values[C.ADDED_KEY] is True
@@ -280,24 +280,24 @@ def test_the_path_line_never_doubles_an_entry():
 @posix_only
 def test_a_second_launch_changes_nothing(mac):
     assert ensure(mac)
-    before = (mac["home"] / ".zprofile").read_text()
+    before = (mac["home"] / ".zshenv").read_text()
     assert not ensure(mac)
-    assert (mac["home"] / ".zprofile").read_text() == before
+    assert (mac["home"] / ".zshenv").read_text() == before
 
 
 @posix_only
 def test_a_removed_path_line_stays_removed(mac):
     ensure(mac)
-    (mac["home"] / ".zprofile").write_text("")
+    (mac["home"] / ".zshenv").write_text("")
     assert not ensure(mac)
-    assert (mac["home"] / ".zprofile").read_text() == ""
+    assert (mac["home"] / ".zshenv").read_text() == ""
 
 
 @needs("zsh")
 @needs("bash")
 @pytest.mark.parametrize("shell,name,line,target", [
-    ("zsh", ".zshenv", 'path=("$HOME/.local/bin" $path)', ".zprofile"),
-    ("zsh", ".zprofile", 'export PATH="$HOME/.local/bin:$PATH"', ".zprofile"),
+    ("zsh", ".zshenv", 'path=("$HOME/.local/bin" $path)', ".zshenv"),
+    ("zsh", ".zprofile", 'export PATH="$HOME/.local/bin:$PATH"', ".zshenv"),
     ("bash", ".bash_profile", 'PATH=~/.local/bin:$PATH', ".bash_profile"),
 ])
 def test_a_login_shell_that_has_local_bin_is_left_alone(mac, shell, name, line, target):
@@ -311,10 +311,16 @@ def test_a_login_shell_that_has_local_bin_is_left_alone(mac, shell, name, line, 
 
 @posix_only
 def test_the_line_goes_after_what_is_there(mac):
-    (mac["home"] / ".zprofile").write_text("export EDITOR=vi")
+    (mac["home"] / ".zshenv").write_text("export EDITOR=vi")
     ensure(mac)
-    lines = (mac["home"] / ".zprofile").read_text().splitlines()
+    lines = (mac["home"] / ".zshenv").read_text().splitlines()
     assert lines[0] == "export EDITOR=vi" and lines[2] == C.PROFILE_TAG
+
+
+def found_by(shell, mac, **env):
+    out = subprocess.run([shell, "-lc", "command -v pyrecon"], capture_output=True, text=True,
+                         env={"HOME": str(mac["home"]), "PATH": "/usr/bin:/bin", **env}, timeout=30)
+    return out.stdout.strip().endswith(str(mac["links"] / "pyrecon"))
 
 
 @posix_only
@@ -323,32 +329,37 @@ def test_zdotdir_is_followed(mac, tmp_path):
     zdot.mkdir()
     C.macos_ensure(mac["settings"], mac["bundle"], home=mac["home"], shell="zsh",
                    env={"ZDOTDIR": str(zdot)})
-    assert C.PROFILE_TAG in (zdot / ".zprofile").read_text()
-    assert not (mac["home"] / ".zprofile").exists()
+    assert C.PROFILE_TAG in (zdot / ".zshenv").read_text()
+    assert not (mac["home"] / ".zshenv").exists()
 
 
 @needs("zsh")
-def test_a_zdotdir_set_in_zshenv_is_followed(mac):
-    zdot = mac["home"] / ".config" / "zsh"
-    zdot.mkdir(parents=True)
-    (mac["home"] / ".zshenv").write_text('export ZDOTDIR="$HOME/.config/zsh"\n')
+@pytest.mark.parametrize("files", [
+    {".zshenv": 'export ZDOTDIR="$HOME/.config/zsh"'},
+    {".zshenv": 'export ZDOTDIR="$HOME/.config/zsh"', ".config/zsh/.zlogin": "unset ZDOTDIR"},
+    {".zshenv": 'export ZDOTDIR="$HOME/.config/zsh"', ".config/zsh/.zprofile": "export EDITOR=vi"},
+    {".zshenv": 'export ZDOTDIR="$HOME/.config/zsh"',
+     ".config/zsh/.zshenv": 'export ZDOTDIR="$HOME/.config/zsh2"'},
+])
+def test_a_zdotdir_moved_by_startup_files_still_finds_the_commands(mac, files):
+    for name, text in files.items():
+        (mac["home"] / name).parent.mkdir(parents=True, exist_ok=True)
+        (mac["home"] / name).write_text(text + "\n")
     ensure(mac)
-    assert C.PROFILE_TAG in (zdot / ".zprofile").read_text()
-    assert not (mac["home"] / ".zprofile").exists()
-    out = subprocess.run(["zsh", "-lc", "command -v pyrecon"], capture_output=True, text=True,
-                         env={"HOME": str(mac["home"]), "PATH": "/usr/bin:/bin"}, timeout=30)
-    assert out.stdout.strip() == str(mac["links"] / "pyrecon")
+    assert C.PROFILE_TAG in (mac["home"] / ".zshenv").read_text()
+    assert mac["settings"].values[C.ADDED_KEY] is True
+    assert found_by("zsh", mac)
 
 
 @needs("zsh")
-def test_a_zdotdir_that_zshenv_unsets_is_not_used(mac, tmp_path):
+def test_a_zdotdir_that_zshenv_unsets_is_handled(mac, tmp_path):
     old = tmp_path / "old-zdotdir"
     old.mkdir()
     (old / ".zshenv").write_text("unset ZDOTDIR\n")
     C.macos_ensure(mac["settings"], mac["bundle"], home=mac["home"], shell="zsh",
                    env={"ZDOTDIR": str(old)})
-    assert C.PROFILE_TAG in (mac["home"] / ".zprofile").read_text()
-    assert not (old / ".zprofile").exists()
+    assert C.PROFILE_TAG in (old / ".zshenv").read_text()
+    assert found_by("zsh", mac, ZDOTDIR=str(old))
 
 
 @needs("zsh")
@@ -361,7 +372,7 @@ def test_startup_files_that_print_do_not_confuse_the_answer(mac, shell, name):
     mac["home"].mkdir(exist_ok=True)
     (mac["home"] / name).write_text('printf "Hello\\n/x:/y\\nset\\n/nowhere\\n"\n')
     ensure(mac, shell=shell)
-    target = ".zprofile" if shell == "zsh" else ".bash_profile"
+    target = ".zshenv" if shell == "zsh" else ".bash_profile"
     assert C.PROFILE_TAG in (mac["home"] / target).read_text()
     out = subprocess.run([shell, "-lc", "command -v pyrecon"], capture_output=True, text=True,
                          env={"HOME": str(mac["home"]), "PATH": "/usr/bin:/bin"}, timeout=30)
@@ -369,24 +380,20 @@ def test_startup_files_that_print_do_not_confuse_the_answer(mac, shell, name):
 
 
 @needs("zsh")
-def test_the_answer_reports_an_unset_zdotdir_as_none(mac):
+def test_the_answer_is_the_login_path(mac):
     mac["home"].mkdir(exist_ok=True)
-    entries, zdotdir = C.login_path("zsh", mac["home"], env={})
-    assert zdotdir is None and "/usr/bin" in entries
+    assert "/usr/bin" in C.login_path("zsh", mac["home"], env={})
 
 
 @needs("zsh")
 def test_a_setup_that_still_lacks_the_folder_is_not_recorded(mac):
-    zdot = mac["home"] / ".config" / "zsh"
-    zdot.mkdir(parents=True)
-    (mac["home"] / ".zshenv").write_text('export ZDOTDIR="$HOME/.config/zsh"\n')
-    (zdot / ".zlogin").write_text("unset ZDOTDIR\n")
+    mac["home"].mkdir(exist_ok=True)
+    (mac["home"] / ".zprofile").write_text("export PATH=/usr/bin:/bin\n")  # drops it again
     ensure(mac)
     for _ in range(2):  # tried again at each launch, never adding the lines twice
         assert C.ADDED_KEY not in mac["settings"].values
         assert not ensure(mac)
-    assert sum(C.PROFILE_TAG in p.read_text() for p in (mac["home"] / ".zprofile", zdot / ".zprofile")
-               if p.exists()) == 1
+    assert (mac["home"] / ".zshenv").read_text().count(C.PROFILE_TAG) == 1
 
 
 @posix_only
@@ -426,7 +433,7 @@ def test_a_line_that_does_not_set_path_does_not_count(mac, shell, name, line):
     mac["home"].mkdir(exist_ok=True)
     (mac["home"] / name).write_text(line + "\n")
     ensure(mac, shell=shell)
-    target = ".zprofile" if shell == "zsh" else ".bash_profile"
+    target = ".zshenv" if shell == "zsh" else ".bash_profile"
     assert C.PROFILE_TAG in (mac["home"] / target).read_text()
 
 
@@ -440,7 +447,7 @@ def test_a_shell_that_cannot_say_still_gets_the_lines(mac, tmp_path, body):
         fake.chmod(0o755)
     assert C.macos_ensure(mac["settings"], mac["bundle"], home=mac["home"], shell=str(fake),
                           env={}, timeout=1)
-    assert C.PROFILE_TAG in (mac["home"] / ".zprofile").read_text()
+    assert C.PROFILE_TAG in (mac["home"] / ".zshenv").read_text()
 
 
 @posix_only
@@ -511,7 +518,7 @@ def test_files_that_are_not_ours_are_never_touched(mac):
     assert (mac["links"] / "pyrecon").read_text() == "someone else's pyrecon\n"
     assert link_to(mac, "pyreconstruct") == "/usr/bin/true"
     # no command of ours is there, so the startup files are not touched either
-    assert not (mac["home"] / ".zprofile").exists()
+    assert not (mac["home"] / ".zshenv").exists()
     assert C.ADDED_KEY not in mac["settings"].values
 
 
@@ -563,7 +570,7 @@ def test_dev_uses_its_own_names_beside_stable(mac, monkeypatch):
         "pyrecon", "pyrecon-dev", "pyreconstruct", "pyreconstruct-dev"]
     assert link_to(mac, "pyrecon") == str(mac["bin"] / "pyrecon")
     assert link_to(mac, "pyrecon-dev") == str(dev_bin / "pyrecon-dev")
-    assert (mac["home"] / ".zprofile").read_text().count(C.PROFILE_TAG) == 1
+    assert (mac["home"] / ".zshenv").read_text().count(C.PROFILE_TAG) == 1
 
 
 @posix_only
