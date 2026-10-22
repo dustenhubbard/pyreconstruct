@@ -80,7 +80,7 @@ dependencies = [
     # Declaring it costs nothing -- 12.3.0 is the version already resolved, and
     # pillow ships binary wheels on every supported platform with no native
     # prerequisite of its own -- and it is what makes the import a promise.
-    "pillow==12.3.0",
+    "pillow==13.0.0",
 ]
 
 [project.urls]

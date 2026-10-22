@@ -11,7 +11,7 @@ opencv-python-headless==4.8.1.78; python_version < '3.13'
 opencv-python-headless==4.10.0.84; python_version >= '3.13'
 orjson==3.11.8
 packaging==26.2
-pillow==12.3.0
+pillow==13.0.0
 qdarkstyle==3.2.3
 scikit-image==0.23.2; python_version < '3.13'
 scikit-image==0.25.2; python_version >= '3.13'
