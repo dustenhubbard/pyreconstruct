@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+
+{# A page sets `robots: noindex` in its front matter to keep search engines
+   from listing it. The class documents use this; see docs/class/index.md. #}
+{% block extrahead %}
+  {% if page and page.meta and page.meta.robots %}
+    <meta name="robots" content="{{ page.meta.robots }}">
+  {% endif %}
+{% endblock %}
