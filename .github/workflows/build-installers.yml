@@ -200,6 +200,21 @@ jobs:
       - name: PyInstaller freeze
         run: pyinstaller --noconfirm packaging/PyReconstruct.spec
 
+      - name: Add the terminal commands
+        # pyrecon and pyreconstruct (pyrecon-dev and pyreconstruct-dev for the
+        # Dev app), written into the frozen app before anything signs,
+        # measures or packs it, so the signed app, the dmg, Setup.exe and the
+        # update payload all carry them (packaging/make_cli_shims.py).
+        shell: bash
+        run: |
+          FLAVOR="$(cat packaging/FLAVOR 2>/dev/null | tr -d '[:space:]' || true)"
+          if [ "$FLAVOR" = "dev" ]; then APP_NAME="PyReconstruct Dev"; else APP_NAME="PyReconstruct"; fi
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            python packaging/make_cli_shims.py --platform macos "dist/${APP_NAME}.app"
+          else
+            python packaging/make_cli_shims.py --platform windows --version "$PYR_PUBLIC" "dist/${APP_NAME}"
+          fi
+
       - name: Freeze the in-place update helper (Windows)
         # apply.py frozen on its own as pyreconstruct-updater.exe, into the
         # app's _updater folder before anything is measured, tested, or
@@ -289,6 +304,8 @@ jobs:
           $p = Start-Process -FilePath "dist\$app\$app.exe" -ArgumentList "--selftest" -Wait -PassThru
           if ($p.ExitCode -ne 0) { Write-Error "frozen self-test failed (exit $($p.ExitCode))"; exit 1 }
           Write-Host "frozen self-test OK"
+          python packaging/make_cli_shims.py --check --platform windows --version "$env:PYR_PUBLIC" "dist\$app"
+          if ($LASTEXITCODE -ne 0) { Write-Error "a terminal command did not run"; exit 1 }
 
       - name: Import the Developer ID certificate (macOS)
         # Signing runs only where the five signing secrets exist, so a fork
@@ -338,6 +355,7 @@ jobs:
           if [ "$FLAVOR" = "dev" ]; then APP_NAME="PyReconstruct Dev"; else APP_NAME="PyReconstruct"; fi
           "dist/${APP_NAME}.app/Contents/MacOS/${APP_NAME}" --selftest
           echo "frozen self-test OK"
+          python packaging/make_cli_shims.py --check --platform macos "dist/${APP_NAME}.app"
 
       - name: Build Windows installer (Inno Setup)
         if: runner.os == 'Windows'
@@ -706,7 +724,10 @@ jobs:
             dnf -y -q install python3 curl
           fi
           AI="$(ls appimage/*.AppImage)"
-          case "$AI" in *-Dev.AppImage) FLAVOR=dev; FLAG=--dev; CMD=pyreconstruct-dev ;; *) FLAVOR=stable; FLAG=; CMD=pyreconstruct ;; esac
+          case "$AI" in
+            *-Dev.AppImage) FLAVOR=dev; FLAG=--dev; CMD=pyreconstruct-dev; SHORT=pyrecon-dev ;;
+            *) FLAVOR=stable; FLAG=; CMD=pyreconstruct; SHORT=pyrecon ;;
+          esac
           SRC="$(mktemp -d)"
           cp packaging/linux/install-appimage.sh tests/linux_installer_harness.py "$SRC"/
           python3 "$SRC/linux_installer_harness.py" --appimage "$AI" --flavor "$FLAVOR" \
@@ -717,9 +738,11 @@ jobs:
           ls -la "$HOME/.local/share"/*/ "$HOME/.local/bin" "$HOME/.local/share/applications"
           cat "$HOME/.local/share/applications/"*.desktop
           QT_QPA_PLATFORM=offscreen "$HOME/.local/bin/$CMD" --selftest
+          QT_QPA_PLATFORM=offscreen "$HOME/.local/bin/$SHORT" --selftest
           PYRECON_RELEASES_API="$(cat "$SRC/api")" sh "$SRC/install-appimage.sh" $FLAG
           sh "$SRC/install-appimage.sh" --uninstall $FLAG
           test ! -e "$HOME/.local/bin/$CMD"
+          test ! -L "$HOME/.local/bin/$SHORT"
 
       - name: Start the GUI on the xcb platform under Xvfb (report only)
         # --selftest never opens a window, so it cannot show that Qt's xcb

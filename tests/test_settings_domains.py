@@ -48,6 +48,7 @@ SPEC_PER_APP = {
     "last_update_check_epoch",
     "window/geometry",
     "update_notice_version",
+    "cli_commands_added",
     "meta/settings_seeded",
     "meta/folded_into_shared",
 }
@@ -70,6 +71,7 @@ def _known_keys():
     from PyReconstruct.modules.backend.settings_migrations import (
         UPDATE_CHECK_DEFAULT_APPLIED_KEY,
     )
+    from PyReconstruct.modules.backend.func import cli_commands
     import conftest
 
     keys = {}
@@ -89,6 +91,7 @@ def _known_keys():
         "last_folder": "file_dialog / main_window._rememberSeriesFolder",
         "username": "main_window / first_launch.resolve_username",
         UPDATE_CHECK_DEFAULT_APPLIED_KEY: "settings_migrations",
+        cli_commands.ADDED_KEY: "cli_commands.ADDED_KEY",
         SEED_MARKER: "settings_domain.SEED_MARKER",
         FOLD_MARKER: "settings_domain.FOLD_MARKER",
     }

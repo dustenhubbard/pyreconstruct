@@ -84,6 +84,8 @@ def per_app_domain():
 #   update_notice_version    the newer build the launch check found; each app
 #                            follows its own feed, so a nightly version must
 #                            not show up in the stable app
+#   cli_commands_added       this app's one-time PATH step for its terminal
+#                            commands ran (the Linux link, on Linux)
 #
 # The What's new keys mirror WHATSNEW_KEY, WHATSNEW_SUPPRESS_KEY and
 # WHATSNEW_RESET_MARKER in gui/main/first_launch.py as literals: constants
@@ -96,6 +98,7 @@ PER_APP_KEYS = frozenset({
     "last_update_check_epoch",
     "window/geometry",
     "update_notice_version",
+    "cli_commands_added",
 })
 
 # Key groups that are bookkeeping about one particular store rather than a
