@@ -1,2 +1,2 @@
-- **Security fixes for reading and writing image files, mainly TIFF, PDF, GIF
-  and PNG.** Exporting a section as SVG or PNG works as before.
+- **Security fixes for reading and writing image files, including JPEG, TIFF,
+  PNG, GIF, PDF and EPS.** Exporting a section as SVG or PNG works as before.
