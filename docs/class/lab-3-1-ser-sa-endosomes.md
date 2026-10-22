@@ -95,7 +95,7 @@ You will search in these spines for SER, SA, and endosomes. These spines have al
 
 Identify and stamp SER or SA in each of these 5 spines.
 
-Set stamp attributes by using the right click on palette icon; set stamp radius to 0.05 µm; and set name to **d03sa## for SA** and **d03ser## for SER**, with ## corresponding to the spine ##, e.g., SA found in d03p12 would be named d03sa12. For each of the 5 additional spines listed above, stamp any SER and SA you observe within the spine head and spine neck.
+Right-click the palette button to open Set Attributes, set Stamp radius (microns) to 0.05, and set the name to **d03sa## for SA** and **d03ser## for SER**, with ## corresponding to the spine ##, e.g., SA found in d03p12 would be named d03sa12. For each of the 5 additional spines listed above, stamp any SER and SA you observe within the spine head and spine neck.
 
 Each of the 5 assigned spines will have either SER or SA.
 
@@ -108,7 +108,7 @@ In spines in which endosomes have been identified, place a stamp on the endosoma
 !!! tip "Hint"
     You are likely to find a coated pit in these 5 spines. There may be additional endosomal structures that need a second stamp in these spines.
 
-Set trace attributes (right click on palette icon), set stamp radius to 0.05 µm, and set name to **d03endo##_cp** (with cp for coated pit and ## corresponding to spine ##). All but one of these spines has at least one endosome.
+Right-click the palette button to open Set Attributes, set Stamp radius (microns) to 0.05, and set the name to **d03endo##_cp** (with cp for coated pit and ## corresponding to spine ##). All but one of these spines has at least one endosome.
 
 !!! note "Extra credit"
     +0.25 pts extra credit on your lab report if you can correctly identify all coated pits in your spines.

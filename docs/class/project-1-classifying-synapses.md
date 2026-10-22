@@ -40,7 +40,7 @@ Have the paper open while you work; this guide covers only how to do it in PyRec
 
 <figure class="class-fig" markdown="span">
   ![The Backup Settings dialog with Use my defaults unchecked, Auto-backup checked, User off and Suffix on with EID](img/project-1/03.png){ width="470" }
-  <figcaption>Backup Settings, set as above. The yellow marks show the boxes to change.</figcaption>
+  <figcaption>Backup Settings. The yellow marks show the boxes to change. The Backup Folder is still blank here; click Browse to choose yours.</figcaption>
 </figure>
 
 ## Steps

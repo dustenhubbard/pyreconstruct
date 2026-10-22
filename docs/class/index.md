@@ -12,7 +12,7 @@ NEU466G, Dr. Kirk
 
 ## Overview
 
-These are the PyReconstruct handouts for NEU466G. Every page uses the class dataset ZGBJY and the current version of PyReconstruct.
+These are the PyReconstruct handouts for NEU466G, written for the current version of PyReconstruct.
 
 On a Mac, use Cmd wherever a handout says Ctrl.
 
