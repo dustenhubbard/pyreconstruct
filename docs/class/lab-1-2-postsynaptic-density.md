@@ -127,7 +127,25 @@ Serial section EM images of spine trace (yellow), c-trace to create 3D reconstru
   <figcaption>Section 5.</figcaption>
 </figure>
 
+<figure class="clip" markdown>
+
+![Clip: the pointer clicks the up arrow through sections 25 to 30 of the class series; spine d03sp05 is yellow, and the red c-trace d03c05 and green cfa-trace d03cfa05 show on sections 26 to 29 only.](img/lab-1-2/psd-sections-poster.jpg)
+
+[▶ 7 s · loops](videos/lab-1-2/psd-sections.mp4){ .clip-src }
+
+<figcaption markdown>In the class series: spine d03sp05 on sections 25 to 30, with d03c05 (red) and d03cfa05 (green) on sections 26 to 29.</figcaption>
+</figure>
+
 ## Calculating flat area of synapses
+
+<figure class="clip" markdown>
+
+![Clip: in the Object List the pointer opens Filter, picks Regex filter..., replaces .\* with d03cfa.\* and clicks OK; the list shows only the d03cfa objects, with their flat areas.](img/lab-1-2/cfa-regex-poster.jpg)
+
+[▶ 7 s · loops](videos/lab-1-2/cfa-regex.mp4){ .clip-src }
+
+<figcaption markdown>Filter > Regex filter... > d03cfa.\* > OK.</figcaption>
+</figure>
 
 1. Filter your object list for d03 synapses (**Lists > Object list** (Ctrl+Shift+O) > **Filter > Regex filter...** > replace the .\* with d03cfa.\* > OK).
 2. You should see the flat areas listed for your synapses. The unit of measurement is square microns (µm²). Be sure you're looking at the flat area, not volume. (If you don't see Flat Area listed, go to the menu bar in the Object List window > **Columns > Set columns...** > make sure Flat area is checked > Click OK.) Here is a screen cap from the Object List:

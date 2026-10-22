@@ -31,8 +31,26 @@ Reconstruct 3 dendritic spines (including one branched spine) in adjacent images
   <figcaption>The Group Filters dialog.</figcaption>
 </figure>
 
+<figure class="clip" markdown>
+
+![Clip: with the Object List docked, the pointer opens Filter and picks Group filter..., opens the list in Group Filters, picks Dend+Spines and clicks OK; the list title reads Filtered by: groups.](img/lab-1-1/group-filter-poster.jpg)
+
+[▶ 6 s · loops](videos/lab-1-1/group-filter.mp4){ .clip-src }
+
+<figcaption markdown>Filter > Group filter... > Dend+Spines > OK.</figcaption>
+</figure>
+
 - In the object list, double left-click on a p-stamp in the list.
     - This will take you to the first section that contains that p-stamp. This strategy becomes especially useful after you have traced several objects and you want to quickly find object(s) of interest.
+
+<figure class="clip" markdown>
+
+![Clip: in the Object List filtered by Dend+Spines, the pointer double-clicks d03p06, and the field goes to section 18 and centers on the red p-stamp d03p06.](img/lab-1-1/jump-to-stamp-poster.jpg)
+
+[▶ 5 s · loops](videos/lab-1-1/jump-to-stamp.mp4){ .clip-src }
+
+<figcaption markdown>Double-click a p-stamp to go to the first section it is on.</figcaption>
+</figure>
 
 ### Set up the trace palette
 
@@ -79,6 +97,15 @@ These are the spines you will fully trace for "Lab 1.1 - Dendritic Spines."
 <figure class="class-fig" markdown="span">
   ![The Closed Trace Mode dialog set to Combo and Trace, both merge boxes checked, rolling average 15, with callouts 1 to 5](img/lab-1-1/06.png){ width="535" }
   <figcaption>Closed Trace Mode settings.</figcaption>
+</figure>
+
+<figure class="clip" markdown>
+
+![Clip: the pointer right-clicks the Closed Trace tool and Closed Trace Mode opens with Combo and Trace already chosen; the pointer checks Automatically merge overlapping traces and Apply rolling average while scribbling, changes 10 to 15, and clicks OK.](img/lab-1-1/closed-trace-mode-poster.jpg)
+
+[▶ 7 s · loops](videos/lab-1-1/closed-trace-mode.mp4){ .clip-src }
+
+<figcaption markdown>Right-click the Closed Trace tool, then set the settings in the order above.</figcaption>
 </figure>
 
 - To trace the spines, keep an eye out for areas of the dendrite where the membrane begins to protrude. These areas are marked by the protrusion stamp to help guide you.

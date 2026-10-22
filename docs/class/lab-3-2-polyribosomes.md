@@ -61,6 +61,15 @@ To view your ribosome stamps in the 3D reconstruction, right-click on the object
   <figcaption>3D Object Settings.</figcaption>
 </figure>
 
+<figure class="clip" markdown>
+
+![Clip: in the Object List the pointer clicks d03rh31, right-clicks it and chooses 3D > Edit 3D settings...; in 3D Object Settings it opens 3D Type, picks spheres in place of surface, and clicks OK.](img/lab-3-2/3d-spheres-poster.jpg)
+
+[▶ 7 s · loops](videos/lab-3-2/3d-spheres.mp4){ .clip-src }
+
+<figcaption markdown>Right-click > 3D > Edit 3D settings... > 3D Type: spheres > OK.</figcaption>
+</figure>
+
 Add polyribosomes to the 3D scene by right clicking on the object in the object list > **3D > Add to scene**.
 
 You may need to lower the opacity of your spine object (d03sp##) to about 0.3-0.4 to see the polyribosomes in the 3D scene: right-click it > **3D > Edit 3D settings...** > Opacity (0-1). The opacity changes right away.
@@ -68,4 +77,13 @@ You may need to lower the opacity of your spine object (d03sp##) to about 0.3-0.
 <figure class="class-fig" markdown="span">
   ![3D scene of d03sp31 at opacity 0.4 with d03rh31 and d03rb31 as spheres](img/lab-3-2/06.png){ width="371" }
   <figcaption>d03sp31 at opacity 0.4, with polyribosomes d03rh31 (head) and d03rb31 (base).</figcaption>
+</figure>
+
+<figure class="clip" markdown>
+
+![Clip: the 3D scene of d03sp31 at opacity 0.4 with the blue spheres d03rh31 and d03rb31; two drags across the window turn the scene all the way around.](img/lab-3-2/3d-turn-poster.jpg)
+
+[▶ 7 s · loops](videos/lab-3-2/3d-turn.mp4){ .clip-src }
+
+<figcaption markdown>Drag in the 3D window to turn the scene.</figcaption>
 </figure>

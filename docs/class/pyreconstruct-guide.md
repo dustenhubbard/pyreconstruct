@@ -61,6 +61,15 @@ Upon opening the .jser file, PyReconstruct will ask if you would like to locate 
   <figcaption>Set Attributes for the "practicetrace" square.</figcaption>
 </figure>
 
+<figure class="clip" markdown>
+
+![Clip: the pointer right-clicks the first trace palette square, Set Attributes opens, the name changes from circle to practicetrace, the pointer clicks OK, and the name above the palette reads practicetrace.](img/guide/set-attributes-poster.jpg)
+
+[▶ 6 s · loops](videos/guide/set-attributes.mp4){ .clip-src }
+
+<figcaption markdown>Right-click a palette square, type a name, and click OK.</figcaption>
+</figure>
+
 ### 2. Make a trace
 
 - Choose an object to trace.
@@ -71,6 +80,15 @@ Upon opening the .jser file, PyReconstruct will ask if you would like to locate 
 <figure class="class-fig" markdown="span">
   ![The Closed Trace and Open Trace tool icons](img/guide/04.png)
   <figcaption>Closed trace (top) and open trace (bottom).</figcaption>
+</figure>
+
+<figure class="clip" markdown>
+
+![Clip: the pointer clicks the Closed Trace tool, holds the left button and drags around a spine head on section 70, and lets go; the new red practicetrace trace is selected.](img/guide/closed-trace-poster.jpg)
+
+[▶ 7 s · loops](videos/guide/closed-trace.mp4){ .clip-src }
+
+<figcaption markdown>Hold the left button, drag around the object, and let go.</figcaption>
 </figure>
 
 ### How to move the image
@@ -249,6 +267,15 @@ In the Object List, you can add or remove objects from the 3D Object Viewer and 
 <figure class="class-fig" markdown="span">
   ![The Object List filtered by d03p.* with the right-click menu open on 3D > Add to scene](img/guide/13.png){ width="439" }
   <figcaption>Right-click > 3D > Add to scene.</figcaption>
+</figure>
+
+<figure class="clip" markdown>
+
+![Clip: in the Object List the pointer clicks d03, right-clicks it and chooses 3D > Add to scene; the 3D window opens with the dendrite d03, and a drag across the window turns it.](img/guide/add-to-scene-poster.jpg)
+
+[▶ 8 s · loops](videos/guide/add-to-scene.mp4){ .clip-src }
+
+<figcaption markdown>Right-click > 3D > Add to scene, then drag in the 3D window to turn the view.</figcaption>
 </figure>
 
 Zoom in and out by using the scroll wheel on your mouse. Hold the left button and move the mouse to spin the view. (To rotate around a different object, click it to select it and press F, or use Scene > View > Center on selected.)
