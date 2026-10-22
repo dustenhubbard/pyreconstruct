@@ -1,1 +1,1 @@
-- **Help ▸ Online resources ▸ Class documents opens the class pages on pyreconstruct.org.** On macOS it is also Help ▸ Class documents.
+- **Help ▸ Online resources ▸ Class documents opens the class pages on pyreconstruct.org.** In macOS Dev builds it is also Help ▸ Class documents.
