@@ -94,20 +94,25 @@ def test_colors_text_accent_and_flag(main_window, monkeypatch):
 @pytest.mark.gui
 def test_a_palette_change_retints(main_window, monkeypatch, qtbot):
     mp = _build(main_window, monkeypatch, "darwin", DEV)
+    # an app style sheet left by an earlier test would override the palette
     app = QApplication.instance()
-    old = app.palette()
+    sheet = app.styleSheet()
+    app.setStyleSheet("")
+    red = QColor(250, 10, 10)
     try:
-        new = QPalette(old)
-        new.setColor(QPalette.ButtonText, QColor(250, 10, 10))
-        app.setPalette(new)
+        new = QPalette(main_window.palette())
+        new.setColor(QPalette.ButtonText, red)
+        main_window.setPalette(new)
         knife = mp.mode_buttons["Knife"][0]
+        assert knife.palette().color(QPalette.ButtonText).rgb() == red.rgb()
         qtbot.waitUntil(lambda: {c.rgb() for c in _inked(knife.icon())[1]}
-                        == {QColor(250, 10, 10).rgb()}, timeout=2000)
+                        == {red.rgb()}, timeout=2000)
         # every tool, not only the one being watched
         ztool = mp.mode_buttons["Ztool"][0]
-        assert {c.rgb() for c in _inked(ztool.icon())[1]} == {QColor(250, 10, 10).rgb()}
+        assert {c.rgb() for c in _inked(ztool.icon())[1]} == {red.rgb()}
     finally:
-        app.setPalette(old)
+        main_window.setPalette(QPalette())
+        app.setStyleSheet(sheet)
 
 
 def _assert_today(mp):
