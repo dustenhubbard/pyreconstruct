@@ -70,6 +70,7 @@ EXPECTED_ROWS = {
     "Window > Zoom": None,
     "Window > Bring all to front": None,
     "Help > PyReconstruct user guide": "openwiki_act",
+    "Help > Class documents": "openclass_act",
     "Help > Shortcuts list": "shortcutshelp_act",
     "Help > What's new?": "whatsnew_act",
     "Help > Report a bug...": "submitissue_act",

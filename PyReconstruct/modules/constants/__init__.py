@@ -32,6 +32,7 @@ from .websites import (
     kh_atlas,
     gh_repo,
     user_guide,
+    class_docs,
     gh_issues,
     gh_bug_form,
     gh_feature_form,

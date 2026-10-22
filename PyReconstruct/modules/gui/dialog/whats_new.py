@@ -341,6 +341,7 @@ MENU_LABELS = (
     "Search menus", "What's new?", "What's new", "Recolor all objects from palette",
     "View log file", "Color filter", "Set filter...", "Autoseg import colors",
     "Import alignments", "Online resources", "Show What's new after each update",
+    "Class documents",
     "Object list of selected traces", "Delete from sections...",
     "Copy to sections...", "Edit attributes of traces...",
     # the Help menu toggle's name before 1.23, and the View toggle's before

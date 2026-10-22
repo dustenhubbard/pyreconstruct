@@ -38,7 +38,7 @@ Role = QAction.MenuRole
 FILE_ROWS = ["open_act", "close", None, "save_act", "saveas_act", "alloptions_act", "quit_act"]
 NEW_SERIES_ROWS = ["newfromimages_act", "newfromzarr_act", "newfromxml_act", "newfromngzarr_act"]
 EDIT_ROWS = ["undo_act", "redo_act", None, "cut_act", "copy_act", "paste_act", None, "selectall_act"]
-HELP_ROWS = ["openwiki_act", "shortcutshelp_act", "whatsnew_act", "submitissue_act", "about", "checkupdates_act"]
+HELP_ROWS = ["openwiki_act", "openclass_act", "shortcutshelp_act", "whatsnew_act", "submitissue_act", "about", "checkupdates_act"]
 
 # the four rows macOS moves into the app menu; everything else is NoRole
 APP_MENU_ROLES = {
