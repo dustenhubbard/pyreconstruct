@@ -100,6 +100,7 @@ from .scale_bar import ScaleBar, drawableLengths, formatLength
 from .outlined_label import OutlinedLabel
 from .help import palette_help
 from .default_rows import shownButtonCount
+from . import line_icons
 
 from PyReconstruct.modules.constants import build_flavor
 from PyReconstruct.modules.constants.roi_mode import roi_mode_enabled
@@ -149,7 +150,8 @@ class MousePalette():
         self.sb_x,    self.sb_y    = 0.01, 0.99
         self.loadPositionState()
 
-        # create mode buttons
+        # create mode buttons; macOS Dev builds draw them as line icons
+        self.line_icons = line_icons.wanted()
         self.mode_buttons = {}
         self.createModeButton("Pointer", 0)
         self.createModeButton("Pan/Zoom", 1)
@@ -173,6 +175,9 @@ class MousePalette():
         # at half spacing until the next resize, a squished tool bar at
         # startup.
         self.placeModeButtons()
+        if self.line_icons:
+            self.tintModeIcons()
+            line_icons.Retinter(self.mode_buttons["Pointer"][0], self.tintModeIcons)
 
         # create palette buttons; a Dev build leaves off trailing rows that
         # copy the standard buttons (default_rows), and the series keeps them
@@ -1054,6 +1059,12 @@ class MousePalette():
         button.setText("⚑")
         s = f"({','.join(map(str, color))})"
         # button.setStyleSheet(f"color:rgb{s}")
+        if self.line_icons:
+            self.tintModeIcons()
+    
+    def tintModeIcons(self):
+        """Draw the mode buttons' line icons in the current colors (macOS Dev)."""
+        line_icons.tint(self.mode_buttons, self.series.getOption("flag_color"))
     
     def modifyFlag(self):
         """Modify the default flag."""
