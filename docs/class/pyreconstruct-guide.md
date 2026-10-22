@@ -281,7 +281,7 @@ Be familiar with the menu options in the 3D viewer: File, Edit, Scene, Scale Cub
 Scale cube of desired size can be added. Select the scale cube (and only the scale cube; ensure other objects are not selected) and hit Ctrl-E to change attributes:
 
 <figure class="class-fig" markdown="span">
-  ![The scale cube attributes dialog](img/guide/17.png)
+  ![The Scale Cube dialog: Edge length 1.0 µm, gray, Opacity 1, Outline width 5.0](img/guide/17.png){ width="244" }
   <figcaption>Scale cube attributes.</figcaption>
 </figure>
 

@@ -12,7 +12,7 @@ NEU466G, Dr. Kirk · [Class documents](index.md)
 
 ## Overview
 
-In this lab you look for smooth endoplasmic reticulum (SER), spine apparatus (SA), and endosomes in 5 additional spines, and stamp each one you find. The figures for this lab are in the papers listed under [References](#references); open them while you work.
+In this lab you look for smooth endoplasmic reticulum (SER), spine apparatus (SA), and endosomes in 5 additional spines, and stamp each one you find. Each Figure box links a journal figure from the papers listed under [References](#references); open them while you work. The EM screenshots on this page show examples from other spines of the series, not from your 5 assigned spines.
 
 ## Smooth endoplasmic reticulum (SER)
 
@@ -22,6 +22,12 @@ In this lab you look for smooth endoplasmic reticulum (SER), spine apparatus (SA
 !!! example "Figure: snake-like tubule of SER entering a spine"
     Spacek & Harris, 1997, Fig. 2c. [Open the paper](https://doi.org/10.1523/JNEUROSCI.17-01-00190.1997).
 
+<figure class="class-fig" markdown="span">
+  ![Section 15 without traces](img/lab-3-1/ser-example-clean.png){ width="350" }
+  ![Section 15 with spine d03sp05 in yellow and the SER stamp d03sern05, a yellow cross](img/lab-3-1/ser-example.png){ width="350" }
+  <figcaption>SER in spine d03sp05 on section 15, without traces (left) and with d03sp05 and the SER stamp d03sern05 (right). The view is about 1.3 µm across.</figcaption>
+</figure>
+
 ## Spine apparatus (SA)
 
 - The spine apparatus is a specialized derivative of the SER.
@@ -30,6 +36,12 @@ In this lab you look for smooth endoplasmic reticulum (SER), spine apparatus (SA
 
 !!! example "Figure: spine apparatus, with cisternae (arrows) and dense plates (wavy arrows)"
     Spacek & Harris, 1997, Fig. 3b. [Open the paper](https://doi.org/10.1523/JNEUROSCI.17-01-00190.1997).
+
+<figure class="class-fig" markdown="span">
+  ![Section 70 without traces](img/lab-3-1/sa-example-clean.png){ width="350" }
+  ![Section 70 with spine d03sp19 in yellow and the SA stamp d03sah19, a red cross](img/lab-3-1/sa-example.png){ width="350" }
+  <figcaption>SA in the head of spine d03sp19 on section 70, without traces (left) and with d03sp19 and the SA stamp d03sah19 (right). The view is about 1.6 µm across.</figcaption>
+</figure>
 
 ## Endosomes
 
@@ -54,6 +66,12 @@ Four major subtypes:
 
 !!! example "Figure: clathrin-coated pit, with an inset of a clathrin-coated vesicle"
     Cooney et al., 2002. [Open the paper](https://doi.org/10.1523/JNEUROSCI.22-06-02215.2002).
+
+<figure class="class-fig" markdown="span">
+  ![Section 108 without traces](img/lab-3-1/endosome-example-clean.png){ width="350" }
+  ![Section 108 with spine d03sp29 in yellow and the coated pit stamp d03endo29_cp, an orange octagon](img/lab-3-1/endosome-example.png){ width="350" }
+  <figcaption>A coated pit on spine d03sp29 on section 108, without traces (left) and with d03sp29 and the stamp d03endo29_cp (right). The view is about 2.3 µm across.</figcaption>
+</figure>
 
 #### 2. Endosomal tubule
 
@@ -89,6 +107,9 @@ To learn to identify these spine resources, you are assigned **5** additional sp
 - **d03p40**
 - **d03p42**
 
+!!! warning "Note for the teaching team"
+    In the class series, the SER stamp d03sern44 (group "SER, SA, Endo") sits inside spine d03sp42 (sections 165-169), one of the five assigned spines. Students would see one answer before they start, and the name points to spine 44, not 42. Check the class series and delete this stamp, or move it to a spine that is not assigned, before the series goes to students.
+
 You will search in these spines for SER, SA, and endosomes. These spines have already been fully traced for you (including their c/cfa-traces).
 
 ## Stamp spine SER and SA
@@ -98,6 +119,11 @@ Identify and stamp SER or SA in each of these 5 spines.
 Right-click the palette button to open Set Attributes, set Stamp radius (microns) to 0.05, and set the name to **d03sa## for SA** and **d03ser## for SER**, with ## corresponding to the spine ##, e.g., SA found in d03p12 would be named d03sa12. For each of the 5 additional spines listed above, stamp any SER and SA you observe within the spine head and spine neck.
 
 Each of the 5 assigned spines will have either SER or SA.
+
+<figure class="class-fig" markdown="span">
+  ![Set Attributes for d03sa12: red, circle, Fill None, Stamp radius 0.05](img/lab-3-1/set-attributes-sa.png){ width="318" }
+  <figcaption>Set Attributes for d03sa12.</figcaption>
+</figure>
 
 ## Stamp spine endosomes
 
@@ -109,6 +135,16 @@ In spines in which endosomes have been identified, place a stamp on the endosoma
     You are likely to find a coated pit in these 5 spines. There may be additional endosomal structures that need a second stamp in these spines.
 
 Right-click the palette button to open Set Attributes, set Stamp radius (microns) to 0.05, and set the name to **d03endo##_cp** (with cp for coated pit and ## corresponding to spine ##). All but one of these spines has at least one endosome.
+
+<figure class="class-fig" markdown="span">
+  ![Set Attributes for d03endo12_cp: orange, circle, Fill None, Stamp radius 0.05](img/lab-3-1/set-attributes-endo.png){ width="318" }
+  <figcaption>Set Attributes for d03endo12_cp.</figcaption>
+</figure>
+
+<figure class="class-fig" markdown="span">
+  ![The Object List filtered by the group SER, SA, Endo, with columns Name, Start, End, Count and Groups, rows d03endo29_cp to d03sern05](img/lab-3-1/object-list-ser-sa-endo.png){ width="366" }
+  <figcaption>The Object List filtered by the group "SER, SA, Endo", with the first and last section of each stamp.</figcaption>
+</figure>
 
 !!! note "Extra credit"
     +0.25 pts extra credit on your lab report if you can correctly identify all coated pits in your spines.

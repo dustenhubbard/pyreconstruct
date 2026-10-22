@@ -57,7 +57,7 @@ Stamp each polyribosome cluster on a single section where the PR is present. In 
 To view your ribosome stamps in the 3D reconstruction, right-click on the object in the object list > **3D > Edit 3D settings...** > in the drop-down menu set 3D Type to spheres > OK.
 
 <figure class="class-fig" markdown="span">
-  ![The 3D Object Settings dialog with 3D Type spheres](img/lab-3-2/05.png)
+  ![The 3D Object Settings dialog with 3D Type spheres and Opacity 1.0](img/lab-3-2/05.png){ width="219" }
   <figcaption>3D Object Settings.</figcaption>
 </figure>
 
