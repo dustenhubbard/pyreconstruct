@@ -11,8 +11,10 @@ PyReconstruct user guide**, which opens the
 [lab wiki](https://wikis.utexas.edu/display/khlab/PyReconstruct+user+guide) at
 The University of Texas at Austin) and the in-app **Help ▸ Shortcuts list**.
 
-> **About screenshots.** This guide does not ship screenshots yet. Places where
-> a screenshot would help are marked like this:
+> **About screenshots.** The screenshots show PyReconstruct on macOS with a small
+> test series. A script in the source tree (`dev/docs_media/capture/capture.py`)
+> shoots them all again when PyReconstruct changes. Places still waiting for one are
+> marked like this:
 >
 > > 📸 *Screenshot: short description of what to capture.*
 >
@@ -20,8 +22,9 @@ The University of Texas at Austin) and the in-app **Help ▸ Shortcuts list**.
 
 > **Shortcuts.** Key combinations shown here are the **defaults**. Almost all of
 > them are rebindable under **Help ▸ Shortcuts list** (press `?`). A few menu
-> shortcuts are fixed: `PgUp`/`PgDown` (section navigation), `Ctrl+\` (align by
-> correlation), and `?` (the shortcuts list itself).
+> shortcuts are fixed: `PgUp`/`PgDown` (section navigation) and `?` (the shortcuts
+> list itself). This guide writes `Ctrl` and `Alt`; on macOS press `Cmd` and
+> `Option`. [Keyboard shortcuts](#13-keyboard-shortcuts) lists both forms.
 
 ---
 
@@ -193,6 +196,8 @@ changes since the previous nightly.
 
 ### Checking for updates
 
+![The update rows of the Help menu: Check for updates..., Automatically check for updates, which is checked, and Download PyReconstruct Dev (nightly)....](assets/images/user-guide/02-help-menu-updates.png)
+
 Choose **Help ▸ Check for updates…**. On an installed build, PyReconstruct checks
 GitHub Releases on the app's channel (off the main thread, so the UI stays
 responsive). If a newer build is found, an update dialog opens showing the new
@@ -205,7 +210,9 @@ the installation.
 If you are already current, you'll see a brief "You're already up to date"
 message; if no installer exists for your platform on that channel, it tells you so.
 
-> 📸 *Screenshot: the update dialog with its release-notes link and Download & Install button.*
+![The update dialog offering 9.9.9, an example version that does not exist: You have 1.25.0, channel Stable, download 178.7 MB, a Release notes for 9.9.9 link, and Later and Download & Install buttons.](assets/images/user-guide/02-update-dialog.png)
+
+The picture shows an example offer. Version 9.9.9 does not exist.
 
 ### Checking automatically on startup
 
@@ -216,6 +223,8 @@ background check at most **once per day**; if an upgrade is available,
 notice stays, across launches too, until you click it; clicking it opens the
 update just like **Help ▸ Check for updates…**. Turning the automatic check off
 also removes the notice.
+
+![The Update available notice on the right of the status bar, for the example version 9.9.9.](assets/images/user-guide/02-update-notice.png)
 
 ### Source / `pip` installs
 
@@ -300,6 +309,8 @@ resolved automatically and recorded against the edits you make. PyReconstruct no
 longer prompts for it on launch; change it anytime under **File ▸ Change
 username…**.
 
+![The main window on first launch, showing the welcome series: a PyReconstruct logo image on the field, with the tool palette on the right and the trace palette at the bottom.](assets/images/user-guide/04-welcome-series.png)
+
 ### Opening an existing series
 
 **File ▸ Open series…** (`Ctrl+O`) opens a `.jser` file. Recently opened series
@@ -308,6 +319,17 @@ when you opened them, not by file date); the list holds ten entries, drops paths
 that no longer exist, and can be emptied with **Clear recents** at the bottom of
 that submenu. **File ▸ Close series** returns to the welcome series (it does not
 quit the app).
+
+<figure class="clip" markdown>
+
+![Clip: over the welcome series, the pointer opens the File menu and clicks Open series..., and the shapes1 test series opens on section 0.](assets/images/user-guide/04-welcome-series.png)
+
+[▶ 6 s · loops](assets/videos/user-guide/04-open-series.mp4){ .clip-src }
+
+<figcaption markdown>**File ▸ Open series…**, then pick the `.jser` file. The file dialog is left out here.</figcaption>
+</figure>
+
+![A small test series open on section 0: a star, a circle, a triangle, a diamond and a rectangle traced over a gray image.](assets/images/user-guide/04-series-open.png)
 
 If a series' image files can't be found when it opens, PyReconstruct asks whether
 you'd like to locate them and lets you pick the image folder (you can also do this
@@ -334,7 +356,7 @@ another window (it was touched within the last few seconds), PyReconstruct shows
 The new series opens fitted to the first image; you are then prompted to choose
 where to save the `.jser`.
 
-> 📸 *Screenshot: the New Series calibration / thickness prompt.*
+![The New Series prompt "Enter image calibration (µm/px)", with the default 0.002540, and Cancel and OK buttons.](assets/images/user-guide/04-new-series-calibration.png)
 
 ### Other ways to create a series
 
@@ -406,7 +428,7 @@ of preset traces, bottom-center), section-increment buttons, brightness/contrast
 sliders, and a scale bar. Each overlay group can be dragged to reposition it, and
 **View ▸ Reset palette position** restores the defaults.
 
-> 📸 *Screenshot: label the main window's field, tool palette (right), trace palette (bottom), scale bar (bottom-left), and section-increment buttons.*
+![The main window with its parts labeled: the field, the tool palette at the top right, the brightness and contrast sliders, the section buttons at the bottom right, the trace palette at the bottom center, and the scale bar at the bottom left.](assets/images/user-guide/05-main-window-labeled.png)
 
 ### Moving between sections
 
@@ -416,6 +438,15 @@ sliders, and a scale bar. Each overlay group can be dragged to reposition it, an
 - **Go to section** (`Ctrl+G`): jump to a section number.
 - The section-increment buttons (▲/▼) in the corner do the same as PgUp/PgDown
   (handy on tablets).
+
+<figure class="clip" markdown>
+
+![Clip: the pointer clicks the up arrow button at the bottom right and section 1 shows, then clicks the down arrow and section 0 is back.](assets/images/user-guide/04-series-open.png)
+
+[▶ 5 s · loops](assets/videos/user-guide/05-move-between-sections.mp4){ .clip-src }
+
+<figcaption markdown>**Click ▲ for the next section and ▼ for the previous one.**</figcaption>
+</figure>
 
 ### Panning and zooming (in any tool)
 
@@ -445,6 +476,8 @@ scale bar. **View ▸ Left handed** swaps the tracing-pencil cursor side.
 **View ▸ Change theme** offers **Default** and **Dark**. (The theme can also be set
 under **Series ▸ Options**.)
 
+![The main window in the Dark theme: the menu bar, status bar and palette buttons turn dark gray.](assets/images/user-guide/05-dark-theme.png)
+
 ---
 
 ## 6. The tool palette
@@ -457,7 +490,25 @@ In every tool except Pan/Zoom, **right-clicking the field** opens a context menu
 (for the selected traces, or for the field). The mouse wheel changes sections, and
 middle-click pans, regardless of the active tool.
 
-The palette has eleven tools:
+![The tool palette column, each button labeled with its tool and default shortcut: Pointer (P), Pan/Zoom (Z), Knife (K), Scissors (Shift+K), Closed Trace (C), Open Trace (O), Stamp (S), Grid (G), Flag (F), Host (Q), and Ztool, which has no shortcut.](assets/images/user-guide/06-tool-palette-labeled.png)
+
+<!-- generated: tools (from PyReconstruct's source; to update, run: python3 scripts/docs_tables.py --write) -->
+The palette has eleven tools, top to bottom:
+
+| Tool | Key |
+|---|---|
+| Pointer | `P` |
+| Pan/Zoom | `Z` |
+| Knife | `K` |
+| Scissors | `Shift+K` |
+| Closed Trace | `C` |
+| Open Trace | `O` |
+| Stamp | `S` |
+| Grid | `G` |
+| Flag | `F` |
+| Host | `Q` |
+| Ztool | (none) |
+<!-- /generated: tools -->
 
 ### Pointer (`P`)
 
@@ -469,6 +520,8 @@ Selects and moves traces, z-trace points, and flags.
   Pointer button to switch the region shape (**Rectangle**/**Lasso**) and whether
   it selects **all touched** traces or **only completely encircled** ones.
 - **Click and drag a selected trace** to move all selected items together.
+
+![The Pointer settings dialog: Shape (Rectangle or Lasso), Select (All touched traces or Only completed encircled traces), and Display closest field item.](assets/images/user-guide/06-pointer-options.png)
 
 ### Pan/Zoom (`Z`)
 
@@ -494,6 +547,8 @@ Slices a selected trace along a freehand line.
 - A trace whose outline crosses itself cannot be cut. The knife says so and
   leaves the object alone; smooth or redraw the trace and cut again.
 
+![The Knife settings dialog: % original trace set to 1.0, Smooth cuts, and Ignore the other mouse buttons, which is checked.](assets/images/user-guide/06-knife-options.png)
+
 ### Scissors (`Shift+K`)
 
 Re-traces an existing trace. **Click a trace** and the tool reopens it as a live
@@ -506,6 +561,15 @@ Draw new traces with the current trace-palette preset's name and color. **Closed
 Trace** makes outlines that enclose area; **Open Trace** makes curves with length
 only.
 
+<figure class="clip" markdown>
+
+![Clip: the pointer clicks the Closed Trace button, drags a loop beside the star and lets go, and the new orange trace stays selected.](assets/images/user-guide/04-series-open.png)
+
+[▶ 8 s · loops](assets/videos/user-guide/06-draw-closed-trace.mp4){ .clip-src }
+
+<figcaption markdown>**Click Closed Trace (or press `C`), then drag a loop and let go.** The trace takes the selected preset's name and color.</figcaption>
+</figure>
+
 Right-click either button to choose the drawing **mode**:
 
 - **Scribble**: hold and drag to draw freehand; release to finish.
@@ -514,10 +578,14 @@ Right-click either button to choose the drawing **mode**:
 - **Combo** (default): a quick click starts a poly/clicked line; click-and-drag
   scribbles.
 
+![The Closed Trace settings dialog: Mode (Scribble, Poly or Combo), Closed Trace Shape (Trace, Rectangle or Ellipse), Automatically merge overlapping traces, and Apply rolling average while scribbling.](assets/images/user-guide/06-closed-trace-mode-dialog.png)
+
 For **Closed Trace** you can also pick a fixed **shape** (freehand **Trace**,
 **Rectangle**, or **Ellipse**; drag to size) and optionally auto-merge new traces
 into selected same-named traces, or apply a rolling-average smooth while
 scribbling.
+
+![A new closed trace, drawn freehand in orange beside the star with the Closed Trace tool.](assets/images/user-guide/06-closed-trace-drawn.png)
 
 ### Stamp (`S`)
 
@@ -537,12 +605,18 @@ element size, spacing, and number of columns/rows. With **Sampling frame** enabl
 (the default), each cell is drawn as a counting frame (a red exclusion line and a
 green inclusion line) rather than a copy of the preset.
 
+![The Grid settings dialog: element size, distance and number in X and Y, and Sampling frame, which is checked.](assets/images/user-guide/06-grid-options.png)
+
 ### Flag (`F`)
 
 Drops a labeled marker (a `⚑` glyph) at the clicked point. **Click** to place a
 flag and fill in its name, color, and an optional comment. Right-click the Flag
 button to set the default name/color, the flag size, and which flags are shown:
 **All flags**, **Only unresolved flags** (the default), or **No flags**.
+
+![The dialog a click with the Flag tool opens: Name (flag_1), Color, and an empty Comment box.](assets/images/user-guide/06-flag-new.png)
+
+![The Flag settings dialog: Default name, Default color, Size of all flags, and Display (All flags, Only unresolved flags or No flags).](assets/images/user-guide/06-flag-options.png)
 
 Flags are selected and moved with the Pointer tool; **right-clicking a flag** opens
 its dialog, where you can edit its name/color, add comments, and mark it
@@ -558,8 +632,8 @@ object list and can be set from the object list's context menu.
 
 ### Z-trace tool
 
-Creates a [z-trace](#3-core-concepts), a curve through the stack. Select the
-tool, then **click** points (changing sections between clicks as needed with the
+Creates a [z-trace](#3-core-concepts), a curve through the stack. The palette
+names this tool **Ztool**. Select the tool, then **click** points (changing sections between clicks as needed with the
 mouse wheel); **right-click to finish**. The new z-trace takes the current
 preset's name and color. (This tool is selected from the palette; it has no default
 keyboard shortcut.)
@@ -572,6 +646,8 @@ The trace palette is the row of preset traces at the bottom of the window. The
 selected preset supplies the **name, color, tags, shape, and stamp radius** for new
 traces you draw, stamp, or grid. The selected preset's name is shown (in its color)
 near the palette.
+
+![The trace palette: two rows of ten preset buttons, with the selected preset's name, circle1, above them in orange.](assets/images/user-guide/07-trace-palette.png)
 
 - The default palette has **20 presets**, arranged as two rows of ten.
 - Select a preset with the number keys: **`1`–`9`, `0`** for the first row, and
@@ -591,7 +667,7 @@ export/import palettes as CSV (**Series ▸ Trace palette ▸ Export as CSV… /
 from CSV…**). **Edit ▸ Paste attributes to palette** (`Shift+G`) sets the current
 preset from a copied trace.
 
-> 📸 *Screenshot: the trace palette with the right-click "edit trace attributes" dialog open, showing the Stamp radius field.*
+![The dialog a right-click on a preset opens: Name, Color, Shape, Fill, Stamp radius (microns), Trace Tags and Object Groups.](assets/images/user-guide/07-trace-palette-edit.png)
 
 ---
 
@@ -605,15 +681,18 @@ traces are selected and **Edit z-trace attributes...** when z-traces are, so the
 most-used edit is one click away above the per-entity submenus.
 
 - **Edit attributes** (`Ctrl+E`): change name, color, tags, and fill mode.
-- **Merge traces** (`Ctrl+M`): merge the exteriors of selected traces (they must
+- **Merge traces** (`Shift+M`): merge the exteriors of selected traces (they must
   share a name).
-- **Hide** (`Ctrl+H`) / **Unhide all** (`Ctrl+U`). Hidden traces can't be edited
+- **Hide** (`Shift+H`) / **Unhide all** (`Ctrl+U`). Hidden traces can't be edited
   until unhidden.
 - **Make negative / positive**. Negative traces subtract from (cut into) the area
   of same-named traces, e.g. to carve a hole; this matters for area and 3D volume.
 - **Cut / Copy / Paste** (`Ctrl+X` / `Ctrl+C` / `Ctrl+V`) and **Paste attributes**
-  (`Ctrl+B`), which copies a trace's name/color/tags onto selected traces.
+  (`Ctrl+Shift+V`; the older `Ctrl+B` still works), which copies a trace's
+  name/color/tags onto selected traces.
 - **Delete** (`Delete` or `Backspace`): delete the selected traces.
+
+![The field context menu, opened on a selected star: Trace, Object, Ztrace, View and Series alignment submenus, then Cut, Copy, Copy to sections, Delete from sections, Paste, Paste attributes, Select all traces, Deselect all traces, Invert selection and Delete.](assets/images/user-guide/08-field-context-menu.png)
 
 On the field (right-click empty space, or use the shortcuts):
 
@@ -631,11 +710,9 @@ On the field (right-click empty space, or use the shortcuts):
 In **Focus mode**, a **Ctrl-click** (`Cmd`-click on macOS) on a trace edits which
 object it belongs to: clicking a trace of the focused object splits that trace out
 into a new `<object>_split` contour, and clicking a trace of any *other* object
-incorporates it into the focused one. Both are undoable. The modifier is Ctrl so
-that it sits on the same key as **Merge traces** (`Ctrl+M`), which is the other
-half of a proofreading pass. **This was Shift-click before 1.21.0**, and Shift no
-longer performs the edit; the modifier is fixed for now, and being able to remap it
-is planned. Clicking a trace *without* a modifier does nothing in focus mode. The ordinary
+incorporates it into the focused one. Both are undoable. **This was Shift-click
+before 1.21.0**, and Shift no longer performs the edit. Choose another modifier, or
+none, under **Help ▸ Shortcuts list**. Clicking a trace *without* a modifier does nothing in focus mode. The ordinary
 click-to-select is suppressed outright while focus mode is on, so an unmodified
 click neither selects another object's trace nor deselects one of the focused
 object's own.
@@ -665,7 +742,7 @@ allowed), and several can be open at once.
 | **Object list of selected traces** | (no shortcut) | the objects with a trace selected in the field, with the same columns |
 | **Trace list** | `Ctrl+Shift+T` | traces on the **current section** |
 | **Section list** | `Ctrl+Shift+S` | every section |
-| **Z-trace list** | `Ctrl+Shift+Z` | every z-trace |
+| **Z-trace list** | `Ctrl+Alt+Z` | every z-trace |
 | **Flag list** | `Ctrl+Shift+F` | flags across the series |
 | **Series history** | (no shortcut) | the full edit log |
 
@@ -685,9 +762,18 @@ allowed), and several can be open at once.
   so an active filter is respected) and **Copy _entity_ values** (named for the list:
   **Copy object values**, **Copy trace values**, etc.; the same as `Ctrl+C`).
 
-> 📸 *Screenshot: the Object list docked on the left, with the column/filter menus visible.*
+![The Object list docked to the left of the field, with its List, Selection, Filter, Find, Groups and Columns menus, and one row per object.](assets/images/user-guide/09-object-list.png)
 
 ### Object list
+
+<figure class="clip" markdown>
+
+![Clip: the pointer opens the Lists menu and clicks Object list, the list docks to the left of the field, and its close button puts it away.](assets/images/user-guide/04-series-open.png)
+
+[▶ 6 s · loops](assets/videos/user-guide/09-open-object-list.mp4){ .clip-src }
+
+<figcaption markdown>**Lists ▸ Object list** docks the list beside the field. Its close button puts it away.</figcaption>
+</figure>
 
 Double-click an object to jump to its first occurrence; **Shift+double-click** adds
 it to the 3D scene. Columns include **Name**, **Start/End** (first/last section),
@@ -730,6 +816,8 @@ Export all traces in series…** writes every trace in the series to CSV. The co
 menu can edit/smooth/merge traces, set open/closed, make negative/positive, hide,
 edit shape/radius, create a flag on a trace, and delete.
 
+![The Trace list docked to the left of the field, with a row for each trace on the current section.](assets/images/user-guide/09-trace-list.png)
+
 ### Section list
 
 Lists all sections. Columns: **Section** (number; calibration-grid sections are
@@ -740,11 +828,15 @@ inserts a section above/below, copies, and deletes. **Modify ▸ Section image
 sources…** bulk-renames image sources, and **Reorder sections** renumbers them
 sequentially.
 
+![The Section list docked to the left of the field, with a row for each section: thickness, locked, brightness and contrast.](assets/images/user-guide/09-section-list.png)
+
 ### Z-trace list
 
 Lists all z-traces. Columns: **Name**, **Start**, **End**, **Distance** (length),
 **Groups**, **Alignment**. The context menu edits attributes, smooths, manages the
 z-trace in 3D and in groups, changes its alignment, and deletes.
+
+![The Z-trace list docked to the left of the field, with the name, start, end and distance of each z-trace.](assets/images/user-guide/09-ztrace-list.png)
 
 ### Flag list
 
@@ -754,6 +846,8 @@ Double-click jumps to the flag. The context menu opens the flag to view/edit and
 add comments, marks flags resolved/unresolved, filters by color, copies, deletes,
 or deletes all flags with a given name. Filters include showing resolved flags, a
 name regex, a color filter, and a comment-text filter.
+
+![The Flag list docked to the left of the field, with one flag: section 0, red, flag_1.](assets/images/user-guide/09-flag-list.png)
 
 ### Series history
 
@@ -791,10 +885,15 @@ active. Switch to a real alignment first.
   **Rename**, or **Remove** alignments. Objects can also carry a per-object
   alignment override (**Edit alignment…** in the object list).
 
+![The alignment dialog: a list of the alignments, default and no-alignment, with Remove, Rename and New buttons.](assets/images/user-guide/10-edit-alignments.png)
+
 ### Adjusting a section's transform
 
 - **Alignments ▸ Edit transformation** (`Ctrl+T`): enter the six transform numbers
   `a b c d e f` directly. (Blocked on locked sections and while in `no-alignment`.)
+
+![The Edit section transform prompt, with the identity transform 1 0 0 0 1 0.](assets/images/user-guide/10-edit-transformation.png)
+
 - **Keyboard nudges** (when no traces are selected, these move the section's
   transform; otherwise they move the selected traces):
   - Arrow keys: translate (medium step); `Ctrl`+arrows = small, `Shift`+arrows =
@@ -890,7 +989,7 @@ to it. Meshes are built on a background thread (you'll see a "Generating 3D…"
 progress indicator). Z-traces can also be added to the scene (as tubes) from the
 z-trace list.
 
-> 📸 *Screenshot: the 3D scene window with a few reconstructed objects and the scale cube.*
+![The 3D scene window with four objects as surfaces, a star, a triangle, a rectangle and a circle, and a gray one-micron scale cube.](assets/images/user-guide/11-3d-scene.png)
 
 ### 3D model types
 
@@ -987,7 +1086,7 @@ auto-backup toggle are remembered **per series**; the naming template is shared
 across all series. (The backup folder and naming are also available under **Series ▸
 Options ▸ Backup**.)
 
-> 📸 *Screenshot: the Backup Settings dialog showing the folder, the auto-backup checkbox, and the filename preview.*
+![The Backup Settings dialog: This Series, My Defaults (all series) with the backup folder and auto-backup, and Backup Naming with the example backup file name.](assets/images/user-guide/12-backup-settings.png)
 
 Because backups are just `.jser` files, **restore a backup by opening it** with
 **File ▸ Open series…**. If the configured backup folder is missing at save time (for
@@ -1001,82 +1100,149 @@ disables auto-backup until you do.
 
 ## 13. Keyboard shortcuts
 
-These are the defaults; rebind them under **Help ▸ Shortcuts list** (`?`).
+These are the defaults, in the groups and words of **Help ▸ Shortcuts list** (`?`),
+where you can rebind them. A key with `Cmd` or `Option` is written for macOS first;
+on Windows and Linux it is `Ctrl` or `Alt`, shown after it.
 
-### Tools
+![The Shortcuts list: each action with its shortcut in a box that can be edited or cleared, and Reset Defaults, Cancel and OK buttons.](assets/images/user-guide/13-shortcuts-list.png)
 
-| Key | Tool |
-|---|---|
-| `P` | Pointer |
-| `Z` | Pan/Zoom |
-| `K` | Knife |
-| `Shift+K` | Scissors |
-| `C` | Closed Trace |
-| `O` | Open Trace |
-| `S` | Stamp |
-| `G` | Grid |
-| `F` | Flag |
-| `Q` | Host |
-
-(The Z-trace tool is selected from the palette.)
-
-### Files and series
+<!-- generated: shortcuts (from PyReconstruct's source; to update, run: python3 scripts/docs_tables.py --write) -->
+### General
 
 | Key | Action |
 |---|---|
-| `Ctrl+N` | New series from images |
-| `Ctrl+O` | Open series |
-| `Ctrl+S` | Save |
-| `Ctrl+Shift+B` | Backup now |
-| `Ctrl+R` | Restart PyReconstruct |
-| `Ctrl+Q` | Quit |
-| `Shift+O` | Series options |
+| `Delete/Backspace` | Delete selected traces. Remove last point when polyline tracing or using scissors. Delete selected entry in lists. |
+| `? (Shift+/)` | Display keyboard shortcuts |
+| `Cmd+,` (`Ctrl+,` on Windows/Linux) | View all options |
+| `Page Up` | Display the next (higher) section |
+| `Page Down` | Display the preceding (lower) section |
+| `/` | Switch between current and last viewed section |
 
-### Sections and view
-
-| Key | Action |
-|---|---|
-| `PgUp` / `PgDown` | Next / previous section |
-| `Ctrl+G` | Go to section |
-| `/` | Flicker between two sections |
-| `Home` | Fit view to image |
-| `Space` | Blend current and last section |
-| `Shift+F` | Find contour on this section |
-| `Ctrl+F` | Find an object's first contour |
-
-### Editing traces
+### View
 
 | Key | Action |
 |---|---|
-| `Ctrl+Z` / `Ctrl+Y` | Undo / Redo |
-| `Ctrl+X` / `Ctrl+C` / `Ctrl+V` | Cut / Copy / Paste |
-| `Ctrl+B` | Paste attributes |
-| `Ctrl+E` | Edit trace attributes |
-| `Ctrl+M` | Merge traces |
-| `Ctrl+H` / `Ctrl+U` | Hide selected / Unhide all |
-| `Ctrl+A` / `Ctrl+D` | Select all / Deselect |
-| `H` / `A` | Hide trace layer / Show all traces (ignore hidden) |
-| `I` | Hide image |
-| `Space` | Section blend |
 | `X` | Focus mode |
-| `Delete` / `Backspace` | Delete selected (or remove last point while tracing) |
+| `Cmd` (`Ctrl` on Windows/Linux) | Hold and click in focus mode to split or incorporate a trace |
+| `H` | Hide trace layer |
+| `A` | Show all traces (ignore hidden) |
+| `I` | Hide image |
+| `-` | Decrease brightness |
+| `=` | Increase brightness |
+| `[` | Decrease contrast |
+| `]` | Increase contrast |
+| `Space` | Section blend |
+| `Home` | Set view to image |
 
-### Lists and alignment
+### Field Interactions
 
 | Key | Action |
 |---|---|
-| `Ctrl+Shift+O` | Object list |
-| `Ctrl+Shift+T` | Trace list |
-| `Ctrl+Shift+S` | Section list |
-| `Ctrl+Shift+Z` | Z-trace list |
-| `Ctrl+Shift+F` | Flag list |
-| `Ctrl+Shift+A` | Modify / switch alignments |
-| `Ctrl+T` | Edit current section transform |
-| `Ctrl+Shift+U` | Unlock current section |
-| `Ctrl+\` | Align by correlation |
+| `Cmd+A` (`Ctrl+A` on Windows/Linux) | Select all traces on section, or all rows in a focused data list |
+| `Cmd+D` (`Ctrl+D` on Windows/Linux) | Deselect all traces on section, or all rows in a focused data list |
+| `Cmd+Shift+I` (`Ctrl+Shift+I` on Windows/Linux) | Invert which traces are selected on section, or which rows in a focused data list |
+| `Cmd+E` (`Ctrl+E` on Windows/Linux) | Edit attributes of selected trace(s) |
+| `Cmd+Shift+R` (`Ctrl+Shift+R` on Windows/Linux) | Smooth selection (traces, or objects over the object list) |
+| `Shift+M` | Merge selected traces |
+| `Cmd+Shift+M` (`Ctrl+Shift+M` on Windows/Linux) | Merge attributes of selected traces |
+| `Shift+H` | Hide selected traces |
+| `Cmd+U` (`Ctrl+U` on Windows/Linux) | Unhide all hidden traces on current section |
+| `Shift+G` | Modify current palette button to match attributes of first selected trace |
+| `Cmd+Shift+G` (`Ctrl+Shift+G` on Windows/Linux) | Modify current palette button to match attributes and shape of first selected trace |
+| `Cmd+Shift+U` (`Ctrl+Shift+U` on Windows/Linux) | Unlock current section |
+| `Cmd+T` (`Ctrl+T` on Windows/Linux) | Modify transform on current section |
+| `Cmd+\` (`Ctrl+\` on Windows/Linux) | Align by correlation |
+| `Cmd+Shift+H` (`Ctrl+Shift+H` on Windows/Linux) | Set host(s) for selected trace(s) |
 
-For the complete, current list (including 3D-scene shortcuts and palette
-shortcuts), open **Help ▸ Shortcuts list**.
+### Edit
+
+| Key | Action |
+|---|---|
+| `Cmd+Z` (`Ctrl+Z` on Windows/Linux) | Undo |
+| `Cmd+Y` (`Ctrl+Y` on Windows/Linux) | Redo |
+| `Cmd+C` (`Ctrl+C` on Windows/Linux) | Copy selected traces to clipboard |
+| `Cmd+Option+C` (`Ctrl+Alt+C` on Windows/Linux) | Copy selected traces onto other sections |
+| `Cmd+Option+X` (`Ctrl+Alt+X` on Windows/Linux) | Delete selected trace name(s) from chosen sections |
+| `Cmd+Shift+D` (`Ctrl+Shift+D` on Windows/Linux) | Add selected object(s) to the 3D scene |
+| `Cmd+X` (`Ctrl+X` on Windows/Linux) | Cut selected traces to clipboard |
+| `Cmd+V` (`Ctrl+V` on Windows/Linux) | Paste clipboard traces into section |
+| `Cmd+Shift+V` (`Ctrl+Shift+V` on Windows/Linux) | Apply attributes of copied traces to selected trace(s) |
+
+### Navigate
+
+| Key | Action |
+|---|---|
+| `Cmd+F` (`Ctrl+F` on Windows/Linux) | Find first instance of a trace in the series |
+| `Shift+F` | Find a trace on the current section |
+| `Cmd+G` (`Ctrl+G` on Windows/Linux) | Go to a specific section number |
+| `Cmd+K` (`Ctrl+K` on Windows/Linux) | Search the menus for a command |
+
+### File
+
+| Key | Action |
+|---|---|
+| `Cmd+O` (`Ctrl+O` on Windows/Linux) | Open a series file |
+| `Cmd+S` (`Ctrl+S` on Windows/Linux) | Save |
+| `Cmd+Shift+B` (`Ctrl+Shift+B` on Windows/Linux) | Backup series |
+| `Cmd+N` (`Ctrl+N` on Windows/Linux) | New series |
+| `Cmd+Option+R` (`Ctrl+Alt+R` on Windows/Linux) | Restart |
+| `Cmd+Q` (`Ctrl+Q` on Windows/Linux) | Quit |
+
+### Lists
+
+| Key | Action |
+|---|---|
+| `Cmd+Option+S` (`Ctrl+Alt+S` on Windows/Linux) | Show or hide the lists |
+| `Cmd+Shift+O` (`Ctrl+Shift+O` on Windows/Linux) | Open Object List |
+| `Cmd+Shift+C` (`Ctrl+Shift+C` on Windows/Linux) | Toggle curation columns in object list |
+| `Cmd+Shift+T` (`Ctrl+Shift+T` on Windows/Linux) | Open Trace List |
+| `Cmd+Option+Z` (`Ctrl+Alt+Z` on Windows/Linux) | Open Z-trace List |
+| `Cmd+Shift+S` (`Ctrl+Shift+S` on Windows/Linux) | Open Section List |
+| `Cmd+Shift+F` (`Ctrl+Shift+F` on Windows/Linux) | Open Flag List |
+| `Cmd+Shift+A` (`Ctrl+Shift+A` on Windows/Linux) | Switch/modify alignments |
+
+### Trace Palette
+
+| Key | Action |
+|---|---|
+| `#, Shift+#` | Select a trace on the palette |
+| `Cmd+#, Cmd+Shift+#` (`Ctrl+#, Ctrl+Shift+#` on Windows/Linux) | Edit attributes of a single trace on the palette |
+| `Cmd+Shift+P` (`Ctrl+Shift+P` on Windows/Linux) | Switch/modify palettes |
+| `Cmd+]` (`Ctrl+]` on Windows/Linux) | Increment palette {#} up |
+| `Cmd+[` (`Ctrl+[` on Windows/Linux) | Increment palette {#} down |
+
+### Movements
+
+| Key | Action |
+|---|---|
+| `Left/Right/Up/Down` | Translate selected traces or image (when no trace selected) |
+| `Cmd+Left/Right/Up/Down` (`Ctrl+Left/Right/Up/Down` on Windows/Linux) | Translate traces or image by small step |
+| `Shift+Left/Right/Up/Down` | Translate trace or image by large step |
+| `Cmd+Shift+Left/Right/Up/Down` (`Ctrl+Shift+Left/Right/Up/Down` on Windows/Linux) | Rotate image around the mouse |
+| `F1, Shift+F1, F2, Shift+F2` | Scale image in X and Y |
+| `F3, Shift+F3, F4, Shift+F4` | Shear image in X and Y |
+
+### Tool Palette
+
+| Key | Action |
+|---|---|
+| `P` | Use pointer tool |
+| `Z` | Use pan/zoom tool |
+| `K` | Use knife tool |
+| `Shift+K` | Use scissors tool |
+| `C` | Use closed trace tool |
+| `O` | Use open trace tool |
+| `S` | Use stamp tool |
+| `G` | Use grid tool |
+| `F` | Use flag tool |
+| `Q` | Use host tool |
+
+### 3D Scene
+
+| Key | Action |
+|---|---|
+| `? (Shift+/)` | Display shortcuts in 3D scene |
+<!-- /generated: shortcuts -->
 
 ---
 

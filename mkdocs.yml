@@ -48,6 +48,9 @@ extra_css:
   - stylesheets/extra.css
   - stylesheets/class.css
 
+extra_javascript:
+  - javascripts/clips.js
+
 markdown_extensions:
   - admonition
   - attr_list

@@ -199,3 +199,48 @@ a:focus-visible, button:focus-visible, input:focus-visible, label[tabindex]:focu
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
 }
+/* User Guide screenshots are 2x pixels: show them at the app's own size, never
+   wider than the page. Lengths here are halved by the zoom. */
+.md-typeset img[src*="/user-guide/"] {
+  zoom: .5;
+  border: 2px solid var(--pr-line);
+  border-radius: 12px;
+}
+/* User Guide clips (javascripts/clips.js): the same frame as the screenshots,
+   at PyReconstruct's own size, with a length tag and a Replay button over it. */
+.md-typeset figure.clip { margin: 1.2em 0; max-width: 1120px; }
+.md-typeset figure.clip img[src*="/user-guide/"] { display: block; }
+.md-typeset .clip-frame { position: relative; }
+.md-typeset .clip-frame video {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--pr-line);
+  border-radius: var(--pr-radius);
+  background: var(--pr-surface);
+}
+.md-typeset .clip-tag, .md-typeset .clip-replay {
+  position: absolute;
+  padding: .2em .75em;
+  border-radius: 999px;
+  background: #0f172acc;
+  color: #fff;
+  font-size: .62rem;
+  line-height: 1.5;
+}
+.md-typeset .clip-tag { top: .6rem; left: .6rem; letter-spacing: .04em; pointer-events: none; }
+.md-typeset .clip-replay { right: .6rem; bottom: .6rem; border: 0; cursor: pointer; font-weight: 600; }
+.md-typeset .clip-replay:hover { background: #0f172a; }
+.md-typeset figure.clip figcaption {
+  max-width: none;
+  margin: .6em 0 0;
+  color: var(--pr-muted);
+  font-size: .72rem;
+  font-style: normal;
+  text-align: left;
+}
+.md-typeset figure.clip figcaption strong { color: var(--md-default-fg-color); }
+@media (max-width: 480px) {
+  .md-typeset .clip-tag { top: .35rem; left: .35rem; }
+  .md-typeset .clip-replay { right: .35rem; bottom: .35rem; }
+}
