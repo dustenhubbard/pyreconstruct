@@ -515,6 +515,12 @@ MENUBAR_EXPECTED[_tail_at:_tail_at + len(_HELP_TAIL_OLD)] = _HELP_TAIL_NEW
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "act", "submitissue_act")) + 1, _REQUEST_FEATURE_ROW
 )
+# Help > Online resources > "Class documents" (2026-10-22): the course
+# handouts on pyreconstruct.org/class/, directly under the user guide.
+_CLASS_DOCS_ROW = (2, "act", "openclass_act")
+MENUBAR_EXPECTED.insert(
+    MENUBAR_EXPECTED.index((2, "act", "openwiki_act")) + 1, _CLASS_DOCS_ROW
+)
 # The Dev-build row (fork, 2026-10-16): Series > Images > Crop scaled images
 # around an object... is built only when constants.build_flavor.is_dev_build()
 # says so, which the autouse fixture below forces on for these rows. The stable
@@ -574,10 +580,11 @@ def test_menubar_action_and_submenu_counts():
     selected traces (fork #438) took it from 125 to 126. Clean up >
     Duplicates... replaced its two duplicate finders, 126 to 125. The Dev
     build's Series > Images > Crop scaled images around an object... took it
-    to 126 (counted with the gate on, see dev_build).
+    to 126 (counted with the gate on, see dev_build). Help > Online
+    resources > Class documents took it to 127.
     """
     rows = _rows()
-    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 126
+    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 127
     assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 30
 
 
