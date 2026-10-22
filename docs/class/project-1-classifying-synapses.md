@@ -43,6 +43,15 @@ Have the paper open while you work; this guide covers only how to do it in PyRec
   <figcaption>Backup Settings. The yellow marks show the boxes to change. The Backup Folder is still blank here; click Browse to choose yours.</figcaption>
 </figure>
 
+<figure class="clip" markdown>
+
+![Clip: the pointer opens File > Backup > Settings...; in Backup Settings it unchecks Use my defaults for this series, checks Auto-backup, unchecks User, checks Suffix, types EID, and clicks OK.](img/project-1/backup-settings-poster.jpg)
+
+[▶ 8 s · loops](videos/project-1/backup-settings.mp4){ .clip-src }
+
+<figcaption markdown>File > Backup > Settings..., then the changes in order. Browse is left out here.</figcaption>
+</figure>
+
 ## Steps
 
 1. Open the Object List: **Lists > Object list** (Ctrl+Shift+O).

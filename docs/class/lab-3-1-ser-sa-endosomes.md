@@ -28,6 +28,15 @@ In this lab you look for smooth endoplasmic reticulum (SER), spine apparatus (SA
   <figcaption>SER in spine d03sp05 on section 15, without traces (left) and with d03sp05 and the SER stamp d03sern05 (right). The view is about 1.3 µm across.</figcaption>
 </figure>
 
+<figure class="clip" markdown>
+
+![Clip: section 13 in a wider view; the camera closes in on spine d03sp05, and the pointer clicks the up arrow four times, through sections 14 to 17, with the SER stamp d03sern05 (yellow cross) in view.](img/lab-3-1/ser-sections-poster.jpg)
+
+[▶ 6 s · loops](videos/lab-3-1/ser-sections.mp4){ .clip-src }
+
+<figcaption markdown>SER in spine d03sp05, sections 13 to 17, stepping up one section at a time.</figcaption>
+</figure>
+
 ## Spine apparatus (SA)
 
 - The spine apparatus is a specialized derivative of the SER.
@@ -71,6 +80,15 @@ Four major subtypes:
   ![Section 108 without traces](img/lab-3-1/endosome-example-clean.png){ width="350" }
   ![Section 108 with spine d03sp29 in yellow and the coated pit stamp d03endo29_cp, an orange octagon](img/lab-3-1/endosome-example.png){ width="350" }
   <figcaption>A coated pit on spine d03sp29 on section 108, without traces (left) and with d03sp29 and the stamp d03endo29_cp (right). The view is about 2.3 µm across.</figcaption>
+</figure>
+
+<figure class="clip" markdown>
+
+![Clip: section 108 in a view about 5 µm across; the camera closes in on a coated pit and the pointer points at it, then spine d03sp29 (yellow) and the stamp d03endo29_cp (orange) appear.](img/lab-3-1/coated-pit-poster.jpg)
+
+[▶ 7 s · loops](videos/lab-3-1/coated-pit.mp4){ .clip-src }
+
+<figcaption markdown>Closing in on the coated pit of spine d03sp29 on section 108.</figcaption>
 </figure>
 
 #### 2. Endosomal tubule
@@ -123,6 +141,15 @@ Each of the 5 assigned spines will have either SER or SA.
 <figure class="class-fig" markdown="span">
   ![Set Attributes for d03sa12: red, circle, Fill None, Stamp radius 0.05](img/lab-3-1/set-attributes-sa.png){ width="318" }
   <figcaption>Set Attributes for d03sa12.</figcaption>
+</figure>
+
+<figure class="clip" markdown>
+
+![Clip: on section 70 with the Stamp tool, the pointer right-clicks the first palette square, sets the name to d03sa19 and Stamp radius (microns) to 0.05, clicks OK, and clicks inside spine d03sp19 to place the red stamp d03sa19 on the SA.](img/lab-3-1/stamp-sa-poster.jpg)
+
+[▶ 7 s · loops](videos/lab-3-1/stamp-sa.mp4){ .clip-src }
+
+<figcaption markdown>Set the name and the radius, click OK, then click on the SA. Shown in spine d03sp19, not one of your 5 spines.</figcaption>
 </figure>
 
 ## Stamp spine endosomes
