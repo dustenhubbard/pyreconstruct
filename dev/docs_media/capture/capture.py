@@ -27,10 +27,11 @@ since that look is not what users see.
 
 What is pinned, so a rerun gives the same frames: the fixture series
 (dev/assets/checker/files/shapes1.jser, copied to a temporary folder), the
-window size (WINDOW_SIZE logical pixels), the theme (the app default, light;
-the run stops if macOS is in dark mode), the username ("docs"), and an empty
-settings store. A run on a different screen density stops rather than give
-frames of a different size.
+window size (WINDOW_SIZE logical pixels), the stable build (a source
+checkout would otherwise show the Dev-only items), the theme (the app
+default, light; the run stops if macOS is in dark mode), the username
+("docs"), and an empty settings store. A run on a different screen density
+stops rather than give frames of a different size.
 
 The settings of the PyReconstruct you use day to day are never touched.
 Before anything imports the app, every `QSettings` is redirected to a
@@ -151,9 +152,11 @@ def tripwire():
 
 
 def isolate_settings():
-    """Redirect every QSettings before the app is imported; stop if it fails."""
+    """Redirect every QSettings and pin the stable build before the app is
+    imported; stop if the redirect fails."""
     os.environ["PYRECON_HYBRID_STORE"] = "0"  # no local store under ~/Library
     os.environ.pop("PYRECON_ROI_MODE", None)  # held features stay hidden
+    os.environ.pop("PYRECON_MAC_UI", None)
     sys.path.insert(0, str(REPO / "tests"))
     import qsettings_isolation  # noqa: F401  (rebinds QSettings on import)
 
@@ -167,7 +170,20 @@ def isolate_settings():
     org, app = qsettings_isolation.ORG, qsettings_isolation.APP
     for application in (app, f"{app}-{SERIES_CODE}"):
         check_settings_path(QSettings(org, application).fileName())
+    pin_stable_build()
     return qsettings_isolation
+
+
+def pin_stable_build():
+    """Make this run the stable app, before any of its windows is imported.
+
+    The guide documents the stable app, but a source checkout counts as a Dev
+    build (constants/build_flavor.py), so the frames would show the Dev-only
+    fonts, tool icons, menu rows and options.
+    """
+    from PyReconstruct.modules.constants import build_flavor
+
+    build_flavor.is_dev_build = lambda: False
 
 
 def check_settings_path(path, real_dir=REAL_PREFS):
