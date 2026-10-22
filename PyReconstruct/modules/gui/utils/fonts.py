@@ -5,14 +5,14 @@ were, so Windows, Linux and the stable Mac app draw the same pixels as before.
 A macOS Dev build sets numbers and field text in the platform's monospace
 (SF Mono when it is installed, else Menlo, else the system fixed font) and
 the palette labels in the system UI font (SF Pro): the Mac-native look
-(2026-10-21), on Dev first.
+(2026-10-21), on Dev first, and only when launched with PYRECON_MAC_UI=1
+(constants/mac_ui.py).
 """
-import sys
 from functools import lru_cache
 
 from PySide6.QtGui import QFont, QFontDatabase
 
-from PyReconstruct.modules.constants import build_flavor
+from PyReconstruct.modules.constants.mac_ui import mac_ui_enabled
 
 LEGACY_FAMILY = "Courier New"
 
@@ -26,9 +26,10 @@ CODE_FAMILIES = {
 
 
 def macLook() -> bool:
-    """True on a macOS Dev build, the only build with the Mac-native look.
-    Read at call time, so a test can set either signal."""
-    return sys.platform == "darwin" and build_flavor.is_dev_build()
+    """True on a macOS Dev build launched with PYRECON_MAC_UI=1, the only
+    build with the Mac-native look. Read at call time, so a test can set
+    any of the signals."""
+    return mac_ui_enabled()
 
 
 @lru_cache(maxsize=None)

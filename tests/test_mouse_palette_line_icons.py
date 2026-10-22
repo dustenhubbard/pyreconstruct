@@ -1,4 +1,5 @@
-"""macOS Dev builds draw the mouse palette's tools as Lucide line icons."""
+"""macOS Dev builds launched with PYRECON_MAC_UI=1 draw the mouse palette's
+tools as Lucide line icons; test_mac_ui_hidden.py covers the switch unset."""
 import os
 import sys
 
@@ -19,6 +20,7 @@ PNG_TOOLS = ["Pointer", "Pan/Zoom", "Knife", "Scissors", "Closed Trace",
 
 def _build(main_window, monkeypatch, platform, version):
     monkeypatch.setenv("PYRECON_ROI_MODE", "1")
+    monkeypatch.setenv("PYRECON_MAC_UI", "1")
     monkeypatch.delenv("PYRECON_APP_NAME", raising=False)
     monkeypatch.setattr(sys, "platform", platform)
     monkeypatch.setattr(build_flavor, "running_version", lambda: version)
