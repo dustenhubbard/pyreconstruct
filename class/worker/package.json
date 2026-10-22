@@ -1,0 +1,13 @@
+{
+  "name": "pyreconstruct-class",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.7",
+    "vitest": "4.1.12",
+    "wrangler": "4.152.0"
+  }
+}

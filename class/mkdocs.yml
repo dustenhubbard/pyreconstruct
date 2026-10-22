@@ -1,0 +1,68 @@
+# The class site, served at pyreconstruct.org/class/ behind a password by the
+# Worker in worker/. Build from this folder:
+#   uv run --no-project --with-requirements ../docs/requirements.txt mkdocs build --strict
+# The theme and look match the public site. Shared files (extra.css, clips.js,
+# the logo) are symlinks into ../docs, so there is one copy of each.
+site_name: PyReconstruct class
+site_url: https://pyreconstruct.org/class/
+docs_dir: pages
+site_dir: worker/public/class
+use_directory_urls: true
+
+# Pages are reached from each term's index, not from a nav, so a student never
+# sees the titles of staff pages or other terms.
+nav:
+  - PyReconstruct: https://pyreconstruct.org/
+  - User Guide: https://pyreconstruct.org/USER_GUIDE/
+not_in_nav: |
+  *.md
+
+theme:
+  name: material
+  logo: assets/images/logo.svg
+  favicon: assets/images/favicon.png
+  font: false
+  # No navigation.instant: it reads sitemap.xml, which lists staff pages, so
+  # the Worker does not serve it to students.
+  features:
+    - navigation.top
+    - navigation.tabs
+    - content.code.copy
+  palette:
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+
+# No search: one index would hold every term and the staff pages.
+plugins: []
+
+extra_css:
+  - stylesheets/extra.css
+  - stylesheets/class.css
+
+extra_javascript:
+  - javascripts/clips.js
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - toc:
+      permalink: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.highlight
+  - pymdownx.superfences

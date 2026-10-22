@@ -1,4 +1,4 @@
-/* Class documents (docs/class/): one figure and header style for every handout. */
+/* Class documents (class/pages/): one figure and header style for every handout. */
 .class-doc-meta { color: var(--pr-muted); margin-top: -.6rem; }
 .md-typeset figure.class-fig { margin: 1.2rem auto; }
 .md-typeset figure.class-fig img {

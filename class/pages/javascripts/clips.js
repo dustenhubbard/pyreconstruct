@@ -1,0 +1,1 @@
+../../../docs/javascripts/clips.js

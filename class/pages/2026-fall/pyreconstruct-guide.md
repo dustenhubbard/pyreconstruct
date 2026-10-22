@@ -22,7 +22,7 @@ Reconstruct has been used to reconstruct anatomical structures in 3D including b
 
 ## Installing PyReconstruct
 
-**Install PyReconstruct:** follow along in class. The install steps for each platform are on the [PyReconstruct home page](../index.md).
+**Install PyReconstruct:** follow along in class. The install steps for each platform are on the [PyReconstruct home page](https://pyreconstruct.org/).
 
 ## Opening your series
 
