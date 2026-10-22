@@ -83,6 +83,11 @@ def export_svg(section_data, svg_fp) -> Union[str, Path]:
         finally:
             Image.MAX_IMAGE_PIXELS = previous_limit
 
+    # PNG holds at most 16 bits a channel. Pillow 12 clipped a 32-bit "I"
+    # image to 16 bits on save; Pillow 13 refuses it, so clip it here.
+    if image.mode == "I":
+        image = image.convert("I;16")
+
     buffered = BytesIO()
     image.save(buffered, format="PNG")
     image_base64 = base64.b64encode(buffered.getvalue()).decode()

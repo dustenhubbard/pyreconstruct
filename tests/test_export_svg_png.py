@@ -770,3 +770,38 @@ def test_svg_export_opens_a_section_image_past_pils_bomb_limit(
     assert out.stat().st_size > 0
     assert f'width="{side}"' in out.read_text()[:2000]
     assert PILImage.MAX_IMAGE_PIXELS == before, "PIL's limit was not restored"
+
+
+def test_svg_export_embeds_a_32_bit_section_image_as_16_bit(
+        exportable_series, tmp_path):
+    """A 32-bit integer zarr section image ("I" mode in PIL) still exports.
+
+    PNG holds at most 16 bits a channel. Pillow 12 clipped an "I" image to 16
+    bits when saving it as PNG; Pillow 13 refuses it with OSError, so the
+    export does the same clip itself. Values past 65535 come out as 65535.
+    """
+    import io
+
+    import numpy as np
+    import zarr
+    from PIL import Image as PILImage
+
+    exportable_series.src_dir = str(tmp_path / "images.zarr")
+    section = exportable_series.loadSection(min(exportable_series.sections.keys()))
+    pixels = np.array([[0, 1000], [65535, 70000]], dtype=np.int32)
+    scale = zarr.open_group(exportable_series.src_dir, mode="w").create_group("scale_1")
+    scale.create_dataset(section.zarr_key, data=pixels)
+    assert PILImage.fromarray(pixels).mode == "I", "fixture premise: a 32-bit image"
+
+    out = tmp_path / "section.svg"
+    section.exportAsSVG(str(out))
+
+    root = ET.parse(out).getroot()
+    (href,) = [
+        img.get("{http://www.w3.org/1999/xlink}href") or img.get("href")
+        for img in root.iter(f"{{{SVG_NS}}}image")
+    ]
+    payload = base64.b64decode(href[len("data:image/png;base64,"):], validate=True)
+    embedded = PILImage.open(io.BytesIO(payload))
+    assert embedded.mode == "I;16"
+    assert np.asarray(embedded).tolist() == [[0, 1000], [65535, 65535]]
