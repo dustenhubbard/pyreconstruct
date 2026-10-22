@@ -207,8 +207,9 @@ def shortcut_text(portable):
 
 
 def tool_label(name, shortcut):
-    """One tool palette label: the tool's name, then its shortcut if it has one."""
-    return f"{name}  {shortcut}" if shortcut else name
+    """One tool palette label: the tool's name, then its shortcut in parentheses
+    if it has one, the way the guide's headings write it."""
+    return f"{name} ({shortcut})" if shortcut else name
 
 
 def tool_shortcuts(window, names):

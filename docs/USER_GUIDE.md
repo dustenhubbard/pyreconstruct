@@ -490,7 +490,7 @@ In every tool except Pan/Zoom, **right-clicking the field** opens a context menu
 (for the selected traces, or for the field). The mouse wheel changes sections, and
 middle-click pans, regardless of the active tool.
 
-![The tool palette column, each button labeled with its tool and default shortcut: Pointer P, Pan/Zoom Z, Knife K, Scissors Shift+K, Closed Trace C, Open Trace O, Stamp S, Grid G, Flag F, Host Q, and Ztool, which has no shortcut.](assets/images/user-guide/06-tool-palette-labeled.png)
+![The tool palette column, each button labeled with its tool and default shortcut: Pointer (P), Pan/Zoom (Z), Knife (K), Scissors (Shift+K), Closed Trace (C), Open Trace (O), Stamp (S), Grid (G), Flag (F), Host (Q), and Ztool, which has no shortcut.](assets/images/user-guide/06-tool-palette-labeled.png)
 
 <!-- generated: tools (from PyReconstruct's source; to update, run: python3 scripts/docs_tables.py --write) -->
 The palette has eleven tools, top to bottom:

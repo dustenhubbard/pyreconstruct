@@ -133,7 +133,7 @@ def test_shortcut_text_puts_the_macos_form_first(capture, portable, shown):
 
 
 def test_tool_label_names_the_tool_then_its_shortcut(capture):
-    assert capture.tool_label("Scissors", "Shift+K") == "Scissors  Shift+K"
+    assert capture.tool_label("Scissors", "Shift+K") == "Scissors (Shift+K)"
     assert capture.tool_label("Ztool", "") == "Ztool"
 
 
