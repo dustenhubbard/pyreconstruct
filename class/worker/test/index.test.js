@@ -1,18 +1,26 @@
 import { describe, expect, it } from "vitest";
 import worker from "../src/index.js";
 
+const ETAG = '"v1"';
+const MODIFIED = "Wed, 21 Oct 2026 07:28:00 GMT";
+
 const env = {
   STUDENT_PASSWORD: "student-pass",
   STAFF_PASSWORD: "staff-pass",
   CURRENT_TERM: "2026-fall",
-  // Stands in for the static files: answers 200 with the path it was asked for,
-  // as video for an MP4, and never answers a byte range itself.
+  // Stands in for the static files: answers 200 with the path it was asked for
+  // (no body for HEAD), as video for an MP4, and never answers a byte range.
   ASSETS: {
     fetch: async (request) => {
       const path = new URL(request.url).pathname;
       const type = path.endsWith(".mp4") ? "video/mp4" : "text/html";
-      return new Response(path, {
-        headers: { "Content-Type": type, "Cache-Control": "public, max-age=14400" },
+      return new Response(request.method === "HEAD" ? null : path, {
+        headers: {
+          "Content-Type": type,
+          "Cache-Control": "public, max-age=14400",
+          ETag: ETAG,
+          "Last-Modified": MODIFIED,
+        },
       });
     },
   },
@@ -22,9 +30,9 @@ const STUDENT = "Basic " + btoa("anyone:student-pass");
 const STAFF = "Basic " + btoa("ta:staff-pass");
 const WRONG = "Basic " + btoa("anyone:guess");
 
-function get(path, authorization, overrides = {}, extra = {}) {
+function get(path, authorization, overrides = {}, extra = {}, method = "GET") {
   const headers = { ...extra, ...(authorization ? { Authorization: authorization } : {}) };
-  const request = new Request(`https://pyreconstruct.org${path}`, { headers });
+  const request = new Request(`https://pyreconstruct.org${path}`, { headers, method });
   return worker.fetch(request, { ...env, ...overrides });
 }
 
@@ -79,6 +87,12 @@ describe("student password", () => {
     expect([400, 403]).toContain((await get(path, STUDENT)).status);
   });
 
+  it("is refused before any file is read", async () => {
+    const ASSETS = { fetch: () => { throw new Error("read a file for a refused request"); } };
+    const response = await get(STAFF_PAGE, STUDENT, { ASSETS }, { Range: "bytes=0-5" });
+    expect(response.status).toBe(403);
+  });
+
   it("is sent from /class/ to the current term", async () => {
     const response = await get("/class/", STUDENT);
     expect(response.status).toBe(302);
@@ -116,6 +130,29 @@ describe("clips", () => {
   it("is 416 for a range past the end", async () => {
     expect((await get(CLIP, STUDENT, {}, { Range: "bytes=9999-" })).status).toBe(416);
   });
+
+  it("answers HEAD with a range as the whole file, never 416", async () => {
+    const response = await get(CLIP, STUDENT, {}, { Range: "bytes=0-5" }, "HEAD");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Range")).toBeNull();
+    expect(response.headers.get("Accept-Ranges")).toBe("bytes");
+  });
+
+  it.each([ETAG, MODIFIED])("answers a range when If-Range is %s", async (validator) => {
+    const response = await get(CLIP, STUDENT, {}, { Range: "bytes=0-5", "If-Range": validator });
+    expect(response.status).toBe(206);
+    expect(await response.text()).toBe(CLIP.slice(0, 6));
+  });
+
+  it.each(['"definitely-stale"', "W/\"v1\"", "Tue, 20 Oct 2026 07:28:00 GMT"])(
+    "sends the whole clip when If-Range is %s",
+    async (validator) => {
+      const response = await get(CLIP, STUDENT, {}, { Range: "bytes=0-5", "If-Range": validator });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("Content-Range")).toBeNull();
+      expect(await response.text()).toBe(CLIP);
+    },
+  );
 
   it("still asks for a password before any range", async () => {
     expect((await get(CLIP, undefined, {}, { Range: "bytes=0-5" })).status).toBe(401);

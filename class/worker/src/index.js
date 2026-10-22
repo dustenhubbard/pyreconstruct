@@ -51,14 +51,17 @@ export default {
 };
 
 // Safari plays a video only from a server that answers byte ranges. If the
-// asset came back whole, cut out the one range asked for.
+// asset came back whole, cut out the one range asked for. Only a GET gets a
+// range, and only when If-Range, if sent, still names this version.
 async function ranged(request, response) {
   const video = (response.headers.get("Content-Type") || "").startsWith("video/");
   if (!video || response.status !== 200) return response;
   const headers = new Headers(response.headers);
   headers.set("Accept-Ranges", "bytes");
   const match = /^bytes=(\d*)-(\d*)$/.exec(request.headers.get("Range") || "");
-  if (!match || (!match[1] && !match[2])) return new Response(response.body, { headers });
+  const whole =
+    request.method !== "GET" || !match || (!match[1] && !match[2]) || !current(request, response);
+  if (whole) return new Response(response.body, { headers });
 
   const body = await response.arrayBuffer();
   const size = body.byteLength;
@@ -71,6 +74,16 @@ async function ranged(request, response) {
   headers.set("Content-Range", `bytes ${start}-${end}/${size}`);
   headers.delete("Content-Length");
   return new Response(body.slice(start, end + 1), { status: 206, headers });
+}
+
+// If-Range matches only a strong ETag or the exact Last-Modified date.
+function current(request, response) {
+  const tag = request.headers.get("If-Range");
+  if (tag === null) return true;
+  if (tag.startsWith("W/")) return false;
+  const etag = response.headers.get("ETag");
+  if (etag && !etag.startsWith("W/") && tag === etag) return true;
+  return tag === response.headers.get("Last-Modified");
 }
 
 async function roleFor(request, env) {
