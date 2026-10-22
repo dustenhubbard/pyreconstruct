@@ -23,7 +23,7 @@ from PyReconstruct.modules.constants import locations as loc
 
 ICON_DIR = os.path.join(loc.assets_dir, "icons", "lucide")
 
-# tool button name: Lucide icon name (the mockup's mapping, 2026-10-21)
+# tool button name: Lucide icon name
 TOOL_ICONS = {
     "Pointer": "mouse-pointer-2",
     "Pan/Zoom": "move",
