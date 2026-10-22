@@ -893,6 +893,7 @@ active. Switch to a real alignment first.
   `a b c d e f` directly. (Blocked on locked sections and while in `no-alignment`.)
 
 ![The Edit section transform prompt, with the identity transform 1 0 0 0 1 0.](assets/images/user-guide/10-edit-transformation.png)
+
 - **Keyboard nudges** (when no traces are selected, these move the section's
   transform; otherwise they move the selected traces):
   - Arrow keys: translate (medium step); `Ctrl`+arrows = small, `Shift`+arrows =
