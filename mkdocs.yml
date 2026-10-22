@@ -7,6 +7,10 @@ repo_url: https://github.com/dustenhubbard/PyReconstruct
 repo_name: dustenhubbard/PyReconstruct
 edit_uri: edit/main/docs/
 docs_dir: docs
+# Class documents are public but unlisted: reached from docs/class/index.md,
+# not from the nav.
+not_in_nav: |
+  /class/
 
 theme:
   name: material
@@ -42,8 +46,10 @@ plugins:
 
 extra_css:
   - stylesheets/extra.css
+  - stylesheets/class.css
 
 markdown_extensions:
+  - admonition
   - attr_list
   - md_in_html
   - pymdownx.emoji:
