@@ -1,4 +1,5 @@
-"""Line icons for the mouse palette's tools, on macOS Dev builds (fork #763).
+"""Line icons for the mouse palette's tools, on macOS Dev builds launched with
+PYRECON_MAC_UI=1 (constants/mac_ui.py; fork #763).
 
 Every other build keeps the fixed-color PNGs and the text characters (Flag,
 Host, ROI). Here each tool gets a Lucide line icon (assets/icons/lucide, ISC
@@ -11,15 +12,14 @@ icon is rendered once per screen scale, so it stays sharp on Retina. A palette
 change (the macOS appearance switching, or a theme change) renders them again.
 """
 import os
-import sys
 from functools import lru_cache
 
 from PySide6.QtCore import QByteArray, QEvent, QObject, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPalette, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
-from PyReconstruct.modules.constants import build_flavor
 from PyReconstruct.modules.constants import locations as loc
+from PyReconstruct.modules.constants.mac_ui import mac_ui_enabled
 
 ICON_DIR = os.path.join(loc.assets_dir, "icons", "lucide")
 
@@ -43,8 +43,8 @@ ICON_SIZE = 24  # Lucide's own grid; its 2 px stroke stays 2 px
 
 
 def wanted() -> bool:
-    """True on macOS in a Dev build."""
-    return sys.platform == "darwin" and build_flavor.is_dev_build()
+    """True on macOS in a Dev build launched with PYRECON_MAC_UI=1."""
+    return mac_ui_enabled()
 
 
 def accentColor(palette : QPalette) -> QColor:

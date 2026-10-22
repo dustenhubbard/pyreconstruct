@@ -4,7 +4,8 @@ The macOS Dev app offers macOS's own three appearance choices, all with the
 native controls: System (stored "default") follows macOS, Light (stored
 "light") and Dark (stored "qdark") force the scheme in-process with
 QStyleHints.setColorScheme. The stable app, Windows and Linux keep Default
-and Dark (qdarkstyle), and read "light" as "default".
+and Dark (qdarkstyle), and read "light" as "default". The tests set
+PYRECON_MAC_UI=1; test_mac_ui_hidden.py covers the switch unset.
 """
 import sys
 
@@ -54,6 +55,7 @@ def build(monkeypatch, restore_look):
 
     monkeypatch.setattr(appearance, "setColorScheme", record)
     monkeypatch.delenv("PYRECON_APP_NAME", raising=False)
+    monkeypatch.setenv("PYRECON_MAC_UI", "1")
 
     def pick(platform, dev):
         monkeypatch.setattr(sys, "platform", platform)

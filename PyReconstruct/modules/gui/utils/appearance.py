@@ -1,7 +1,8 @@
 """The theme choices, and System, Light and Dark on macOS Dev builds.
 
 The stored theme keeps its old values: "default" and "qdark". The macOS Dev
-app offers three choices, like macOS's own Appearance setting:
+app launched with PYRECON_MAC_UI=1 (constants/mac_ui.py) offers three
+choices, like macOS's own Appearance setting:
 
 * System, stored "default": follows macOS light and dark, live. The native
   style's standard palette already tracks the color scheme, so this is the
@@ -19,12 +20,10 @@ The qdarkstyle sheet pads table cells, so the lists widen their columns by
 8 px under it. They ask qdarkstyleApplied(), not the stored name: native Dark
 is stored as "qdark" too and needs no padding.
 """
-import sys
-
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
-from PyReconstruct.modules.constants import build_flavor
+from PyReconstruct.modules.constants.mac_ui import mac_ui_enabled
 
 SYSTEM = "default"
 LIGHT = "light"
@@ -35,8 +34,9 @@ QDARKSTYLE_PROPERTY = "pyreconQDarkStyle"
 
 
 def native() -> bool:
-    """True in the macOS Dev app, where all three choices keep native controls."""
-    return sys.platform == "darwin" and build_flavor.is_dev_build()
+    """True in the macOS Dev app launched with PYRECON_MAC_UI=1, where all
+    three choices keep native controls."""
+    return mac_ui_enabled()
 
 
 def choices(legacy_labels=("Default", "Dark")):

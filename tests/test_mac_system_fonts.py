@@ -2,8 +2,9 @@
 
 Everywhere else the palettes, the scale bar and the field's labels keep
 "Courier New" and the selected trace button keeps its yellow frame, so those
-builds draw what they drew before. The tests set the platform and the build
-flavor themselves, so they mean the same on every CI runner.
+builds draw what they drew before. The tests set the platform, the build
+flavor and PYRECON_MAC_UI=1 themselves, so they mean the same on every CI
+runner; test_mac_ui_hidden.py covers the switch unset.
 """
 import sys
 from pathlib import Path
@@ -31,7 +32,10 @@ YELLOW = (255, 255, 0)
 
 @pytest.fixture
 def look(monkeypatch):
-    """Set the platform and the flavor: look("linux", dev=True) and so on."""
+    """Set the platform and the flavor: look("linux", dev=True) and so on.
+    The look is held behind PYRECON_MAC_UI, so the switch is on throughout."""
+    monkeypatch.setenv("PYRECON_MAC_UI", "1")
+
     def set_look(platform, dev):
         monkeypatch.setattr(sys, "platform", platform)
         monkeypatch.setattr(build_flavor, "is_dev_build", lambda: dev)
