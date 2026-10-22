@@ -8,6 +8,7 @@ The tests that drive the look set the switch (test_mac_system_fonts.py,
 test_mac_appearance.py, test_mouse_palette_line_icons.py).
 """
 import sys
+from types import SimpleNamespace
 
 import pytest
 from PySide6.QtGui import QFont
@@ -17,7 +18,7 @@ from PyReconstruct.modules.backend.settings_store import (
     DictSettingsStore,
     set_default_settings_store,
 )
-from PyReconstruct.modules.constants import build_flavor
+from PyReconstruct.modules.constants import build_flavor, mac_ui
 from PyReconstruct.modules.constants.mac_ui import ENV_SWITCH, mac_ui_enabled
 from PyReconstruct.modules.gui.palette import line_icons
 from PyReconstruct.modules.gui.palette.mouse_palette import MousePalette
@@ -133,17 +134,24 @@ def _close(window, excepthook):
 
 
 def test_a_hidden_launch_leaves_the_theme_then_a_shown_one_applies_it(
-    qapp, series_jser, main_window_dialogs, mac_dev, restore_look,  # noqa: F811
+    qapp, series_jser, main_window_dialogs, restore_look,  # noqa: F811
     monkeypatch,
 ):
     """Settings a launch with the switch left (Light): a launch without it
     draws the default look, keeps "light" stored and forces no scheme; the
-    next launch with the switch set draws Light again."""
+    next launch with the switch set draws Light again.
+
+    Only the switch sees macOS here: the rest of a launch reads the real
+    platform, so its file handling stays the runner's own."""
     from PySide6.QtCore import QSettings
 
     from PyReconstruct.modules.gui.dialog.whats_new import current_version_str
     from PyReconstruct.modules.gui.main.first_launch import WHATSNEW_KEY
 
+    monkeypatch.delenv(ENV_SWITCH, raising=False)
+    monkeypatch.delenv("PYRECON_APP_NAME", raising=False)
+    monkeypatch.setattr(mac_ui, "sys", SimpleNamespace(platform="darwin"))
+    monkeypatch.setattr(build_flavor, "running_version", lambda: DEV)
     asked = []
     monkeypatch.setattr(appearance, "setColorScheme", asked.append)
     QSettings("KHLab", "PyReconstruct").setValue(WHATSNEW_KEY, current_version_str())
