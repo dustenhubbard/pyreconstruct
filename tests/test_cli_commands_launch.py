@@ -331,10 +331,24 @@ def test_a_bashrc_a_login_bash_skips_does_not_count(mac):
 
 
 @posix_only
-def test_a_comment_that_names_local_bin_does_not_count(mac):
-    (mac["home"] / ".zshrc").write_text("# someday: ~/.local/bin\n")
-    ensure(mac)
-    assert C.PROFILE_TAG in (mac["home"] / ".zprofile").read_text()
+@pytest.mark.parametrize("shell,name", [("zsh", ".zshrc"), ("bash", ".bash_profile")])
+@pytest.mark.parametrize("line", [
+    "# someday: ~/.local/bin",
+    "   # someday: ~/.local/bin",
+    "export EDITOR=vi # someday add ~/.local/bin",
+    "export EDITOR=vi\t# ~/.local/bin",
+])
+def test_a_comment_that_names_local_bin_does_not_count(mac, shell, name, line):
+    mac["home"].mkdir(exist_ok=True)
+    (mac["home"] / name).write_text(line + "\n")
+    ensure(mac, shell=shell)
+    target = ".zprofile" if shell == "zsh" else ".bash_profile"
+    assert C.PROFILE_TAG in (mac["home"] / target).read_text()
+
+
+def test_a_hash_inside_a_word_is_not_a_comment():
+    assert C._without_comment('p=a#b:$HOME/.local/bin') == 'p=a#b:$HOME/.local/bin'
+    assert C._without_comment('x=1 # ~/.local/bin') == 'x=1 '
 
 
 @posix_only

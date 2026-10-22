@@ -217,6 +217,15 @@ def shell_profiles(shell, home, env=None):
     return None
 
 
+def _without_comment(line):
+    """A shell line up to its comment: a ``#`` at the start of the line or
+    after a space or tab. A ``#`` inside a word (``$#``, ``a#b``) is kept."""
+    for i, ch in enumerate(line):
+        if ch == "#" and (i == 0 or line[i - 1] in " \t"):
+            return line[:i]
+    return line
+
+
 def macos_add_to_path(home=None, shell=None, env=None):
     """Put ~/.local/bin on PATH in the login shell's startup file, unless a
     startup file that shell reads already names it outside a comment. True
@@ -231,7 +240,7 @@ def macos_add_to_path(home=None, shell=None, env=None):
             lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
             continue
-        if any(".local/bin" in line and not line.lstrip().startswith("#") for line in lines):
+        if any(".local/bin" in _without_comment(line) for line in lines):
             return False
     text = ""
     try:
