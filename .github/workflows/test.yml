@@ -350,7 +350,11 @@ jobs:
           fi
 
   test:
-    runs-on: ubuntu-latest
+    # A fixed image, not ubuntu-latest: the Linux screenshot baselines record
+    # the system FreeType that drew them (2.14.2 on 26.04, 2.13.2 on 24.04),
+    # and ubuntu-latest moves between the two over several weeks from
+    # Oct 19, 2026. Moving to a new image means accepting its visual-diffs.
+    runs-on: ubuntu-26.04
     # The suite is no longer seconds: green runs from Oct 3 to 7, 2026 took a
     # median of 16 minutes and up to 24.4 on a loaded runner, and a 25-minute
     # cap canceled jobs that had passed every test. 40 covers the slowest
@@ -374,7 +378,7 @@ jobs:
 
       - name: Install headless Qt system libs
         # PySide6 6.5 needs these even under the offscreen platform. libglib2.0-0t64,
-        # libX11, libfreetype6 and zlib are already present on the ubuntu-latest image.
+        # libX11, libfreetype6 and zlib are already present on the runner image.
         # PNG export draws with QtSvg, so no Cairo is needed.
         #
         # apt-get can hang rather than fail. On Oct 7, 2026 three jobs sat in
@@ -487,7 +491,7 @@ jobs:
         include:
           - python: "3.11"
             fonts: fonts-noto-core
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04   # the image `test` pins, for its screenshot baselines
     timeout-minutes: 40   # the suite's run time plus an apt retry, as in `test`
     env:
       UV_PYTHON: ${{ matrix.python }}
