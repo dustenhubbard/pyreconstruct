@@ -323,6 +323,21 @@ def test_bash_with_no_startup_file_gets_a_bash_profile(mac):
 
 
 @posix_only
+def test_a_bashrc_a_login_bash_skips_does_not_count(mac):
+    mac["home"].mkdir(exist_ok=True)
+    (mac["home"] / ".bashrc").write_text('export PATH="$HOME/.local/bin:$PATH"\n')
+    ensure(mac, shell="bash")
+    assert C.PROFILE_TAG in (mac["home"] / ".bash_profile").read_text()
+
+
+@posix_only
+def test_a_comment_that_names_local_bin_does_not_count(mac):
+    (mac["home"] / ".zshrc").write_text("# someday: ~/.local/bin\n")
+    ensure(mac)
+    assert C.PROFILE_TAG in (mac["home"] / ".zprofile").read_text()
+
+
+@posix_only
 def test_another_shell_gets_links_but_no_startup_line(mac):
     assert ensure(mac, shell="fish")
     assert link_to(mac, "pyrecon") == str(mac["bin"] / "pyrecon")
@@ -350,7 +365,20 @@ def test_a_moved_app_gets_its_links_back(mac, tmp_path):
     assert ensure(mac)
     assert link_to(mac, "pyrecon") == str(mac["bin"] / "pyrecon")
     assert link_to(mac, "pyreconstruct") == str(mac["bin"] / "pyreconstruct")
-    assert not list(mac["links"].glob("*.pyrecon-tmp"))
+    assert sorted(p.name for p in mac["links"].iterdir()) == ["pyrecon", "pyreconstruct"]
+
+
+@posix_only
+def test_a_moved_link_fix_leaves_a_user_file_with_the_old_temp_name(mac, tmp_path):
+    mac["links"].mkdir(parents=True)
+    old = tmp_path / "gone" / "PyReconstruct.app" / "Contents" / "Resources" / "bin"
+    os.symlink(old / "pyrecon", mac["links"] / "pyrecon")
+    (mac["links"] / "pyrecon.pyrecon-tmp").write_text("mine\n")
+    ensure(mac)
+    assert link_to(mac, "pyrecon") == str(mac["bin"] / "pyrecon")
+    assert (mac["links"] / "pyrecon.pyrecon-tmp").read_text() == "mine\n"
+    assert sorted(p.name for p in mac["links"].iterdir()) == [
+        "pyrecon", "pyrecon.pyrecon-tmp", "pyreconstruct"]
 
 
 @posix_only

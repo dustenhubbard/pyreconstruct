@@ -174,11 +174,15 @@ def macos_make_links(fixes):
             else:
                 if not os.path.islink(link) or os.readlink(link) != current:
                     continue
-                tmp = f"{link}.pyrecon-tmp"
-                if os.path.lexists(tmp):
-                    os.remove(tmp)
+                # a fresh name: symlink() refuses one that exists, so no
+                # file of the user's is ever replaced or removed here
+                tmp = f"{link}.pyrecon-{os.getpid()}-{os.urandom(4).hex()}"
                 os.symlink(want, tmp)
-                os.replace(tmp, link)
+                try:
+                    os.replace(tmp, link)
+                except OSError:
+                    os.remove(tmp)
+                    raise
             made += 1
         except OSError as e:
             log_problem(f"terminal commands: {link}: {e!r}")
@@ -206,15 +210,17 @@ def shell_profiles(shell, home, env=None):
         look = [zdot / n for n in (".zshenv", ".zprofile", ".zshrc", ".zlogin")]
         return look, zdot / ".zprofile"
     if shell == "bash":
-        look = [home / n for n in (".bash_profile", ".bash_login", ".profile", ".bashrc")]
-        first = next((f for f in look[:3] if f.exists()), look[0])  # what a login bash reads
-        return look, first
+        # a login bash reads only the first of these that exists
+        names = (".bash_profile", ".bash_login", ".profile")
+        first = next((home / n for n in names if (home / n).exists()), home / names[0])
+        return [first], first
     return None
 
 
 def macos_add_to_path(home=None, shell=None, env=None):
-    """Put ~/.local/bin on PATH in the login shell's startup file, unless one
-    of its startup files already names it. True when a line was added."""
+    """Put ~/.local/bin on PATH in the login shell's startup file, unless a
+    startup file that shell reads already names it outside a comment. True
+    when a line was added."""
     home = Path(home if home is not None else Path.home())
     found = shell_profiles(shell if shell is not None else login_shell(), home, env)
     if found is None:
@@ -222,10 +228,11 @@ def macos_add_to_path(home=None, shell=None, env=None):
     look, target = found
     for f in look:
         try:
-            if ".local/bin" in f.read_text(encoding="utf-8", errors="replace"):
-                return False
+            lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
-            pass
+            continue
+        if any(".local/bin" in line and not line.lstrip().startswith("#") for line in lines):
+            return False
     text = ""
     try:
         text = target.read_text(encoding="utf-8", errors="replace")
