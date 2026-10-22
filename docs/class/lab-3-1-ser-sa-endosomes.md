@@ -107,6 +107,9 @@ To learn to identify these spine resources, you are assigned **5** additional sp
 - **d03p40**
 - **d03p42**
 
+!!! warning "Note for the teaching team"
+    In the class series, the SER stamp d03sern44 (group "SER, SA, Endo") sits inside spine d03sp42 (sections 165-169), one of the five assigned spines. Students would see one answer before they start, and the name points to spine 44, not 42. Check the class series and delete this stamp, or move it to a spine that is not assigned, before the series goes to students.
+
 You will search in these spines for SER, SA, and endosomes. These spines have already been fully traced for you (including their c/cfa-traces).
 
 ## Stamp spine SER and SA
