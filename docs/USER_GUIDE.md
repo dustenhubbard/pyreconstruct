@@ -13,10 +13,7 @@ The University of Texas at Austin) and the in-app **Help ▸ Shortcuts list**.
 
 > **About screenshots.** The screenshots show PyReconstruct on macOS with a small
 > test series. A script in the source tree (`dev/docs_media/capture/capture.py`)
-> shoots them all again when PyReconstruct changes. Places still waiting for one are
-> marked like this:
->
-> > 📸 *Screenshot: short description of what to capture.*
+> shoots the app screenshots again when PyReconstruct changes.
 >
 > Contributions of screenshots are welcome. See [CONTRIBUTING.md](https://github.com/dustenhubbard/PyReconstruct/blob/main/CONTRIBUTING.md).
 
@@ -79,7 +76,7 @@ versions are on the
   xattr -dr com.apple.quarantine /Applications/PyReconstruct.app
   ```
 
-> 📸 *Screenshot: the macOS `.dmg` window showing the app and the Applications drop target.*
+![The PyReconstruct installer window on macOS: the PyReconstruct app icon on the left, an arrow, and the Applications folder shortcut on the right.](assets/images/user-guide/01-macos-dmg-window.png)
 
 Both macOS builds are native:
 [`PyReconstruct-1.25.0-macOS-arm64.dmg`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.25.0/PyReconstruct-1.25.0-macOS-arm64.dmg) for

@@ -145,6 +145,24 @@ def test_guide_replaces_old_images_and_drops_stale_ones(capture, tmp_path):
     assert (guide / "notes.txt").read_text() == "not an image"
 
 
+def test_guide_keeps_the_images_this_script_cannot_shoot(capture, tmp_path):
+    out, guide = tmp_path / "out", tmp_path / "guide"
+    guide.mkdir()
+    for name in capture.NOT_CAPTURED:
+        (guide / name).write_bytes(b"by hand")
+    shots = _frames(out, ["04-welcome-series.png"])
+
+    capture.copy_to_guide(out, shots, guide)
+
+    for name in capture.NOT_CAPTURED:
+        assert (guide / name).read_bytes() == b"by hand"
+
+
+def test_every_image_not_captured_is_in_the_guide(capture):
+    for name in capture.NOT_CAPTURED:
+        assert (capture.GUIDE_IMAGES / name).is_file()
+
+
 # --- tool shortcuts ---------------------------------------------------------
 
 

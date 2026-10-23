@@ -90,6 +90,8 @@ GUIDE_IMAGES = REPO / "docs" / "assets" / "images" / "user-guide"
 FLOW_ONLY = {"04-file-menu", "04-file-menu-open-series", "05-next-section",
              "06-closed-trace-selected", "06-closed-trace-drawn-plain", "06-flag-placed",
              "09-lists-menu", "09-lists-menu-object-list", "09-object-list-opened"}
+# Guide images that are not of the app, so this script cannot shoot them; --guide leaves them.
+NOT_CAPTURED = {"01-macos-dmg-window.png"}
 
 REAL_DOMAIN = "com.khlab.PyReconstruct"
 REAL_PREFS = Path.home() / "Library" / "Preferences"
@@ -1171,13 +1173,13 @@ def copy_to_guide(out, shots, guide=GUIDE_IMAGES):
     """Replace the guide's images with this run's, leaving out the flow-only frames.
 
     A PNG in `guide` that this run did not make is removed, so a renamed shot
-    leaves no stale copy; other files there are left alone. Returns the names
-    copied.
+    leaves no stale copy; other files there, and the NOT_CAPTURED images, are
+    left alone. Returns the names copied.
     """
     guide.mkdir(parents=True, exist_ok=True)
     keep = sorted(s["file"] for s in shots if Path(s["file"]).stem not in FLOW_ONLY)
     for old in guide.glob("*.png"):
-        if old.name not in keep:
+        if old.name not in keep and old.name not in NOT_CAPTURED:
             old.unlink()
     for name in keep:
         shutil.copyfile(out / name, guide / name)
