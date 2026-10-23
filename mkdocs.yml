@@ -1,7 +1,6 @@
 site_name: PyReconstruct
 site_description: >-
-  Tracing, annotation, and 3D reconstruction for serial-section and volume
-  electron microscopy.
+  Annotation and 3D reconstruction for volume electron microscopy.
 site_url: https://pyreconstruct.org/
 repo_url: https://github.com/dustenhubbard/PyReconstruct
 repo_name: dustenhubbard/PyReconstruct
@@ -15,7 +14,7 @@ not_in_nav: |
 theme:
   name: material
   custom_dir: docs/overrides
-  logo: assets/images/logo.svg
+  logo: assets/images/glass-stack-header.png
   favicon: assets/images/favicon.png
   font: false
   icon:
@@ -27,19 +26,29 @@ theme:
     - navigation.tabs
     - search.suggest
     - content.code.copy
+  # Follow the visitor's system theme. The toggle steps through system,
+  # light and dark, and the browser remembers the choice.
   palette:
-    - scheme: slate
+    - media: "(prefers-color-scheme)"
       primary: custom
       accent: custom
       toggle:
-        icon: material/weather-sunny
+        icon: material/brightness-auto
         name: Switch to light mode
-    - scheme: default
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
       primary: custom
       accent: custom
       toggle:
         icon: material/weather-night
         name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to system theme
 
 plugins:
   - search
