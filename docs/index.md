@@ -9,11 +9,11 @@ template: home.html
 <div class="pr-hero" markdown>
 <div class="pr-hero-copy" markdown>
 
-<p class="pr-eyebrow">OPEN SOURCE · ELECTRON MICROSCOPY</p>
+<p class="pr-eyebrow">Serial-section · Volume EM</p>
 
 # PyReconstruct
 
-An open-source desktop application for tracing, annotating, and 3D reconstruction of serial-section and volume electron microscopy (EM) data.
+Annotation and 3D reconstruction for volume electron microscopy.
 { .pr-lead }
 
 <div class="pr-actions" markdown>
@@ -26,8 +26,8 @@ An open-source desktop application for tracing, annotating, and 3D reconstructio
 <p class="pr-platforms">Windows, macOS & Linux <span aria-hidden="true">/</span> Free and open source</p>
 
 </div>
-<div class="pr-hero-visual" role="img" aria-label="Electron microscopy image with colorful segmented structures, from the PyReconstruct welcome artwork">
-  <div class="pr-visual-label"><span class="pr-status-dot"></span> ELECTRON MICROSCOPY / SEGMENTATION</div>
+<div class="pr-hero-visual">
+  <img class="pr-hero-mark" src="assets/images/hero-mark.svg" alt="The PyReconstruct mark: three stacked serial sections, the top one segmented into colored cells." width="384" height="384" decoding="async" fetchpriority="high">
 </div>
 </div>
 
