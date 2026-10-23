@@ -95,6 +95,7 @@
   --pr-muted: #6b6b74;
   --pr-link: #0369a1;
   --pr-link-hover: #075985;
+  --pr-focus: #0f766e;
 }
 
 /* Dark scheme (the default): graphite page, light text, links in sky. */
@@ -153,6 +154,7 @@
   --pr-muted: #8b8b95;
   --pr-link: var(--pr-sky);
   --pr-link-hover: #7dd3fc;
+  --pr-focus: var(--pr-teal);
 }
 
 html { scroll-padding-top: 7rem; }
@@ -277,7 +279,7 @@ body { -webkit-font-smoothing: antialiased; }
 .md-top:hover { background: var(--pr-surface); color: var(--md-default-fg-color); }
 
 a:focus-visible, button:focus-visible, input:focus-visible, label[tabindex]:focus-visible {
-  outline: 3px solid var(--pr-teal);
+  outline: 3px solid var(--pr-focus);
   outline-offset: 3px;
 }
 
