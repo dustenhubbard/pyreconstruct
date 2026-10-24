@@ -4,7 +4,8 @@
 
 The video is in section 11, "Generating a 3D object". It shows the task the
 section describes in words: open the Object list from the Lists menu,
-right-click the star, choose 3D > Add to scene, and the 3D scene opens.
+select the objects, right-click them, choose 3D > Add to scene, and the 3D
+scene opens.
 
 What this makes, in <folder>:
 
@@ -15,14 +16,15 @@ What this makes, in <folder>:
   * capture-verification.json, the size and sha256 of every file, the pinned inputs,
     and the settings tripwire read before and after the run.
 
-How it shoots, and what is pinned, is capture.py's: the same fixture series,
-theme, username, isolated settings and tripwire, and QWidget.grab() of the
-live window. Two things differ. The main window is 1920 x 1080 logical
+How it shoots, and what is pinned, is capture.py's: the theme, username,
+isolated settings and tripwire, and QWidget.grab() of the live window. Three
+things differ. The series is neurites.py's, a dendrite with a spine, an axon
+and a glial process, written fresh for each run. The main window is 1920 x 1080 logical
 pixels, so a frame is 3840 x 2160 on a 2x screen, the size the video tool
 zooms into. And the last frame puts the 3D scene window over the main
 window, the way the two sit on screen, since one grab holds one window.
 
-Fixture series only. No lab data, no file dialog, no recent-files list.
+Made-up data only. No lab data, no file dialog, no recent-files list.
 """
 
 import argparse
@@ -36,9 +38,17 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 STEPS_TEMPLATE = HERE / "walkthrough_3d.steps.json"
 
-spec = importlib.util.spec_from_file_location("docs_capture", HERE / "capture.py")
-capture = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(capture)
+
+
+def _load(name, file):
+    spec = importlib.util.spec_from_file_location(name, HERE / file)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+capture = _load("docs_capture", "capture.py")
+neurites = _load("docs_neurites", "neurites.py")
 
 # logical pixels; 3840 x 2160 native at 2x. Frameless, as in capture.py, so
 # macOS lets it be larger than the screen.
@@ -49,7 +59,9 @@ FRAME_SIZE = (3840, 2160)
 SCENE_SIZE = (1100, 720)
 SCENE_AT = (1060, 300)
 SHADOW = 36  # native pixels of soft shadow around the scene window
-OBJECT = "star"
+# the Object list's rows, in its order; the video selects them all
+OBJECTS = ["a01", "d01", "d01s01", "g01"]
+RIGHT_CLICK = "d01"
 VIEW_MARGIN = 0.12  # of the image, on each side
 
 FRAMES = {
@@ -57,6 +69,8 @@ FRAMES = {
     "lists": "02-lists-menu.png",
     "lists-row": "02-lists-menu-object-list.png",
     "list": "03-object-list.png",
+    "list-first": "03-object-list-first-row.png",
+    "list-all": "03-object-list-all-rows.png",
     "menu": "04-object-menu.png",
     "menu-3d": "05-object-menu-3d.png",
     "menu-add": "05-object-menu-3d-add-to-scene.png",
@@ -140,15 +154,10 @@ def shoot(out, app):
         if not image.save(str(out / FRAMES[key]), "PNG"):
             sys.exit(f"Could not write {out / FRAMES[key]}")
 
-    # the fixture, copied as capture.py copies it
     series_dir = Path(tempfile.mkdtemp(prefix="pyrecon-docs-series-"))
-    data = json.loads((capture.FIXTURE_DIR / capture.FIXTURE).read_text())
-    data["series"]["code"] = capture.SERIES_CODE
-    (series_dir / capture.FIXTURE).write_text(json.dumps(data))
-    for image in capture.FIXTURE_DIR.glob("shapes_*.tif"):
-        shutil.copy(image, series_dir / image.name)
+    jser = neurites.write_series(series_dir)
 
-    window = capture.build_window(app, str(series_dir / capture.FIXTURE))
+    window = capture.build_window(app, str(jser))
     capture.check_no_roi(window.mouse_palette.mode_buttons)
     # the saved view suits capture.py's smaller window; here the image would
     # sit small in a wide black field, so the view is fitted to it, with a
@@ -179,24 +188,32 @@ def shoot(out, app):
     capture.settle(app, 0.3)
     save(capture.grab(window), "list")
 
-    # right-click the object's row: the row is selected, the menu opens there
+    # click the first row, Shift-click the last, right-click inside the selection
     table = window.field.table_manager.tables["object"][-1]
     view, model = table.table, table.model
-    row = next((r for r in range(model.rowCount()) if model.nameAt(r) == OBJECT), None)
-    if row is None:
-        sys.exit(f"The Object list has no {OBJECT!r} row.")
-    cell = view.visualRect(model.index(row, 0))
-    click = view.viewport().mapTo(window, cell.center())
-    star_row = [round(click.x() * capture.EXPECTED_DPR), round(click.y() * capture.EXPECTED_DPR)]
-    view.setFocus()  # a right-click focuses the list: its selection draws blue
-    view.selectRow(row)
+    names = [model.nameAt(r) for r in range(model.rowCount())]
+    if names != OBJECTS:
+        sys.exit(f"The Object list shows {names}, not {OBJECTS}.")
+    rows = {}
+    for r, name in enumerate(names):
+        rows[name] = view.viewport().mapTo(window, view.visualRect(model.index(r, 0)).center())
+
+    def native(point):
+        return [round(point.x() * capture.EXPECTED_DPR), round(point.y() * capture.EXPECTED_DPR)]
+
+    view.setFocus()  # a click focuses the list: its selection draws blue
+    view.selectRow(0)
     capture.settle(app, 0.3)
-    if table.getSelected() != [OBJECT]:
-        sys.exit(f"Selecting the {OBJECT!r} row selected {table.getSelected()}.")
+    save(capture.grab(window), "list-first")
+    view.selectAll()
+    capture.settle(app, 0.3)
+    if table.getSelected() != OBJECTS:
+        sys.exit(f"Selecting every row selected {table.getSelected()}.")
+    save(capture.grab(window), "list-all")
 
     table.syncVisibilityActions()
     context = table.context_menu
-    at = window.mapToGlobal(click)
+    at = window.mapToGlobal(rows[RIGHT_CLICK])
     save(grab_with_menus(app, window, [(context, at, None)]), "menu")
     three_d = table.menu_3D
     three_d_row = row_center(context, three_d.menuAction(), window)
@@ -217,7 +234,7 @@ def shoot(out, app):
 
     # the click itself. The row's action finds its names through the focused
     # list, which a scripted run cannot count on, so this makes the call the
-    # action ends in, on the selected row.
+    # action ends in, on the selected rows.
     window.activateWindow()
     capture.settle(app, 0.3)
     window.addTo3D(table.getSelected())
@@ -243,7 +260,7 @@ def shoot(out, app):
     capture.settle(app, 1.5)
     scene_image = capture.grab_scene(app, scene, viewer)
     # behind it, the main window as it is after the click: menus closed,
-    # the star still selected
+    # the rows still selected
     window_image = capture.grab(window, check_active=False)
     save(with_window_over(window_image, scene_image, SCENE_AT), "scene")
     scene.close()
@@ -255,7 +272,9 @@ def shoot(out, app):
     return {
         "lists_menu": lists_title,
         "object_list_row": object_row,
-        "star_row": star_row,
+        "first_row": native(rows[OBJECTS[0]]),
+        "last_row": native(rows[OBJECTS[-1]]),
+        "right_click_row": native(rows[RIGHT_CLICK]),
         "menu_3d_row": three_d_row,
         "add_to_scene_row": add_row,
         "scene_window": [SCENE_AT[0] + scene_image.width() // 2,
@@ -284,8 +303,12 @@ def main():
     parked = QCursor.pos()
     from PyReconstruct.modules.gui.utils import MenuShortcutSpacingStyle
     app.setStyle(MenuShortcutSpacingStyle())
-    if app.styleHints().colorScheme() == Qt.ColorScheme.Dark:
-        sys.exit("macOS is in dark mode; the pinned theme is the light default. Switch and rerun.")
+    # the pinned theme is the light default. On a Mac set to Auto, evening
+    # turns it dark, so the app asks for light for itself; macOS is not changed.
+    app.styleHints().setColorScheme(Qt.ColorScheme.Light)
+    app.processEvents()
+    if app.styleHints().colorScheme() != Qt.ColorScheme.Light:
+        sys.exit("The app would not take the light theme. Switch macOS to Light and rerun.")
 
     watchdog = capture.start_watchdog(app)
     targets = shoot(out, app)
@@ -306,7 +329,7 @@ def main():
         "fork_commit": commit,
         "app_source_modified": dirty,
         "method": "QWidget.grab() of the live Cocoa windows; no screen capture",
-        "pinned": {"fixture": f"dev/assets/checker/files/{capture.FIXTURE}",
+        "pinned": {"series": "dev/docs_media/capture/neurites.py",
                    "window_logical": list(capture.WINDOW_SIZE),
                    "scene_window_logical": list(SCENE_SIZE), "scene_window_at_native": list(SCENE_AT),
                    "device_pixel_ratio": capture.EXPECTED_DPR, "theme": "default (light)",

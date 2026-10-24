@@ -1,16 +1,111 @@
 {
-  "note": "Step list for the walkthrough-video tool's draft command. walkthrough_3d.py fills in size, images and the measured targets and writes the full steps.json beside the frames.",
-  "camera_start": {"x": 1480, "y": 830, "zoom": 1.3},
+  "note": "Step list for the walkthrough-video tool's draft command. walkthrough_3d.py fills in size, images and the measured targets and writes the full steps.json beside the frames. The click on last_row is a Shift-click, and the one on right_click_row a right-click; the written steps beside the video say so.",
+  "camera_start": {
+    "x": 1480,
+    "y": 830,
+    "zoom": 1.3
+  },
   "steps": [
-    {"image": "open", "click": "lists_menu", "camera": {"x": 1200, "y": 675, "zoom": 1.6}},
-    {"image": "lists", "point": "object_list_row", "move": 0.9, "camera": {"x": 1200, "y": 675, "zoom": 1.6}},
-    {"image": "lists-row", "click": "object_list_row", "camera": {"x": 1200, "y": 675, "zoom": 1.6}},
-    {"image": "list", "click": "star_row", "fade": true, "camera": {"x": 1200, "y": 675, "zoom": 1.6}},
-    {"image": "menu", "point": "menu_3d_row", "fade": true, "move": 1.0, "camera": {"x": 1200, "y": 675, "zoom": 1.6}},
-    {"image": "menu-3d", "point": "add_to_scene_row", "move": 0.9, "camera": {"x": 1200, "y": 675, "zoom": 1.6}},
-    {"image": "menu-add", "click": "add_to_scene_row", "after": "scene", "after_fade": 0.3,
-     "end_dwell": 0.6, "camera": {"x": 1200, "y": 675, "zoom": 1.6}}
+    {
+      "image": "open",
+      "click": "lists_menu",
+      "camera": {
+        "x": 1200,
+        "y": 675,
+        "zoom": 1.6
+      }
+    },
+    {
+      "image": "lists",
+      "point": "object_list_row",
+      "move": 0.9,
+      "camera": {
+        "x": 1200,
+        "y": 675,
+        "zoom": 1.6
+      }
+    },
+    {
+      "image": "lists-row",
+      "click": "object_list_row",
+      "camera": {
+        "x": 1200,
+        "y": 675,
+        "zoom": 1.6
+      }
+    },
+    {
+      "image": "list",
+      "click": "first_row",
+      "fade": true,
+      "camera": {
+        "x": 1200,
+        "y": 675,
+        "zoom": 1.6
+      }
+    },
+    {
+      "image": "list-first",
+      "click": "last_row",
+      "move": 0.8,
+      "dwell": 0.3,
+      "camera": {
+        "x": 1200,
+        "y": 675,
+        "zoom": 1.6
+      }
+    },
+    {
+      "image": "list-all",
+      "click": "right_click_row",
+      "move": 0.7,
+      "camera": {
+        "x": 1200,
+        "y": 675,
+        "zoom": 1.6
+      }
+    },
+    {
+      "image": "menu",
+      "point": "menu_3d_row",
+      "fade": true,
+      "move": 1.0,
+      "camera": {
+        "x": 1200,
+        "y": 675,
+        "zoom": 1.6
+      }
+    },
+    {
+      "image": "menu-3d",
+      "point": "add_to_scene_row",
+      "move": 0.9,
+      "camera": {
+        "x": 1200,
+        "y": 675,
+        "zoom": 1.6
+      }
+    },
+    {
+      "image": "menu-add",
+      "click": "add_to_scene_row",
+      "after": "scene",
+      "after_fade": 0.3,
+      "end_dwell": 0.6,
+      "camera": {
+        "x": 1200,
+        "y": 675,
+        "zoom": 1.6
+      }
+    }
   ],
-  "camera_end": {"x": 2160, "y": 1050, "zoom": 1.25},
-  "timing": {"outro": 1.8, "tail": 2.4}
+  "camera_end": {
+    "x": 2160,
+    "y": 1050,
+    "zoom": 1.25
+  },
+  "timing": {
+    "outro": 1.8,
+    "tail": 2.4
+  }
 }
