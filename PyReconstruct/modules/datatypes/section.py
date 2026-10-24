@@ -699,13 +699,12 @@ class Section():
         ## the adoption that followed would report every row in the file as
         ## clashing with itself.
         issuer = getattr(series, "trace_id_issuer", None)
+        digest = sectionFileDigest(raw) if issuer is not None else None
         ## Before both: a file this session wrote gets back the ids its rows
         ## were saved with (`TraceIDIssuer.recordSaved`), so a save and a load
         ## in between do not move any trace's id. Every row is in it or none.
         restored_ids = (
-            issuer.restoreForSection(
-                n, sectionFileDigest(raw), section_data["contours"]
-            )
+            issuer.restoreForSection(n, digest, section_data["contours"])
             if issuer is not None else None
         )
         del raw
@@ -728,7 +727,8 @@ class Section():
             )
             derived_ids = (
                 issuer.deriveForSection(
-                    n, section_data["contours"], skip=adopted_ids
+                    n, section_data["contours"], skip=adopted_ids,
+                    digest=digest,
                 )
                 if issuer is not None else None
             )
