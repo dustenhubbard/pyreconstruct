@@ -602,14 +602,16 @@ def draft(spec):
     loop = spec.get("loop")
     if loop:
         # a clip that plays on a loop: the pointer fades in at the start, and
-        # once it has faded out the first screen fades back, so the loop has
-        # no jump
+        # once it has faded out and every fade has finished (a stroke ends
+        # with the fade of the screen after it), the first screen fades
+        # back, so the loop has no jump
         scene["cursor_fade_in"] = 0
         gone = scene["cursor_fade_out"] + {**STYLE, **spec.get("style", {})}["cursor_fade"]
-        duration = max(duration, math.ceil((gone + d["tail"]) * 10) / 10)
+        settled = max([gone] + [st["time"] + st.get("fade", 0) for st in states])
+        duration = max(duration, math.ceil((settled + d["tail"]) * 10) / 10)
         if states[-1]["image"] != states[0]["image"]:
             fade = d["loop_fade"] if loop is True else loop
-            at = round(gone + 0.1, 3)
+            at = round(settled + 0.1, 3)
             states.append({"time": at, "image": states[0]["image"], "fade": fade})
             duration = max(duration, math.ceil((at + fade + d["tail"]) * 10) / 10)
     key(duration, end)

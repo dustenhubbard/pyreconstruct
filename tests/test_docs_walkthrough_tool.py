@@ -280,6 +280,26 @@ def test_a_loop_whose_camera_moves_ends_on_its_opening_frame(tool, tmp_path):
     assert abs(first - last).max() <= 2
 
 
+@pytest.mark.parametrize("back_to", ["a", "c"])
+def test_a_loop_ends_after_a_long_last_fade_on_its_opening_frame(tool, tmp_path, back_to):
+    for name, color in (("a", (200, 60, 60)), ("b", (60, 200, 60)), ("c", (60, 60, 200))):
+        Image.new("RGB", (160, 90), color).save(tmp_path / f"{name}.png")
+    spec = steps()
+    spec["steps"][-1].update(after=back_to, after_fade=2.0)
+    path = tmp_path / "long.json"
+    path.write_text(json.dumps(tool.draft({**spec, "loop": True,
+                                           "timing": {"outro": 0.2, "tail": 0.3}})))
+    scene = tool.Scene(path)
+    # no fade is cut short: each screen starts only once the one before has
+    # fully shown
+    for before, after in zip(scene.states, scene.states[1:]):
+        assert after["time"] >= before["time"] + before.get("fade", 0), after
+    renderer = tool.Renderer(scene, 160)
+    first = renderer.frame(0).astype(int)
+    last = renderer.frame((tool.frame_count(scene) - 1) / scene.fps).astype(int)
+    assert abs(first - last).max() <= 2
+
+
 def test_a_loop_waits_for_a_slower_pointer_fade(tool, tmp_path):
     for name, color in (("a", (200, 60, 60)), ("b", (60, 200, 60)), ("c", (60, 60, 200))):
         Image.new("RGB", (160, 90), color).save(tmp_path / f"{name}.png")
