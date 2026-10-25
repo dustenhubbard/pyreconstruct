@@ -21,8 +21,17 @@ isolated settings and tripwire, and QWidget.grab() of the live window. Three
 things differ. The series is neurites.py's, a dendrite with a spine, an
 axon and an astroglial process, written fresh for each run. The main window
 is 1280 x 720 logical pixels, so a frame is 2560 x 1440 on a 2x screen: the
-app as a 1280 x 720 screen shows it, at Retina sharpness. And the last frame puts the 3D scene window over the main
-window, the way the two sit on screen, since one grab holds one window.
+app as a 1280 x 720 screen shows it, at Retina sharpness. And the last
+frame puts the 3D scene window over the main window, the way the two sit on
+screen, since one grab holds one window.
+
+To make the video, give steps.json to the walkthrough-video renderer:
+`walkthrough.py draft <folder>/steps.json`, then
+`walkthrough.py render <folder>/scene.json --width 2560 --crf 21 -o 11-add-to-scene.mp4`.
+The camera stays at zoom 1, so the video shows each frame pixel for pixel. The
+guide's copy is docs/assets/videos/user-guide/11-add-to-scene.mp4, and its
+poster is 01-series-open.png, saved as 11-add-to-scene-start.png beside the
+guide's other images.
 
 Made-up data only. No lab data, no file dialog, no recent-files list.
 """

@@ -90,8 +90,9 @@ GUIDE_IMAGES = REPO / "docs" / "assets" / "images" / "user-guide"
 FLOW_ONLY = {"04-file-menu", "04-file-menu-open-series", "05-next-section",
              "06-closed-trace-selected", "06-closed-trace-drawn-plain", "06-flag-placed",
              "09-lists-menu", "09-lists-menu-object-list", "09-object-list-opened"}
-# Guide images that are not of the app, so this script cannot shoot them; --guide leaves them.
-NOT_CAPTURED = {"01-macos-dmg-window.png"}
+# Guide images this script does not shoot, so --guide leaves them: the installer
+# window is not the app, and walkthrough_3d.py shoots the section 11 clip's poster.
+NOT_CAPTURED = {"01-macos-dmg-window.png", "11-add-to-scene-start.png"}
 
 REAL_DOMAIN = "com.khlab.PyReconstruct"
 REAL_PREFS = Path.home() / "Library" / "Preferences"

@@ -147,8 +147,11 @@ def trace_row(points, color):
             True, False, False, ["transparent", "selected"], []]
 
 
-def write_series(folder):
-    """Write the series into `folder`; return the path of the .jser."""
+def write_series(folder, images=True):
+    """Write the series into `folder`; return the path of the .jser.
+
+    `images` False writes the .jser alone, for a quick check of its contents.
+    """
     import numpy as np
 
     folder = Path(folder)
@@ -158,7 +161,8 @@ def write_series(folder):
     for k in range(SECTIONS):
         polygons = shapes(k)
         src = f"neurites_{k:02d}.tif"
-        draw_image(polygons, folder / src, rng)
+        if images:
+            draw_image(polygons, folder / src, rng)
         sections.append({
             "src": src, "brightness": 0, "contrast": 0, "mag": MAG, "align_locked": True,
             "tforms": {"default": [1, 0, 0, 0, 1, 0]}, "thickness": THICKNESS,
