@@ -80,7 +80,8 @@ large.
    the pointer fades in at the start, the camera returns to its opening view
    (in place of `camera_end`), and once everything else has finished (pointer,
    fades, badges, rings, camera) the first screen fades back in (0.4 s by
-   default), so the loop has no jump.
+   default), so the loop has no jump. `draft` reads `loop`; a scene written
+   by hand keeps its own duration and screens.
 4. **Draft, preview and render:**
 
    ```sh
