@@ -1,12 +1,5 @@
-"""The User Guide's section 11 walkthrough clip and the series it is shot on.
-
-dev/docs_media/capture/walkthrough_3d.py shoots the clip's frames from the real
-app on macOS, on the made-up series neurites.py writes. The shooting needs a
-Retina screen, so it is not run here; these tests cover what decides the
-frames: the series holds the four objects the clip selects, each trace is a
-closed outline, the spine is one outline where its neck shows, the series is
-the same on every run, the step list names only frames the script shoots, and
-the guide embeds the clip with its poster.
+"""The User Guide's section 11 clip: the made-up series neurites.py writes, the
+step list walkthrough_3d.py fills in, and the clip's place in the guide.
 """
 
 import importlib.util
@@ -130,31 +123,13 @@ def test_the_clip_is_2560_by_1440_and_as_long_as_its_tag():
     assert round(float(info["format"]["duration"])) == 16
 
 
-def test_a_clip_guide_refresh_keeps_this_clip(tmp_path):
-    from dev.docs_media.video import clips
-
-    guide, out = tmp_path / "guide", tmp_path / "out"
-    guide.mkdir()
-    out.mkdir()
-    (guide / CLIP.name).write_bytes(b"made by walkthrough_3d.py")
-    (guide / "old-clip.mp4").write_bytes(b"stale")
-    made = out / "04-open-series.mp4"
-    made.write_bytes(b"new")
-
-    clips.copy_to_guide([made], guide)
-
-    assert (guide / CLIP.name).read_bytes() == b"made by walkthrough_3d.py"
-    assert not (guide / "old-clip.mp4").exists()
-    assert (guide / made.name).read_bytes() == b"new"
-
-
 def test_each_clip_poster_gives_the_page_its_size():
     # clips.js sizes the video from data-width and data-height, falling back
-    # to 1120 x 760, the size of the 2240 x 1520 posters, so the page holds
-    # the right shape before the poster or the video loads
+    # to 1280 x 720, so the page holds the right shape before the poster or
+    # the video loads; every poster is a 2x still that names its size
     script = (REPO / "docs" / "javascripts" / "clips.js").read_text()
-    assert "Number(poster.dataset.width) || 1120" in script
-    assert "Number(poster.dataset.height) || 760" in script
+    assert "Number(poster.dataset.width) || 1280" in script
+    assert "Number(poster.dataset.height) || 720" in script
     figures = re.findall(r'<figure class="clip[^"]*" markdown>(.*?)</figure>', GUIDE.read_text(), re.S)
     assert figures
     for figure in figures:
@@ -162,8 +137,5 @@ def test_each_clip_poster_gives_the_page_its_size():
         with Image.open(REPO / "docs" / poster.group(1)) as image:
             width, height = image.size
         attrs = poster.group(2) or ""
-        if (width, height) == (2240, 1520):
-            assert "data-width" not in attrs, poster.group(1)
-        else:
-            assert f'data-width="{width // 2}"' in attrs, poster.group(1)
-            assert f'data-height="{height // 2}"' in attrs, poster.group(1)
+        assert f'data-width="{width // 2}"' in attrs, poster.group(1)
+        assert f'data-height="{height // 2}"' in attrs, poster.group(1)

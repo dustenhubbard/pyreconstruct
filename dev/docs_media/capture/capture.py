@@ -7,16 +7,13 @@ What this makes, in <folder>:
   * one PNG per shot in SHOTS, at the screen's native pixel density (2x on a
     Retina Mac), with labels drawn on the ones that need them;
   * contact-sheet.png, every shot on one page with its file name;
-  * targets.json, the native-pixel click and drag points of the short flows
-    the guide's clips show, for the video renderer (dev/docs_media/video/);
   * verification.json, the size and sha256 of every file, the pinned inputs,
     and the settings tripwire read before and after the run.
 
 With --guide, the shots docs/USER_GUIDE.md shows are also copied over the
 ones in docs/assets/images/user-guide/, so one command reshoots the guide.
-With --clips, the guide's clips are rendered from this run's frames into
-<folder>/clips/ (dev/docs_media/video/clips.py); with both, they replace the
-ones in docs/assets/videos/user-guide/ too.
+The guide's clips are shot by guide_clips.py and walkthrough_3d.py beside
+this script, which borrow its pinned setup.
 
 How it shoots. Each frame is `QWidget.grab()` of the live window, not a
 screen capture: it needs no Screen Recording permission, has no desktop,
@@ -41,8 +38,8 @@ on the real settings file (its digest, key count and username) is read before
 and after and written to verification.json; the run exits non-zero if it moved.
 
 To add a shot, add a block to `shoot` that calls `save`; give it a file name
-that starts with its guide section number. A frame that only a video or an
-animation uses goes in FLOW_ONLY, so --guide leaves it out of the guide.
+that starts with its guide section number. A frame the guide does not show
+goes in FLOW_ONLY, so --guide leaves it out of the guide.
 
 Fixture series only. No lab data, no file dialog, no recent-files list.
 """
@@ -85,14 +82,15 @@ BACKUP_PREVIEW_TIME = datetime.datetime(2026, 1, 15, 9, 30)
 SERIES_CODE = "shapes1"
 
 # where --guide puts the images docs/USER_GUIDE.md shows; the frames in
-# FLOW_ONLY are for the video flows, and the guide does not use them
+# FLOW_ONLY are shot, and the guide does not use them
 GUIDE_IMAGES = REPO / "docs" / "assets" / "images" / "user-guide"
-FLOW_ONLY = {"04-file-menu", "04-file-menu-open-series", "05-next-section",
-             "06-closed-trace-selected", "06-closed-trace-drawn-plain", "06-flag-placed",
-             "09-lists-menu", "09-lists-menu-object-list", "09-object-list-opened"}
+FLOW_ONLY = {"06-flag-placed"}
 # Guide images this script does not shoot, so --guide leaves them: the installer
-# window is not the app, and walkthrough_3d.py shoots the section 11 clip's poster.
-NOT_CAPTURED = {"01-macos-dmg-window.png", "11-add-to-scene-start.png"}
+# window is not the app, and the clips' posters are shot at the clips' own
+# window size by guide_clips.py and walkthrough_3d.py.
+NOT_CAPTURED = {"01-macos-dmg-window.png", "04-open-series-start.png",
+                "05-move-between-sections-start.png", "06-draw-closed-trace-start.png",
+                "09-open-object-list-start.png", "11-add-to-scene-start.png"}
 
 REAL_DOMAIN = "com.khlab.PyReconstruct"
 REAL_PREFS = Path.home() / "Library" / "Preferences"
@@ -596,8 +594,24 @@ def blob(cx, cy, rx, ry, n=48):
 # --- the shot list ----------------------------------------------------------
 
 
+def fixture_copy():
+    """The made-up test series, copied to a temporary folder; returns the folder.
+
+    Copied so the hidden working folder lands there. The series in the repo
+    has no series code, so opening it asks for one; the copy gets one, and
+    the one in the repo is left as it is.
+    """
+    series_dir = Path(tempfile.mkdtemp(prefix="pyrecon-docs-series-"))
+    data = json.loads((FIXTURE_DIR / FIXTURE).read_text())
+    data["series"]["code"] = SERIES_CODE
+    (series_dir / FIXTURE).write_text(json.dumps(data))
+    for image in FIXTURE_DIR.glob("shapes_*.tif"):
+        shutil.copy(image, series_dir / image.name)
+    return series_dir
+
+
 def shoot(out, app):
-    """Make every frame; return (shots, flows)."""
+    """Make every frame; return the shots."""
     import math
 
     from PySide6.QtCore import QRect, QSettings, Qt
@@ -626,10 +640,6 @@ def shoot(out, app):
     save(grab(window), "04-welcome-series", "4. On first launch",
          "The welcome series PyReconstruct opens with no file.")
 
-    # clip: File > Open series...
-    file_title, open_row = menubar_menu(app, window, window.filemenu, window.open_act,
-                                        "04-file-menu", "4. Opening an existing series", save)
-
     # 4. Creating a new series from images: the calibration prompt. The images
     # and the name are passed in, so no file dialog opens; Cancel ends it.
     images = sorted(str(p) for p in FIXTURE_DIR.glob("shapes_*.tif"))
@@ -638,52 +648,16 @@ def shoot(out, app):
          "The image calibration prompt (um/px, default 0.00254).")
     close_window(app, window)
 
-    # the fixture, copied so the hidden working folder lands in the temp dir
-    # The fixture has no series code, so opening it asks for one; the copy
-    # gets one, and the fixture in the repo is left as it is.
-    series_dir = Path(tempfile.mkdtemp(prefix="pyrecon-docs-series-"))
-    data = json.loads((FIXTURE_DIR / FIXTURE).read_text())
-    data["series"]["code"] = SERIES_CODE
-    (series_dir / FIXTURE).write_text(json.dumps(data))
-    for image in FIXTURE_DIR.glob("shapes_*.tif"):
-        shutil.copy(image, series_dir / image.name)
-
+    series_dir = fixture_copy()
     window = build_window(app, str(series_dir / FIXTURE))
     palette = window.mouse_palette
     field = window.field
     check_no_roi(palette.mode_buttons)
 
-    # 4. Opening an existing series; also frame 1 of both flows
+    # 4. Opening an existing series
     opened = grab(window)
     save(opened, "04-series-open", "4. Opening an existing series",
          "shapes1.jser open on section 0, Pointer tool active.")
-
-    # clip: Lists > Object list
-    lists_title, object_row = menubar_menu(app, window, window.listsmenu, window.objectlist_act,
-                                           "09-lists-menu", "9. Object list", save)
-    # what that row opens, on this clean section; the guide's own Object list
-    # shot comes later, with the trace and flag drawn below. The dock resizes
-    # the field, which rounds its view, so the view is put back after: the
-    # later shots stay as they were.
-    view = list(window.series.window)
-    window.objectlist_act.trigger()
-    settle(app, 1.0)
-    window.activateWindow()
-    settle(app, 0.3)
-    save(grab(window), "09-object-list-opened", "9. Object list",
-         "The Object list just opened from the Lists menu.")
-    from PySide6.QtWidgets import QAbstractButton, QDockWidget
-
-    dock = next(d for d in window.findChildren(QDockWidget) if d.isVisible())
-    close = dock.findChild(QAbstractButton, "qt_dockwidget_closebutton")
-    if close is None or not close.isVisible():
-        sys.exit("The Object list dock has no close button to point at.")
-    close_center = native_point(close, window)
-    field.table_manager.closeAll()
-    settle(app, 0.5)
-    window.series.window = view
-    field.generateView()
-    settle(app, 0.3)
 
     # 5. The main window, labeled
     mode_rect = union([native_rect(b, window) for b, _, _ in palette.mode_buttons.values()])
@@ -739,13 +713,9 @@ def shoot(out, app):
     save(dialog, "06-closed-trace-mode-dialog", "6. Closed Trace (C) and Open Trace (O)",
          "Right-click on the Closed Trace button: mode, shape, merge and smoothing.")
 
-    # flow A: pick Closed Trace, draw a trace
-    closed_button = palette.mode_buttons["Closed Trace"][0]
-    closed_center = native_point(closed_button, window)
-    closed_button.click()
+    # 6. Closed Trace: pick it, draw a trace
+    palette.mode_buttons["Closed Trace"][0].click()
     settle(app, 0.5)
-    save(grab(window), "06-closed-trace-selected", "6. Closed Trace (C) and Open Trace (O)",
-         "Closed Trace selected in the tool palette.")
 
     # an empty part of the field, left of center, clear of the fixture's shapes
     path = blob(field.width() * 0.30, field.height() * 0.50, 70, 52)
@@ -758,26 +728,12 @@ def shoot(out, app):
     settle(app, 0.6)
     save(grab(window), "06-closed-trace-drawn", "6. Closed Trace (C) and Open Trace (O)",
          "A closed trace just drawn with the Closed Trace tool.")
-    drag_native = [native_point(field, window, x, y) for x, y in path]
-    # the same trace unselected, the thin line the clip's live stroke cuts
-    # to before the selection fades in; then selected again, as before
-    drawn = field.section.selected_traces[0]
-    field.deselectAllTraces()
-    settle(app, 0.4)
-    save(grab(window), "06-closed-trace-drawn-plain", "6. Closed Trace (C) and Open Trace (O)",
-         "The closed trace just drawn, unselected.")
-    field.selectTrace(drawn)
-    settle(app, 0.4)
 
-    # flow B: next section with the section button, back on the Pointer
+    # section 1, with the section button, back on the Pointer
     palette.mode_buttons["Pointer"][0].click()
     settle(app, 0.3)
-    up_center = native_point(palette.up_bttn, window)
-    down_center = native_point(palette.down_bttn, window)
     palette.up_bttn.click()
     settle(app, 1.2)
-    save(grab(window), "05-next-section", "5. Moving between sections",
-         "Section 1, after the section button (or Page Up).")
 
     # 5. Theme: the Dark theme, then back to the default
     window.setTheme("qdark")
@@ -964,81 +920,7 @@ def shoot(out, app):
     close_window(app, window)
     shutil.rmtree(series_dir, ignore_errors=True)
 
-    flows = {
-        "open-series": {
-            "steps": [
-                {"frame": "04-welcome-series.png", "action": "click", "target": "file_menu"},
-                {"frame": "04-file-menu.png", "action": "move", "target": "open_series_row"},
-                {"frame": "04-file-menu-open-series.png", "action": "click",
-                 "target": "open_series_row"},
-                {"frame": "04-series-open.png", "action": "hold",
-                 "note": "the file dialog is not shot; the clip fades to the open series"},
-            ],
-        },
-        "pick-closed-trace-and-draw": {
-            "steps": [
-                {"frame": "04-series-open.png", "action": "click", "target": "closed_trace_button"},
-                {"frame": "06-closed-trace-selected.png", "action": "drag", "target": "draw_path"},
-                {"frame": "06-closed-trace-drawn-plain.png", "action": "hold"},
-                {"frame": "06-closed-trace-drawn.png", "action": "hold"},
-            ],
-        },
-        "next-section": {
-            "steps": [
-                {"frame": "04-series-open.png", "action": "click", "target": "next_section_button"},
-                {"frame": "05-next-section.png", "action": "click", "target": "previous_section_button"},
-                {"frame": "04-series-open.png", "action": "hold"},
-            ],
-        },
-        "open-object-list": {
-            "steps": [
-                {"frame": "04-series-open.png", "action": "click", "target": "lists_menu"},
-                {"frame": "09-lists-menu.png", "action": "move", "target": "object_list_row"},
-                {"frame": "09-lists-menu-object-list.png", "action": "click",
-                 "target": "object_list_row"},
-                {"frame": "09-object-list-opened.png", "action": "click",
-                 "target": "object_list_close"},
-                {"frame": "04-series-open.png", "action": "hold"},
-            ],
-        },
-    }
-    targets = {
-        "file_menu": {"center": file_title, "frame": "04-welcome-series.png"},
-        "open_series_row": {"center": open_row, "frame": "04-file-menu.png"},
-        "closed_trace_button": {"center": closed_center,
-                                "bounds": rect_list(native_rect(closed_button, window)),
-                                "frame": "04-series-open.png"},
-        "draw_path": {"points": drag_native, "frame": "06-closed-trace-selected.png",
-                      "color": list(drawn.color),
-                      "note": "left button held from the first point to the last"},
-        "next_section_button": {"center": up_center,
-                                "frame": "04-series-open.png"},
-        "previous_section_button": {"center": down_center,
-                                    "frame": "05-next-section.png"},
-        "lists_menu": {"center": lists_title, "frame": "04-series-open.png"},
-        "object_list_row": {"center": object_row, "frame": "09-lists-menu.png"},
-        "object_list_close": {"center": close_center, "frame": "09-object-list-opened.png"},
-    }
-    return shots, flows, targets
-
-
-def target_check(out, targets):
-    """The flow targets drawn on their frame, to check them by eye."""
-    from PySide6.QtCore import QPointF
-    from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPolygonF
-
-    image = QImage(str(out / "06-closed-trace-selected.png"))
-    p = QPainter(image)
-    p.setRenderHint(QPainter.Antialiasing)
-    p.setPen(QPen(QColor("#ef4444"), 5))
-    p.drawPolyline(QPolygonF([QPointF(x, y) for x, y in targets["draw_path"]["points"]]))
-    for key in ("closed_trace_button", "next_section_button", "previous_section_button"):
-        x, y = targets[key]["center"]
-        p.drawEllipse(QPointF(x, y), 22, 22)
-        p.drawLine(x - 30, y, x + 30, y)
-        p.drawLine(x, y - 30, x, y + 30)
-    p.end()
-    image.save(str(out / "target-check.png"), "PNG")
+    return shots
 
 
 def _left():
@@ -1098,8 +980,6 @@ def main():
     parser.add_argument("--out", required=True, type=Path, help="folder for the frames")
     parser.add_argument("--guide", action="store_true",
                         help=f"also replace the User Guide's images in {GUIDE_IMAGES.relative_to(REPO)}")
-    parser.add_argument("--clips", action="store_true",
-                        help="also render the User Guide's clips from these frames")
     args = parser.parse_args()
     out = args.out.expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -1123,22 +1003,13 @@ def main():
         sys.exit("macOS is in dark mode; the pinned theme is the light default. Switch and rerun.")
 
     watchdog = start_watchdog(app)
-    shots, flows, targets = shoot(out, app)
+    shots = shoot(out, app)
     watchdog.stop()
     if QCursor.pos() != parked:
         sys.exit("The pointer moved during the run, so a hover state may be in a frame. Rerun.")
     contact_sheet(out, sorted(shots, key=lambda s: s["file"]))
-    target_check(out, targets)
 
-    files = [s["file"] for s in shots] + ["contact-sheet.png", "target-check.png"]
-    (out / "targets.json").write_text(json.dumps({
-        "canvas": {"width": 2 * WINDOW_SIZE[0], "height": 2 * WINDOW_SIZE[1],
-                   "origin": "top-left", "units": "native pixels"},
-        "targets": targets,
-        "flows": flows,
-        "note": "Each frame is a still of the real window. Click and drag points are "
-                "where the script sent its events; the cursor is not in any frame.",
-    }, indent=2) + "\n")
+    files = [s["file"] for s in shots] + ["contact-sheet.png"]
 
     after = tripwire()
     commit, dirty = commit_of_tree()
@@ -1151,7 +1022,7 @@ def main():
                    "theme": "default (light); 05-dark-theme.png is the Dark theme",
                    "username": USERNAME, "settings": "empty, isolated store"},
         "files": {name: {"size": list(_png_size(out / name)), "bytes": (out / name).stat().st_size,
-                         "sha256": sha256(out / name)} for name in files + ["targets.json"]},
+                         "sha256": sha256(out / name)} for name in files},
         "shots": shots,
         "real_settings_tripwire": {"before": before, "after": after, "unchanged": before == after},
     }
@@ -1162,12 +1033,6 @@ def main():
     if args.guide:
         kept = copy_to_guide(out, shots)
         print(f"{len(kept)} images in {GUIDE_IMAGES.relative_to(REPO)}")
-    if args.clips:
-        sys.path.insert(0, str(REPO))
-        from dev.docs_media.video import clips
-
-        made = clips.build(out, guide=args.guide)
-        print(f"{len(made)} clips in {out / 'clips'}")
 
 
 def copy_to_guide(out, shots, guide=GUIDE_IMAGES):

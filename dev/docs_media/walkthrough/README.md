@@ -6,8 +6,10 @@ stills.
 The result looks like a screen recording, but nothing is recorded live, so
 there is no lag, no stray windows and nothing in the frame that was not chosen.
 
-The User Guide's section 11 clip is made with it, from the frames
-`dev/docs_media/capture/walkthrough_3d.py` shoots.
+The User Guide's clips are made with it: section 11's from the frames
+`dev/docs_media/capture/walkthrough_3d.py` shoots, and the four short clips in
+sections 4 to 9 by `dev/docs_media/capture/guide_clips.py`, which shoots,
+drafts and renders them in one run.
 
 ## Setup
 
