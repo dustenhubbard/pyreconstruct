@@ -50,8 +50,9 @@ NAME = "shapes2"
 #: How long the child may take to reach its point. It takes under a second.
 TIMEOUT = 120
 
-#: What a killed save or close can leave beside the .jser: a save's temp file,
-#: or the working folder a close moved aside. A later open removes both.
+#: What a killed save or close can leave beside the .jser: a save's temp file
+#: (a later open removes it), or the working folder a close moved aside (a
+#: retired copy that stays; nothing offers it as unsaved work).
 TEMP_NAME = re.compile(r"\.save-[0-9a-f]{6}\.tmp|\.closing-[0-9a-f]{8}")
 
 # Each point, the state the .jser must hold after the kill, and the state the

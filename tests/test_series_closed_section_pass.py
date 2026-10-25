@@ -173,7 +173,7 @@ def test_a_close_the_move_refuses_deletes_nothing(series, monkeypatch):
 def test_a_delete_that_fails_after_the_move_still_closes(series, monkeypatch):
     import os
     import shutil
-    from PyReconstruct.modules.datatypes.series import RETIRED_MARKER, SeriesClosedError
+    from PyReconstruct.modules.datatypes.series import SeriesClosedError
     hidden_dir = series.hidden_dir
     parent = os.path.dirname(hidden_dir)
     before = sorted(os.listdir(hidden_dir))
@@ -187,14 +187,40 @@ def test_a_delete_that_fails_after_the_move_still_closes(series, monkeypatch):
     assert not os.path.isdir(hidden_dir)
     aside = _closing_dirs(parent)
     assert len(aside) == 1
-    aside_dir = os.path.join(parent, aside[0])
-    # the marker that lets the next open of this series remove the folder
-    marker = os.path.join(aside_dir, RETIRED_MARKER)
-    assert sorted(os.listdir(aside_dir)) == sorted(before + [RETIRED_MARKER])
-    with open(marker, encoding="utf-8") as f:
-        assert f.read() == os.path.basename(hidden_dir)
+    # the moved folder is as it was: nothing is written into it at a close
+    assert sorted(os.listdir(os.path.join(parent, aside[0]))) == before
     with pytest.raises(SeriesClosedError):
         series.save()
+
+
+def test_a_close_writes_nothing_through_a_link_in_the_working_folder(
+    series, monkeypatch, tmp_path
+):
+    """A link inside the working folder to a file outside it: the close removes
+    the link and leaves the file as it was, bytes for bytes."""
+    import os
+    import shutil
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    document = outside / "user-document.jser"
+    document.write_bytes(b'{"kept": true}')
+    for name in (".retired", "note.txt"):
+        os.symlink(str(document), os.path.join(series.hidden_dir, name))
+    before = sorted(os.listdir(series.hidden_dir))
+
+    # once with the delete refused, once with it done
+    monkeypatch.setattr(shutil, "rmtree", lambda path, *args, **kwargs: None)
+    series.close()
+    monkeypatch.undo()
+    aside = _closing_dirs(os.path.dirname(series.hidden_dir))
+    assert len(aside) == 1
+    aside_dir = os.path.join(os.path.dirname(series.hidden_dir), aside[0])
+    assert sorted(os.listdir(aside_dir)) == before
+    assert document.read_bytes() == b'{"kept": true}'
+
+    shutil.rmtree(aside_dir)
+    assert document.read_bytes() == b'{"kept": true}'
+    assert sorted(p.name for p in outside.iterdir()) == ["user-document.jser"]
 
 
 def _closes_at_the_end(series, save_first=False, then=None):

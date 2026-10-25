@@ -550,32 +550,6 @@ def _closingDir(hidden_dir : str) -> str:
             return closing_dir
 
 
-#: The file a close writes into the folder it moved aside, holding the name of
-#: the working folder it was. The one thing that marks a folder as retired.
-RETIRED_MARKER = ".retired"
-
-
-def _markRetired(closing_dir : str, hidden_dir : str):
-    """Record inside a moved-aside folder which working folder it was.
-
-    A later open of the same series removes a marked folder the delete left
-    behind (_sweepRetiredFolders). A `.closing-<hex>` folder without the
-    marker is never taken as retired: it may be the working folder of a
-    series of that name. Best effort: the folder is about to be deleted, and
-    a marker that cannot be written only leaves it in place.
-    """
-    try:
-        # surrogateescape: on Linux a folder name can hold a byte that is not
-        # UTF-8, which Python carries as a lone surrogate
-        with open(
-            os.path.join(closing_dir, RETIRED_MARKER), "w",
-            encoding="utf-8", errors="surrogateescape",
-        ) as f:
-            f.write(os.path.basename(hidden_dir))
-    except (OSError, UnicodeError):
-        pass
-
-
 def _holdsSeriesFile(folder : str) -> bool:
     """True if `folder` is a dot folder with a `.ser` directly in it."""
     if not os.path.basename(folder).startswith("."):
@@ -831,41 +805,6 @@ def _sweepStaleSaveTemps(*folders):
                         pass  # locked, vanished, or otherwise inaccessible
         except OSError:
             pass  # best-effort cleanup must never prevent opening a series
-
-
-def _sweepRetiredFolders(sdir : str, hidden_dir : str):
-    """Remove the folders a close of this series moved aside and could not delete.
-
-    Only a `.closing-<hex>` sibling whose marker names this series' working
-    folder (_markRetired) goes, and only past the same 10 minute margin as
-    the save temps. A folder of that name with no marker, or another series'
-    marker, may be a series' working folder or its unsaved work, whatever its
-    age, and is left alone. Best effort: a folder that cannot be removed stays.
-    """
-    name = os.path.basename(hidden_dir)
-    cutoff = datetime.now(timezone.utc).timestamp() - 10 * 60
-    try:
-        with os.scandir(sdir or os.curdir) as entries:
-            for entry in entries:
-                if not re.fullmatch(r"\.closing-[0-9a-f]{8}", entry.name):
-                    continue
-                try:
-                    if (
-                        not entry.is_dir(follow_symlinks=False)
-                        or entry.stat(follow_symlinks=False).st_mtime >= cutoff
-                    ):
-                        continue
-                    with open(
-                        os.path.join(entry.path, RETIRED_MARKER),
-                        encoding="utf-8", errors="surrogateescape",
-                    ) as f:
-                        if f.read() != name:
-                            continue
-                    shutil.rmtree(entry.path, ignore_errors=True)
-                except (OSError, UnicodeError):
-                    pass  # no marker, locked, vanished, or otherwise inaccessible
-    except OSError:
-        pass  # best-effort cleanup must never prevent opening a series
 
 
 def renamedSeriesFile(filename : str, old_name : str, new_name : str) -> str:
@@ -1469,7 +1408,6 @@ class Series():
                 raise _notPutBack(fp, os.path.join(sdir, f".{sname}"), kept, failure)
 
         _sweepStaleSaveTemps(sdir, hidden_dir)
-        _sweepRetiredFolders(sdir, hidden_dir)
         return series, collisions, (source.sha256 if store is None else None)
 
     def saveJser(self, save_fp : str = None, close : bool = False):
@@ -2031,11 +1969,15 @@ class Series():
 
             # Nothing the series reads is under its name now, so it is closed
             # whatever the delete does. A folder the delete leaves behind (a
-            # held file) is never offered as unsaved work, and the next open
-            # of this series removes it by its marker (_sweepRetiredFolders).
-            _markRetired(closing_dir, self.hidden_dir)
+            # held file) is a retired copy: no open offers it as unsaved work,
+            # nothing is written into it, and nothing in PyReconstruct removes
+            # it later, so the log names it for the user.
             self.closed = True
             shutil.rmtree(closing_dir, ignore_errors=True)
+            if os.path.lexists(closing_dir):
+                local_stores.log_note(
+                    f"Closing {self.name} left its old working folder at {closing_dir}"
+                )
 
         self.closed = True
     
