@@ -6,6 +6,7 @@ swept the other series' sections in, and a series named `ser` could pick the
 hidden `.ser` folder of an earlier conversion as its series file, which made
 the hidden folder path the XML folder itself and deleted the originals.
 """
+import contextlib
 import os
 import types
 
@@ -115,7 +116,7 @@ def test_new_from_xml_passes_the_chosen_file(monkeypatch):
     monkeypatch.setattr(
         main_window, "xmlToJSON", lambda fp: seen.append(fp) or None
     )
-    fake = types.SimpleNamespace()
+    fake = types.SimpleNamespace(seriesTransition=contextlib.nullcontext)
     main_window.MainWindow.newFromXML(fake, "/data/xml/Alpha.ser")
     assert seen == ["/data/xml/Alpha.ser"]
 
@@ -303,7 +304,8 @@ def test_new_from_xml_shows_a_refusal(monkeypatch):
     monkeypatch.setattr(main_window, "xmlToJSON", refuse)
     monkeypatch.setattr(main_window, "notify", shown.append)
     fake = types.SimpleNamespace(
-        openSeries=lambda *a, **k: pytest.fail("opened a series")
+        openSeries=lambda *a, **k: pytest.fail("opened a series"),
+        seriesTransition=contextlib.nullcontext,
     )
     main_window.MainWindow.newFromXML(fake, "/data/xml/Alpha.ser")
     assert shown == ["No section files for Alpha.ser were found."]

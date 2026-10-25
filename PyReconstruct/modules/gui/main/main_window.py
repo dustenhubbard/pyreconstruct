@@ -1,10 +1,12 @@
 """The main window."""
 
 
+import functools
 import math
 import shutil
 import struct
 import traceback
+from contextlib import contextmanager
 
 from shiboken6 import isValid
 from PySide6.QtCore import QEvent
@@ -351,6 +353,15 @@ def _samePath(a, b):
 _SERIES_LOCK_HEARTBEAT = 7
 
 
+def _seriesTransition(method):
+    """Run a MainWindow method as a series transition (MainWindow.seriesTransition)."""
+    @functools.wraps(method)
+    def transition(self, *args, **kwargs):
+        with self.seriesTransition():
+            return method(self, *args, **kwargs)
+    return transition
+
+
 class MainWindow(QMainWindow):
 
     def __init__(self, filename, staged_update=None):
@@ -405,6 +416,7 @@ class MainWindow(QMainWindow):
             self._pending_inplace = inplace.Pending(**staged_update)
         self.check_actions_enabled  =  False
         self.actions_initialized    =  False
+        self._series_transition     =  False  # see seriesTransition
 
         ## Set constant tracking for mouse modes
         self.setMouseTracking(True)
@@ -1553,6 +1565,48 @@ class MainWindow(QMainWindow):
         if layout:
             self.field.table_manager.restoreLayout(layout, self.field.section)
 
+    @contextmanager
+    def seriesTransition(self):
+        """Mark an open, new series, import, Save As or quit as running.
+
+        Each of these asks the user something (a save prompt, a file dialog,
+        a series name) between closing one series and settling on the next,
+        and every dialog runs the event loop. A .jser opened from the Finder
+        arrives there (run.FileOpenWatcher), and opening it changed which
+        series the window held under the running one, and the running open or
+        quit then closed the series the Finder opened, deleting its unsaved
+        work. The watcher checks seriesTransitionRunning and refuses such an
+        open with a notice, so the running transition finishes on the series
+        it started with. The open is not queued: a queued open would run
+        before the caller's own remaining steps. A transition inside another
+        (an import opens the new series, an open of a series never saved asks
+        for Save As) leaves the outer one marked when it ends.
+        """
+        if self._series_transition:
+            yield
+            return
+        self._series_transition = True
+        try:
+            yield
+        finally:
+            self._series_transition = False
+
+    def seriesTransitionRunning(self) -> bool:
+        """True while an open, new series, import, Save As or quit runs."""
+        return self._series_transition
+
+    def refuseFinderOpen(self, jser_fp : str):
+        """Tell the user a .jser opened from the Finder was not opened.
+
+            Params:
+                jser_fp (str): the file the Finder asked to open
+        """
+        notify(
+            "Open skipped: PyReconstruct is opening, saving or closing a "
+            "series.\n\nOpen this file again once that is done:\n" + jser_fp
+        )
+
+    @_seriesTransition
     def openSeries(self, series_obj=None, jser_fp=None, query_prev=True):
         """Open an existing series and create the field.
 
@@ -2098,6 +2152,7 @@ class MainWindow(QMainWindow):
         else:
             self.seriesModified()
 
+    @_seriesTransition
     def newSeries(
         self,
         image_locations : list = None,
@@ -2196,6 +2251,7 @@ class MainWindow(QMainWindow):
         ## Prompt user to save series
         self.saveAsToJser()
     
+    @_seriesTransition
     def newFromXML(self, series_fp : str = None):
         """Create a new series from a set of XML files.
         
@@ -2237,6 +2293,7 @@ class MainWindow(QMainWindow):
         # prompt user to save series
         self.saveAsToJser()
 
+    @_seriesTransition
     def newFromNgZarr(self):
         """Create a new series from a neuroglancer zarr."""
         zarr_fp = FileDialog.get(
@@ -3410,6 +3467,7 @@ class MainWindow(QMainWindow):
         self._backupSaved()
         self.seriesModified(False)
 
+    @_seriesTransition
     def saveAsToJser(self, close=False):
         """Prompt user for save location.
 
@@ -6249,6 +6307,7 @@ class MainWindow(QMainWindow):
         
         self.close()
 
+    @_seriesTransition
     def closeEvent(self, event):
         """Save all data to files when the user exits."""
         # capture the list layout FIRST: saveToJser(close=True) closes the
