@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Render a screenshot walkthrough video from a scene file.
 
-The video is built from still screen captures. The pointer, click rings and
-camera moves are drawn on top, so the result looks like a screen recording
-without being one. README.md beside this file describes the step list, the
-scene format and the capture, render and review workflow.
+The video is built from still screen captures. The pointer, click rings,
+drags and camera moves are drawn on top, so the result looks like a screen
+recording without being one. README.md beside this file describes the step
+list, the scene format and the capture, render and review workflow.
 
 Commands:
   render  SCENE -o OUT.mp4 [--width 1920]   write the MP4 (H.264, no audio)
@@ -82,6 +82,33 @@ def bezier(p0, c1, c2, p1, s):
                  + 3 * (1 - s) * s * s * c2[i] + s ** 3 * p1[i] for i in range(2))
 
 
+def path_progress(u, ramp):
+    """Share of a path's length covered at time share `u` of a drag: constant
+    speed between an equal speed-up and slow-down, each `ramp` of the time."""
+    u = min(max(u, 0.0), 1.0)
+    if ramp and u < ramp:
+        return u * u / (2 * ramp * (1 - ramp))
+    if ramp and u > 1 - ramp:
+        return 1 - (1 - u) ** 2 / (2 * ramp * (1 - ramp))
+    return (u - ramp / 2) / (1 - ramp)
+
+
+def polyline_prefix(path, progress):
+    """The points of `path` up to `progress` of its length, ending exactly there."""
+    lengths = [math.dist(a, b) for a, b in zip(path, path[1:])]
+    remaining = sum(lengths) * progress
+    points = [tuple(path[0])]
+    for a, b, length in zip(path, path[1:], lengths):
+        if not length:
+            continue
+        if remaining < length:
+            points.append(tuple(a[i] + (b[i] - a[i]) * remaining / length for i in range(2)))
+            return points
+        points.append(tuple(b))
+        remaining -= length
+    return points
+
+
 class Scene:
     def __init__(self, path):
         self.path = Path(path).resolve()
@@ -102,6 +129,9 @@ class Scene:
         self.states = sorted(d["states"], key=lambda s: s["time"])
         self.camera = sorted(d["camera"], key=lambda c: c["time"])
         self.moves = sorted(d.get("moves", []), key=lambda m: m["start"])
+        for m in self.moves:
+            if "path" in m:
+                m["path"] = self.drag_path(m["path"])
         self.clicks = sorted(d.get("clicks", []))
         self.cursor_start = self.point(d.get("cursor_start", [self.size[0] / 2, self.size[1] / 2]))
         self.cursor_fade_out = d.get("cursor_fade_out")
@@ -114,6 +144,15 @@ class Scene:
             t = self.targets[p]
             p = t["center"] if isinstance(t, dict) else t
         return (float(p[0]), float(p[1]))
+
+    def drag_path(self, p):
+        """A path is a list of points or the name of a target with "points"."""
+        if isinstance(p, str):
+            p = self.targets[p]["points"]
+        points = [self.point(q) for q in p]
+        if len(points) < 2 or all(q == points[0] for q in points):
+            sys.exit("A drag path needs two or more points and some length.")
+        return points
 
     # -- timeline -------------------------------------------------------
     def camera_at(self, t):
@@ -132,12 +171,14 @@ class Scene:
     def cursor_at(self, t):
         pos = self.cursor_start
         for m in self.moves:
-            to = self.point(m["to"])
+            to = m["path"][-1] if "path" in m else self.point(m["to"])
             if t >= m["end"]:
                 pos = to
                 continue
             if t <= m["start"]:
                 break
+            if "path" in m:
+                return polyline_prefix(m["path"], self.drag_progress(m, t))[-1]
             c = m.get("controls")
             if c:
                 c1, c2 = self.point(c[0]), self.point(c[1])
@@ -147,6 +188,23 @@ class Scene:
             s = smootherstep((t - m["start"]) / (m["end"] - m["start"]))
             return bezier(pos, c1, c2, to, s)
         return pos
+
+    @staticmethod
+    def drag_progress(m, t):
+        return path_progress((t - m["start"]) / (m["end"] - m["start"]), m.get("ease", 0.1))
+
+    def strokes_at(self, t):
+        """Return [(stroke, points)] for the drag strokes drawn at t.
+
+        A stroke grows behind the pointer from the drag's start and stays,
+        whole, until its "until" (by default the drag's end).
+        """
+        out = []
+        for m in self.moves:
+            s = m.get("stroke")
+            if s and m["start"] <= t < s.get("until", m["end"]):
+                out.append((s, polyline_prefix(m["path"], self.drag_progress(m, min(t, m["end"])))))
+        return out
 
     def cursor_opacity(self, t):
         a = 1.0
@@ -254,10 +312,17 @@ class Renderer:
         sy = (p[1] - y) * z + self.sc.size[1] / 2
         return sx * self.W / self.sc.size[0], sy * self.H / self.sc.size[1]
 
-    def background(self, name, cam):
+    def background(self, name, cam, strokes=()):
         x, y, z = cam
         w, h = self.sc.size[0] / z, self.sc.size[1] / z
         im = self.sc.images[name]
+        if strokes:
+            # drawn on the still in native pixels, as the field draws its
+            # live line, so the camera scales still and stroke together
+            im = im.copy()
+            draw = ImageDraw.Draw(im)
+            for s, points in strokes:
+                draw.line(points, fill=tuple(s["color"]), width=int(s["width"]), joint="curve")
         out = im.resize((self.W, self.H), Image.LANCZOS, box=(x - w / 2, y - h / 2, x + w / 2, y + h / 2))
         return np.asarray(out, np.float32)
 
@@ -265,9 +330,10 @@ class Renderer:
         sc, st = self.sc, self.sc.style
         cam = self.clamp(sc.camera_at(t))
         img, prev, mix = sc.state_at(t)
-        f = self.background(img, cam)
+        strokes = sc.strokes_at(t)
+        f = self.background(img, cam, strokes)
         if prev is not None:
-            f = self.background(prev, cam) * (1 - mix) + f * mix
+            f = self.background(prev, cam, strokes) * (1 - mix) + f * mix
         typing = sc.typing_at(t)
         if typing:
             self._typing(f, cam, *typing)
@@ -381,6 +447,7 @@ DRAFT = {
     "start_zoom": 1.6,    # zoom of the first and last frames
     "intro": 0.7,         # still time before the first move
     "move": 1.6,          # pointer move
+    "drag": 2.0,          # press to release of a drag
     "pan": 1.2,           # camera pan to bring the next target into view
     "settle": 0.2,        # pointer rests before a click
     "react": 0.08,        # click to screen change
@@ -389,6 +456,7 @@ DRAFT = {
     "outro_delay": 0.37,  # last screen change to pointer fade out
     "outro": 1.65,        # final zoom out
     "tail": 0.8,          # still time at the end
+    "loop_fade": 0.4,     # a looping clip's fade back to its first screen
     "safe": 0.3,          # camera pans when a target is outside this part of the view
     "key_lead": 0.35,     # a key badge shows this long before the pointer arrives
     "key_hold": 0.5,      # and stays this long after the click
@@ -408,6 +476,17 @@ def draft(spec):
             p = t["center"] if isinstance(t, dict) else t
         return [float(p[0]), float(p[1])]
 
+    def path(p):
+        return [pt(q) for q in (targets[p]["points"] if isinstance(p, str) else p)]
+
+    def time_at(progress, ramp=0.1):
+        """The time share of a drag at which `progress` of its path is covered."""
+        lo, hi = 0.0, 1.0
+        for _ in range(40):
+            mid = (lo + hi) / 2
+            lo, hi = (mid, hi) if path_progress(mid, ramp) < progress else (lo, mid)
+        return hi
+
     def clamp(c):
         w, h = W / c["zoom"], H / c["zoom"]
         c["x"] = round(min(max(c["x"], w / 2), W - w / 2), 1)
@@ -424,8 +503,12 @@ def draft(spec):
     def key(t, c):
         camera.append({"time": round(t, 3), "x": c["x"], "y": c["y"], "zoom": c["zoom"]})
 
+    def aim(st):
+        """Where a step's pointer goes first: its target, or where its drag starts."""
+        return path(st["drag"])[0] if "drag" in st else pt(st.get("click") or st.get("point"))
+
     steps = spec["steps"]
-    first = pt(steps[0].get("click") or steps[0].get("point"))
+    first = aim(steps[0])
     cam = spec.get("camera_start") or follow({"x": W / 2, "y": H / 2}, first, d["start_zoom"])
     cam = clamp(dict(cam))
     cursor = pt(spec.get("cursor_start", [first[0] + 500, first[1] + 520]))
@@ -441,7 +524,7 @@ def draft(spec):
     t = d["intro"]
     bend = 1
     for i, st in enumerate(steps):
-        target = pt(st.get("click") or st.get("point"))
+        target = aim(st)
         z = st.get("zoom", d["zoom"])
         new = clamp(dict(st["camera"])) if "camera" in st else follow(cam, target, z)
         together = st.get("together", i == 0)
@@ -465,15 +548,33 @@ def draft(spec):
         key_start = t - d["key_lead"]
         t += st.get("dwell", 0)
         nxt = steps[i + 1]["image"] if i + 1 < len(steps) else st.get("after")
+        shown = st["image"]
         if "click" in st:
             t += d["settle"]
             clicks.append(round(t, 3))
             t += d["react"]
+        if "drag" in st:
+            # the press, the pointer along the path at an even speed, the release
+            t += d["settle"]
+            clicks.append(round(t, 3))
+            span = st.get("drag_time", d["drag"])
+            m = {"start": round(t, 3), "end": round(t + span, 3), "path": path(st["drag"])}
+            if "stroke" in st:
+                m["stroke"] = {**st["stroke"], "until": m["end"]}
+            moves.append(m)
+            # "frames" show in turn as the pointer covers equal shares of the
+            # path, each from halfway between its share and the one before
+            frames = st.get("frames", [])
+            for k, name in enumerate(frames, 1):
+                states.append({"time": round(t + span * time_at((k - 0.5) / len(frames)), 3), "image": name})
+                shown = name
+            t += span + d["react"]
+            cursor = m["path"][-1]
         if "keys" in st:
             if keys and keys[-1]["end"] > key_start:  # one badge at a time
                 keys[-1]["end"] = round(key_start, 3)
             keys.append({"start": round(key_start, 3), "end": round(t + d["key_hold"], 3), "text": st["keys"]})
-        if nxt and nxt != st["image"]:
+        if nxt and nxt != shown:
             s = {"time": round(t, 3), "image": nxt}
             fade = steps[i + 1].get("fade") if i + 1 < len(steps) else st.get("after_fade")
             if fade:
@@ -490,6 +591,17 @@ def draft(spec):
     key(t + 0.22, cam)
     key(t + 0.22 + d["outro"], end)
     duration = math.ceil((t + 0.22 + d["outro"] + d["tail"]) * 10) / 10
+    loop = spec.get("loop")
+    if loop:
+        # a clip that plays on a loop: the pointer fades in at the start, and
+        # once it has faded out the first screen fades back, so the loop has
+        # no jump
+        scene["cursor_fade_in"] = 0
+        if states[-1]["image"] != states[0]["image"]:
+            fade = d["loop_fade"] if loop is True else loop
+            at = round(scene["cursor_fade_out"] + STYLE["cursor_fade"] + 0.1, 3)
+            states.append({"time": at, "image": states[0]["image"], "fade": fade})
+            duration = max(duration, math.ceil((at + fade + d["tail"]) * 10) / 10)
     key(duration, end)
     scene.update(duration=duration, states=states, moves=moves, clicks=clicks, camera=camera)
     if keys:
