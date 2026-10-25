@@ -595,11 +595,11 @@ def blob(cx, cy, rx, ry, n=48):
 
 
 def fixture_copy():
-    """The fixture series, copied to a temporary folder; returns the folder.
+    """The made-up test series, copied to a temporary folder; returns the folder.
 
-    Copied so the hidden working folder lands there. The fixture has no
-    series code, so opening it asks for one; the copy gets one, and the
-    fixture in the repo is left as it is.
+    Copied so the hidden working folder lands there. The series in the repo
+    has no series code, so opening it asks for one; the copy gets one, and
+    the one in the repo is left as it is.
     """
     series_dir = Path(tempfile.mkdtemp(prefix="pyrecon-docs-series-"))
     data = json.loads((FIXTURE_DIR / FIXTURE).read_text())

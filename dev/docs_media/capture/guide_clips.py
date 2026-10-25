@@ -12,10 +12,10 @@ The clips play on a loop, with no sound, beside the guide text they show:
 What this makes, in <folder>:
 
   * one 2560 x 1440 PNG per screen state, without a pointer (FRAMES);
-  * a folder per clip with steps.json, the step list for walkthrough.py's
-    `draft` command with each click point measured from the live widgets on
-    this run (CLIPS, filled in); scene.json, drafted from it; <clip>.mp4;
-    sheet.jpg, one frame per second; and verification.json;
+  * a folder per clip with steps.json, the clip's step list from clips()
+    for walkthrough.py's `draft` command, with each click point measured
+    from the live widgets on this run; scene.json, drafted from it;
+    <clip>.mp4; sheet.jpg, one frame per second; and verification.json;
   * capture-verification.json, the size and sha256 of every frame, the
     pinned inputs, and the settings tripwire read before and after the run.
 
@@ -23,7 +23,7 @@ With --guide, the four videos replace the ones in docs/assets/videos/user-guide/
 and each clip's first frame is saved as its poster, <clip>-start.png, in
 docs/assets/images/user-guide/.
 
-How it shoots is capture.py's, on the fixture series the guide's stills
+How it shoots is capture.py's, on the made-up series the guide's stills
 show (shapes1): the theme, username, isolated settings and tripwire, and
 QWidget.grab() of the live window. As in walkthrough_3d.py, the window is
 1280 x 720 logical pixels, so a frame is 2560 x 1440 on a 2x screen, and the
@@ -31,7 +31,7 @@ camera stays at zoom 1: PyReconstruct as a 1280 x 720 screen shows it, at
 Retina sharpness, each frame shown pixel for pixel. The videos are rendered
 with dev/docs_media/walkthrough/walkthrough.py at --width 2560 --crf 21.
 
-Fixture series only. No file dialog, no recent-files list.
+Made-up series only. No file dialog, no recent-files list.
 """
 
 import argparse
