@@ -9,10 +9,13 @@ how a check gets ignored. Loaded by file path, the same way
 
 Pinned here: for each of the four rules it checks (1, 3, 5 and 6 of
 ``changelog.d/README.md``), one bullet that breaks the rule is a finding and one
-that follows it is not; the shapes that look like a break and are not (a path
-with dots in backticks, St. Patrick's Day, a second bullet in one file); the
-README's own example passes; the changed-files mode reads only fragments that
-exist; and the exit code follows ``BLOCKING``.
+that follows it is not; the shapes that look like a break and are not (code and
+file names in backticks, a comparison, St. Patrick's Day, a second bullet in one
+file); the README's own example passes; the changed-files mode reads only
+fragments that exist; a fragment that is not UTF-8 is reported, not a crash; and
+the exit code follows ``BLOCKING``. Every case is literal text written here: no
+test reads the repository's own ``changelog.d``, since the check is report-only
+and a test over the live directory would make its findings fail the suite.
 """
 
 import importlib.util
@@ -64,6 +67,17 @@ def test_rule_1_a_bullet_that_does_not_open_bold_is_a_finding():
 
 def test_rule_1_a_two_sentence_bold_claim_is_a_finding():
     assert 1 in rules("**The scale bar is thinner. Its labels moved.** They are legible now.")
+
+
+def test_rule_1_a_second_bold_run_is_a_finding():
+    bullet = "**The scale bar is thinner.** **Its tick labels are below the bar.**"
+    assert voice.check_bullet(bullet) == [
+        (1, "a second bold run follows the claim; one bold claim, then plain text")
+    ]
+
+
+def test_rule_1_bold_inside_code_is_not_a_second_claim():
+    assert rules("**The field redraws faster.** A name such as `**x**` still opens.") == []
 
 
 def test_rule_1_a_semicolon_is_not_a_sentence_break():
@@ -119,10 +133,14 @@ def test_rule_5_does_not_match_a_longer_word():
         "**Help > What's new shows the stable notes.** Open `Help` > `What's new`.",
         # the whole path in backticks
         "**Backup Settings has a checkbox.** Check it under `File ▸ Backup ▸ Settings`.",
+        # the whole path in backticks, with ">" and "..."
+        "**The scale bar is thinner.** `Series > Options... > View` sets its thickness.",
         # backticked items joined by the separator
         "**Save as follows the folder's case rule.** Use `File` ▸ `Save as`.",
-        # "..." after an item
+        # "..." after an item, before the next separator
         "**Choose how a selected trace looks.** It is in Series ▸ Options... ▸ View.",
+        # "..." on the last item
+        "**Close is the right size in dark dialogs.** Help ▸ View log file... shows it.",
         # a lone backticked item written the old way
         "**Edit image source saves the name.** `Edit image source...` keeps it.",
     ],
@@ -131,16 +149,40 @@ def test_rule_6_each_old_form_is_a_finding(bullet):
     assert 6 in rules(bullet)
 
 
+def test_rule_6_backticked_items_joined_by_gt_are_two_findings():
+    bullet = "**Help > What's new shows the stable notes.** Open `Help` > `What's new`."
+    assert [rule for rule, _ in voice.check_bullet(bullet)] == [6, 6]
+    assert [m.split(";")[0] for _, m in voice.check_bullet(bullet)] == [
+        'menu path uses ">"',
+        "menu path in backticks",
+    ]
+
+
 def test_rule_6_the_house_form_passes():
     bullet = "**The scale bar is thinner.** Series ▸ Options ▸ View sets its thickness."
     assert rules(bullet) == []
 
 
-def test_rule_6_code_in_backticks_is_not_a_menu_path():
-    bullet = (
-        "**A zarr image whose name has a backslash now shows on macOS and Linux.** "
-        "An image such as `a\\b.png` showed as missing, and `crop_log.txt` names it."
-    )
+@pytest.mark.parametrize(
+    "bullet",
+    [
+        # a comparison is not a menu path
+        "**The scale bar is thinner.** A value such as `15 > 10` is accepted.",
+        "**Zoom steps are larger.** A step where new > old is kept.",
+        # dots in a file name are not a menu item's "..."
+        "**Image names are preserved.** A file named `a...b.png` opens normally.",
+        # code and file names in backticks
+        (
+            "**A zarr image whose name has a backslash now shows on macOS and Linux.** "
+            "An image such as `a\\b.png` showed as missing, and `crop_log.txt` names it."
+        ),
+        # a backticked option or setting name, with no separator and no "..."
+        "**The scale bar follows the zoom.** It is limited to `Scale bar size`.",
+        # a key and an environment variable
+        "**The 3D scene opens on Wayland.** It works without `QT_QPA_PLATFORM=xcb` or `B`.",
+    ],
+)
+def test_rule_6_ordinary_code_and_comparisons_pass(bullet):
     assert rules(bullet) == []
 
 
@@ -176,16 +218,12 @@ def test_a_hard_wrapped_bullet_is_read_as_one(tmp_path):
     assert voice.check_file(fragment) == []
 
 
-def test_every_fragment_waiting_on_main_passes():
-    """The rules apply to new fragments; the ones waiting today already follow them."""
-    waiting = ROOT / voice.FRAGMENT_DIR
-    findings = [
-        f"{path.name}:{line}: rule {rule}: {message}"
-        for path in sorted(waiting.glob("*.md"))
-        if path.name not in voice.NOT_FRAGMENTS
-        for line, rule, message in voice.check_file(path)
-    ]
-    assert not findings, "\n".join(findings)
+def test_a_fragment_that_is_not_utf8_is_a_finding_not_a_crash(tmp_path):
+    fragment = tmp_path / "cp1252-abc123.fixed.md"
+    fragment.write_bytes(b"- **Undo works.** It keeps the user\x92s choice.\n")
+    findings = voice.check_file(fragment)
+    assert [(line, rule) for line, rule, _ in findings] == [(1, "read")]
+    assert "UTF-8" in findings[0][2]
 
 
 # The command line.
@@ -219,6 +257,16 @@ def test_exit_code_follows_blocking(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(voice, "BLOCKING", True)
     assert voice.main([str(bad)]) == 1
     assert "::error " in capsys.readouterr().out
+
+
+def test_an_unreadable_fragment_follows_blocking_too(tmp_path, monkeypatch, capsys):
+    fragment = tmp_path / "cp1252-abc123.fixed.md"
+    fragment.write_bytes(b"- **Undo works.** It keeps the user\x92s choice.\n")
+    assert voice.main([str(fragment)]) == 0
+    out = capsys.readouterr().out
+    assert f"{fragment}:1: not read:" in out and "::warning " in out
+    monkeypatch.setattr(voice, "BLOCKING", True)
+    assert voice.main([str(fragment)]) == 1
 
 
 def test_a_clean_fragment_exits_zero(tmp_path, capsys):

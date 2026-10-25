@@ -1,32 +1,33 @@
 #!/usr/bin/env python3
 """Report ``changelog.d`` fragments that break the mechanical voice rules.
 
-The nightly release body is the fragments, concatenated. On October 17, 2026 it
-ran to 72 bullets: twelve opened a sentence with "Before,", the longest ran six
-sentences, two said "the app", and the menu paths came in four spellings
-(``Series > Options... > View``, ``Series ▸ Options...``, backticked, plain).
-Each fragment had been read on its own, and the shape of the set was nobody's
-job. ``changelog.d/README.md`` now states the rules; this checks the four a
-program can decide, on the fragments a pull request adds or edits.
+``changelog.d/README.md`` states the rules a fragment follows. Four of them a
+program can decide, and this checks those on the fragments a pull request adds
+or edits; the others (internals, dev-cycle fixes, one topic per fragment) take a
+reader. The numbers are the README's.
 
-  1. One bold claim first, at most one plain sentence after it: two sentences
-     in all, and the bold claim is one sentence.
+  1. One bold claim first, then plain text: at most one sentence after the
+     claim, the claim itself one sentence, and no second bold run.
   3. No sentence opens with "Before,". A fix says what works now.
   5. "PyReconstruct", never "the app".
   6. A menu path is written one way: ``Series ▸ Options ▸ View``. Not ``>``
      between the items, not in backticks, and no "..." after an item.
 
-The numbers are the rules' numbers in the README; 2, 4 and 7 (internals, dev-cycle
-fixes, one topic per fragment) take a reader. Code spans are left out of the
-sentence count and the "Before," search, so a path like ``a.b/c.png`` is not a
-sentence break; a backticked menu path is still a finding under rule 6.
+Code spans are left out of the sentence count and the "Before," search, so a
+path like ``a.b/c.png`` is not a sentence break. For rule 6 a menu path is text
+in menu-path shape: capitalized items around a separator, an item ending in
+"...", or a backticked capitalized item ending in "...". A comparison such as
+``15 > 10`` or a file name such as ``a...b.png`` is not one.
 
 Each finding is one line, ``path:line: rule N: what, and the fix``, plus a
-GitHub annotation on that line of the fragment when run in Actions.
+GitHub annotation on that line of the fragment when run in Actions. A fragment
+that cannot be read (not UTF-8, missing) is reported the same way instead of
+stopping the run.
 
 REPORT-ONLY. ``BLOCKING = False`` below means the exit code is 0 whatever is
 found, and a finding arrives as a warning annotation and a job summary. Set
-``BLOCKING = True`` to make it a gate.
+``BLOCKING = True`` to make it a gate: findings and unreadable fragments then
+exit 1.
 
 Usage::
 
@@ -52,14 +53,16 @@ FRAGMENT_DIR = "changelog.d"
 NOT_FRAGMENTS = {"README.md"}
 
 MENU_SEP = "▸"
-ELLIPSIS_RE = re.compile(r"\.\.\.|…")
+HOUSE_FORM = f"Series {MENU_SEP} Options {MENU_SEP} View"
 
 CODE_SPAN_RE = re.compile(r"`[^`\n]*`")
+BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 
 # A sentence ends at . ! or ? followed by space or the end, except inside an
 # ellipsis ("Options..." is not three sentences) and after the abbreviations a
 # fragment plausibly uses (St. Patrick's Day).
 SENTENCE_END_RE = re.compile(r"(?<![.])(?:[!?]|\.(?!\.))(?=\s|$)")
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 ABBREVIATIONS = ("St.", "Dr.", "Mr.", "Mrs.", "Ms.", "No.", "vs.", "e.g.", "i.e.")
 
 # "Before," at the start of the text, of a sentence, or right after the bold claim.
@@ -67,15 +70,30 @@ BEFORE_RE = re.compile(r"(?:^|[.!?]\s+|\*\*\s*)Before,")
 
 THE_APP_RE = re.compile(r"\bthe app\b", re.IGNORECASE)
 
-# ">" used as a menu separator: whitespace on either side, or between two code
-# spans. "->" and "=>" are not menu paths.
-GT_SEPARATOR_RE = re.compile(r"(?<![-=])(?:\s>\s|`\s*>\s*`)")
-# A code span that is a menu path: it holds a separator, or an item ends in "...".
-CODE_MENU_RE = re.compile(r"`[^`\n]*(?:▸|\s>\s|\.\.\.|…)[^`\n]*`")
-# A code span holding an ellipsis: a menu item written the old way.
-CODE_ELLIPSIS_RE = re.compile(r"`[^`\n]*(?:\.\.\.|…)[^`\n]*`")
-# Backticked items joined by the separator: `File` ▸ `Save as`.
-CODE_AROUND_SEP_RE = re.compile(r"`\s*▸|▸\s*`")
+# Rule 6 patterns. A menu item is a capitalized word run, optionally in
+# backticks, optionally ending in "...": `Options`, Options..., `Save as...`.
+ELLIPSIS = r"(?:\.\.\.|…)"
+ITEM = r"[A-Z][A-Za-z0-9'’]*(?:[ ][A-Za-z0-9'’#{}]+)*"
+# ">" as the separator between two items: a letter or an ellipsis before it,
+# a capitalized item after it. "15 > 10" has digits on both sides.
+GT_SEPARATOR_RE = re.compile(r"(?:[A-Za-z]|" + ELLIPSIS + r")`?\s>\s`?[A-Z]")
+# A code span that is a menu path: a path with a separator inside the
+# backticks, or a lone capitalized item ending in "...".
+CODE_MENU_RE = re.compile(
+    r"`" + ITEM + ELLIPSIS + r"?(?:\s*(?:▸|>)\s*" + ITEM + ELLIPSIS + r"?)+`"
+    r"|`" + ITEM + ELLIPSIS + r"`"
+)
+# Backticked items joined by a separator: `File` ▸ `Save as`, `Help` > `What's new`.
+CODE_AROUND_SEP_RE = re.compile(
+    r"`\s*▸|▸\s*`|`" + ITEM + ELLIPSIS + r"?`\s>\s`" + ITEM
+)
+# "..." on a menu item: before a separator (Options... ▸ View), after one
+# (▸ View log file...), or on a lone backticked item (CODE_MENU_RE above).
+ELLIPSIS_ON_ITEM_RE = re.compile(
+    ELLIPSIS + r"`?\s*(?:▸|>)\s`?[A-Z]"
+    r"|(?:▸|(?:[A-Za-z]|" + ELLIPSIS + r")`?\s>)\s*`?" + ITEM + ELLIPSIS
+)
+CODE_ITEM_ELLIPSIS_RE = re.compile(r"`" + ITEM + ELLIPSIS + r"`")
 
 
 def is_fragment(path):
@@ -135,11 +153,10 @@ def check_bullet(text):
     """The findings for one flattened bullet, as ``(rule, message)`` pairs."""
     findings = []
 
-    # Rule 1: a bold claim first, one sentence, and at most one sentence after it.
-    match = re.match(r"\*\*(.+?)\*\*", text)
+    # Rule 1: a bold claim first, one sentence, then plain text of at most one sentence.
+    match = BOLD_RE.match(text)
     if not match:
         findings.append((1, "does not open with a bold claim; start with **what the user sees now.**"))
-        rest = text
     else:
         claim = match.group(1)
         rest = text[match.end():]
@@ -149,6 +166,8 @@ def check_bullet(text):
         after = sentence_count(rest)
         if after > 1:
             findings.append((1, f"{after} sentences follow the bold claim; at most one may"))
+        if BOLD_RE.search(_without_code(rest)):
+            findings.append((1, "a second bold run follows the claim; one bold claim, then plain text"))
 
     # Rule 3: no "Before," sentence.
     if BEFORE_RE.search(_without_code(text)):
@@ -160,21 +179,26 @@ def check_bullet(text):
 
     # Rule 6: one menu-path form.
     if GT_SEPARATOR_RE.search(text):
-        findings.append((6, f'menu path uses ">"; write it as Series {MENU_SEP} Options {MENU_SEP} View'))
+        findings.append((6, f'menu path uses ">"; write it as {HOUSE_FORM}'))
     if CODE_MENU_RE.search(text) or CODE_AROUND_SEP_RE.search(text):
-        findings.append((6, "menu path in backticks; write it plain, Series ▸ Options ▸ View"))
-    if CODE_ELLIPSIS_RE.search(text) or any(
-        (MENU_SEP in sentence or GT_SEPARATOR_RE.search(sentence)) and ELLIPSIS_RE.search(sentence)
-        for sentence in re.split(r"(?<=[.!?])\s+", text)
-    ):
-        findings.append((6, 'menu path ends an item with "..."; drop it, Series ▸ Options ▸ View'))
+        findings.append((6, f"menu path in backticks; write it plain, {HOUSE_FORM}"))
+    if ELLIPSIS_ON_ITEM_RE.search(text) or CODE_ITEM_ELLIPSIS_RE.search(text):
+        findings.append((6, f'menu path ends an item with "..."; drop it, {HOUSE_FORM}'))
 
     return findings
 
 
 def check_file(path):
-    """``(line, rule, message)`` for each finding in the fragment at ``path``."""
-    text = Path(path).read_text(encoding="utf-8")
+    """``(line, rule, message)`` for each finding in the fragment at ``path``.
+
+    A file that cannot be read or decoded is one finding on line 1 with the
+    rule ``"read"``, so a bad byte in one fragment reports instead of stopping
+    the run.
+    """
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return [(1, "read", f"could not be read as UTF-8 text ({exc}); save it as UTF-8")]
     results = []
     for line, bullet in bullets(text):
         for rule, message in check_bullet(bullet):
@@ -202,6 +226,10 @@ def fragment_paths(args):
     return paths
 
 
+def _rule_text(rule):
+    return "not read" if rule == "read" else f"rule {rule}"
+
+
 def _annotate(level, path, line, title, message):
     print(f"::{level} file={path},line={line},title={title}::{message}")
 
@@ -223,12 +251,12 @@ def main(argv=None):
             findings.append((str(path), line, rule, message))
 
     for path, line, rule, message in findings:
-        print(f"{path}:{line}: rule {rule}: {message}")
+        print(f"{path}:{line}: {_rule_text(rule)}: {message}")
 
     level = "error" if BLOCKING else "warning"
     title = "Fragment voice" if BLOCKING else "Fragment voice (report-only, not blocking)"
     for path, line, rule, message in findings:
-        _annotate(level, path, line, title, f"rule {rule}: {message}")
+        _annotate(level, path, line, title, f"{_rule_text(rule)}: {message}")
 
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary and findings:
@@ -236,7 +264,7 @@ def main(argv=None):
             fh.write(f"### {title}\n\n")
             fh.write("Rules 1, 3, 5 and 6 of changelog.d/README.md, checked by script.\n\n```\n")
             for path, line, rule, message in findings:
-                fh.write(f"{path}:{line}: rule {rule}: {message}\n")
+                fh.write(f"{path}:{line}: {_rule_text(rule)}: {message}\n")
             fh.write("```\n")
 
     if not findings:
