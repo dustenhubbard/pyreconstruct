@@ -1,21 +1,10 @@
 """A launch draws the stored theme and writes nothing to the theme setting.
 
-Starting PyReconstruct used to store the ``theme`` key on every launch: a
-missing key got its default written back by ``Series.getOption``, and
-``setTheme`` stored the value it had just been handed. A user who never
-picked a theme had one saved for them, and a launch alone changed the
-settings file. The launch now draws through ``MainWindow.applyTheme``, which
-stores nothing, and reads the key with ``write_default=False``. Picking a
-theme (Change theme..., Series ▸ Options) still stores the choice.
-
-The launch tests build a real ``MainWindow`` on an in-memory default store,
-so the whole constructor runs against a store the test can inspect. They run
-as the build they are on, and once more as the macOS Dev app with its native
-controls (``appearance.native()`` stubbed on, since ``sys.platform`` cannot be
-patched under a constructor that imports scipy). The ``window`` tests drive
-``applyTheme`` and ``setTheme`` on the shared fixture window across the
-builds that draw a theme differently (``appearance.py``), patched the way
-``test_mac_appearance.py`` patches them.
+A launch draws through ``MainWindow.applyTheme``, which stores nothing, and
+reads the key with ``write_default=False``, so a missing key stays missing
+and a stored one keeps its value. Picking a theme (Change theme..., Series ▸
+Options) still stores the choice. The same holds in the macOS Dev app with
+its native controls (``appearance.native()``).
 """
 import sys
 
@@ -67,8 +56,8 @@ def build(monkeypatch, restore_look):
 
 @pytest.fixture
 def memory_store():
-    """The process default store swapped for an empty in-memory one, so a
-    MainWindow built here reads and writes settings the test can see."""
+    """The process default store swapped for an empty in-memory one, which a
+    MainWindow built here reads and writes."""
     original = default_settings_store()
     store = DictSettingsStore()
     set_default_settings_store(store)
@@ -78,8 +67,8 @@ def memory_store():
 
 @pytest.fixture
 def launch(qapp, series_jser, qsettings_snapshot, main_window_dialogs):
-    """Build a MainWindow on the fixture series the way the main_window
-    fixture does, and close it before the default store is restored."""
+    """Open a MainWindow on the series, and close it before the default store
+    is restored."""
     import sys as _sys
 
     from PyReconstruct.modules.gui.dialog.whats_new import (
@@ -109,8 +98,8 @@ def launch(qapp, series_jser, qsettings_snapshot, main_window_dialogs):
 
 @pytest.fixture(params=[False, True], ids=["this build", "mac dev"])
 def native(request, monkeypatch, restore_look):
-    """Run as the build this test is on, or as the macOS Dev app with
-    PYRECON_MAC_UI=1, where every theme keeps the native controls."""
+    """This build as it is, or the macOS Dev app with PYRECON_MAC_UI=1, where
+    every theme keeps the native controls."""
     if request.param:
         monkeypatch.setattr(appearance, "mac_ui_enabled", lambda: True)
     return request.param
