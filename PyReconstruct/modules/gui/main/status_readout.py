@@ -58,8 +58,11 @@ class StatusSegment(QLabel):
     clicked = Signal()
     right_clicked = Signal()
 
-    #: inner padding so the outline does not hug the glyphs; the vertical
-    #: pixel is measured by test_pills_do_not_grow_the_status_bar
+    #: inner padding so the outline does not hug the glyphs. The vertical
+    #: pixel is the least a pill gets (test_pills_do_not_grow_the_status_bar
+    #: measures it); a text whose ink reaches further past its line, such as
+    #: a stacked Vietnamese accent, gets as much as it needs on that side
+    #: (fitPadding).
     H_PAD = 8
     V_PAD = 1
 
@@ -79,6 +82,44 @@ class StatusSegment(QLabel):
         self._hovered = False
         self._popup_open = False
         self._popup_hidden_at = 0.0
+
+    def setText(self, text):
+        super().setText(text)
+        self.fitPadding()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.FontChange:
+            self.fitPadding(keep=False)
+
+    def fitPadding(self, keep=True):
+        """Pad above and below the line as far as the text's ink goes past it.
+
+        A QLabel paints its text on one line of the font's ascent and descent
+        and clips at the widget's edge, so a glyph drawn beyond that line (the
+        tilde over a circumflex in Ẫ, in DejaVu Sans at the default size) lost
+        its top. The tight bounding rect of the text says how far the ink
+        reaches; a name whose ink stays within V_PAD of the line, which is
+        every plain Latin name, keeps the same height as before. Runs on a
+        text or font change, not on the coordinate updates, which go to a
+        plain label.
+
+        With ``keep`` the padding only grows: a bar that made room for Ẫ
+        would otherwise lose that pixel on the next plain name and take it
+        back on the one after, so a pill keeps the room a name once needed.
+        A font change (``keep`` False) starts over, since the line itself
+        changes then.
+        """
+        import math
+        from PySide6.QtGui import QFontMetricsF
+        metrics = QFontMetricsF(self.font())
+        ink = metrics.tightBoundingRect(self.text())
+        top = max(self.V_PAD, math.ceil(-ink.top() - metrics.ascent()))
+        bottom = max(self.V_PAD, math.ceil(ink.bottom() - metrics.descent()))
+        if keep:
+            margins = self.contentsMargins()
+            top, bottom = max(top, margins.top()), max(bottom, margins.bottom())
+        self.setContentsMargins(self.H_PAD, top, self.H_PAD, bottom)
 
     # -- pressed state, owned by the popup helper --------------------------
     def popupOpened(self):

@@ -387,27 +387,40 @@ def ink_rows(widget):
     return (rows[-1] - rows[0] + 1 if rows else 0), len(dark)
 
 
+def set_app_font(qapp, family, size=None):
+    """Make ``family`` at ``size`` the application font, or skip the test
+    where it is not installed. None is the platform's own font, and no size
+    keeps the font's own."""
+    from PySide6.QtGui import QFont, QFontInfo
+    font = QFont(family) if family else QFont(qapp.font())
+    if size is not None:
+        font.setPointSizeF(size)
+    if family and QFontInfo(font).family() != family:
+        pytest.skip(f"{family} is not installed")
+    qapp.setFont(font)
+
+
 @pytest.mark.parametrize("family,size,text", [
     ("DejaVu Sans", 10.5, "Alignment: gjpqy ÁÉÍÓÚÅÇ"),
     ("DejaVu Sans", 24, "Alignment: gjpqy ÁÉÍÓÚÅÇ"),
+    ("DejaVu Sans", 9, "Alignment: Ẫ"),
+    ("DejaVu Sans", 24, "Alignment: Ẫ"),
     ("Noto Sans", 9, "Alignment: gjpqy ÁÉÍÓÚÅÇ"),
     ("Noto Sans", 9, "Alignment: Ẫ"),
     (None, 9, "Alignment: gjpqy ÁÉÍÓÚÅÇ"),
+    (None, 9, "Alignment: Ẫ"),
 ])
 def test_pills_keep_accents_and_descenders(qapp, family, size, text):
     """No pill cuts off its text. DejaVu Sans at 10.5 pt draws the tops of
     accented capitals above its line, and Noto Sans at 9 pt the tilde of a
-    Vietnamese capital (U+1EAA); the pill's padding holds both. None is the
-    platform's own font."""
-    from PySide6.QtGui import QFont, QFontInfo
+    Vietnamese capital (U+1EAA); the pill's padding holds both. In DejaVu
+    Sans that tilde reaches two pixels past the line at 9 pt and four at
+    24 pt, more than the one-pixel padding, so the pill pads as far as the
+    ink goes. None is the platform's own font."""
     from PySide6.QtWidgets import QLabel
     from PyReconstruct.modules.gui.main.status_readout import StatusSegment
     previous = qapp.font()
-    font = QFont(family) if family else QFont(previous)
-    font.setPointSizeF(size)
-    if family and QFontInfo(font).family() != family:
-        pytest.skip(f"{family} is not installed")
-    qapp.setFont(font)
+    set_app_font(qapp, family, size)
     try:
         pill = StatusSegment("Alignment", outlined=False)
         pill.setText(text)
@@ -417,6 +430,82 @@ def test_pills_keep_accents_and_descenders(qapp, family, size, text):
                                  StatusSegment.H_PAD, line)
         assert ink_rows(pill) == ink_rows(roomy)
     finally:
+        qapp.setFont(previous)
+
+
+@pytest.mark.parametrize("family,size", [
+    ("DejaVu Sans", 9), ("Noto Sans", 9), (None, None),
+])
+def test_plain_names_keep_the_pill_at_its_line_plus_padding(qapp, family, size):
+    """The padding grows only for ink past the line. The default names leave
+    the pill the size of a plain label with the pill's own one-pixel
+    padding, which is what it always was, and a plain Latin name with
+    accents and descenders leaves a status bar no taller than one holding
+    the same text as a plain label, plus the padding, so the bar stays where
+    it was. None is the platform's own font at its own size."""
+    from PySide6.QtWidgets import QLabel, QStatusBar
+    from PyReconstruct.modules.gui.main.status_readout import StatusSegment
+    previous = qapp.font()
+    set_app_font(qapp, family, size)
+    try:
+        pill = StatusSegment("Alignment", outlined=False)
+        for text in ("Section: 5", "Alignment: default", "B/C Profile: default"):
+            pill.setText(text)
+            # the same label with the padding a pill has always had; the
+            # platform's own size hint for the text, not a line height
+            as_before = QLabel(text)
+            as_before.setContentsMargins(StatusSegment.H_PAD, StatusSegment.V_PAD,
+                                         StatusSegment.H_PAD, StatusSegment.V_PAD)
+            assert pill.sizeHint() == as_before.sizeHint(), text
+        for text in ("Alignment: default", "Alignment: gjpqy ÁÉÍÓÚÅÇ"):
+            pill = StatusSegment("Alignment")
+            pill.setText(text)
+            with_pill, plain = QStatusBar(), QStatusBar()
+            with_pill.addWidget(pill)
+            plain.addWidget(QLabel(text))
+            assert (with_pill.sizeHint().height()
+                    <= plain.sizeHint().height() + 2 * StatusSegment.V_PAD), text
+    finally:
+        qapp.setFont(previous)
+
+
+@pytest.mark.parametrize("family,size", [
+    ("DejaVu Sans", 9), ("Noto Sans", 9), (None, None),
+])
+def test_switching_names_never_shrinks_the_status_bar(qapp, qtbot, family, size):
+    """The readout in a shown window's status bar, switched between the
+    default alignment and one named Ẫ and back. The bar may grow once, when
+    the accent first needs room, and keeps that height afterward: a bar
+    that gave the pixel back on the next plain name would move with every
+    switch. A session of plain names is as tall as it always was."""
+    from PySide6.QtWidgets import QLabel, QMainWindow, QStatusBar
+    from PyReconstruct.modules.gui.main.status_readout import StatusSegment
+    previous = qapp.font()
+    set_app_font(qapp, family, size)
+    try:
+        window = QMainWindow()
+        qtbot.addWidget(window)
+        window.resize(1200, 300)
+        bar = window.statusBar()
+        readout = FieldStatusReadout(bar)
+        bar.addWidget(readout)
+        window.show()
+        heights = []
+        for name in ("default", "Ẫ", "default", "Ẫ", "default"):
+            readout.setReadout("Section: 5", f"Alignment: {name}",
+                               "B/C Profile: default", "x = 1, y = 2")
+            for _ in range(3):
+                qapp.processEvents()
+            heights.append((readout.alignment_segment.sizeHint().height(),
+                            bar.sizeHint().height(), bar.height()))
+        for before, after in zip(heights, heights[1:]):
+            assert after >= before, heights
+        assert heights[2:] == [heights[1]] * 3, heights
+        plain = QStatusBar()
+        plain.addWidget(QLabel("Section: 5"))
+        assert heights[0][1] <= plain.sizeHint().height() + 2 * StatusSegment.V_PAD
+    finally:
+        window.close()
         qapp.setFont(previous)
 
 
