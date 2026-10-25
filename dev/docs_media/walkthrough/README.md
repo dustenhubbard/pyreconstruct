@@ -62,7 +62,7 @@ large.
    | `click` / `point` | Target name or `[x, y]`. `point` moves the pointer without a click |
    | `drag` | Target name with `"points"`, or a list of `[x, y]`: press at the first point, move along the path at an even speed, release at the last |
    | `drag_time` | Seconds from press to release (default 2.0) |
-   | `stroke` | `{"color": [r, g, b], "width": 2}`: the drag draws a line behind the pointer, in native pixels, until the release |
+   | `stroke` | `{"color": [r, g, b], "width": 2}`: the drag draws a line behind the pointer, in native pixels, until the next screen has fully shown |
    | `frames` | Screens shown in turn during the drag, each as the pointer covers its share of the path (a 3D turn, for example) |
    | `fade` | `true` or seconds: cross-fade into this step's screen (menus, dialogs). Plain changes cut |
    | `after`, `after_fade` | Screen shown after the last step's click |
