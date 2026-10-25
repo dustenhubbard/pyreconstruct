@@ -1,4 +1,4 @@
-"""Every removal of a working folder takes the series file first.
+"""No removal of a working folder leaves a series file beside files already gone.
 
 An open writes a working folder's ``.ser`` last, and both scans that decide
 whether a folder is unsaved work (the fast path in ``Series.openJser`` and the
@@ -8,13 +8,17 @@ already lost sections or ``existing_log.csv``: that folder was offered as
 unsaved work, and a save from it wrote the missing sections as ``null`` and
 dropped the history.
 
-Each test lists the ``.ser`` last, as the folder listing on macOS does, so the
-old listing-order removal reaches it last. ``tests/test_save_kill_reopen.py``
-kills a real Save and close; these cover every other path that removes a
-working folder, and what an open does with the folder a stopped close leaves.
+A close moves the whole folder aside in one step (to a ``.closing-<hex>``
+sibling) and deletes it there, so under the series' own name there is either
+every file or nothing. Every removal in place (``Save As`` over an old folder,
+a failed open, declined unsaved work) takes the series file first; each of
+those tests lists the ``.ser`` last, as the folder listing on macOS does, so
+the old listing-order removal reaches it last. ``tests/test_save_kill_reopen.py``
+kills a real Save and close.
 """
 
 import os
+import re
 import shutil
 
 import pytest
@@ -89,39 +93,37 @@ def test_removeSeriesFiles_takes_only_series_files(tmp_path):
     ]
 
 
-def test_close_stopped_partway_leaves_no_series_file(
-    series_jser, ser_listed_last, stop_after_first_remove
-):
-    series = _open(series_jser)
-    hidden = series.hidden_dir
-    with pytest.raises(Stopped):
-        series.close()
-    assert stop_after_first_remove == [f"{series.name}.ser"]
-    assert not _ser_files(hidden)
-    assert "existing_log.csv" in os.listdir(hidden)
+def _closing_dirs(parent):
+    """The folders a close moved aside in `parent`."""
+    return sorted(
+        n for n in os.listdir(parent) if re.fullmatch(r"\.closing-[0-9a-f]{8}", n)
+    )
 
 
-def test_folder_a_stopped_close_left_opens_the_jser_whole(
-    series_jser, ser_listed_last, monkeypatch
+def test_close_stopped_during_the_delete_leaves_nothing_under_the_series_name(
+    series_jser, monkeypatch
 ):
-    """No series file: the open replaces the folder from the .jser, every section."""
+    """The folder is moved aside whole first, so the open takes the .jser, every section."""
     series = _open(series_jser)
     hidden = series.hidden_dir
     sections = dict(series.sections)
-    real_remove = os.remove
+    real_unlink = os.unlink
     removed = []
 
-    def remove(path, *args, **kwargs):
+    def unlink(path, *args, **kwargs):
         if len(removed) == 2:
             raise Stopped(path)
-        real_remove(path, *args, **kwargs)
+        real_unlink(path, *args, **kwargs)
         removed.append(path)
 
-    monkeypatch.setattr(os, "remove", remove)
+    monkeypatch.setattr(os, "unlink", unlink)
     with pytest.raises(Stopped):
         series.close()
-    monkeypatch.setattr(os, "remove", real_remove)
-    assert os.path.isdir(hidden) and not _ser_files(hidden)
+    monkeypatch.setattr(os, "unlink", real_unlink)
+    assert series.closed
+    assert not os.path.exists(hidden)
+    aside = _closing_dirs(os.path.dirname(hidden))
+    assert len(aside) == 1
 
     reopened = _open(series_jser)
     try:
@@ -145,12 +147,13 @@ def test_move_onto_a_stale_working_folder_takes_its_series_file_first(
     stale.mkdir()
     for name in ("other.0", "existing_log.csv", "other.ser"):
         (stale / name).write_text("x")
+    real_rmtree = shutil.rmtree
 
     def rmtree(path, *args, **kwargs):
         if os.path.abspath(path) == str(stale):
             assert not _ser_files(path), "a stopped Save As would leave this offered"
             raise Stopped(path)
-        return shutil.rmtree(path, *args, **kwargs)
+        return real_rmtree(path, *args, **kwargs)
 
     monkeypatch.setattr(series_mod.shutil, "rmtree", rmtree)
     try:
@@ -251,14 +254,17 @@ def log_held(monkeypatch):
     monkeypatch.setattr(os, "unlink", held(os.unlink))
 
 
-def test_close_finishes_once_its_series_file_is_gone(series_jser, log_held):
-    """A file held after the .ser is gone leaves nothing to edit in the folder."""
+def test_close_finishes_once_its_folder_is_moved_aside(series_jser, log_held):
+    """A file the delete cannot remove stays in the moved folder, under no series name."""
     series = _open(series_jser)
     hidden = series.hidden_dir
     sections = dict(series.sections)
     series.close()  # does not raise
     assert series.closed
-    assert os.listdir(hidden) == ["existing_log.csv"]
+    assert not os.path.isdir(hidden)
+    aside = _closing_dirs(os.path.dirname(hidden))
+    assert len(aside) == 1
+    assert os.listdir(os.path.join(os.path.dirname(hidden), aside[0])) == ["existing_log.csv"]
 
     reopened = _open(series_jser)
     try:
@@ -280,7 +286,7 @@ def test_opening_another_series_with_a_held_file_moves_the_window_on(
     main_window.openSeries(jser_fp=str(other), query_prev=False)
     assert main_window.series is not old
     assert main_window.series.jser_fp == str(other)
-    assert old.closed and not _ser_files(old.hidden_dir)
+    assert old.closed and not os.path.isdir(old.hidden_dir)
 
 
 def test_a_closed_series_refuses_to_write(series_jser, log_held):
@@ -296,22 +302,21 @@ def test_a_closed_series_refuses_to_write(series_jser, log_held):
         series.save()
     with pytest.raises(SeriesClosedError):
         series.saveJser()
-    assert os.listdir(series.hidden_dir) == ["existing_log.csv"]
+    assert not os.path.isdir(series.hidden_dir)
 
 
 @pytest.mark.gui
 def test_reopening_the_series_with_a_held_file_puts_a_whole_series_back(
     main_window, main_window_dialogs, series_jser, log_held
 ):
-    """The open fails on the held file; the window gets the series back from its .jser."""
+    """The held file goes aside with the old folder; the open writes a whole new one."""
     old = main_window.series
     snum = main_window.field.section.n
     main_window.field.section.thickness = 0.123
     main_window.seriesModified(True)
     main_window_dialogs.save_response = "yes"
 
-    with pytest.raises(PermissionError):
-        main_window.openSeries(jser_fp=str(series_jser))
+    main_window.openSeries(jser_fp=str(series_jser))
 
     series = main_window.series
     assert series is not old and old.closed
@@ -331,8 +336,8 @@ def test_a_closed_series_gets_no_heartbeat(main_window, log_held):
     series = main_window.series
     hidden = series.hidden_dir
     series.close()
-    before = sorted(os.listdir(hidden))
+    assert not os.path.isdir(hidden)
     main_window.field.markTime()
-    assert sorted(os.listdir(hidden)) == before == ["existing_log.csv"]
+    assert not os.path.isdir(hidden)
     series.closed = False  # for the window's own close at teardown
     series.leave_open = True

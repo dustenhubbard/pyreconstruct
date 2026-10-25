@@ -50,7 +50,10 @@ NAME = "shapes2"
 #: How long the child may take to reach its point. It takes under a second.
 TIMEOUT = 120
 
-TEMP_NAME = re.compile(r"\.save-[0-9a-f]{6}\.tmp")
+#: What a killed save or close can leave beside the .jser: a save's temp file
+#: (a later open removes it), or the working folder a close moved aside (a
+#: retired copy that stays; nothing offers it as unsaved work).
+TEMP_NAME = re.compile(r"\.save-[0-9a-f]{6}\.tmp|\.closing-[0-9a-f]{8}")
 
 # Each point, the state the .jser must hold after the kill, and the state the
 # working folder must hold.
@@ -249,7 +252,7 @@ def check_jser(folder, untouched, expect, states, tmp_path):
         f for f in os.listdir(declined)
         if f != f"{NAME}.jser" and f != f".{NAME}"
     ]
-    # a temp file left by the killed save is one a later open removes
+    # what the killed save or close left is what a later open removes
     assert all(TEMP_NAME.fullmatch(f) for f in leftovers), leftovers
 
 

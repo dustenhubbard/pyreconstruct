@@ -65,7 +65,7 @@ POINTS = (
     "injected-jser-flush-between-sections",  # sections 0 to 2 forced into the temp .jser
     "jser-before-rename",  # the new .jser complete and synced, not renamed
     "jser-after-rename",  # the new .jser renamed into place
-    "close-remove",  # Save and close: two files of the working folder removed
+    "close-remove",  # Save and close: the folder moved aside, two files removed there
 )
 
 #: The two finished saves the test compares against.
@@ -136,33 +136,26 @@ def arm(point, series):
     series_mod.write_jser = write_jser
 
     if point == "close-remove":
-        # Stops after the second file of the working folder is removed,
-        # whichever files those are, so a close that removes the series file
-        # first reaches this point too and leaves no series file behind.
-        real_remove = os.remove
-        removed = []
+        # Stops after the close has moved the working folder aside and
+        # removed two of its files there, whichever files those are: under
+        # the series' own name nothing is left to offer.
+        real_rename, real_unlink = os.rename, os.unlink
+        state = {"moved": False, "removed": 0}
 
-        def remove(path, *args, **kwargs):
-            if os.path.dirname(os.path.abspath(path)) == hidden:
-                if len(removed) == 2:
-                    stop(point)
-                removed.append(path)
-            real_remove(path, *args, **kwargs)
+        def rename(src, dst, *args, **kwargs):
+            real_rename(src, dst, *args, **kwargs)
+            if os.path.abspath(src) == hidden:
+                state["moved"] = True
 
-        os.remove = os.unlink = remove
+        def unlink(path, *args, **kwargs):
+            if state["moved"] and state["removed"] == 2:
+                stop(point)
+            real_unlink(path, *args, **kwargs)
+            if state["moved"]:
+                state["removed"] += 1
 
-        # The order close() removes files in is the folder listing's, which the
-        # file system picks. Sorted with the series file last is one real
-        # order, and the same on every file system.
-        real_listdir = os.listdir
-
-        def listdir(path="."):
-            names = real_listdir(path)
-            if os.path.abspath(path) == hidden:
-                names = sorted(names, key=lambda n: (n.endswith(".ser"), n))
-            return names
-
-        os.listdir = listdir
+        os.rename = rename
+        os.remove = os.unlink = unlink
 
 
 class _StoppingFile:

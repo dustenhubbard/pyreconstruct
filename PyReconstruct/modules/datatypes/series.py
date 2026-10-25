@@ -537,6 +537,61 @@ def _setAside(folder : str) -> str:
     return aside
 
 
+def _closingDir(hidden_dir : str) -> str:
+    """A free `.closing-<hex>` name beside a working folder, for Series.close.
+
+    Short, since the series' own name may already be as long as a folder
+    name can be. Never an existing path, so never the folder itself.
+    """
+    parent = os.path.dirname(hidden_dir)
+    while True:
+        closing_dir = os.path.join(parent, f".closing-{secrets.token_hex(4)}")
+        if not os.path.lexists(closing_dir):
+            return closing_dir
+
+
+def _holdsSeriesFile(folder : str) -> bool:
+    """True if `folder` is a dot folder with a `.ser` directly in it."""
+    if not os.path.basename(folder).startswith("."):
+        return False
+    try:
+        with os.scandir(folder) as entries:
+            return any(
+                e.name.lower().endswith(".ser") and e.is_file() for e in entries
+            )
+    except (OSError, ValueError):
+        return False
+
+
+def _insideWorkingFolder(folder : str) -> bool:
+    """True if `folder` is, or is inside, a series' working folder.
+
+    A working folder is a `.<name>` folder holding a `.ser`. A close deletes
+    the whole folder (Series.close), so nothing a user asks PyReconstruct to
+    keep, a backup folder above all, may be in one. Checked as written and
+    with its links resolved: a link from outside into a working folder
+    reaches files the close deletes, and a link from inside one is a path the
+    close removes. A path that cannot be read (missing, or a NUL in it) is
+    not inside one as far as this can tell; the caller reports it.
+    """
+    if not folder:
+        return False
+    paths = {os.path.abspath(folder)}
+    try:
+        paths.add(os.path.realpath(folder))
+    except ValueError:
+        pass  # a NUL in the path: reported by the caller
+    for path in paths:
+        while True:
+            if _holdsSeriesFile(path):
+                return True
+            parent = os.path.dirname(path)
+            if parent == path:
+                break
+            path = parent
+    return False
+
+
 def _putBack(aside : str, folder : str) -> bool:
     """Rename a folder set aside by `_setAside` back to where it was.
 
@@ -1889,9 +1944,9 @@ class Series():
     def refuseClosedWrite(self, fp : str):
         """Raise SeriesClosedError for a write to a working file of a closed series.
 
-        A close may leave files it could not remove in the folder, with no
-        .ser beside them, and no open offers that folder back. Anything
-        written there now would be lost.
+        A close moves the working folder aside and deletes it, and no open
+        offers it back. Anything written under the old path now would be
+        lost.
         """
         raise SeriesClosedError(
             f"Series {self.name} is closed, so {os.path.basename(fp)} was "
@@ -1899,7 +1954,7 @@ class Series():
         )
 
     def close(self):
-        """Clear the hidden directory of the series.
+        """Move the hidden directory of the series aside, then delete it.
 
         A local store that holds a Save the .jser lacks writes the .jser first
         (store_save.py). If that fails it raises, and nothing is removed.
@@ -1913,29 +1968,26 @@ class Series():
             return
 
         if os.path.isdir(self.hidden_dir):
+            # The working folder is the series' own, whole, so it goes in one
+            # rename to a free name beside it before anything is deleted. A
+            # rename that fails (on Windows, a working file another program
+            # holds open) raises with every file in place and the series
+            # still open, so it stays usable in the window. Deleting the
+            # files in place could stop with some sections gone.
+            closing_dir = _closingDir(self.hidden_dir)
+            os.rename(self.hidden_dir, closing_dir)
 
-            # a .ser that cannot be removed (held open) stops the close with
-            # every file in place, and the series stays in the window, usable
-            removeSeriesFiles(self.hidden_dir)
-
-            # Without its .ser the folder is never offered as unsaved work, so
-            # an edit saved in it now would be lost. The close finishes
-            # instead: a file that cannot be removed is left for the next open,
-            # which replaces the folder from the .jser.
+            # Nothing the series reads is under its name now, so it is closed
+            # whatever the delete does. A folder the delete leaves behind (a
+            # held file) is a retired copy: no open offers it as unsaved work,
+            # nothing is written into it, and nothing in PyReconstruct removes
+            # it later, so the log names it for the user.
             self.closed = True
-            try:
-                names = os.listdir(self.hidden_dir)
-            except OSError:
-                names = []
-            for f in names:
-                try:
-                    os.remove(os.path.join(self.hidden_dir, f))
-                except OSError:
-                    pass
-            try:
-                os.rmdir(self.hidden_dir)
-            except OSError:
-                pass
+            shutil.rmtree(closing_dir, ignore_errors=True)
+            if os.path.lexists(closing_dir):
+                local_stores.log_note(
+                    f"Closing {self.name} left its old working folder at {closing_dir}"
+                )
 
         self.closed = True
     
@@ -6330,9 +6382,13 @@ class Series():
                     created: a missing one is reported, as before.
         """
         if not self.usesBackupDefaults():
-            return self.getOption("backup_dir")
+            folder = self.getOption("backup_dir")
+            # a close deletes a working folder whole, backups in it included
+            return "" if _insideWorkingFolder(folder) else folder
         template = self.getOption("default_backup_dir")
         folder = self.expandBackupFolder(template)
+        if _insideWorkingFolder(folder):
+            return ""
         i = template.find("{series}")
         if create and i != -1 and not os.path.isdir(folder):
             if os.path.isdir(os.path.dirname(template[:i])):

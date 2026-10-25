@@ -70,7 +70,7 @@ POINTS = (
     "close-injected-jser-half-write",  # half of section 3 forced into the temp .jser
     "close-jser-before-rename",  # the new .jser complete and synced, not renamed
     "close-jser-after-rename",  # the new .jser in place, not yet recorded by the store
-    "close-remove",  # the .jser written; two files of the working folder removed
+    "close-remove",  # the .jser written; the folder moved aside, two files removed there
 )
 
 CONTROLS = ("none",)
@@ -186,27 +186,24 @@ def armClose(point, series):
     jser_format.write_jser = write_jser
 
     if point == "close-remove":
-        # as tests/save_kill_child.py: after two removals, the series file last
-        real_remove = os.remove
-        removed = []
+        # as tests/save_kill_child.py: the folder moved aside, two files removed there
+        real_rename, real_unlink = os.rename, os.unlink
+        state = {"moved": False, "removed": 0}
 
-        def remove(path, *args, **kwargs):
-            if os.path.dirname(os.path.abspath(path)) == hidden:
-                if len(removed) == 2:
-                    stop(point)
-                removed.append(path)
-            real_remove(path, *args, **kwargs)
+        def rename(src, dst, *args, **kwargs):
+            real_rename(src, dst, *args, **kwargs)
+            if os.path.abspath(src) == hidden:
+                state["moved"] = True
 
-        os.remove = os.unlink = remove
-        real_listdir = os.listdir
+        def unlink(path, *args, **kwargs):
+            if state["moved"] and state["removed"] == 2:
+                stop(point)
+            real_unlink(path, *args, **kwargs)
+            if state["moved"]:
+                state["removed"] += 1
 
-        def listdir(path="."):
-            names = real_listdir(path)
-            if os.path.abspath(path) == hidden:
-                names = sorted(names, key=lambda n: (n.endswith(".ser"), n))
-            return names
-
-        os.listdir = listdir
+        os.rename = rename
+        os.remove = os.unlink = unlink
 
 
 class _StoppingFile:

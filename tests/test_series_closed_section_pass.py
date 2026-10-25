@@ -16,8 +16,10 @@ What is pinned here:
   * a write pass stopped that way is not quiet: the app's exception hook
     shows and logs it, naming the series (only the read-only clean-up scans
     end without a word; see test_cleanup_lists_series_switch.py)
-  * a close that fails part-way (a locked working file) leaves the series
-    open, and a pass over it reads every section
+  * a close moves the working folder aside in one step before it deletes
+    anything: a move that is refused (a working file held open, on Windows)
+    leaves the series open with every file, and a pass over it reads every
+    section; a delete that fails after the move still closes the series
   * the last progress update (100%) runs the event loop too, after the last
     section: a pass that still writes series data then (the copy's and the
     split's object attributes, an import's groups, hosts and alignment, and
@@ -130,26 +132,95 @@ def test_a_write_pass_stopped_part_way_is_reported(
     assert log.exists() and "SeriesClosedError" in log.read_text()
 
 
-def test_a_failed_close_leaves_the_series_usable(series, monkeypatch):
+def _closing_dirs(parent):
+    """The folders a close moved aside in `parent`."""
     import os
-    removed = []
+    import re
+    return sorted(
+        n for n in os.listdir(parent) if re.fullmatch(r"\.closing-[0-9a-f]{8}", n)
+    )
 
-    def locked(path):
-        removed.append(path)
-        raise PermissionError(13, "Permission denied", path)
 
-    monkeypatch.setattr(os, "remove", locked)
+def test_a_close_the_move_refuses_deletes_nothing(series, monkeypatch):
+    import os
+    hidden_dir = series.hidden_dir
+    before = sorted(os.listdir(hidden_dir))
+    rename = os.rename
+    refused = []
+
+    def held(src, dst, *args, **kwargs):
+        if os.path.normpath(src) == os.path.normpath(hidden_dir):
+            refused.append(dst)
+            raise PermissionError(13, "Permission denied", src)
+        return rename(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(os, "rename", held)
     with pytest.raises(PermissionError):
         series.close()
     monkeypatch.undo()
 
-    assert len(removed) == 1 and os.path.isdir(series.hidden_dir)
+    assert len(refused) == 1
     assert not series.closed
+    assert sorted(os.listdir(hidden_dir)) == before
+    assert _closing_dirs(os.path.dirname(hidden_dir)) == []
     visited = [
         snum for snum, _section
         in series.enumerateSections(message="Scanning...")
     ]
     assert visited == sorted(series.sections)
+
+
+def test_a_delete_that_fails_after_the_move_still_closes(series, monkeypatch):
+    import os
+    import shutil
+    from PyReconstruct.modules.datatypes.series import SeriesClosedError
+    hidden_dir = series.hidden_dir
+    parent = os.path.dirname(hidden_dir)
+    before = sorted(os.listdir(hidden_dir))
+
+    # every file held: the delete leaves the moved folder as it is
+    monkeypatch.setattr(shutil, "rmtree", lambda path, *args, **kwargs: None)
+    series.close()
+    monkeypatch.undo()
+
+    assert series.closed
+    assert not os.path.isdir(hidden_dir)
+    aside = _closing_dirs(parent)
+    assert len(aside) == 1
+    # the moved folder is as it was: nothing is written into it at a close
+    assert sorted(os.listdir(os.path.join(parent, aside[0]))) == before
+    with pytest.raises(SeriesClosedError):
+        series.save()
+
+
+def test_a_close_writes_nothing_through_a_link_in_the_working_folder(
+    series, monkeypatch, tmp_path
+):
+    """A link inside the working folder to a file outside it: the close removes
+    the link and leaves the file as it was, bytes for bytes."""
+    import os
+    import shutil
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    document = outside / "user-document.jser"
+    document.write_bytes(b'{"kept": true}')
+    for name in (".retired", "note.txt"):
+        os.symlink(str(document), os.path.join(series.hidden_dir, name))
+    before = sorted(os.listdir(series.hidden_dir))
+
+    # once with the delete refused, once with it done
+    monkeypatch.setattr(shutil, "rmtree", lambda path, *args, **kwargs: None)
+    series.close()
+    monkeypatch.undo()
+    aside = _closing_dirs(os.path.dirname(series.hidden_dir))
+    assert len(aside) == 1
+    aside_dir = os.path.join(os.path.dirname(series.hidden_dir), aside[0])
+    assert sorted(os.listdir(aside_dir)) == before
+    assert document.read_bytes() == b'{"kept": true}'
+
+    shutil.rmtree(aside_dir)
+    assert document.read_bytes() == b'{"kept": true}'
+    assert sorted(p.name for p in outside.iterdir()) == ["user-document.jser"]
 
 
 def _closes_at_the_end(series, save_first=False, then=None):
