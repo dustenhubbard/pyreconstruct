@@ -15,12 +15,16 @@ reader. The numbers are the README's.
 
 Code spans are left out of the sentence count and the "Before," search, so a
 path like ``a.b/c.png`` is not a sentence break. For rule 6 a menu path is two
-or more items joined by ``▸`` or ``>``, one of which is a menu or submenu name
-PyReconstruct's menubar or field context menu defines (read from
-``gui/main/menubar.py`` and ``gui/main/context_menu_list.py``); items may hold
-slashes, hyphens and digits (``Brightness/contrast``, ``Show z-traces``, ``3D``).
-A lone backticked item ending in "..." also counts. A comparison such as
-``15 > 10`` or ``A > B``, or a file name such as ``a...b.png``, is not a path.
+or more items joined by ``▸`` or ``>``. Items may hold slashes, hyphens and
+digits (``Brightness/contrast``, ``Show z-traces``, ``3D``). With ``▸``, one
+item names a menu or submenu PyReconstruct defines. With ``>``, which is also a
+comparison, the first item is exactly a top-level menu or a context-menu root
+(``File``, ``Series``, ``Trace``, ...) and every item begins with a capital
+letter or a digit followed by a letter, so ``15 > 10``, ``A > B``, ``trace > 5``
+and ``Edit > 5 traces`` are not paths. The menu names are read as data from
+``gui/main/menubar.py`` and ``gui/main/context_menu_list.py``; when they cannot
+be read, a fixed list stands in. A lone backticked item ending in "..." also
+counts.
 
 Each finding is one line, ``path:line: rule N: what, and the fix``, plus a
 GitHub annotation on that line of the fragment when run in Actions. A fragment
@@ -79,11 +83,14 @@ MENU_FILES = (
     ROOT / "PyReconstruct/modules/gui/main/menubar.py",
     ROOT / "PyReconstruct/modules/gui/main/context_menu_list.py",
 )
-# The menus and submenus, for a checkout without the package (a tag export).
-FALLBACK_MENUS = frozenset({
+# The menus, for a checkout without the package (a tag export) or one whose
+# menu files cannot be read: the top-level menus and context-menu roots, then
+# the submenus the fragments name.
+FALLBACK_ROOTS = frozenset({
     "File", "Edit", "Series", "Section", "Lists", "Alignments", "Autosegment",
-    "View", "Help", "Trace", "Object", "Ztrace", "New series", "Options", "3D",
+    "View", "Help", "Trace", "Object", "Ztrace",
 })
+FALLBACK_LABELS = FALLBACK_ROOTS | {"New series", "Options", "3D"}
 
 # Rule 6 patterns. A menu item is a run of words that may hold slashes,
 # hyphens, digits and apostrophes (Brightness/contrast, Show z-traces, 3D),
@@ -95,40 +102,72 @@ ITEM = ITEM_CHARS + r"+(?: " + ITEM_CHARS + r"+)*"
 PATH_ITEM = r"`?" + ITEM + ELLIPSIS + r"?`?"
 PATH_RE = re.compile(PATH_ITEM + r"(?:\s*(?:▸|>)\s*" + PATH_ITEM + r")+")
 SEP_SPLIT_RE = re.compile(r"\s*(?:▸|>)\s*")
+# What an item of a ">" path looks like: a capital, or a digit then a letter (3D).
+MENU_ITEM_START_RE = re.compile(r"^(?:[A-Z]|[0-9]+[A-Za-z])")
+BARE_NUMBER_RE = re.compile(r"^[0-9]+$")
 # A lone backticked item ending in "...": a menu item written the old way.
 CODE_ITEM_ELLIPSIS_RE = re.compile(r"`" + ITEM + ELLIPSIS + r"`")
 
 
+def _text_label(node):
+    """The ``"text"`` string of a menu dict, or None."""
+    if not isinstance(node, ast.Dict):
+        return None
+    for key, value in zip(node.keys, node.values):
+        if (
+            isinstance(key, ast.Constant) and key.value == "text"
+            and isinstance(value, ast.Constant) and isinstance(value.value, str)
+        ):
+            return value.value
+    return None
+
+
+def _labeled_dicts(node, inside=False):
+    """``(label, is_root)`` for each menu dict under ``node``; a root has no menu dict above it."""
+    for child in ast.iter_child_nodes(node):
+        label = _text_label(child)
+        if label is None:
+            yield from _labeled_dicts(child, inside)
+        else:
+            yield label, not inside
+            yield from _labeled_dicts(child, True)
+
+
 def menu_labels(files=MENU_FILES):
-    """Every menu and submenu name the menubar and field context menu define.
+    """``(roots, labels)``: the menu names the menubar and field context menu define.
 
-    Read as data from the ``"text"`` entries of the menu dicts, without
-    importing Qt. The fallback set stands in when the files are not there.
+    ``roots`` are the top-level menus and the context-menu roots; ``labels``
+    adds every submenu. Read as data from the ``"text"`` entries of the menu
+    dicts, without importing Qt. Anything that stops the read (a missing file,
+    a byte that is not UTF-8, a syntax error) means the fixed lists stand in:
+    the check is about fragments, and a menu file it cannot read is not a
+    finding against them.
     """
-    labels = set()
-    for path in files:
-        if not path.exists():
-            continue
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if not isinstance(node, ast.Dict):
-                continue
-            for key, value in zip(node.keys, node.values):
-                if (
-                    isinstance(key, ast.Constant) and key.value == "text"
-                    and isinstance(value, ast.Constant) and isinstance(value.value, str)
-                ):
-                    labels.add(value.value)
-    return frozenset(labels) if labels else FALLBACK_MENUS
+    roots, labels = set(), set()
+    try:
+        for path in files:
+            tree = ast.parse(Path(path).read_text(encoding="utf-8"))
+            for label, is_root in _labeled_dicts(tree):
+                labels.add(label)
+                if is_root:
+                    roots.add(label)
+    except Exception:  # noqa: BLE001  (any failure to read the menus falls back)
+        return FALLBACK_ROOTS, FALLBACK_LABELS
+    if not labels:
+        return FALLBACK_ROOTS, FALLBACK_LABELS
+    return frozenset(roots), frozenset(labels)
 
 
-_MENU_LABELS = None
+_MENUS = None
 
 
 def _menus():
-    global _MENU_LABELS
-    if _MENU_LABELS is None:
-        _MENU_LABELS = {label.lower() for label in menu_labels()}
-    return _MENU_LABELS
+    """``(roots, lowercased labels)``, read once."""
+    global _MENUS
+    if _MENUS is None:
+        roots, labels = menu_labels()
+        _MENUS = (frozenset(roots), frozenset(label.lower() for label in labels))
+    return _MENUS
 
 
 def _items(path_text):
@@ -140,19 +179,31 @@ def _items(path_text):
 
 
 def menu_paths(text):
-    """Each run of items joined by ``▸`` or ``>`` that names a known menu.
+    """Each run of items joined by ``▸`` or ``>`` that is a menu path.
 
-    An item counts as known when it is a menu or submenu label, or one of its
-    words is; ``A > B`` and ``new > Old`` name none and are left alone.
+    With ``▸`` one item is, or holds the word of, a menu or submenu label. With
+    ``>``, which is also a comparison, the first item is exactly a root menu
+    and every item starts like a menu label: ``Help > What's new`` is a path,
+    ``A > B``, ``Edit > 5 traces`` and ``It follows the View > 3 rule`` are not.
     """
-    menus = _menus()
+    roots, labels = _menus()
     found = []
     for match in PATH_RE.finditer(text):
-        for item in _items(match.group(0)):
-            words = item.lower().split()
-            if item.lower() in menus or any(word in menus for word in words):
-                found.append(match.group(0))
-                break
+        path = match.group(0)
+        items = _items(path)
+        if ">" in path:
+            is_path = (
+                items[0] in roots
+                and all(MENU_ITEM_START_RE.match(item) for item in items)
+                and not any(BARE_NUMBER_RE.match(item) for item in items)
+            )
+        else:
+            is_path = any(
+                item.lower() in labels or any(word in labels for word in item.lower().split())
+                for item in items
+            )
+        if is_path:
+            found.append(path)
     return found
 
 

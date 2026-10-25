@@ -183,6 +183,12 @@ def test_rule_6_the_house_form_passes():
         # alphabetic comparisons: no item is a menu
         "**The view is clearer.** A value such as `A > B` is accepted.",
         "**The view is clearer.** A step where new > Old is kept.",
+        # comparisons that happen to hold a menu word
+        "**The view is clearer.** It follows the View > 3 rule.",
+        "**The view is clearer.** Edit > 5 traces in one pass.",
+        "**The view is clearer.** A filter accepts `trace > 5`.",
+        # ">" with a menu word that is not the whole first item
+        "**The scale bar is thinner.** The Series > Options page sets it.",
     ],
 )
 def test_rule_6_ordinary_code_and_comparisons_pass(bullet):
@@ -198,10 +204,11 @@ def test_rule_6_ordinary_code_and_comparisons_pass(bullet):
         ("**The view is clearer.** Open `Series ▸ 3D ▸ Load 3D scene`.", ["in backticks"]),
         ("**The view is clearer.** Open Series ▸ Brightness/contrast profiles...", ['"..."']),
         ("**Traces keep their hosts.** Right-click and choose `Trace` > `Set hosts`.", ['">"', "in backticks"]),
-        # a submenu name, not a top-level menu, is enough
-        ("**A 4D zarr opens.** `New series` > `From neuroglancer zarr...` reads it.", ['">"', "in backticks", '"..."']),
-        # the menu name need not be the first word of the item
-        ("**The scale bar is thinner.** The Series > Options page sets it.", ['">"']),
+        # with ▸ a submenu name is enough; with ">" the lone item still shows
+        ("**A 4D zarr opens.** `New series` ▸ `From neuroglancer zarr...` reads it.", ["in backticks", '"..."']),
+        ("**A 4D zarr opens.** `New series` > `From neuroglancer zarr...` reads it.", ["in backticks", '"..."']),
+        # a ">" path whose items start with a digit then a letter
+        ("**Meshes export.** Series > 3D > Export meshes writes them.", ['">"']),
     ],
 )
 def test_rule_6_real_menu_labels_are_recognized(bullet, expected):
@@ -211,10 +218,65 @@ def test_rule_6_real_menu_labels_are_recognized(bullet, expected):
         assert marker in message, (message, marker)
 
 
-def test_menu_labels_come_from_the_menubar():
-    labels = voice.menu_labels()
-    assert {"File", "Series", "View", "Help", "New series", "3D", "Trace", "Object"} <= labels
-    assert voice.menu_labels(files=()) == voice.FALLBACK_MENUS
+# The menu reader. Checked on small inline sources, not on the live menubar, so
+# an equivalent rewrite of the menu files cannot fail this suite.
+
+MENU_SOURCE = '''
+def return_file_menu(self):
+    return {
+        "text": "File",
+        "opts": [("open_act", "Open..."), {"text": "New series", "opts": []}],
+    }
+
+context_menu_list = [{"text": "Trace", "opts": []}, {"text": "View", "opts": []}]
+'''
+
+
+def test_menu_reader_tells_roots_from_submenus(tmp_path):
+    source = tmp_path / "menubar.py"
+    source.write_text(MENU_SOURCE, encoding="utf-8")
+    roots, labels = voice.menu_labels(files=(source,))
+    assert roots == {"File", "Trace", "View"}
+    assert labels == {"File", "New series", "Trace", "View"}
+
+
+def test_menu_reader_falls_back_without_files_or_labels(tmp_path):
+    assert voice.menu_labels(files=()) == (voice.FALLBACK_ROOTS, voice.FALLBACK_LABELS)
+    plain = tmp_path / "plain.py"
+    plain.write_text("x = 1\n", encoding="utf-8")
+    assert voice.menu_labels(files=(plain,)) == (voice.FALLBACK_ROOTS, voice.FALLBACK_LABELS)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"def broken(:\n",  # a syntax error
+        b'# coding: latin-1\nmenu = {"text": "File", "tip": "caf\xe9"}\n',  # not UTF-8
+    ],
+)
+def test_menu_reader_falls_back_when_a_menu_file_cannot_be_read(tmp_path, content):
+    bad = tmp_path / "menubar.py"
+    bad.write_bytes(content)
+    assert voice.menu_labels(files=(bad,)) == (voice.FALLBACK_ROOTS, voice.FALLBACK_LABELS)
+
+
+def test_an_unreadable_menu_file_keeps_the_step_report_only(tmp_path, monkeypatch, capsys):
+    bad = tmp_path / "menubar.py"
+    bad.write_bytes(b"def broken(:\n")
+    monkeypatch.setattr(voice, "MENU_FILES", (bad,))
+    monkeypatch.setattr(voice, "_MENUS", None)
+    good = tmp_path / "good-abc123.fixed.md"
+    good.write_text(f"- {GOOD}\n", encoding="utf-8")
+    assert voice.main([str(good)]) == 0
+    assert "fragment voice: ok" in capsys.readouterr().out
+    monkeypatch.setattr(voice, "_MENUS", None)
+    assert rules("**Help > What's new shows the notes.** Open it.") == [6]  # the fallback still knows Help
+    monkeypatch.setattr(voice, "_MENUS", None)
+
+
+def test_the_live_menu_files_yield_some_labels():
+    roots, labels = voice.menu_labels()
+    assert roots and labels  # a soft check: the fixed lists satisfy it too
 
 
 # Shapes that look like a break and are not.
