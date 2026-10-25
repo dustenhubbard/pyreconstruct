@@ -319,7 +319,7 @@ quit the app).
 
 <figure class="clip" markdown>
 
-![Clip: over the welcome series, the pointer opens the File menu and clicks Open series..., and the shapes1 test series opens on section 0.](assets/images/user-guide/04-open-series-start.png){ data-width="1280" data-height="720" }
+![Clip: over the welcome series, the pointer opens the File menu and clicks Open series..., and the shapes1 test series opens on section 0.](assets/images/user-guide/04-open-series-poster.png){ data-width="1280" data-height="720" }
 
 [▶ 6 s · loops](assets/videos/user-guide/04-open-series.mp4){ .clip-src }
 
@@ -438,7 +438,7 @@ sliders, and a scale bar. Each overlay group can be dragged to reposition it, an
 
 <figure class="clip" markdown>
 
-![Clip: the pointer clicks the up arrow button at the bottom right and section 1 shows, then clicks the down arrow and section 0 is back.](assets/images/user-guide/05-move-between-sections-start.png){ data-width="1280" data-height="720" }
+![Clip: the pointer clicks the up arrow button at the bottom right and section 1 shows, then clicks the down arrow and section 0 is back.](assets/images/user-guide/05-move-between-sections-poster.png){ data-width="1280" data-height="720" }
 
 [▶ 6 s · loops](assets/videos/user-guide/05-move-between-sections.mp4){ .clip-src }
 
@@ -560,7 +560,7 @@ only.
 
 <figure class="clip" markdown>
 
-![Clip: the pointer clicks the Closed Trace button, drags a loop beside the star and lets go, and the new orange trace stays selected.](assets/images/user-guide/06-draw-closed-trace-start.png){ data-width="1280" data-height="720" }
+![Clip: the pointer clicks the Closed Trace button, drags a loop beside the star and lets go, and the new orange trace stays selected.](assets/images/user-guide/06-draw-closed-trace-poster.png){ data-width="1280" data-height="720" }
 
 [▶ 8 s · loops](assets/videos/user-guide/06-draw-closed-trace.mp4){ .clip-src }
 
@@ -765,7 +765,7 @@ allowed), and several can be open at once.
 
 <figure class="clip" markdown>
 
-![Clip: the pointer opens the Lists menu and clicks Object list, the list docks to the left of the field, and its close button puts it away.](assets/images/user-guide/09-open-object-list-start.png){ data-width="1280" data-height="720" }
+![Clip: the pointer opens the Lists menu and clicks Object list, the list docks to the left of the field, and its close button puts it away.](assets/images/user-guide/09-open-object-list-poster.png){ data-width="1280" data-height="720" }
 
 [▶ 7 s · loops](assets/videos/user-guide/09-open-object-list.mp4){ .clip-src }
 
@@ -988,7 +988,7 @@ z-trace list.
 
 <figure class="clip walkthrough" markdown>
 
-![Clip: the pointer opens Lists ▸ Object list, clicks ast01, Shift-clicks d01sp01 to select all four objects, right-clicks them and chooses 3D ▸ Add to scene; the 3D scene opens with a dendrite, its spine, an axon and an astroglial process.](assets/images/user-guide/11-add-to-scene-start.png){ data-width="1280" data-height="720" }
+![Clip: the pointer opens Lists ▸ Object list, clicks ast01, Shift-clicks d01sp01 to select all four objects, right-clicks them and chooses 3D ▸ Add to scene; the 3D scene opens with a dendrite, its spine, an axon and an astroglial process.](assets/images/user-guide/11-add-to-scene-poster.png){ data-width="1280" data-height="720" }
 
 [▶ 16 s · loops](assets/videos/user-guide/11-add-to-scene.mp4){ .clip-src }
 

@@ -224,12 +224,20 @@ def test_a_guide_copy_writes_each_video_and_its_poster_only(clips, tmp_path):
         made[-1].write_bytes(f"video {name}".encode())
     (videos / "11-add-to-scene.mp4").write_bytes(b"made by walkthrough_3d.py")
 
-    clips.copy_to_guide(out, made, made_up_targets(), videos, images)
+    clips.copy_to_guide(out, made, videos, images)
 
     assert (videos / "11-add-to-scene.mp4").read_bytes() == b"made by walkthrough_3d.py"
     for name in CLICK_TARGETS:
         assert (videos / f"{name}.mp4").read_bytes() == f"video {name}".encode()
-    assert (images / "04-open-series-start.png").read_bytes() == b"welcome"
-    for name in ("05-move-between-sections", "06-draw-closed-trace", "09-open-object-list"):
-        assert (images / clips.poster(name)).read_bytes() == b"open"
+    assert (images / "04-open-series-poster.png").read_bytes() == b"open"
+    assert (images / "05-move-between-sections-poster.png").read_bytes() == b"next"
+    assert (images / "06-draw-closed-trace-poster.png").read_bytes() == b"drawn"
+    assert (images / "09-open-object-list-poster.png").read_bytes() == b"list"
     assert len(list(images.iterdir())) == 4
+
+
+def test_each_poster_is_a_screen_its_clip_shows_and_no_two_share_one(clips, scenes):
+    assert set(clips.KEY_SCREEN) == set(scenes)
+    for name, key in clips.KEY_SCREEN.items():
+        assert key in {s["image"] for s in scenes[name]["states"]}, name
+    assert len(set(clips.KEY_SCREEN.values())) == len(clips.KEY_SCREEN)

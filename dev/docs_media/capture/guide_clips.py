@@ -20,8 +20,8 @@ What this makes, in <folder>:
     pinned inputs, and the settings tripwire read before and after the run.
 
 With --guide, the four videos replace the ones in docs/assets/videos/user-guide/,
-and each clip's first frame is saved as its poster, <clip>-start.png, in
-docs/assets/images/user-guide/.
+and each clip's key screen (KEY_SCREEN) is saved as its poster,
+<clip>-poster.png, in docs/assets/images/user-guide/.
 
 How it shoots is capture.py's, on the made-up series the guide's stills
 show (shapes1): the theme, username, isolated settings and tripwire, and
@@ -95,6 +95,15 @@ FRAMES = {
     "list": "09-object-list-opened.png",
 }
 
+# each clip's poster: the screen that shows what the clip does, not the one
+# it opens on, since three of the clips open on the same series
+KEY_SCREEN = {
+    "04-open-series": "open",
+    "05-move-between-sections": "next",
+    "06-draw-closed-trace": "drawn",
+    "09-open-object-list": "list",
+}
+
 
 def clips(targets):
     """Each clip's step list, from this run's targets."""
@@ -154,7 +163,7 @@ def steps_files(targets):
 
 
 def poster(name):
-    return f"{name}-start.png"
+    return f"{name}-poster.png"
 
 
 # --- the shoot --------------------------------------------------------------
@@ -315,12 +324,11 @@ def render(out, targets):
     return videos
 
 
-def copy_to_guide(out, videos, targets, video_dir=GUIDE_VIDEOS, image_dir=GUIDE_IMAGES):
-    """Put each video in the guide, and its first frame as its poster."""
-    steps = clips(targets)
+def copy_to_guide(out, videos, video_dir=GUIDE_VIDEOS, image_dir=GUIDE_IMAGES):
+    """Put each video in the guide, and its key screen as its poster."""
     for video in videos:
         shutil.copyfile(video, video_dir / video.name)
-        shutil.copyfile(out / FRAMES[steps[video.stem][0]["image"]], image_dir / poster(video.stem))
+        shutil.copyfile(out / FRAMES[KEY_SCREEN[video.stem]], image_dir / poster(video.stem))
 
 
 def main():
@@ -381,7 +389,7 @@ def main():
 
     videos = render(out, targets)
     if args.guide:
-        copy_to_guide(out, videos, targets)
+        copy_to_guide(out, videos)
         print(f"{len(videos)} clips and posters in docs/assets/")
 
 

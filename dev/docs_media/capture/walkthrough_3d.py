@@ -30,9 +30,9 @@ To make the video, give steps.json to dev/docs_media/walkthrough/walkthrough.py:
 `walkthrough.py render <folder>/scene.json --width 2560 --crf 21 -o 11-add-to-scene.mp4`
 (its README.md has the whole workflow).
 The camera stays at zoom 1, so the video shows each frame pixel for pixel. The
-guide's copy is docs/assets/videos/user-guide/11-add-to-scene.mp4, and its
-poster is 01-series-open.png, saved as 11-add-to-scene-start.png beside the
-guide's other images.
+guide's copy is docs/assets/videos/user-guide/11-add-to-scene.mp4. Its
+poster is the clip's key screen, the 3D scene (POSTER); with --guide it is
+saved as docs/assets/images/user-guide/11-add-to-scene-poster.png.
 
 Made-up data only. No lab data, no file dialog, no recent-files list.
 """
@@ -47,6 +47,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 STEPS_TEMPLATE = HERE / "walkthrough_3d.steps.json"
+GUIDE_IMAGES = HERE.parents[2] / "docs" / "assets" / "images" / "user-guide"
+POSTER_FILE = "11-add-to-scene-poster.png"
 
 
 
@@ -92,6 +94,8 @@ FRAMES = {
     "menu-add": "05-object-menu-3d-add-to-scene.png",
     "scene": "06-3d-scene.png",
 }
+# the clip's poster: the screen that shows what the clip does
+POSTER = "scene"
 
 
 def grab_with_menus(app, window, chain):
@@ -298,9 +302,16 @@ def shoot(out, app):
     }
 
 
+def copy_poster(out, image_dir=GUIDE_IMAGES):
+    """Put the clip's key screen in the guide as its poster."""
+    shutil.copyfile(out / FRAMES[POSTER], image_dir / POSTER_FILE)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--out", required=True, type=Path, help="folder for the frames")
+    parser.add_argument("--guide", action="store_true",
+                        help="also replace the clip's poster in docs/assets/")
     args = parser.parse_args()
     out = args.out.expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -358,6 +369,8 @@ def main():
     print(json.dumps({"out": str(out), "frames": len(FRAMES), "tripwire_unchanged": before == after}))
     if before != after:
         sys.exit("The real settings changed during the run. Find the writer before using these frames.")
+    if args.guide:
+        copy_poster(out)
 
 
 if __name__ == "__main__":
