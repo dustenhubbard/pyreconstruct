@@ -5924,12 +5924,15 @@ class Series():
         value = defaults[option_name]
         return copy(value) if isinstance(value, (list, dict)) else value
 
-    def getOption(self, option_name : str, get_default=False):
+    def getOption(self, option_name : str, get_default=False, *, write_default=True):
         """Get an option from the series (or computer)
 
             Params:
                 option_name (str): the name of the option
                 get_default (bool): True if only default should be returned
+                write_default (bool): when the option is not stored, store its
+                    default as well as return it; False returns the default and
+                    leaves the store as it is
         """
         ## Check for internal series option first
         if option_name in self.options:
@@ -5988,8 +5991,9 @@ class Series():
                 option = json.loads(option)
         else:
             option = Series._fromDefaults(defaults, option_name)
-            self.setOption(option_name, option)
-        
+            if write_default:
+                self.setOption(option_name, option)
+
         ## CHECKS FOR UPDATES
 
         ## Check for disallowing laplacian smoothing

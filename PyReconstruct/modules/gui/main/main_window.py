@@ -473,8 +473,8 @@ class MainWindow(QMainWindow):
         ## Set main window as parent of progress bar
         setMainWindow(self)
 
-        ## Set theme
-        self.setTheme(self.series.getOption("theme"))
+        ## Draw the stored theme; a launch never writes the theme setting
+        self.applyTheme(self.series.getOption("theme", write_default=False))
 
         self.show()
 
@@ -5503,7 +5503,8 @@ class MainWindow(QMainWindow):
         if confirmed:
             self.field.generateView()
             self.mouse_palette.reset()
-            self.setTheme(self.series.getOption("theme"))
+            # the dialog stored the choice; draw it
+            self.applyTheme(self.series.getOption("theme"))
     
     def optimizeBC(self, sections : list = None):
         """Optimize the brightness and contrast of the series.
@@ -5766,9 +5767,16 @@ class MainWindow(QMainWindow):
         self.viewer.setFocus()
     
     def setTheme(self, new_theme=None):
-        """Change the theme."""
+        """Change the theme: store the choice and draw it.
+
+        With no argument, ask with a dialog. The launch and the Options
+        dialog draw a theme that is already stored through applyTheme, so
+        neither writes the theme setting.
+        """
         if new_theme is None:
-            theme = appearance.resolve(self.series.getOption("theme"))
+            theme = appearance.resolve(
+                self.series.getOption("theme", write_default=False)
+            )
             options = appearance.choices()
             structure = [
                 ["Theme:"],
@@ -5786,25 +5794,33 @@ class MainWindow(QMainWindow):
                 return
             new_theme = picked[0]
 
+        if not self.applyTheme(new_theme):
+            return
+        # a value this build does not offer (Light, saved by a Dev build)
+        # is drawn as default and left stored as it is
+        if appearance.resolve(new_theme) == new_theme:
+            self.series.setOption("theme", new_theme)
+
+    def applyTheme(self, theme) -> bool:
+        """Draw a theme without storing it.
+
+        Returns False when the dark style sheet cannot be imported, in which
+        case nothing changes.
+        """
         app = QApplication.instance()
-        if new_theme == appearance.DARK and not appearance.native():
+        if theme == appearance.DARK and not appearance.native():
             try:
                 import qdarkstyle
             except:
                 notify("Unable to import dark theme.")
-                return
-            self.series.setOption("theme", "qdark")
+                return False
             app.setStyleSheet(
-                qdarkstyle.load_stylesheet_pyside6() + 
+                qdarkstyle.load_stylesheet_pyside6() +
                 qdark_addon
             )
             app.setProperty(appearance.QDARKSTYLE_PROPERTY, True)
         else:
-            # a value this build does not offer (Light, saved by a Dev build)
-            # is drawn as default and left stored as it is
-            shown = appearance.resolve(new_theme)
-            if shown == new_theme:
-                self.series.setOption("theme", new_theme)
+            shown = appearance.resolve(theme)
             app.setStyleSheet("")
             app.setProperty(appearance.QDARKSTYLE_PROPERTY, False)
             if appearance.native():
@@ -5816,6 +5832,7 @@ class MainWindow(QMainWindow):
         field = getattr(self, "field", None)
         if field is not None and hasattr(field, "table_manager"):
             field.table_manager.refreshColumnWidths()
+        return True
 
     def addToRecentSeries(self, series_fp : str = None):
         """Add a series to the recently opened series list."""
