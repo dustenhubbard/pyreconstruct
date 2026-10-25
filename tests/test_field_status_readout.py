@@ -438,7 +438,8 @@ def test_pills_keep_accents_and_descenders(qapp, family, size, text):
 ])
 def test_plain_names_keep_the_pill_at_its_line_plus_padding(qapp, family, size):
     """The padding grows only for ink past the line. The default names leave
-    the pill at the height it always had, and a plain Latin name with
+    the pill the size of a plain label with the pill's own one-pixel
+    padding, which is what it always was, and a plain Latin name with
     accents and descenders leaves a status bar no taller than one holding
     the same text as a plain label, plus the padding, so the bar stays where
     it was. None is the platform's own font at its own size."""
@@ -448,10 +449,14 @@ def test_plain_names_keep_the_pill_at_its_line_plus_padding(qapp, family, size):
     set_app_font(qapp, family, size)
     try:
         pill = StatusSegment("Alignment", outlined=False)
-        line = pill.fontMetrics().height()
         for text in ("Section: 5", "Alignment: default", "B/C Profile: default"):
             pill.setText(text)
-            assert pill.sizeHint().height() == line + 2 * StatusSegment.V_PAD, text
+            # the same label with the padding a pill has always had; the
+            # platform's own size hint for the text, not a line height
+            as_before = QLabel(text)
+            as_before.setContentsMargins(StatusSegment.H_PAD, StatusSegment.V_PAD,
+                                         StatusSegment.H_PAD, StatusSegment.V_PAD)
+            assert pill.sizeHint() == as_before.sizeHint(), text
         for text in ("Alignment: default", "Alignment: gjpqy ÁÉÍÓÚÅÇ"):
             pill = StatusSegment("Alignment")
             pill.setText(text)
@@ -461,6 +466,46 @@ def test_plain_names_keep_the_pill_at_its_line_plus_padding(qapp, family, size):
             assert (with_pill.sizeHint().height()
                     <= plain.sizeHint().height() + 2 * StatusSegment.V_PAD), text
     finally:
+        qapp.setFont(previous)
+
+
+@pytest.mark.parametrize("family,size", [
+    ("DejaVu Sans", 9), ("Noto Sans", 9), (None, None),
+])
+def test_switching_names_never_shrinks_the_status_bar(qapp, qtbot, family, size):
+    """The readout in a shown window's status bar, switched between the
+    default alignment and one named Ẫ and back. The bar may grow once, when
+    the accent first needs room, and keeps that height afterward: a bar
+    that gave the pixel back on the next plain name would move with every
+    switch. A session of plain names is as tall as it always was."""
+    from PySide6.QtWidgets import QLabel, QMainWindow, QStatusBar
+    from PyReconstruct.modules.gui.main.status_readout import StatusSegment
+    previous = qapp.font()
+    set_app_font(qapp, family, size)
+    try:
+        window = QMainWindow()
+        qtbot.addWidget(window)
+        window.resize(1200, 300)
+        bar = window.statusBar()
+        readout = FieldStatusReadout(bar)
+        bar.addWidget(readout)
+        window.show()
+        heights = []
+        for name in ("default", "Ẫ", "default", "Ẫ", "default"):
+            readout.setReadout("Section: 5", f"Alignment: {name}",
+                               "B/C Profile: default", "x = 1, y = 2")
+            for _ in range(3):
+                qapp.processEvents()
+            heights.append((readout.alignment_segment.sizeHint().height(),
+                            bar.sizeHint().height(), bar.height()))
+        for before, after in zip(heights, heights[1:]):
+            assert after >= before, heights
+        assert heights[2:] == [heights[1]] * 3, heights
+        plain = QStatusBar()
+        plain.addWidget(QLabel("Section: 5"))
+        assert heights[0][1] <= plain.sizeHint().height() + 2 * StatusSegment.V_PAD
+    finally:
+        window.close()
         qapp.setFont(previous)
 
 

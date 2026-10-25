@@ -90,9 +90,9 @@ class StatusSegment(QLabel):
     def changeEvent(self, event):
         super().changeEvent(event)
         if event.type() == QEvent.FontChange:
-            self.fitPadding()
+            self.fitPadding(keep=False)
 
-    def fitPadding(self):
+    def fitPadding(self, keep=True):
         """Pad above and below the line as far as the text's ink goes past it.
 
         A QLabel paints its text on one line of the font's ascent and descent
@@ -103,6 +103,12 @@ class StatusSegment(QLabel):
         every plain Latin name, keeps the same height as before. Runs on a
         text or font change, not on the coordinate updates, which go to a
         plain label.
+
+        With ``keep`` the padding only grows: a bar that made room for Ẫ
+        would otherwise lose that pixel on the next plain name and take it
+        back on the one after, so a pill keeps the room a name once needed.
+        A font change (``keep`` False) starts over, since the line itself
+        changes then.
         """
         import math
         from PySide6.QtGui import QFontMetricsF
@@ -110,6 +116,9 @@ class StatusSegment(QLabel):
         ink = metrics.tightBoundingRect(self.text())
         top = max(self.V_PAD, math.ceil(-ink.top() - metrics.ascent()))
         bottom = max(self.V_PAD, math.ceil(ink.bottom() - metrics.descent()))
+        if keep:
+            margins = self.contentsMargins()
+            top, bottom = max(top, margins.top()), max(bottom, margins.bottom())
         self.setContentsMargins(self.H_PAD, top, self.H_PAD, bottom)
 
     # -- pressed state, owned by the popup helper --------------------------
