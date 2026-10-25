@@ -161,12 +161,34 @@ def attach(series, snums):
 ## ---------------------------------------------------------------------------
 
 def readStub(fp : str):
-    """The stub at fp, or None when fp is a section file."""
+    """The stub at fp, or None when fp is a section file.
+
+        Raises:
+            SectionUnavailable: the file starts as a stub but the rest cannot
+                be read as one
+    """
     with open(fp, "rb") as f:
         head = f.read(len(MAGIC))
         if head != MAGIC:
             return None
-        return json.loads(f.read())
+        body = f.read()
+    try:
+        stub = json.loads(body)
+        rng = stub.get("range")
+        ok = (
+            type(stub["snum"]) is int and isinstance(stub["store"], str)
+            and stub["store"] == os.path.basename(stub["store"])
+            and len(bytes.fromhex(stub["key"])) == 32
+            and (rng is None or (
+                isinstance(rng, list) and len(rng) == 2
+                and all(type(n) is int and n >= 0 for n in rng)
+            ))
+        )
+    except (ValueError, TypeError, KeyError, AttributeError):
+        ok = False
+    if not ok:
+        raise SectionUnavailable(f"{os.path.basename(fp)} is a stub that cannot be read")
+    return stub
 
 
 class _Reader(HybridStore):

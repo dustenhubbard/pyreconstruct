@@ -811,3 +811,67 @@ def test_deleting_the_last_stub_lets_cleanup_remove_the_store(tmp_path, switch_o
     _crash(series)
     state, db_fp = _remove_if_clean(fp)
     assert state.clean and not os.path.exists(db_fp)
+
+
+BAD_STUBS = {
+    "truncated": lazy_sections.MAGIC + b"{",
+    "bad-key": lazy_sections.MAGIC + b'{"snum": 1, "key": "zz", "store": "x.v1.pyrstore", "range": null}',
+    "store-path": lazy_sections.MAGIC + b'{"snum": 1, "key": "' + b"00" * 32 + b'", "store": "../x", "range": null}',
+}
+
+
+@pytest.mark.parametrize("bad", sorted(BAD_STUBS))
+def test_a_bad_stub_in_a_folder_by_another_path_does_not_stop_the_open(bad, tmp_path, switch_on, notes, monkeypatch):  # noqa: F811
+    src = _kept(_copy(PARITY, tmp_path / "original"))
+    alias, folder, stubbed = _left_by_a_link(src, tmp_path)
+    (folder / f"{alias.stem}.1").write_bytes(BAD_STUBS[bad])
+    before = {p.name: p.read_bytes() for p in folder.iterdir()}
+    second = _open(src)
+    try:
+        # opened from the .jser, the store not taken, the folder as it was
+        assert store_save.heldStore(second) is None
+        assert second.loadSection(0).thickness == 0.05
+        assert any(str(folder) in n for n in notes)
+    finally:
+        second.close()
+    assert {p.name: p.read_bytes() for p in folder.iterdir()} == before
+
+
+@pytest.mark.parametrize("bad", sorted(BAD_STUBS))
+def test_a_bad_stub_in_this_session_fails_its_load_and_a_save(bad, tmp_path, switch_on, monkeypatch):  # noqa: F811
+    fp = _kept(_copy(PARITY, tmp_path / "s"))
+    series = _open(fp)
+    series.setNotifier(_Quiet())
+    try:
+        stub_fp = Path(series.getwdir(), series.sections[1])
+        stub_fp.write_bytes(BAD_STUBS[bad])
+        with pytest.raises(lazy_sections.SectionUnavailable):
+            series.loadSection(1)
+        assert stub_fp.read_bytes() == BAD_STUBS[bad]
+        with pytest.raises(SeriesSaveError):
+            series.saveToStore()
+        with pytest.raises(SeriesSaveError):
+            series.saveJser()
+    finally:
+        _crash(series)
+
+
+def test_a_bad_stub_in_a_resumed_folder_sets_it_aside_whole(tmp_path, switch_on, monkeypatch):  # noqa: F811
+    fp = _kept(_copy(PARITY, tmp_path / "s"))
+    series = _open(fp)
+    wdir = Path(series.getwdir())
+    _crash(series)
+    # the first stub, so none is filled before it
+    Path(wdir, f"{fp.stem}.0").write_bytes(BAD_STUBS["truncated"])
+    before = {p.name: p.read_bytes() for p in wdir.iterdir()}
+    asker = _Quiet()
+    opened = _open(fp, notifier=asker)
+    try:
+        # a fresh open of the .jser, every section of it readable
+        for snum in opened.sections:
+            opened.loadSection(snum)
+    finally:
+        opened.close()
+    aside = [p for p in wdir.parent.iterdir() if p.name.startswith(f"{wdir.name}.lazy-")]
+    assert len(aside) == 1 and {p.name: p.read_bytes() for p in aside[0].iterdir()} == before
+    assert len(asker.told) == 1
