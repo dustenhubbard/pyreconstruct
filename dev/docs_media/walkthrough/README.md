@@ -1,7 +1,8 @@
 # Walkthrough videos from screenshots
 
 `walkthrough.py` makes short how-to videos from still screen captures. It
-draws a pointer, click rings, key badges and camera moves on top of the stills.
+draws a pointer, click rings, drags, key badges and camera moves on top of the
+stills.
 The result looks like a screen recording, but nothing is recorded live, so
 there is no lag, no stray windows and nothing in the frame that was not chosen.
 
@@ -53,11 +54,16 @@ large.
    ```
 
    Each step names the screen showing and the target to `click` (or `point`
-   at). The next step's screen appears just after the click. Step options:
+   at, or `drag` along). The next step's screen appears just after the click
+   or the release. Step options:
 
    | Key | Meaning |
    | --- | --- |
    | `click` / `point` | Target name or `[x, y]`. `point` moves the pointer without a click |
+   | `drag` | Target name with `"points"`, or a list of `[x, y]`: press at the first point, move along the path at an even speed, release at the last |
+   | `drag_time` | Seconds from press to release (default 2.0) |
+   | `stroke` | `{"color": [r, g, b], "width": 2}`: the drag draws a line behind the pointer, in native pixels, until the release |
+   | `frames` | Screens shown in turn during the drag, each as the pointer covers its share of the path (a 3D turn, for example) |
    | `fade` | `true` or seconds: cross-fade into this step's screen (menus, dialogs). Plain changes cut |
    | `after`, `after_fade` | Screen shown after the last step's click |
    | `dwell` | Extra seconds to rest on the target before the click |
@@ -68,6 +74,9 @@ large.
    | `type` | `{"box": [x0, y0, x1, y1], "duration": 2.4}`: type in this step's text, captured already typed |
 
    Top-level `timing` overrides the defaults in `DRAFT` in `walkthrough.py`.
+   Top-level `loop`, `true` or seconds, is for a clip that plays on a loop:
+   the pointer fades in at the start, and after it fades out at the end the
+   first screen fades back in (0.4 s by default), so the loop has no jump.
 4. **Draft, preview and render:**
 
    ```sh
@@ -95,7 +104,7 @@ pixels of the stills.
 | `images` | Name to path, relative to the scene file |
 | `states` | `[{time, image, fade?}]`: which still shows from `time` on |
 | `cursor_start` | Pointer position at time 0 |
-| `moves` | `[{start, end, to, controls?}]`: cubic Bézier pointer moves |
+| `moves` | `[{start, end, to, controls?}]`: cubic Bézier pointer moves, or `[{start, end, path, ease?, stroke?}]`: drags along a polyline |
 | `clicks` | Times of click rings, at the pointer position |
 | `cursor_fade_in`, `cursor_fade_out` | Times the pointer fades in or out |
 | `camera` | `[{time, x, y, zoom}]`: view center and zoom, kept inside the still |
@@ -104,5 +113,8 @@ pixels of the stills.
 | `cursor_size`, `style` | Optional overrides of `STYLE` in `walkthrough.py` |
 
 Motion uses smootherstep easing for the camera, the pointer and cross-fades.
+A drag keeps an even speed between a short speed-up and slow-down, each `ease`
+of its time (default 0.1). Its `stroke`, `{color, width, until?}`, grows
+behind the pointer and stays whole until `until` (default the drag's end).
 The key badges use the macOS system font; elsewhere Pillow's own font stands
 in, which has no key symbols.
