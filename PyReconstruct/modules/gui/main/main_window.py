@@ -2066,19 +2066,32 @@ class MainWindow(QMainWindow):
             pass
 
     def _ensureSeriesCode(self):
-        """Derive the series code from the name, or ask the user for one."""
-        # get the series code from the user if needed
-        if not self.series.isWelcomeSeries() and not self.series.code:
-            detected_code = re.search(
-                self.series.getOption("series_code_pattern"),
-                self.series.name
-            )
-            if detected_code:
-                self.series.code = detected_code.group()
-            # the dialog is not cancelable and loops until a code is entered, so
-            # it can only be raised when someone is there to answer it
-            if user_is_present():
-                self.setSeriesCode(cancelable=False)
+        """Derive the series code from the name, or ask the user for one.
+
+        A code the name supplies is not an edit: it is written to the series
+        file and nothing is marked modified, so a section change with no
+        edits saves no section. A code the user typed over it is an edit, so
+        the series is marked modified and the code is saved with it. With no
+        code and nobody to ask, nothing changes.
+        """
+        if self.series.isWelcomeSeries() or self.series.code:
+            return
+        detected = re.search(
+            self.series.getOption("series_code_pattern"),
+            self.series.name
+        )
+        detected_code = detected.group() if detected else ""
+        if detected_code:
+            self.series.code = detected_code
+        # the dialog is not cancelable and loops until a code is entered, so
+        # it can only be raised when someone is there to answer it
+        if user_is_present():
+            self.setSeriesCode(cancelable=False)
+        if not self.series.code:
+            return
+        if self.series.code == detected_code:
+            self.series.save()
+        else:
             self.seriesModified()
 
     def newSeries(
