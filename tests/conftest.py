@@ -998,6 +998,8 @@ def main_window(qapp, series_jser, qsettings_snapshot, main_window_dialogs):
     finally:
         _sys.excepthook = previous_excepthook
         window.series.modified = False
+        # closing here discards pending series data (the code set at open) too
+        window.series.unsaved_series_data = False
         window.close()
         window.deleteLater()
 
