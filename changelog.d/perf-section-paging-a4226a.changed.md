@@ -1,1 +1,1 @@
-- **Paging through the sections of a large series is faster after an edit.**
+- **Paging through the sections of a large series is faster.**
