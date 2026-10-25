@@ -986,6 +986,15 @@ to it. Meshes are built on a background thread (you'll see a "Generating 3D…"
 progress indicator). Z-traces can also be added to the scene (as tubes) from the
 z-trace list.
 
+<figure class="clip walkthrough" markdown>
+
+![Clip: the pointer opens Lists ▸ Object list, clicks ast01, Shift-clicks d01sp01 to select all four objects, right-clicks them and chooses 3D ▸ Add to scene; the 3D scene opens with a dendrite, its spine, an axon and an astroglial process.](assets/images/user-guide/11-add-to-scene-start.png){ data-width="1280" data-height="720" }
+
+[▶ 16 s · loops](assets/videos/user-guide/11-add-to-scene.mp4){ .clip-src }
+
+<figcaption markdown>**Lists ▸ Object list**, click the first object, **Shift**-click the last, right-click the selection, then **3D ▸ Add to scene**. The series is a made-up one: d01 a dendrite, d01sp01 its spine, ax01 an axon, ast01 astroglia.</figcaption>
+</figure>
+
 ![The 3D scene window with four objects as surfaces, a star, a triangle, a rectangle and a circle, and a gray one-micron scale cube.](assets/images/user-guide/11-3d-scene.png)
 
 ### 3D model types

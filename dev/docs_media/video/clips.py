@@ -32,6 +32,9 @@ if str(REPO) not in sys.path:
 from dev.docs_media.video.render import Scene, render, validate  # noqa: E402
 
 GUIDE_CLIPS = REPO / "docs" / "assets" / "videos" / "user-guide"
+# Guide clips another script makes, so --guide leaves them:
+# dev/docs_media/capture/walkthrough_3d.py shoots the section 11 clip.
+NOT_MADE_HERE = {"11-add-to-scene.mp4"}
 
 # 2240 x 1520 stills scale to 1904 x 1292 with no padding; 1920 wide would
 # leave a sub-pixel black row at the top and bottom
@@ -245,7 +248,7 @@ def build(capture, names=None, guide=False, width=CLIP_WIDTH, ffmpeg="ffmpeg",
 
 def copy_to_guide(videos, guide_dir=GUIDE_CLIPS):
     guide_dir.mkdir(parents=True, exist_ok=True)
-    keep = {v.name for v in videos}
+    keep = {v.name for v in videos} | NOT_MADE_HERE
     for old in guide_dir.glob("*.mp4"):
         if old.name not in keep:
             old.unlink()

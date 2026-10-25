@@ -25,8 +25,10 @@
     video.playsInline = true;
     video.preload = "metadata";
     video.poster = poster.currentSrc || poster.src;
-    video.width = 1120;
-    video.height = 760;
+    // the clip's own size: a poster that is not 2240 x 1520 names its size
+    // in data-width and data-height, so it is known before anything loads
+    video.width = Number(poster.dataset.width) || 1120;
+    video.height = Number(poster.dataset.height) || 760;
     video.setAttribute("aria-label", poster.alt);
     var source = document.createElement("source");
     source.src = link.href;
