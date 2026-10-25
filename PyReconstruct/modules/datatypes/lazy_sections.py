@@ -15,12 +15,16 @@ against the stub's key. On a mismatch it reads the key's range from the .jser
 checks that. Only bytes with that sha256 are ever written, then put over the
 stub in one replace. When no source matches, `SectionUnavailable` (an
 OSError) is raised, the stub stays, and nothing is written: a load fails as
-for an unreadable file, and a Save refuses as it does for one.
+for an unreadable file, and a Save that writes the .jser refuses as it does
+for one. A Save into the store alone takes a stub's key without reading it.
 
-A Save never fills: `workingSection` gives a stub's key, and its bytes from
-the store when the writer must encode the section. Save As, a renumbering, and
-letting go of the store fill first (`presentAll`), since nothing else backs a
-stub once the store is let go.
+Save does not write a section it leaves unchanged: `workingSection` gives a
+stub's key, and its bytes from a checked source when the writer must encode
+the section. A pass over the series a Save needs first (measuring sections
+again after an alignment changed) loads the sections it reads, and so fills
+them. Save As, a renumbering, and letting go of the store fill first
+(`Series.presentAllSections`), since nothing else backs a stub once the store
+is let go; when a fill fails, the store is kept.
 
 The folder holds `MARKER` while it may hold stubs, so a resumed folder is
 filled before a series is built from it (`presentFolder`). A real section
@@ -46,6 +50,8 @@ MAGIC = b"PYRECON-LAZY-SECTION 1\n"
 ## takes it for a section
 MARKER = "lazy-sections.json"
 FILL_SUFFIX = ".fill.tmp"
+## meta: the working folders an open from this store wrote stubs into (JSON list)
+META_FOLDERS = "lazy_folders"
 
 
 class SectionUnavailable(OSError):
@@ -98,6 +104,48 @@ def writeStub(fp : str, stub : dict):
 def writeMarker(folder : str, store_name : str):
     with open(os.path.join(folder, MARKER), "w", encoding="ascii") as f:
         f.write(json.dumps({"version": 1, "store": store_name}))
+
+
+def recordFolder(held, folder : str):
+    """Note in the store the working folder that will hold its stubs.
+
+    Cleanup reads the list (`needsStore`), so it keeps the store whatever
+    path the folder was opened by: an alias of the .jser, or a `.<name>-2`
+    folder beside it. A listed folder whose marker is gone is dropped.
+    """
+    from . import store_open
+
+    store = held.store
+    try:
+        listed = json.loads(store.meta(META_FOLDERS) or "[]")
+        kept = [f for f in listed if f != folder and os.path.isfile(os.path.join(f, MARKER))]
+        store.setMeta(META_FOLDERS, json.dumps(kept + [os.path.abspath(folder)]))
+    except (OSError, sqlite3.Error) as e:
+        store_open._raiseIfBug(e)
+        raise store_open.StoreUnavailable(str(e)) from e
+
+
+def needsStore(meta : dict, store_name : str) -> bool:
+    """True when a working folder the store recorded may hold stubs filled from it.
+
+    `meta` is the store's meta table. Cleanup keeps such a store
+    (local_stores.removeIfClean): its stubs need it. A record or a folder
+    that cannot be read keeps it too.
+    """
+    try:
+        folders = json.loads(meta.get(META_FOLDERS) or "[]")
+    except ValueError:
+        return True
+    for folder in folders:
+        try:
+            with open(os.path.join(folder, MARKER), "rb") as f:
+                if json.loads(f.read()).get("store") == store_name:
+                    return True
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except (OSError, ValueError, AttributeError):
+            return True
+    return False
 
 
 def attach(series, snums):
@@ -297,21 +345,3 @@ def _tell(notifier, message : str):
 
     log_note(message.replace("\n", " "))
     (notifier or _default_notifier()).notify(message)
-
-
-def namesStore(jser_fp : str, store_name : str) -> bool:
-    """True when the working folder beside jser_fp may hold stubs filled from the store.
-
-    Cleanup keeps such a store (local_stores.removeIfClean): its stubs need
-    it. A folder that cannot be read keeps it too.
-    """
-    stem = os.path.basename(jser_fp)
-    stem = stem[:stem.rfind(".")] if "." in stem else stem
-    marker = os.path.join(os.path.dirname(jser_fp), f".{stem}", MARKER)
-    try:
-        with open(marker, "rb") as f:
-            return json.loads(f.read()).get("store") == store_name
-    except (FileNotFoundError, NotADirectoryError):
-        return False
-    except (OSError, ValueError, AttributeError):
-        return True

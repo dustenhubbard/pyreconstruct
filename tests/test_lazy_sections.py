@@ -1,25 +1,10 @@
 """Section files written on first need after an open from the local store (lazy_sections.py).
 
 An open from the store writes a stub for each section the store holds as its
-working file. The oracle is the eager arm: the same open with no stub (every
-section file written at open, as before), or today's open of the .jser.
-
-What these pin:
-
-* the reopen writes a stub for every eligible section and no section JSON,
-  and the object list equals a full refresh;
-* loading a section fills only it, with the bytes and trace ids the eager
-  open gives;
-* a Save in either mode, a backup, a close, and a renumbering then a Save
-  write the eager arm's bytes, and a Save fills nothing;
-* Save As fills every stub before the store is let go; so do `_giveUp` and
-  `turnOff`;
-* sections load on worker threads (zarr export and label import);
-* a stub whose store copy changed fills from the .jser; with both changed,
-  nothing is written and a Save of the .jser refuses;
-* a resumed folder is filled first, the switch off too, or set aside whole;
-* a build without the seam never writes a .jser short a section;
-* cleanup keeps a store a folder's stubs need.
+working file, and the first load of a section writes its file. Everything a
+series does after that open must give the bytes it gives when every section
+file is written at open, so most of these run the same steps both ways and
+compare the files and the .jser.
 """
 import hashlib
 import json
@@ -525,11 +510,14 @@ def test_a_crashed_lazy_folder_no_source_matches_is_set_aside_whole(tmp_path, sw
 
 
 # ---------------------------------------------------------------------------
-# 10. a build without the seam
+# 10. a reader with no seam
 # ---------------------------------------------------------------------------
 
-def test_a_build_without_the_seam_never_writes_a_jser_short_a_section(tmp_path, switch_on, monkeypatch):  # noqa: F811
-    """As v1.24.0 resumes a folder: Series from its listing, each file read as JSON."""
+def test_a_reader_that_takes_a_stub_for_json_writes_no_jser(tmp_path, switch_on, monkeypatch):  # noqa: F811
+    """A reader with no seam: a series built from the folder listing, each file read as JSON.
+
+    Its open fails at the first stub, and its Save refuses and leaves the .jser as it was.
+    """
     fp = _kept(_copy(PARITY, tmp_path / "s"))
     series = _open(fp)
     wdir = series.getwdir()
@@ -592,5 +580,78 @@ def test_letting_go_of_the_store_mid_session_fills_every_stub_first(how, tmp_pat
         assert stubs_at_release == [set()]
         assert store_save.heldStore(series) is None
         assert not series._lazy
+    finally:
+        series.close()
+
+
+def _remove_if_clean(fp):
+    root = local_stores.storeFolder()
+    name = os.path.basename(storePaths(str(fp))[0])
+    return local_stores.removeIfClean(root, name), os.path.join(root, name)
+
+
+def test_cleanup_keeps_the_store_of_a_folder_opened_through_a_link(tmp_path, switch_on, monkeypatch):  # noqa: F811
+    real = _copy(PARITY, tmp_path / "real")
+    (tmp_path / "alias").mkdir()
+    alias = tmp_path / "alias" / "linked.jser"
+    alias.symlink_to(real)
+    _kept(alias)
+    series = _open(alias)
+    edited = _edit(series)
+    series.save()
+    wdir = Path(series.getwdir())
+    assert wdir.parent == alias.parent and _stubbed(series)
+    edited_bytes = (wdir / series.sections[edited]).read_bytes()
+    _crash(series)
+    state, db_fp = _remove_if_clean(real)
+    assert not state.clean and state.why == local_stores.STUBS
+    assert os.path.isfile(db_fp)
+    # the resume finds every section, the edit with them
+    monkeypatch.delenv(store_open.ENV_SWITCH)
+    resumed = _open(alias, notifier=_NoDialog())
+    try:
+        assert Path(resumed.getwdir()) == wdir and _stubbed(resumed) == set()
+        assert (wdir / resumed.sections[edited]).read_bytes() == edited_bytes
+    finally:
+        resumed.close()
+
+
+def test_cleanup_keeps_the_store_of_a_folder_beside_another_series_folder(tmp_path, switch_on, monkeypatch):  # noqa: F811
+    fp = _kept(_copy(PARITY, tmp_path / "s"))
+    # the usual folder belongs to another series, so the open writes into .<name>-2
+    usual = fp.parent / f".{fp.stem}"
+    usual.mkdir()
+    (usual / "other.ser").write_text("{}")
+    series = _open(fp)
+    wdir = Path(series.getwdir())
+    assert wdir != usual and _stubbed(series)
+    _crash(series)
+    state, db_fp = _remove_if_clean(fp)
+    assert not state.clean and state.why == local_stores.STUBS
+    assert os.path.isfile(db_fp)
+    # once that folder holds no stub, the store is clean
+    shutil.rmtree(wdir)
+    assert _remove_if_clean(fp)[0].clean
+
+
+@pytest.mark.parametrize("how", ["give-up", "turn-off"])
+def test_a_fill_that_fails_keeps_the_store_and_says_so(how, tmp_path, switch_on, notes, monkeypatch):  # noqa: F811
+    fp = _kept(_copy(PARITY, tmp_path / "s"))
+    series = _open(fp)
+    try:
+        def full(*a, **k):
+            raise OSError(28, "No space left on device")
+
+        with monkeypatch.context() as m:
+            m.setattr(lazy_sections, "sectionBytes", full)
+            if how == "give-up":
+                store_save._giveUp(series, store_save.heldStore(series), OSError("a test"))
+            else:
+                report = local_stores.turnOff(series)
+                assert report.kept == [str(fp)]
+                assert str(fp) in local_stores.turnOffText(report)
+        assert store_save.heldStore(series) is not None
+        assert _stubbed(series) == set(series.sections)
+        assert any("not every section" in n for n in notes)
     finally:
         series.close()

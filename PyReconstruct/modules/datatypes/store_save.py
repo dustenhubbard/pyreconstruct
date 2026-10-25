@@ -258,7 +258,8 @@ def _giveUp(series, held, err : Exception):
     """The store gives up its claim on the .jser and the series lets go of it.
 
     Called only once the .jser holds the Save, so nothing in the store is
-    ahead of it. The next open is today's, and keeps the store again.
+    ahead of it. The next open is today's, and keeps the store again. The
+    series keeps the store while a stub it backs could not be filled.
     """
     from . import store_open
 
@@ -273,20 +274,25 @@ def _giveUp(series, held, err : Exception):
         _raiseIfBug(e)
         # left as it was, and its hash still names the last .jser it held:
         # an open reads it only for that file's bytes
-    fillStubs(series)
-    release(series)
+    if fillStubs(series):
+        release(series)
 
 
-def fillStubs(series):
+def fillStubs(series) -> bool:
     """Before the series lets go of its store mid-session: fill its stubs
-    (lazy_sections.py). One that cannot be filled is noted in the log, and a
-    load or Save of it refuses later."""
+    (lazy_sections.py). False when one could not be filled, noted in the log:
+    the caller keeps the store, which still backs the rest."""
     from . import store_open
 
     try:
         series.presentAllSections()
+        return True
     except OSError as e:
-        store_open.log_note(f"Not every section of {os.path.basename(series.jser_fp)} was written out: {e}")
+        store_open.log_note(
+            f"Local store kept for {os.path.basename(series.jser_fp)}: not every section "
+            f"could be written out from it ({e})"
+        )
+        return False
 
 
 def _commit(series, held, keys : dict, tail : dict, written):

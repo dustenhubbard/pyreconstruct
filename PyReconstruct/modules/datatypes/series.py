@@ -1363,6 +1363,9 @@ class Series():
                     aside = _setAside(hidden_dir)
                 hidden_dir = createHiddenDir(sdir, sname)
             placed = True
+            if stubs:
+                # before any stub is in place, so cleanup keeps the store
+                lazy_sections.recordFolder(store, hidden_dir)
             for name in sorted(os.listdir(work_dir), key=lambda n: n == series_name):
                 os.replace(
                     os.path.join(work_dir, name), os.path.join(hidden_dir, name)
