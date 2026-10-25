@@ -260,6 +260,10 @@ def test_closing_an_unmodified_series_writes_nothing(
 
     window = main_window
     assert window.field is not None  # a real window, not a stub
+    # a .jser that already holds the series code: one set at open is written
+    # to the .jser when the series closes (MainWindow._ensureSeriesCode)
+    window.saveToJser()
+    assert window.series.unsaved_series_data is False
     window.series.modified = False
     before = series_jser.read_bytes()
 

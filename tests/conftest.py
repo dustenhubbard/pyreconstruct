@@ -998,6 +998,11 @@ def main_window(qapp, series_jser, qsettings_snapshot, main_window_dialogs):
     finally:
         _sys.excepthook = previous_excepthook
         window.series.modified = False
+        # the series code set at open is written to the .jser at close
+        # (MainWindow._ensureSeriesCode, saveToJser); the close here discards
+        # it with the rest, so a test that changed the series code or its
+        # backup settings does not write them through the real settings path
+        window.series.unsaved_series_data = False
         window.close()
         window.deleteLater()
 
