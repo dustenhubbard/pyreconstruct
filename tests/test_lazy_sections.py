@@ -7,10 +7,14 @@ file is written at open, so most of these run the same steps both ways and
 compare the files and the .jser.
 """
 import hashlib
+import io
 import json
 import os
 import shutil
 import sqlite3
+import subprocess
+import sys
+import tarfile
 import threading
 from pathlib import Path
 
@@ -20,7 +24,7 @@ import pytest
 from PyReconstruct.modules.constants import fast_dumps, fast_loads
 from PyReconstruct.modules.datatypes import lazy_sections, local_stores, store_open, store_save
 from PyReconstruct.modules.datatypes.hybrid_store import HybridStore, storePaths
-from PyReconstruct.modules.datatypes.series import Series, SeriesSaveError
+from PyReconstruct.modules.datatypes.series import SeriesSaveError
 from PyReconstruct.modules.datatypes.series_data import SeriesData
 
 from test_hybrid_store import PARITY, SERIES_FILES, _edge_series, _keyed, full_field_series, legacy_series
@@ -125,7 +129,7 @@ class _Quiet:
 
 
 # ---------------------------------------------------------------------------
-# 1. the reopen writes stubs
+# the reopen writes stubs
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("make", [
@@ -179,7 +183,7 @@ def test_a_section_the_store_holds_otherwise_than_its_file_is_written_at_reopen(
 
 
 # ---------------------------------------------------------------------------
-# 2. a load fills its own section, as the eager open wrote it
+# a load fills its own section, as the eager open wrote it
 # ---------------------------------------------------------------------------
 
 def _ids(section) -> list:
@@ -214,7 +218,7 @@ def test_a_load_fills_only_its_section_with_the_eager_bytes_and_ids(load_src, tm
 
 
 # ---------------------------------------------------------------------------
-# 3, 4. Save, close and backup write the eager bytes, and fill nothing
+# Save, close and backup write the eager bytes, and fill nothing
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("mode", [store_save.MODE_STORE, store_save.MODE_JSER])
@@ -247,7 +251,7 @@ def test_one_edit_saved_and_closed_writes_the_eager_bytes_and_fills_nothing(mode
 
 
 # ---------------------------------------------------------------------------
-# 5. Save As
+# Save As
 # ---------------------------------------------------------------------------
 
 def test_save_as_fills_every_stub_before_the_store_is_let_go(tmp_path, switch_on, monkeypatch):  # noqa: F811
@@ -281,7 +285,7 @@ def test_save_as_fills_every_stub_before_the_store_is_let_go(tmp_path, switch_on
 
 
 # ---------------------------------------------------------------------------
-# 6. renumbering
+# renumbering
 # ---------------------------------------------------------------------------
 
 def test_insert_reorder_and_delete_then_save_write_the_eager_bytes(tmp_path, switch_on, monkeypatch):  # noqa: F811
@@ -313,7 +317,7 @@ def test_insert_reorder_and_delete_then_save_write_the_eager_bytes(tmp_path, swi
 
 
 # ---------------------------------------------------------------------------
-# 7. worker threads
+# worker threads
 # ---------------------------------------------------------------------------
 
 def test_stubs_fill_on_worker_threads(tmp_path, switch_on, monkeypatch):  # noqa: F811
@@ -387,7 +391,7 @@ def test_a_zarr_export_and_a_labels_import_give_the_eager_output(qapp, tmp_path,
 
 
 # ---------------------------------------------------------------------------
-# 8. a store copy that no longer matches its stub
+# a store copy that no longer matches its stub
 # ---------------------------------------------------------------------------
 
 def _tamper_store(fp, snum):
@@ -458,7 +462,7 @@ def test_a_stub_no_source_matches_is_kept_and_a_save_of_the_jser_refuses(tmp_pat
 
 
 # ---------------------------------------------------------------------------
-# 9. a resumed folder
+# a resumed folder
 # ---------------------------------------------------------------------------
 
 def test_a_crashed_lazy_folder_is_filled_and_resumed_with_the_switch_off(tmp_path, switch_on, monkeypatch):  # noqa: F811
@@ -510,40 +514,126 @@ def test_a_crashed_lazy_folder_no_source_matches_is_set_aside_whole(tmp_path, sw
 
 
 # ---------------------------------------------------------------------------
-# 10. a reader with no seam
+# an older build given a lazy folder
 # ---------------------------------------------------------------------------
 
-def test_a_reader_that_takes_a_stub_for_json_writes_no_jser(tmp_path, switch_on, monkeypatch):  # noqa: F811
-    """A reader with no seam: a series built from the folder listing, each file read as JSON.
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
-    Its open fails at the first stub, and its Save refuses and leaves the .jser as it was.
-    """
+_OLD_BUILD_DRIVER = '''\
+"""Take up a working folder as this build does, then Save its .jser."""
+import json, os, sys, traceback
+
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
+
+from PySide6 import QtCore
+
+
+class _NoSettings:
+    """Keeps this process away from the real settings."""
+
+    def __init__(self, *a, **k):
+        raise RuntimeError("QSettings is blocked here")
+
+
+QtCore.QSettings = _NoSettings
+
+import PyReconstruct
+from PyReconstruct.modules.backend.settings_store import DictSettingsStore, set_default_settings_store
+from PyReconstruct.modules.datatypes.series import Series
+
+set_default_settings_store(DictSettingsStore())
+jser_fp, result_fp = sys.argv[1], sys.argv[2]
+stem = os.path.splitext(os.path.basename(jser_fp))[0]
+wdir = os.path.join(os.path.dirname(jser_fp), "." + stem)
+got = {"package": PyReconstruct.__file__}
+
+
+def attempt(key, step):
+    """got[key]: None when the step finished, else what stopped it."""
+    got[key] = None
+    try:
+        step()
+    except Exception as e:
+        got[key] = {
+            "error": type(e).__name__, "value_error": isinstance(e, ValueError),
+            "text": str(e)[:300], "trace": traceback.format_exc()[-1500:],
+        }
+
+
+# opening the .jser, or answering yes to its unsaved work, builds a Series from the
+# folder listing and reads every section
+attempt("open", lambda: Series.openJser(jser_fp))
+
+# a Series from the same listing that has read no section, then a Save
+def save():
+    sections = {}
+    for name in os.listdir(wdir):
+        ext = name.rsplit(".", 1)[-1]
+        if "." in name and ext.isnumeric():
+            sections[int(ext)] = name
+    series = Series(os.path.join(wdir, stem + ".ser"), sections, get_series_data=False)
+    series.jser_fp = jser_fp
+    series.saveJser()
+
+
+attempt("save", save)
+with open(result_fp, "w", encoding="utf-8") as f:
+    json.dump(got, f)
+'''
+
+
+def _extract(tag, tmp_path) -> Path:
+    """`git archive` of a tag, or a skip saying why."""
+    proc = subprocess.run(["git", "-C", str(REPO_ROOT), "archive", tag], capture_output=True)
+    if proc.returncode != 0:
+        pytest.skip(f"cannot git archive {tag}: {proc.stderr.decode('utf-8', 'replace')[:200]}")
+    dest = tmp_path / f"build-{tag}"
+    dest.mkdir()
+    with tarfile.open(fileobj=io.BytesIO(proc.stdout)) as archive:
+        try:
+            archive.extractall(dest, filter="data")
+        except TypeError:  # pragma: no cover - Python < 3.12
+            archive.extractall(dest)
+    return dest
+
+
+def _files(folder) -> dict:
+    return {p.name: p.read_bytes() for p in Path(folder).iterdir()}
+
+
+@pytest.mark.parametrize("tag", ["v1.24.0"])
+def test_an_older_build_given_a_lazy_folder_writes_no_jser(tag, tmp_path, switch_on, monkeypatch):  # noqa: F811
+    """v1.24.0 reads each section file as JSON: it cannot open the folder, and its Save refuses."""
     fp = _kept(_copy(PARITY, tmp_path / "s"))
     series = _open(fp)
+    _edit(series)
     wdir = series.getwdir()
+    assert _stubbed(series)
     _crash(series)
-    jser = fp.read_bytes()
-    monkeypatch.delenv(store_open.ENV_SWITCH)
-    monkeypatch.setattr(lazy_sections, "presentFolder", lambda *a, **k: True)
-    monkeypatch.setattr(
-        Series, "presentSection", lambda self, snum: os.path.join(self.getwdir(), self.sections[snum])
+    jser, folder = fp.read_bytes(), _files(wdir)
+
+    build = _extract(tag, tmp_path)
+    (build / "_driver.py").write_text(_OLD_BUILD_DRIVER, encoding="utf-8")
+    result = tmp_path / "result.json"
+    env = {k: v for k, v in os.environ.items() if not k.startswith("PYRECON_")}
+    proc = subprocess.run(
+        [sys.executable, "_driver.py", str(fp), str(result)],
+        cwd=str(build), env=env, capture_output=True, timeout=300,
     )
-    # its open loads every section, and the first stub stops it
-    with pytest.raises(ValueError):
-        Series.openJser(str(fp), notifier=_NoDialog())
-    # its Save, from the folder as listed, refuses
-    sections = {int(n.rsplit(".", 1)[1]): n for n in os.listdir(wdir) if n.rsplit(".", 1)[1].isdigit()}
-    old = Series(os.path.join(wdir, f"{Path(fp).stem}.ser"), sections, get_series_data=False)
-    old.jser_fp = str(fp)
-    old.setNotifier(_Quiet())
-    with pytest.raises(SeriesSaveError):
-        old.saveJser()
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")[-2000:]
+    got = json.loads(result.read_bytes())
+    assert str(build) in got["package"]
+    # the open stops at a stub, read as JSON
+    assert got["open"] and got["open"]["value_error"], got["open"]
+    # the Save refuses at a stub
+    assert got["save"] and got["save"]["error"] == "SeriesSaveError", got["save"]
+    assert "could not be read" in got["save"]["text"], got["save"]
     assert fp.read_bytes() == jser
-    assert any(Path(wdir, n).read_bytes().startswith(lazy_sections.MAGIC) for n in sections.values())
+    assert _files(wdir) == folder
 
 
 # ---------------------------------------------------------------------------
-# 11. cleanup, and letting go of the store
+# cleanup, and letting go of the store
 # ---------------------------------------------------------------------------
 
 def test_cleanup_keeps_a_clean_store_a_folder_s_stubs_need(tmp_path, switch_on, monkeypatch):  # noqa: F811
