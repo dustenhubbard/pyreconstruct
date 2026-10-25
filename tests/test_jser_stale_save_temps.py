@@ -274,3 +274,65 @@ def test_jser_recovery_keeps_section_temp_and_does_not_load_it(series_jser):
         assert section_temp.read_bytes() == b"newer section state, never renamed"
     finally:
         series.close()
+
+
+## Working folders a close moved aside
+
+def make_closing_dir(folder, name=".closing-0badcafe", age=20 * 60):
+    """A working folder a close moved aside and could not delete."""
+    aside = folder / name
+    aside.mkdir()
+    (aside / "series.ser").write_bytes(b"{}")
+    (aside / "series.0").write_bytes(b"{}")
+    mtime = time.time() - age
+    os.utime(aside, (mtime, mtime))
+    return aside
+
+
+def test_jser_open_removes_a_stale_moved_aside_working_folder(series_jser):
+    stale = make_closing_dir(series_jser.parent)
+    series = Series.openJser(str(series_jser), progress=NullProgressReporter)
+    try:
+        assert not stale.exists()
+        assert series.sections
+    finally:
+        series.close()
+
+
+def test_jser_open_keeps_a_recent_moved_aside_working_folder(series_jser):
+    recent = make_closing_dir(series_jser.parent, ".closing-deadbeef", age=0)
+    series = Series.openJser(str(series_jser), progress=NullProgressReporter)
+    try:
+        assert sorted(p.name for p in recent.iterdir()) == ["series.0", "series.ser"]
+    finally:
+        series.close()
+
+
+@pytest.mark.parametrize(
+    "name", [".closing-abc", ".closing-0badcafe.old", ".closing-0BADCAFE", "closing-0badcafe"]
+)
+def test_jser_open_keeps_other_folder_names(series_jser, name):
+    kept = make_closing_dir(series_jser.parent, name)
+    series = Series.openJser(str(series_jser), progress=NullProgressReporter)
+    try:
+        assert kept.is_dir()
+    finally:
+        series.close()
+
+
+def test_jser_open_keeps_a_moved_aside_folder_it_cannot_remove(series_jser, monkeypatch):
+    stale = make_closing_dir(series_jser.parent)
+    real_rmtree = series_mod.shutil.rmtree
+
+    def refused(path, *args, **kwargs):
+        if os.path.abspath(path) == str(stale):
+            raise PermissionError(13, "Permission denied", path)
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(series_mod.shutil, "rmtree", refused)
+    series = Series.openJser(str(series_jser), progress=NullProgressReporter)
+    try:
+        assert stale.is_dir()
+        assert series.sections
+    finally:
+        series.close()
