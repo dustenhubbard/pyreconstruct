@@ -181,11 +181,15 @@ class Scene:
         return (ty["box"], p, cur["image"]) if p < 1 else None
 
     def keys_at(self, t):
-        """Return [(text, opacity)] for the key badges showing at t."""
+        """Return [(text, opacity)] for the key badges showing at t.
+
+        A badge fades in from its start and is gone by its end, so a badge
+        that starts where the last one ends never shows over it.
+        """
         f = self.style["key_fade"]
         out = []
         for k in self.keys:
-            a = min(smoothstep((t - k["start"]) / f), 1 - smoothstep((t - k["end"]) / f))
+            a = min(smoothstep((t - k["start"]) / f), 1 - smoothstep((t - k["end"] + f) / f))
             if a > 0:
                 out.append((k["text"], a))
         return out

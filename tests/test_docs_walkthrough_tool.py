@@ -99,3 +99,11 @@ def test_a_render_has_the_frames_the_scene_asks_for(tool, scene_file, tmp_path):
     info = tool.probe(video)
     assert (info["width"], info["height"]) == (160, 90)
     assert info["frames"] == tool.frame_count(scene)
+
+
+def test_only_one_key_badge_shows_at_a_time(tool, scene_file):
+    # every frame, through the hand-over from one badge to the next
+    scene = tool.Scene(scene_file)
+    shown = [scene.keys_at(i / scene.fps) for i in range(tool.frame_count(scene))]
+    assert all(len(badges) <= 1 for badges in shown)
+    assert {text for badges in shown for text, _ in badges} == {"⇧ Shift", "Right-click"}

@@ -324,7 +324,7 @@ def main():
     app.styleHints().setColorScheme(Qt.ColorScheme.Light)
     app.processEvents()
     if app.styleHints().colorScheme() != Qt.ColorScheme.Light:
-        sys.exit("The app would not take the light theme. Switch macOS to Light and rerun.")
+        sys.exit("PyReconstruct would not take the light theme. Switch macOS to Light and rerun.")
 
     watchdog = capture.start_watchdog(app)
     targets = shoot(out, app)
