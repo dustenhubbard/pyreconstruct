@@ -565,9 +565,14 @@ def _markRetired(closing_dir : str, hidden_dir : str):
     a marker that cannot be written only leaves it in place.
     """
     try:
-        with open(os.path.join(closing_dir, RETIRED_MARKER), "w", encoding="utf-8") as f:
+        # surrogateescape: on Linux a folder name can hold a byte that is not
+        # UTF-8, which Python carries as a lone surrogate
+        with open(
+            os.path.join(closing_dir, RETIRED_MARKER), "w",
+            encoding="utf-8", errors="surrogateescape",
+        ) as f:
             f.write(os.path.basename(hidden_dir))
-    except OSError:
+    except (OSError, UnicodeError):
         pass
 
 
@@ -851,12 +856,13 @@ def _sweepRetiredFolders(sdir : str, hidden_dir : str):
                     ):
                         continue
                     with open(
-                        os.path.join(entry.path, RETIRED_MARKER), encoding="utf-8"
+                        os.path.join(entry.path, RETIRED_MARKER),
+                        encoding="utf-8", errors="surrogateescape",
                     ) as f:
                         if f.read() != name:
                             continue
                     shutil.rmtree(entry.path, ignore_errors=True)
-                except (OSError, UnicodeDecodeError):
+                except (OSError, UnicodeError):
                     pass  # no marker, locked, vanished, or otherwise inaccessible
     except OSError:
         pass  # best-effort cleanup must never prevent opening a series

@@ -2,6 +2,7 @@
 
 import json
 import os
+import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -397,3 +398,50 @@ def test_jser_open_keeps_a_moved_aside_folder_it_cannot_remove(series_jser, monk
         assert series.sections
     finally:
         series.close()
+
+
+def test_a_marker_carries_a_folder_name_that_is_not_utf_8(tmp_path):
+    """On Linux a folder name can hold a byte that is not UTF-8 (a lone surrogate here)."""
+    name = os.fsdecode(b".bad\xff")
+    aside = tmp_path / ".closing-0badcafe"
+    aside.mkdir()
+    (aside / "series.0").write_bytes(b"{}")
+    series_mod._markRetired(str(aside), str(tmp_path / name))
+    marker = aside / series_mod.RETIRED_MARKER
+    assert marker.read_bytes() == b".bad\xff"
+    old = time.time() - 20 * 60
+    os.utime(aside, (old, old))
+
+    series_mod._sweepRetiredFolders(str(tmp_path), str(tmp_path / ".other"))
+    assert aside.is_dir()
+    series_mod._sweepRetiredFolders(str(tmp_path), str(tmp_path / name))
+    assert not aside.exists()
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="only Linux takes a file name that is not UTF-8"
+)
+def test_a_series_named_with_a_byte_that_is_not_utf_8_closes_and_is_swept(
+    series_jser, tmp_path, monkeypatch
+):
+    bad = tmp_path / os.fsdecode(b"bad\xff.jser")
+    bad.write_bytes(series_jser.read_bytes())
+    series = Series.openJser(str(bad), progress=NullProgressReporter)
+    hidden = series.hidden_dir
+    monkeypatch.setattr(series_mod.shutil, "rmtree", lambda path, *a, **k: None)
+    series.close()  # does not raise
+    monkeypatch.undo()
+    assert series.closed and not os.path.isdir(hidden)
+    left = [p for p in tmp_path.iterdir() if p.name.startswith(".closing-")]
+    assert len(left) == 1
+    assert (left[0] / series_mod.RETIRED_MARKER).read_bytes() == os.fsencode(
+        os.path.basename(hidden)
+    )
+    old = time.time() - 20 * 60
+    os.utime(left[0], (old, old))
+
+    reopened = Series.openJser(str(bad), progress=NullProgressReporter)
+    try:
+        assert not left[0].exists()
+    finally:
+        reopened.close()
