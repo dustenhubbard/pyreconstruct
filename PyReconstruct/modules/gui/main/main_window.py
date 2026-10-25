@@ -2070,9 +2070,11 @@ class MainWindow(QMainWindow):
 
         A code the name supplies is not an edit: it is written to the series
         file and nothing is marked modified, so a section change with no
-        edits saves no section. A code the user typed over it is an edit, so
-        the series is marked modified and the code is saved with it. With no
-        code and nobody to ask, nothing changes.
+        edits saves no section. The .jser takes it when the series closes,
+        without asking (saveToJser), so the next open does not ask for it
+        again. A code the user typed over it is an edit, so the series is
+        marked modified and the code is saved with it. With no code and
+        nobody to ask, nothing changes.
         """
         if self.series.isWelcomeSeries() or self.series.code:
             return
@@ -2091,6 +2093,7 @@ class MainWindow(QMainWindow):
             return
         if self.series.code == detected_code:
             self.series.save()
+            self.series.unsaved_series_data = True
         else:
             self.seriesModified()
 
@@ -3282,6 +3285,14 @@ class MainWindow(QMainWindow):
         
         # User closing and series not modified
         if close and not self.series.modified:
+            # the series code set at open goes into the .jser without asking:
+            # none of the user's work changed, and the next open would ask
+            # for the code again otherwise. Through the store when Save
+            # writes the store (the .jser is then written from it below). A
+            # failed write keeps the series open, as any failed save does.
+            if self.series.unsaved_series_data and self.series.jser_fp:
+                if not self.series.saveToStore() and not self._writeJser():
+                    return "cancel"
             if not self._writeStoreSave():
                 return "cancel"
             self.series.close()

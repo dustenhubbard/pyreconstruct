@@ -815,6 +815,11 @@ class Series():
         self.jser_fp = ""
         self.hidden_dir = os.path.dirname(self.filepath)
         self.modified = False
+        ## True when the series' own data holds a change that is not a user
+        ## edit (the series code set at open) and the .jser lacks it: the
+        ## .jser is written at close without asking, and no section is
+        ## rewritten for it. Cleared by any save of the .jser or the store.
+        self.unsaved_series_data = False
 
         self.current_section = series_data["current_section"]
         self.src_dir = series_data["src_dir"]
@@ -1391,6 +1396,8 @@ class Series():
         self._jser_save_running = True
         try:
             self._saveJser(save_fp, close)
+            if not save_fp or save_fp == self.jser_fp:
+                self.unsaved_series_data = False
         finally:
             self._jser_save_running = False
 
@@ -1667,7 +1674,10 @@ class Series():
                 tail = self._jserTail(
                     lambda step: reporter.set_progress((len(snums) + step)/final_value * 100)
                 )
-                return store_save.saveToStore(self, keys, tail)
+                stored = store_save.saveToStore(self, keys, tail)
+                if stored:
+                    self.unsaved_series_data = False
+                return stored
             finally:
                 reporter.finish()
         finally:
