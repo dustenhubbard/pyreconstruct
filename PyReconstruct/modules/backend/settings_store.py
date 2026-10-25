@@ -67,7 +67,8 @@ class QSettingsStore(SettingsStore):
 
     def _settings(self, code: Optional[str]):
         from PySide6.QtCore import QSettings
-        app = self.APP if code is None else f"{self.APP}-{code}"
+        from PyReconstruct.modules.constants.settings_domain import series_app
+        app = self.APP if code is None else series_app(self.APP, code)
         return QSettings(self.ORG, app)
 
     def contains(self, code, key):

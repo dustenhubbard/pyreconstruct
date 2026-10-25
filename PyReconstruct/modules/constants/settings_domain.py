@@ -50,6 +50,20 @@ def settings_app():
     return os.environ.get("PYRECON_APP_NAME", SHARED_APP)
 
 
+def series_app(app, code):
+    """The application name of one series' own settings: ``<app>-<code>``.
+
+    The name becomes a file name in the Ini format (Linux, and the test
+    suite), and no file name can hold a NUL. Given one, `QLockFile` retries
+    the lock forever, so a series whose code holds a NUL would hang every
+    per-series read. A code typed in Series code is refused a NUL, but one
+    read from a series file is not, so the NUL is replaced here, as U+FFFD.
+    Every other code names the same domain it always has, so a series keeps
+    its stored settings.
+    """
+    return f"{app}-{code.replace(chr(0), chr(0xFFFD))}"
+
+
 def shared_domain():
     """(org, app) of the store both apps share. Never flavored."""
     return SETTINGS_ORG, SHARED_APP
@@ -240,12 +254,12 @@ def fold_series_settings_once(code, flavored=None, shared=None):
         if settings_app() == SHARED_APP:
             return False
         from PySide6.QtCore import QSettings
-        flavored = QSettings(SETTINGS_ORG, f"{settings_app()}-{code}")
+        flavored = QSettings(SETTINGS_ORG, series_app(settings_app(), code))
     if flavored.contains(FOLD_MARKER):
         return False
     if shared is None:
         from PySide6.QtCore import QSettings
-        shared = QSettings(SETTINGS_ORG, f"{SHARED_APP}-{code}")
+        shared = QSettings(SETTINGS_ORG, series_app(SHARED_APP, code))
     return bool(_fold(
         flavored, shared, mark_always=False, validate_list_layout=True
     ))
