@@ -35,9 +35,10 @@ class FileOpenWatcher(QObject):
     macOS hands a double-clicked file to the app as a QFileOpenEvent, never as
     argv, both at launch and while running. Before the main window exists the
     path parks in ``pending`` (runPyReconstruct spins the event loop once to
-    collect it); after that the event opens the series in the live window.
-    Windows and Linux pass the path as argv and never send this event, so the
-    filter is a no-op there.
+    collect it); after that the event opens the series in the live window,
+    unless an open, import, Save As or quit is running there, in which case
+    it is refused with a notice. Windows and Linux pass the path as argv and
+    never send this event, so the filter is a no-op there.
     """
 
     def __init__(self):
@@ -49,10 +50,15 @@ class FileOpenWatcher(QObject):
         if event.type() == QEvent.FileOpen:
             path = event.file()
             if path:
-                if self.main_window is not None:
-                    self.main_window.openSeries(jser_fp=path)
-                else:
+                if self.main_window is None:
                     self.pending = path
+                # the event arrives under the dialogs of a running open,
+                # import, Save As or quit; it is refused there, not queued
+                # (MainWindow.seriesTransition)
+                elif self.main_window.seriesTransitionRunning():
+                    self.main_window.refuseFinderOpen(path)
+                else:
+                    self.main_window.openSeries(jser_fp=path)
             return True
         return super().eventFilter(obj, event)
 

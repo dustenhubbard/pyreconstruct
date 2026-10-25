@@ -11,6 +11,7 @@ Covered:
   * importFromZarrLabels — non-zarr directory selection
   * calibrateMag         — no traces selected
 """
+import contextlib
 import types
 import pytest
 
@@ -46,7 +47,10 @@ def _patch_zarr_dialogs(monkeypatch, selected_dir):
 @pytest.mark.parametrize("method", ["newFromNgZarr", "importFromZarrLabels"])
 def test_invalid_zarr_selection_aborts(monkeypatch, tmp_path, method):
     notified, quick_called = _patch_zarr_dialogs(monkeypatch, tmp_path)
-    stub = types.SimpleNamespace(field=types.SimpleNamespace(refuseWhileRoiBox=lambda: False))
+    stub = types.SimpleNamespace(
+        field=types.SimpleNamespace(refuseWhileRoiBox=lambda: False),
+        seriesTransition=contextlib.nullcontext,
+    )
 
     getattr(mw.MainWindow, method)(stub)
 

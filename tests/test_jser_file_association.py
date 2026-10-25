@@ -58,6 +58,9 @@ def test_open_with_a_window_opens_the_series(qapp, watcher):
     opened = []
 
     class Window:
+        def seriesTransitionRunning(self):
+            return False
+
         def openSeries(self, series_obj=None, jser_fp=None, query_prev=True):
             opened.append(jser_fp)
 
