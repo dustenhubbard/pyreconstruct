@@ -280,15 +280,38 @@ def test_a_loop_whose_camera_moves_ends_on_its_opening_frame(tool, tmp_path):
     assert abs(first - last).max() <= 2
 
 
+def run_late(kind, spec):
+    """Make one kind of timed element in `spec` run on past the last step."""
+    if kind == "screen fade":
+        spec["steps"][-1]["after_fade"] = 2.0
+    elif kind == "key badge":
+        spec["timing"]["key_hold"] = 3
+    elif kind == "click ring":
+        spec["style"] = {"ring_duration": 3}
+    elif kind == "pointer fade":
+        spec["style"] = {"cursor_fade": 3}
+    elif kind == "camera move":  # a camera that follows the pointer, slow to return
+        for step in spec["steps"]:
+            del step["camera"]
+        del spec["camera_start"], spec["camera_end"]
+        spec["timing"]["outro"] = 3
+    return spec
+
+
 @pytest.mark.parametrize("back_to", ["a", "c"])
-def test_a_loop_ends_after_a_long_last_fade_on_its_opening_frame(tool, tmp_path, back_to):
+@pytest.mark.parametrize("kind", ["screen fade", "key badge", "click ring", "pointer fade",
+                                  "camera move"])
+def test_a_loop_ends_on_its_opening_frame_after_everything_has_finished(tool, tmp_path, kind,
+                                                                         back_to):
     for name, color in (("a", (200, 60, 60)), ("b", (60, 200, 60)), ("c", (60, 60, 200))):
-        Image.new("RGB", (160, 90), color).save(tmp_path / f"{name}.png")
+        image = Image.new("RGB", (160, 90), color)
+        ImageDraw.Draw(image).rectangle((30, 30, 60, 50), fill=(250, 250, 250))
+        image.save(tmp_path / f"{name}.png")
     spec = steps()
-    spec["steps"][-1].update(after=back_to, after_fade=2.0)
-    path = tmp_path / "long.json"
-    path.write_text(json.dumps(tool.draft({**spec, "loop": True,
-                                           "timing": {"outro": 0.2, "tail": 0.3}})))
+    spec["steps"][-1]["after"] = back_to
+    spec.update(loop=True, timing={"outro": 0.2, "tail": 0.3})
+    path = tmp_path / "late.json"
+    path.write_text(json.dumps(tool.draft(run_late(kind, spec))))
     scene = tool.Scene(path)
     # no fade is cut short: each screen starts only once the one before has
     # fully shown
@@ -298,6 +321,27 @@ def test_a_loop_ends_after_a_long_last_fade_on_its_opening_frame(tool, tmp_path,
     first = renderer.frame(0).astype(int)
     last = renderer.frame((tool.frame_count(scene) - 1) / scene.fps).astype(int)
     assert abs(first - last).max() <= 2
+
+
+@pytest.mark.parametrize("kind", ["screen fade", "typing", "pointer move", "stroke", "click ring",
+                                  "key badge", "camera", "pointer fade"])
+def test_settled_counts_every_timed_element(tool, kind):
+    # each kind in turn ends last, at 9 s; everything else ends by 1 s
+    late = {
+        "screen fade": {"states": [{"time": 0, "image": "a"}, {"time": 7, "image": "b", "fade": 2}]},
+        "typing": {"states": [{"time": 0, "image": "a"},
+                              {"time": 6, "image": "b", "type": {"box": [0, 0, 1, 1], "duration": 3}}]},
+        "pointer move": {"moves": [{"start": 8, "end": 9, "to": [1, 1]}]},
+        "stroke": {"moves": [{"start": 0, "end": 1, "path": [[0, 0], [1, 1]],
+                              "stroke": {"color": [0, 0, 0], "width": 2, "until": 9}}]},
+        "click ring": {"clicks": [9 - tool.STYLE["ring_duration"]]},
+        "key badge": {"keys": [{"start": 8, "end": 9, "text": "A"}]},
+        "camera": {"camera": [{"time": 0, "x": 0, "y": 0, "zoom": 1}, {"time": 9, "x": 0, "y": 0, "zoom": 1}]},
+        "pointer fade": {"cursor_fade_out": 9 - tool.STYLE["cursor_fade"]},
+    }[kind]
+    scene = {"states": [{"time": 0, "image": "a"}], "moves": [], "clicks": [0.5], "keys": [],
+             "camera": [{"time": 0, "x": 0, "y": 0, "zoom": 1}], "cursor_fade_out": 0.5, **late}
+    assert tool.settled(scene, tool.STYLE) == pytest.approx(9)
 
 
 def test_a_loop_waits_for_a_slower_pointer_fade(tool, tmp_path):

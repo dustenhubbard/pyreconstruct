@@ -463,6 +463,27 @@ DRAFT = {
 }
 
 
+def settled(scene, style):
+    """When everything timed in `scene` has finished: screen changes and
+    their fades, typing, pointer moves and drags, strokes, click rings, key
+    badges, camera moves, and the pointer's fade out."""
+    ends = [0.0]
+    for st in scene.get("states", []):
+        ends.append(st["time"] + st.get("fade", 0))
+        if st.get("type"):
+            ends.append(st["time"] + st["type"].get("duration", 2.0))
+    for m in scene.get("moves", []):
+        ends.append(m["end"])
+        if "stroke" in m:
+            ends.append(m["stroke"].get("until", m["end"]))
+    ends += [c + style["ring_duration"] for c in scene.get("clicks", [])]
+    ends += [k["end"] for k in scene.get("keys", [])]
+    ends += [c["time"] for c in scene.get("camera", [])]
+    if scene.get("cursor_fade_out") is not None:
+        ends.append(scene["cursor_fade_out"] + style["cursor_fade"])
+    return max(ends)
+
+
 def draft(spec):
     """Build a full scene from a short list of steps. See README.md."""
     W, H = spec["size"]
@@ -602,16 +623,15 @@ def draft(spec):
     loop = spec.get("loop")
     if loop:
         # a clip that plays on a loop: the pointer fades in at the start, and
-        # once it has faded out and every fade has finished (a stroke ends
-        # with the fade of the screen after it), the first screen fades
-        # back, so the loop has no jump
+        # once everything else has finished the first screen fades back, so
+        # the loop has no jump
         scene["cursor_fade_in"] = 0
-        gone = scene["cursor_fade_out"] + {**STYLE, **spec.get("style", {})}["cursor_fade"]
-        settled = max([gone] + [st["time"] + st.get("fade", 0) for st in states])
-        duration = max(duration, math.ceil((settled + d["tail"]) * 10) / 10)
+        done = settled({**scene, "states": states, "moves": moves, "clicks": clicks,
+                        "keys": keys, "camera": camera}, {**STYLE, **spec.get("style", {})})
+        duration = max(duration, math.ceil((done + d["tail"]) * 10) / 10)
         if states[-1]["image"] != states[0]["image"]:
             fade = d["loop_fade"] if loop is True else loop
-            at = round(settled + 0.1, 3)
+            at = round(done + 0.1, 3)
             states.append({"time": at, "image": states[0]["image"], "fade": fade})
             duration = max(duration, math.ceil((at + fade + d["tail"]) * 10) / 10)
     key(duration, end)
