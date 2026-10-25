@@ -457,6 +457,7 @@ DRAFT = {
     "outro": 1.65,        # final zoom out
     "tail": 0.8,          # still time at the end
     "loop_fade": 0.4,     # a looping clip's fade back to its first screen
+    "loop_lead": 0.1,     # a looping clip's first badge, ring or stroke waits this long
     "safe": 0.3,          # camera pans when a target is outside this part of the view
     "key_lead": 0.35,     # a key badge shows this long before the pointer arrives
     "key_hold": 0.5,      # and stays this long after the click
@@ -551,7 +552,8 @@ def draft(spec):
         together = st.get("together", i == 0)
         if new != cam:
             key(t, cam)
-            key(t + (d["move"] if together else d["pan"]), new)
+            # a camera that moves with the pointer takes the pointer's own time
+            key(t + (st.get("move", d["move"]) if together else d["pan"]), new)
             cam = new
             if not together:
                 t += d["pan"] + 0.05
@@ -626,6 +628,27 @@ def draft(spec):
         # once everything else has finished the first screen fades back, so
         # the loop has no jump
         scene["cursor_fade_in"] = 0
+        # and opens clean: everything moves later until its first screen
+        # change, badge or click ring starts after the first frame (a drag's
+        # stroke starts with its press, a click)
+        starts = [st["time"] for st in states[1:]] + [k["start"] for k in keys] + clicks
+        shift = d["loop_lead"] - min(starts, default=d["loop_lead"])
+        if shift > 0:
+            def later(x):
+                return round(x + shift, 3)
+            for st in states[1:]:
+                st["time"] = later(st["time"])
+            for m in moves:
+                m["start"], m["end"] = later(m["start"]), later(m["end"])
+                if "stroke" in m:
+                    m["stroke"]["until"] = later(m["stroke"]["until"])
+            clicks[:] = [later(c) for c in clicks]
+            for k in keys:
+                k["start"], k["end"] = later(k["start"]), later(k["end"])
+            for c in camera[1:]:
+                c["time"] = later(c["time"])
+            scene["cursor_fade_out"] = later(scene["cursor_fade_out"])
+            duration = math.ceil((duration + shift) * 10) / 10
         style = {**STYLE, **spec.get("style", {})}
         done = settled({**scene, "states": states, "moves": moves, "clicks": clicks,
                         "keys": keys, "camera": camera}, style)
@@ -637,7 +660,7 @@ def draft(spec):
         # the last frame shows one frame before the end: it must come once
         # everything has finished, tail or not
         fps = int(style["fps"])
-        while (round(duration * fps) - 1) / fps < done + d["tail"] - 1e-9:
+        while (round(duration * fps) - 1) / fps < done + d["tail"]:
             duration = round(duration + 0.1, 1)
     key(duration, end)
     scene.update(duration=duration, states=states, moves=moves, clicks=clicks, camera=camera)

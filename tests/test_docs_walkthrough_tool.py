@@ -357,16 +357,26 @@ def last_frame_time(tool, scene):
     return (tool.frame_count(scene) - 1) / scene.fps
 
 
+TINY = 1e-6  # opacities and times this close to their limit show nothing
+
+
+def assert_clean(scene, t):
+    """Nothing but the screen and the camera shows at `t`."""
+    assert all(a < TINY for _, a in scene.keys_at(t)), "a key badge"
+    assert scene.strokes_at(t) == [], "a stroke"
+    assert not any(-TINY < t - c < scene.style["ring_duration"] - TINY for c in scene.clicks), "a click ring"
+    assert scene.cursor_opacity(t) < TINY, "the pointer"
+
+
 def assert_loops_cleanly(tool, scene):
-    """The last frame matches the first, and nothing is still under way in it."""
+    """The first and last frames match, and nothing is under way in either."""
     last = last_frame_time(tool, scene)
-    image, previous, _ = scene.state_at(last)
-    assert image == scene.states[0]["image"] and previous is None
-    assert scene.keys_at(last) == []
-    assert scene.strokes_at(last) == []
-    assert not any(0 <= last - c < scene.style["ring_duration"] for c in scene.clicks)
-    assert scene.cursor_opacity(last) == 0
-    assert scene.camera_at(last) == scene.camera_at(0)
+    assert_clean(scene, 0)
+    assert_clean(scene, last)
+    image, previous, mix = scene.state_at(last)
+    assert image == scene.states[0]["image"], "the last screen"
+    assert previous is None or mix > 1 - TINY, "a screen fade"
+    assert scene.camera_at(last) == pytest.approx(scene.camera_at(0)), "the camera"
     renderer = tool.Renderer(scene, scene.size[0])
     first = renderer.frame(0).astype(int)
     assert abs(first - renderer.frame(last).astype(int)).max() <= 2
@@ -387,6 +397,31 @@ def test_a_loop_with_no_tail_ends_after_everything_has_finished(tool, tmp_path, 
             "camera_start": STILL, "camera_end": STILL, "loop": True, "timing": timing,
             "steps": [{"image": "a", "click": [20, 20], "camera": STILL}, last]}
     path = tmp_path / "no-tail.json"
+    path.write_text(json.dumps(tool.draft(spec)))
+    assert_loops_cleanly(tool, tool.Scene(path))
+
+
+@pytest.mark.parametrize("kind", ["key badge", "click ring", "screen change"])
+def test_a_loop_opens_on_its_first_screen_with_nothing_over_it(tool, tmp_path, kind):
+    # each would start at or before the first frame without the loop's lead
+    stills(tmp_path)
+    first = {"image": "a", "click": [20, 20], "camera": STILL}
+    second = {"image": "b", "click": [140, 70], "camera": STILL, "after": "a"}
+    if kind == "key badge":
+        first.update(keys="A", move=0.1)
+        timing = {"intro": 0.1}
+    elif kind == "click ring":  # a click that changes nothing on screen
+        first["move"] = 0
+        second.update(image="a", after="b")
+        timing = {"intro": 0, "settle": 0}
+    else:  # a point with no move and no wait: the next screen comes at once
+        del first["click"]
+        first.update(point=[20, 20], move=0)
+        timing = {"intro": 0}
+    spec = {"size": [160, 90], "images": {"a": "a.png", "b": "b.png", "c": "c.png"},
+            "camera_start": STILL, "camera_end": STILL, "loop": True, "timing": timing,
+            "steps": [first, second]}
+    path = tmp_path / "opening.json"
     path.write_text(json.dumps(tool.draft(spec)))
     assert_loops_cleanly(tool, tool.Scene(path))
 
@@ -421,6 +456,10 @@ def random_loop(seed):
         else:
             step["zoom"] = rng.choice([1, 1.5, 2])
         steps.append(step)
+    # the opening: an early first move, or none, and a badge on the first step
+    steps[0]["move"] = rng.choice([0, 0.1, 1.6])
+    if rng.random() < 0.4:
+        steps[0]["keys"] = "A"
     if rng.random() < 0.7:
         steps[-1]["after"] = rng.choice("abc")
         if rng.random() < 0.5:
@@ -429,6 +468,7 @@ def random_loop(seed):
         "size": [160, 90], "images": {"a": "a.png", "b": "b.png", "c": "c.png"}, "steps": steps,
         "loop": rng.choice([True, 0.3, 1.5]),
         "timing": {"tail": rng.choice([0, 0, 0.1, 0.3]), "outro": rng.choice([0, 0.1, 0.5, 1.65]),
+                   "intro": rng.choice([0, 0.1, 0.7]), "settle": rng.choice([0, 0.2]),
                    "outro_delay": rng.choice([0, 0.37]), "key_hold": rng.choice([0.5, 2.04, 3])},
         "style": {"cursor_fade": rng.choice([0.2, 0.4, 3]), "fps": rng.choice([10, 30, 60]),
                   "ring_duration": rng.choice([0.45, 2])},
@@ -437,7 +477,7 @@ def random_loop(seed):
 
 def test_random_drafted_loops_end_on_their_opening_frame(tool, tmp_path):
     stills(tmp_path)
-    for seed in range(48):
+    for seed in range(64):
         path = tmp_path / f"random-{seed}.json"
         path.write_text(json.dumps(tool.draft(random_loop(seed))))
         try:
