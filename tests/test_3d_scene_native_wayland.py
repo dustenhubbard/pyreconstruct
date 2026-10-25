@@ -31,6 +31,11 @@ from PySide6.QtWidgets import QApplication
 mode = sys.argv[1]
 app = QApplication([])
 if mode == "draw":
+    # a platform with no screen (a sandbox that hides the display) has no
+    # surface to make a context on, and asking for one ends the process
+    if not QGuiApplication.screens():
+        print(json.dumps({"no_screen": QGuiApplication.platformName()}))
+        sys.exit(0)
     ctx, surface = QOpenGLContext(), QOffscreenSurface()
     surface.create()
     if not (ctx.create() and ctx.makeCurrent(surface)):
@@ -105,6 +110,8 @@ def test_wayland_scene_draws_through_qt_without_an_x11_window():
 
 def test_wayland_scene_shows_the_frame_vtk_drew():
     got = probe("draw")
+    if "no_screen" in got:
+        pytest.skip(f"Qt reports no screen on {got['no_screen']}")
     if "no_gl" in got:
         pytest.skip(f"Qt makes no OpenGL context on {got['no_gl']}")
     assert got["render_window"] == "vtkGenericOpenGLRenderWindow"
