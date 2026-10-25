@@ -49,6 +49,10 @@ words:
 - One topic, one fragment. If a fragment for the same feature is already
   waiting here, edit it instead of adding a new one.
 
+`python3 scripts/check_fragment_voice.py changelog.d` checks the first, third,
+fifth and sixth of these; the pull request check runs it on the fragments you
+add or edit and reports what it finds.
+
 Hard-wrap at 80 columns and indent continuation lines by two spaces. This is a
 real entry:
 

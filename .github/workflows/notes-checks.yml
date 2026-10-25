@@ -8,14 +8,19 @@ name: notes
 # automatic exemptions, and the opt-out, and changelog.d/README.md for what an
 # author writes.
 #
+# `changelog-entry` also reads each fragment the pull request adds or edits
+# against the four mechanical voice rules of changelog.d/README.md (one bold
+# claim and at most one sentence after it, no "Before," sentence, no "the
+# app", one menu-path form). See scripts/check_fragment_voice.py.
+#
 # `docs-entry` reports a pull request that changes a menu, dialog, tool,
 # shortcut, the updater or an installer without changing docs/ or README.md,
 # and with no `No docs change: <reason>` line in the body. It also lists guide
 # images that show a changed file, once docs/assets/images/user-guide/sources.json
 # exists. See scripts/check_docs_entry.py for the path list and the rule.
 #
-# REPORT-ONLY. Both jobs always exit 0. A finding arrives as a warning
-# annotation and a job summary, not as a failed check. To make either a gate,
+# REPORT-ONLY. Both jobs always exit 0, the voice step included. A finding
+# arrives as a warning annotation and a job summary, not as a failed check. To make either a gate,
 # set BLOCKING = True in its script; nothing in this file needs to change. A
 # gate also needs its job name added to the required checks in branch
 # protection.
@@ -73,6 +78,14 @@ jobs:
           python3 scripts/check_changelog_entry.py \
             --changed-files "${RUNNER_TEMP}/changed-files.txt" \
             --body "${RUNNER_TEMP}/pr-body.txt"
+
+      # Report-only, like the step above: the script exits 0 and annotates the
+      # fragment's own line. Fragments the change deleted (an assemble) are
+      # skipped, since there is nothing to read.
+      - name: Fragment voice
+        run: |
+          python3 scripts/check_fragment_voice.py \
+            --changed-files "${RUNNER_TEMP}/changed-files.txt"
 
   # The same shape as changelog-entry above, and the same care with the body.
   docs-entry:
