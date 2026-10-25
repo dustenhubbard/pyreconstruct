@@ -988,7 +988,7 @@ z-trace list.
 
 <figure class="clip walkthrough" markdown>
 
-![Clip: the pointer opens Lists ▸ Object list, clicks ast01, Shift-clicks d01sp01 to select all four objects, right-clicks them and chooses 3D ▸ Add to scene; the 3D scene opens with a dendrite, its spine, an axon and an astroglial process.](assets/images/user-guide/11-add-to-scene-start.png)
+![Clip: the pointer opens Lists ▸ Object list, clicks ast01, Shift-clicks d01sp01 to select all four objects, right-clicks them and chooses 3D ▸ Add to scene; the 3D scene opens with a dendrite, its spine, an axon and an astroglial process.](assets/images/user-guide/11-add-to-scene-start.png){ data-width="1280" data-height="720" }
 
 [▶ 16 s · loops](assets/videos/user-guide/11-add-to-scene.mp4){ .clip-src }
 

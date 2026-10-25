@@ -6,7 +6,7 @@ Writes neurites.jser and one image per section into <folder>. Nothing in it is
 lab data: every shape is drawn here from a formula, and the images are drawn
 from the same shapes, so each trace follows the outline it sits on.
 
-The four objects stand for what the app is mostly used to trace, named the
+The four objects stand for what PyReconstruct is mostly used to trace, named the
 way the lab names them (d dendrite, sp spine, ax axon, ast astroglia):
 
   * d01, a dendrite: a tube that runs at a slant through the sections;
@@ -174,7 +174,7 @@ def write_series(folder, images=True):
     series = {
         "code": CODE, "current_section": 20, "src_dir": "",
         "window": [0, 0, w * MAG, h * MAG],
-        # the trace palette as the app's own test series has it
+        # the trace palette as the shapes1 test series has it
         "palette_traces": PALETTE["palette_traces"], "current_trace": PALETTE["current_trace"],
         "ztraces": {},
         "alignment": "default", "object_groups": {}, "object_3D_modes": {},

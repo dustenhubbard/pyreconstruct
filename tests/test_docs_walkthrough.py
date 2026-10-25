@@ -128,3 +128,42 @@ def test_the_clip_is_2560_by_1440_and_as_long_as_its_tag():
     stream = info["streams"][0]
     assert (stream["width"], stream["height"]) == (2560, 1440)
     assert round(float(info["format"]["duration"])) == 16
+
+
+def test_a_clip_guide_refresh_keeps_this_clip(tmp_path):
+    from dev.docs_media.video import clips
+
+    guide, out = tmp_path / "guide", tmp_path / "out"
+    guide.mkdir()
+    out.mkdir()
+    (guide / CLIP.name).write_bytes(b"made by walkthrough_3d.py")
+    (guide / "old-clip.mp4").write_bytes(b"stale")
+    made = out / "04-open-series.mp4"
+    made.write_bytes(b"new")
+
+    clips.copy_to_guide([made], guide)
+
+    assert (guide / CLIP.name).read_bytes() == b"made by walkthrough_3d.py"
+    assert not (guide / "old-clip.mp4").exists()
+    assert (guide / made.name).read_bytes() == b"new"
+
+
+def test_each_clip_poster_gives_the_page_its_size():
+    # clips.js sizes the video from data-width and data-height, falling back
+    # to 1120 x 760, the size of the 2240 x 1520 posters, so the page holds
+    # the right shape before the poster or the video loads
+    script = (REPO / "docs" / "javascripts" / "clips.js").read_text()
+    assert "Number(poster.dataset.width) || 1120" in script
+    assert "Number(poster.dataset.height) || 760" in script
+    figures = re.findall(r'<figure class="clip[^"]*" markdown>(.*?)</figure>', GUIDE.read_text(), re.S)
+    assert figures
+    for figure in figures:
+        poster = re.search(r"\]\((assets/images/user-guide/[^)]+)\)(\{[^}]*\})?", figure)
+        with Image.open(REPO / "docs" / poster.group(1)) as image:
+            width, height = image.size
+        attrs = poster.group(2) or ""
+        if (width, height) == (2240, 1520):
+            assert "data-width" not in attrs, poster.group(1)
+        else:
+            assert f'data-width="{width // 2}"' in attrs, poster.group(1)
+            assert f'data-height="{height // 2}"' in attrs, poster.group(1)

@@ -20,8 +20,8 @@ How it shoots, and what is pinned, is capture.py's: the theme, username,
 isolated settings and tripwire, and QWidget.grab() of the live window. Three
 things differ. The series is neurites.py's, a dendrite with a spine, an
 axon and an astroglial process, written fresh for each run. The main window
-is 1280 x 720 logical pixels, so a frame is 2560 x 1440 on a 2x screen: the
-app as a 1280 x 720 screen shows it, at Retina sharpness. And the last
+is 1280 x 720 logical pixels, so a frame is 2560 x 1440 on a 2x screen:
+PyReconstruct as a 1280 x 720 screen shows it, at Retina sharpness. And the last
 frame puts the 3D scene window over the main window, the way the two sit on
 screen, since one grab holds one window.
 
@@ -59,9 +59,9 @@ def _load(name, file):
 capture = _load("docs_capture", "capture.py")
 neurites = _load("docs_neurites", "neurites.py")
 
-# A screencast shows the app as a 1280 x 720 screen shows it, at 2x: the
+# A screencast shows PyReconstruct as a 1280 x 720 screen shows it, at 2x: the
 # window is 1280 x 720 logical pixels, a frame is 2560 x 1440, and the video
-# shows each frame pixel for pixel (DECISIONS, 2026-10-24). At the left edge
+# shows each frame pixel for pixel. At the left edge
 # of the screen, so the window fits on a 1280-wide one; the pointer waits
 # in the menu bar above it, where no hover state is drawn.
 capture.WINDOW_SIZE = (1280, 720)
@@ -233,7 +233,7 @@ def shoot(out, app):
     three_d = table.menu_3D
     three_d_row = row_center(context, three_d.menuAction(), window)
     # the submenu where Qt puts it: beside the 3D row, its first row level
-    # with it. Shown by hand: setActiveAction() does not open a submenu.
+    # with it. Opened with popup(): setActiveAction() does not open a submenu.
     geometry = context.actionGeometry(three_d.menuAction())
     sub_at = context.mapToGlobal(QPoint(geometry.right(), geometry.top()))
     chain = [(context, at, three_d.menuAction()), (three_d, sub_at, None)]
@@ -319,7 +319,7 @@ def main():
     from PyReconstruct.modules.gui.utils import MenuShortcutSpacingStyle
     app.setStyle(MenuShortcutSpacingStyle())
     # the pinned theme is the light default. On a Mac set to Auto, evening
-    # turns it dark, so the app asks for light for itself; macOS is not changed.
+    # turns it dark, so PyReconstruct asks for light for itself; macOS is not changed.
     app.styleHints().setColorScheme(Qt.ColorScheme.Light)
     app.processEvents()
     if app.styleHints().colorScheme() != Qt.ColorScheme.Light:
