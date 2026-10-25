@@ -108,7 +108,7 @@ def draw_image(polygons, path, rng):
     def px(points):
         return [(x / MAG, h - y / MAG) for x, y in points]
 
-    ground = rng.normal(118, 14, (h // 8, w // 8)).clip(0, 255).astype("uint8")
+    ground = rng.normal(118, 10, (h // 12, w // 12)).clip(0, 255).astype("uint8")
     image = Image.fromarray(ground).resize((w, h), Image.BICUBIC)
     fills = {"d01": 196, "d01sp01": 196, "ax01": 182, "ast01": 150}
     # the membrane is the rim of each object's whole outline, so a spine's
@@ -137,7 +137,8 @@ def draw_image(polygons, path, rng):
             x, y = (cx + d * math.cos(a)) / MAG, h - (cy + d * math.sin(a)) / MAG
             draw.ellipse((x - 7, y - 7, x + 7, y + 7), outline=80, width=3)
     image = image.filter(ImageFilter.GaussianBlur(2.2))
-    pixels = np.asarray(image, dtype=np.float32) + rng.normal(0, 7, (h, w))
+    # a light grain only: fine noise is what makes a video file large
+    pixels = np.asarray(image, dtype=np.float32) + rng.normal(0, 1.5, (h, w))
     Image.fromarray(pixels.clip(0, 255).astype("uint8")).save(path)
 
 

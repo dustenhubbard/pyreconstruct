@@ -10,9 +10,9 @@
       "image": "open",
       "click": "lists_menu",
       "camera": {
-        "x": 1200,
-        "y": 675,
-        "zoom": 1.6
+        "x": 870,
+        "y": 490,
+        "zoom": 2.2
       }
     },
     {
@@ -20,18 +20,18 @@
       "point": "object_list_row",
       "move": 0.9,
       "camera": {
-        "x": 1200,
-        "y": 675,
-        "zoom": 1.6
+        "x": 870,
+        "y": 490,
+        "zoom": 2.2
       }
     },
     {
       "image": "lists-row",
       "click": "object_list_row",
       "camera": {
-        "x": 1200,
-        "y": 675,
-        "zoom": 1.6
+        "x": 870,
+        "y": 490,
+        "zoom": 2.2
       }
     },
     {
@@ -39,9 +39,9 @@
       "click": "first_row",
       "fade": true,
       "camera": {
-        "x": 1200,
-        "y": 675,
-        "zoom": 1.6
+        "x": 870,
+        "y": 490,
+        "zoom": 2.2
       }
     },
     {
@@ -50,9 +50,9 @@
       "move": 0.8,
       "dwell": 0.3,
       "camera": {
-        "x": 1200,
-        "y": 675,
-        "zoom": 1.6
+        "x": 870,
+        "y": 490,
+        "zoom": 2.2
       },
       "keys": "⇧ Shift"
     },
@@ -61,9 +61,9 @@
       "click": "right_click_row",
       "move": 0.7,
       "camera": {
-        "x": 1200,
-        "y": 675,
-        "zoom": 1.6
+        "x": 870,
+        "y": 490,
+        "zoom": 2.2
       },
       "keys": "Right-click"
     },
@@ -73,9 +73,9 @@
       "fade": true,
       "move": 1.0,
       "camera": {
-        "x": 1200,
-        "y": 675,
-        "zoom": 1.6
+        "x": 870,
+        "y": 490,
+        "zoom": 2.2
       }
     },
     {
@@ -83,9 +83,9 @@
       "point": "add_to_scene_row",
       "move": 0.9,
       "camera": {
-        "x": 1200,
-        "y": 675,
-        "zoom": 1.6
+        "x": 870,
+        "y": 490,
+        "zoom": 2.2
       }
     },
     {
@@ -95,9 +95,9 @@
       "after_fade": 0.3,
       "end_dwell": 0.6,
       "camera": {
-        "x": 1200,
-        "y": 675,
-        "zoom": 1.6
+        "x": 870,
+        "y": 490,
+        "zoom": 2.2
       }
     }
   ],
