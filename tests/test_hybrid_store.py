@@ -529,6 +529,52 @@ def test_a_trace_row_comes_back_exactly(row):
         assert [type(v) for v in back[0]] == [type(v) for v in row[0]]
 
 
+def test_a_section_read_encoded_writes_the_same_file_without_a_list_per_trace(tmp_path, monkeypatch):
+    """`readSectionEncoded` gives `fast_dumps` the bytes `readSection` would, for
+    every row shape, a stdlib-written section, and one with unsaved work."""
+    floats = [
+        [0.1, -0.0, 1e-7, 1e22, 5e-324, 1.7976931348623157e308, 9007199254740993.0],
+        [1.5, 2.0, 3.25, 123456789012345680.0, 0.3, 100.0, 1e-5],
+        [255, 0, 0], True, False, False, ["none", "none"], ["☃", "a\\u00e9"],
+    ]
+    rows = [
+        floats,
+        [[1, 2.0], [3.0, 4.0], [0, 0, 0], True, False, False, ["none", "none"], []],
+        [[], [], [0, 0, 0], False, False, False, ["none", "none"], []],
+        {"x": [1.0, 2.0], "y": [3.0, 4.0], "color": [1, 2, 3]},
+    ]
+    header = {"src": "a.tif", "mag": 0.002, "thickness": 0.05, "align_locked": True, "tforms": {"default": [1, 0, 0, 0, 1, 0]}}
+    sections = {
+        1: {**header, "contours": {"obj é": rows, "back\\u00e9": [floats, floats], "none": []}},
+        # an integer past 64 bits: stored and written with the stdlib writer
+        2: {**header, "contours": {"big": [[[2**64, 2.0], [3.0, 4.0], [0, 0, 0], True, False, False, ["none", "none"], []]]}},
+        3: {**header, "contours": {"a": [floats]}},
+    }
+    store = HybridStore(str(tmp_path / "s.pyrstore"), str(tmp_path / "w"))
+    try:
+        with store._tx():
+            for snum, section_data in sections.items():
+                store._replaceSection(snum, section_data)
+        edited = copy.deepcopy(sections[3])
+        edited["contours"]["a"][0][2] = [1, 2, 3]
+        store.writePendingSection(3, edited)
+        for snum, section_data in {1: sections[1], 2: sections[2], 3: edited}.items():
+            expected = fast_dumps(section_data)
+            assert fast_dumps(store.readSection(snum)) == expected
+            assert fast_dumps(store.readSectionEncoded(snum)) == expected
+        # the orjson section's traces come as fragments, not as lists
+        encoded = store.readSectionEncoded(1)
+        assert all(not isinstance(v, list) for v in encoded["contours"].values())
+        assert list(encoded["contours"]) == list(sections[1]["contours"])
+        assert isinstance(store.readSectionEncoded(2)["contours"]["big"], list)
+        assert isinstance(store.readSectionEncoded(3)["contours"]["a"], list)
+        # without orjson: readSection
+        monkeypatch.setattr(hybrid_store, "have_orjson", lambda: False)
+        assert isinstance(store.readSectionEncoded(1)["contours"]["none"], list)
+    finally:
+        store.close()
+
+
 def test_the_object_index_finds_every_trace_of_an_object(tmp_path, store_root):
     sections, _, _ = _today(CLASS, tmp_path)
     expected : dict = {}

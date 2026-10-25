@@ -36,7 +36,9 @@ from pathlib import Path
 import numpy as np
 
 from PyReconstruct.modules.constants import fast_loads, fast_dumps
-from PyReconstruct.modules.constants.fast_json import have_orjson, orjson_dumps, stdlib_dumps
+from PyReconstruct.modules.constants.fast_json import (
+    have_orjson, orjson_dumps, orjson_dumps_coords, orjson_fragment, stdlib_dumps,
+)
 
 from .log import LOG_READ_ERRORS
 
@@ -282,6 +284,22 @@ def unpackRow(shape, npts, xy, rest, exact : bool = False) -> list:
         a = np.frombuffer(xy, dtype="<f8")
         return [a[:npts].tolist(), a[npts:].tolist(), *loads(rest)]
     return loads(rest)
+
+
+def rowBytes(shape, npts, xy, rest) -> bytes:
+    """The stored trace row as `fast_dumps` writes it, from an orjson section.
+
+    What ``orjson_dumps(unpackRow(...))`` gives, without the Python lists in
+    between: the coordinates are written straight from the float64 blob
+    (`orjson_dumps_coords`), and `rest` is already those bytes. Not for a
+    section stored with the stdlib writer (``exact``), whose file is written
+    by that writer.
+    """
+    if shape == 0:
+        coords = orjson_dumps_coords(np.frombuffer(xy, dtype="<f8").reshape(2, npts))
+        # "[[x...],[y...]]" and "[rest...]" into one row "[[x...],[y...],rest...]"
+        return b"[" + coords[1:-1] + b"," + rest[1:]
+    return rest
 
 
 def packSection(snum : int, section_data : dict) -> tuple:
@@ -544,6 +562,36 @@ class HybridStore():
         ):
             contours[names[cpos]].append(unpackRow(shape, npts, xy, rest, bool(exact)))
         header["contours"] = contours
+        return header
+
+    def readSectionEncoded(self, snum : int) -> dict:
+        """`readSection`, for a caller that only writes the section with `fast_dumps`.
+
+        The same dict, except that each contour's traces are one JSON
+        fragment already in the file's bytes (`rowBytes`), so ``fast_dumps``
+        of it is the section file, byte for byte, without building and
+        encoding a list per trace: an open from the store writes every
+        section file this way (store_open.py). A section with unsaved work,
+        or one stored with the stdlib writer, or no orjson: `readSection`.
+        """
+        row = self.con.execute(
+            "SELECT header, exact FROM section WHERE snum=?", (snum,)
+        ).fetchone()
+        if row is None or row[1] or not have_orjson() or self.con.execute(
+            "SELECT 1 FROM pending_section WHERE snum=?", (snum,)
+        ).fetchone() is not None:
+            return self.readSection(snum)
+        header = fast_loads(row[0])
+        names = header["contours"]
+        rows : dict = {name: [] for name in names}
+        for cpos, shape, npts, xy, rest in self.con.execute(
+            "SELECT cpos, shape, npts, xy, rest FROM trace WHERE snum=? ORDER BY cpos, ord",
+            (snum,),
+        ):
+            rows[names[cpos]].append(rowBytes(shape, npts, xy, rest))
+        header["contours"] = {
+            name: orjson_fragment(b"[" + b",".join(traces) + b"]") for name, traces in rows.items()
+        }
         return header
 
     def seriesData(self) -> dict:
