@@ -1,15 +1,6 @@
-"""The walkthrough renderer: a step list drafted into a scene, and one render.
-
-dev/docs_media/walkthrough/walkthrough.py turns a short step list into a timed
-scene and renders it over still captures. These tests check, on made-up
-stills, that each click happens with the pointer on its target, that the next
-screen shows only after the click, that key badges cover their click and
-never overlap, that a camera kept at zoom 1 never moves, and that a render
-has the frame count the scene asks for. For a drag: the press and release
-land on the path's ends, the pointer keeps an even speed between its ramps,
-a stroke grows up to the pointer and gives way at the release, and drag
-frames change as the pointer covers the path. A looping clip fades the
-pointer in and ends on its first screen.
+"""The walkthrough renderer, dev/docs_media/walkthrough/walkthrough.py: a short
+step list drafted into a timed scene and rendered over made-up stills, with
+clicks, key badges, drags, strokes and looping endings.
 """
 
 import importlib.util
@@ -21,7 +12,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 REPO = Path(__file__).resolve().parents[1]
 TOOL = REPO / "dev" / "docs_media" / "walkthrough" / "walkthrough.py"
@@ -120,7 +111,10 @@ STROKE = [255, 0, 255]
 CORNER = [[20, 20], [140, 20], [140, 70]]
 
 
-def drag_steps(**drag):
+def drag_steps(next_fade=None, **drag):
+    after = {"image": "c", "point": CORNER[-1], "camera": STILL}
+    if next_fade:
+        after["fade"] = next_fade
     return {
         "size": [160, 90],
         "images": {"a": "a.png", "b": "b.png", "c": "c.png",
@@ -131,19 +125,22 @@ def drag_steps(**drag):
         "steps": [
             {"image": "a", "click": "tool", "camera": STILL},
             {"image": "b", "drag": "loop", "drag_time": 2.0, "camera": STILL, **drag},
-            {"image": "c", "point": CORNER[-1], "camera": STILL},
+            after,
         ],
     }
 
 
 @pytest.fixture
 def drag_scene(tool, tmp_path):
-    def make(**drag):
+    def make(next_fade=None, **drag):
         names = ("a", "b", "c", "r1", "r2", "r3", "r4")
         for i, name in enumerate(names):
-            Image.new("RGB", (160, 90), (30 * i, 120, 200 - 20 * i)).save(tmp_path / f"{name}.png")
+            image = Image.new("RGB", (160, 90), (30 * i, 120, 200 - 20 * i))
+            if name == "c":  # the screen after the release holds the drawn line
+                ImageDraw.Draw(image).line(CORNER, fill=tuple(STROKE), width=2)
+            image.save(tmp_path / f"{name}.png")
         path = tmp_path / "drag-scene.json"
-        path.write_text(json.dumps(tool.draft(drag_steps(**drag))))
+        path.write_text(json.dumps(tool.draft(drag_steps(next_fade, **drag))))
         return tool.Scene(path)
     return make
 
@@ -186,16 +183,32 @@ def test_the_pointer_follows_the_path_at_an_even_speed_between_its_ramps(drag_sc
     assert scene.drag_progress(drag, drag["start"] + span * 0.05) * length < covered[0] / 2
 
 
-def test_a_stroke_grows_behind_the_pointer_and_gives_way_at_the_release(drag_scene):
+def test_a_stroke_grows_behind_the_pointer_and_gives_way_to_the_next_screen(drag_scene):
     scene = drag_scene(stroke={"color": STROKE, "width": 2})
     drag = the_drag(scene)
-    assert drag["stroke"]["until"] == drag["end"]
+    after = next(st for st in scene.states if st["image"] == "c")
+    assert drag["stroke"]["until"] == after["time"] > drag["end"]
     mid = (drag["start"] + drag["end"]) / 2
     (stroke, points), = scene.strokes_at(mid)
     assert points[0] == pytest.approx(CORNER[0])
     assert points[-1] == pytest.approx(scene.cursor_at(mid))
     assert scene.strokes_at(drag["start"] - 0.01) == []
-    assert scene.strokes_at(drag["end"]) == []
+    (stroke, points), = scene.strokes_at(drag["end"])
+    assert points[-1] == pytest.approx(CORNER[-1])
+    assert scene.strokes_at(after["time"]) == []
+
+
+@pytest.mark.parametrize("next_fade", [None, 0.2])
+def test_the_line_never_blinks_away_at_the_release(tool, drag_scene, next_fade):
+    scene = drag_scene(next_fade, stroke={"color": STROKE, "width": 2})
+    drag = the_drag(scene)
+    renderer = tool.Renderer(scene, 160)
+    # every frame from just before the release until well after the next
+    # screen has shown: the line is there, drawn or captured
+    first, last = round((drag["end"] - 0.1) * scene.fps), round((drag["end"] + 0.5) * scene.fps)
+    for i in range(first, last):
+        r, g, b = (int(v) for v in renderer.frame(i / scene.fps)[20, 30])
+        assert r > 215 and g < 60 and b > 215, (i / scene.fps, (r, g, b))
 
 
 def test_the_rendered_stroke_is_drawn_up_to_the_pointer_and_no_further(tool, drag_scene):
@@ -246,6 +259,21 @@ def test_a_looping_clip_ends_on_its_first_screen_after_the_pointer_is_gone(tool,
     assert last["time"] + last["fade"] < scene.duration
     assert scene.state_at(scene.duration)[0] == "a"
     assert scene.cursor_opacity(0) == 0 and scene.cursor_opacity(0.5) == 1
+
+
+def test_a_loop_waits_for_a_slower_pointer_fade(tool, tmp_path):
+    for name, color in (("a", (200, 60, 60)), ("b", (60, 200, 60)), ("c", (60, 60, 200))):
+        Image.new("RGB", (160, 90), color).save(tmp_path / f"{name}.png")
+    path = tmp_path / "slow.json"
+    spec = {**steps(), "loop": True, "style": {"cursor_fade": 3},
+            "timing": {"outro": 0.2, "tail": 0.3}}
+    path.write_text(json.dumps(tool.draft(spec)))
+    scene = tool.Scene(path)
+    last = scene.states[-1]
+    assert last["image"] == "a"
+    assert last["time"] >= scene.cursor_fade_out + 3
+    assert last["time"] + last["fade"] < scene.duration
+    assert scene.cursor_opacity(scene.duration) == 0
 
 
 def test_a_looping_clip_that_ends_where_it_began_adds_no_fade(tool, scene_file, tmp_path):

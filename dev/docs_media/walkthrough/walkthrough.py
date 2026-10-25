@@ -549,6 +549,7 @@ def draft(spec):
         t += st.get("dwell", 0)
         nxt = steps[i + 1]["image"] if i + 1 < len(steps) else st.get("after")
         shown = st["image"]
+        stroke = None
         if "click" in st:
             t += d["settle"]
             clicks.append(round(t, 3))
@@ -560,7 +561,7 @@ def draft(spec):
             span = st.get("drag_time", d["drag"])
             m = {"start": round(t, 3), "end": round(t + span, 3), "path": path(st["drag"])}
             if "stroke" in st:
-                m["stroke"] = {**st["stroke"], "until": m["end"]}
+                stroke = m["stroke"] = {**st["stroke"], "until": m["end"]}
             moves.append(m)
             # "frames" show in turn as the pointer covers equal shares of the
             # path, each from halfway between its share and the one before
@@ -582,6 +583,10 @@ def draft(spec):
             if i + 1 < len(steps) and "type" in steps[i + 1]:
                 s["type"] = steps[i + 1]["type"]
             states.append(s)
+            if stroke:
+                # the line stays until the next screen, which holds it, has
+                # fully shown, so it never blinks away at the release
+                stroke["until"] = round(s["time"] + s.get("fade", 0), 3)
         t += d["gap"] if i + 1 < len(steps) else 0
         if i + 1 < len(steps) and "type" in steps[i + 1]:
             t += steps[i + 1]["type"].get("duration", 2.0) + 0.3
@@ -597,11 +602,11 @@ def draft(spec):
         # once it has faded out the first screen fades back, so the loop has
         # no jump
         scene["cursor_fade_in"] = 0
-        gone = scene["cursor_fade_out"] + STYLE["cursor_fade"]
+        gone = scene["cursor_fade_out"] + {**STYLE, **spec.get("style", {})}["cursor_fade"]
         duration = max(duration, math.ceil((gone + d["tail"]) * 10) / 10)
         if states[-1]["image"] != states[0]["image"]:
             fade = d["loop_fade"] if loop is True else loop
-            at = round(scene["cursor_fade_out"] + STYLE["cursor_fade"] + 0.1, 3)
+            at = round(gone + 0.1, 3)
             states.append({"time": at, "image": states[0]["image"], "fade": fade})
             duration = max(duration, math.ceil((at + fade + d["tail"]) * 10) / 10)
     key(duration, end)
