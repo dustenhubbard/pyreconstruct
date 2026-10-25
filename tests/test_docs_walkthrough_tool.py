@@ -252,6 +252,10 @@ def test_a_looping_clip_that_ends_where_it_began_adds_no_fade(tool, scene_file, 
     spec = steps()
     spec["steps"][-1]["after"] = "a"
     path = tmp_path / "back.json"
-    path.write_text(json.dumps(tool.draft({**spec, "loop": True})))
+    # a short ending, which a loop must stretch until the pointer has gone
+    timing = {"outro": 0.2, "tail": 0.3}
+    path.write_text(json.dumps(tool.draft({**spec, "loop": True, "timing": timing})))
     scene = tool.Scene(path)
     assert [s["image"] for s in scene.states] == ["a", "b", "a"]
+    # and the pointer is gone before the loop starts again
+    assert scene.cursor_opacity(scene.duration) == 0
