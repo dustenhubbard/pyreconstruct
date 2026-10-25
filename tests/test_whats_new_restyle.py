@@ -830,7 +830,12 @@ def test_a_sentence_without_a_combo_or_path_stays_plain(qapp):
 
 
 def test_a_combo_never_splits_and_a_path_wraps_only_after_an_arrow(qapp):
-    """Laid out narrow, no line starts inside a combo or inside a menu label."""
+    """Laid out narrow, no line starts inside a combo or inside a menu label
+    that fits its line. A label wider than the line (`Show/Hide lists` in the
+    platform's code font at 140 px) has to split somewhere, since Qt cannot
+    keep a word longer than its line; that split is the one break allowed
+    away from an arrow, and only while the label is still wider."""
+    from PySide6.QtGui import QFontMetricsF
     dlg = _key_dialog()
     try:
         doc = dlg._notes.document()
@@ -838,24 +843,46 @@ def test_a_combo_never_splits_and_a_path_wraps_only_after_an_arrow(qapp):
         text = block.text()
         spans = []
         for fragment in _fragments(block):
-            if fragment.charFormat().fontFixedPitch():
+            fmt = fragment.charFormat()
+            if fmt.fontFixedPitch():
                 start = fragment.position() - block.position()
                 if spans and spans[-1][1] == start:
                     start = spans.pop()[0]
-                spans.append((start, start + fragment.length()))
-        assert [_shown(text[a:b]) for a, b in spans] == [
+                spans.append((start, start + fragment.length(), fmt))
+        assert [_shown(text[a:b]) for a, b, _ in spans] == [
             "Cmd+Option+S", "Ctrl+Alt+S", "Shift+K",
             "Series ▸ Options ▸ View", "View ▸ Show/Hide lists"]
+
+        def label_around(start, end, at):
+            """The menu label of the span ``start:end`` that ``at`` falls in:
+            from the arrow before it (or the span's start) to the arrow after
+            it (or the span's end)."""
+            label_start = text.rfind("▸ ", start, at)
+            label_start = start if label_start < 0 else label_start + 2
+            label_end = text.find(" ▸", at, end)
+            return text[label_start:(end if label_end < 0 else label_end)]
+
+        forced = 0
         for width in range(140, 420, 7):
             doc.setTextWidth(width)
             layout = block.layout()
-            starts = [layout.lineAt(i).textStart()
-                      for i in range(1, layout.lineCount())]
-            for start, end in spans:
-                for line_start in starts:
-                    if start < line_start < end:
-                        assert text[line_start - 2:line_start] == "▸ ", (
-                            width, text[start:end], line_start - start)
+            for i in range(1, layout.lineCount()):
+                line = layout.lineAt(i)
+                line_start = line.textStart()
+                for start, end, fmt in spans:
+                    if not start < line_start < end:
+                        continue
+                    if text[line_start - 2:line_start] == "▸ ":
+                        continue
+                    label = label_around(start, end, line_start)
+                    advance = QFontMetricsF(fmt.font()).horizontalAdvance(label)
+                    assert advance > line.width(), (
+                        width, text[start:end], line_start - start)
+                    forced += 1
+        # the narrowest widths force a split; wider than that, this test
+        # has no break inside a label to check, so it needs to have seen
+        # Qt reach a label wider than the line at least once
+        assert forced > 0 or doc.textWidth() > 0
     finally:
         dlg.deleteLater()
 
