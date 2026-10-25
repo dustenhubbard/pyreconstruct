@@ -82,7 +82,7 @@ def shapes(k):
 
     # the axon: thin, with three swellings along its length
     u = k / (SECTIONS - 1)
-    ax, ay = 3.55 - 0.45 * u, 0.55 + 0.3 * u
+    ax, ay = 3.1 - 0.4 * u, 0.6 + 0.3 * u
     r = 0.075 + sum(0.2 * math.exp(-((k - c) / 2.6) ** 2) for c in (6, 20, 33))
     out["ax01"] = [circle(ax, ay, r, n=48)]
 

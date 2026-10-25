@@ -63,7 +63,7 @@ FRAME_SIZE = (2560, 1440)
 # last frame at SCENE_AT (native pixels), over the field and clear of the
 # sliders and palettes
 SCENE_SIZE = (720, 480)
-SCENE_AT = (690, 190)
+SCENE_AT = (590, 190)
 SHADOW = 24  # native pixels of soft shadow around the scene window
 # the Object list's rows, in its order; the video selects them all
 OBJECTS = ["ast01", "ax01", "d01", "d01sp01"]
