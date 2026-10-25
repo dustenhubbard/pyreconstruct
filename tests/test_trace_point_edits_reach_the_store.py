@@ -156,8 +156,8 @@ def test_a_merge_from_another_magnification_moves_both_stores(real_series, secti
 # These load their own Section objects and save them before returning, so the
 # generation and bounds of a section the test holds say nothing about them.
 # The save rebuilds the store and prints DRIFT when the store it replaces had
-# fallen behind the object model: a resync dropped from any of these paths
-# shows up there.
+# fallen behind the object model: a missing store update on any of these
+# paths shows up there.
 
 def test_smoothing_an_object_leaves_no_drift_for_the_save_to_find(real_series, capsys):
     numbers = sorted(real_series.getObjectSections([OBJECT]))
@@ -206,7 +206,13 @@ def test_copying_traces_to_sections_leaves_no_drift(real_series, section, capsys
     assert sorted(copied_to) == sorted(targets) and skipped == []
     assert DRIFT not in capsys.readouterr().err
     for n in targets:
-        assert len(real_series.loadSection(n).contours["copied"]) == 1
+        target = real_series.loadSection(n)
+        copied = target.contours["copied"].getTraces()
+        assert len(copied) == 1
+        # each copy sits at the source's field position: its points, mapped
+        # through its own section's transform, are the points given
+        in_field = [target.tform.map(*p) for p in copied[0].points]
+        assert np.allclose(in_field, SQUARE, atol=1e-9), n
 
 
 # --- edits through the field ------------------------------------------------
