@@ -22,6 +22,7 @@ from PyReconstruct.modules.datatypes.series import (
     SeriesOpenError,
 )
 from PyReconstruct.modules.backend.crop_zarr import CropError, CropStopped, LOG_NAME
+from PyReconstruct.modules.backend.view.image_layer import dropReadAhead
 from PyReconstruct.modules.gui.dialog.crop_zarr import cropWithProgress
 from PyReconstruct.modules.gui.dialog.all_options import SERIES_CODE_NUL
 from PyReconstruct.modules.backend.func.window_geometry import (
@@ -6223,6 +6224,9 @@ class MainWindow(QMainWindow):
             # app instead of exiting (found 2026-08-28)
             self.restart_mainwindow = False
             return
+        # the close is committed: an image read ahead for the series is of no
+        # use now, and a read under way finishes into nothing
+        dropReadAhead()
         # the series to reopen after an in-place update, read after the save,
         # which gives a series saved for the first time here its path
         reopen = None

@@ -492,71 +492,93 @@ def _blank(w : int, h : int) -> QImage:
 
 
 def _fileStamp(path : str):
-    """The size and modification time of a file, or None when it cannot be
-    stat'ed. Two reads of a file with the same stamp are taken as reads of
-    the same bytes."""
+    """What tells one version of a file from another, or None when the file
+    cannot be stat'ed: size, modification and change times, inode and device.
+    A replacement file has another inode; a rewrite in place moves the change
+    time, which nothing but the system clock sets."""
     try:
         st = os.stat(path)
     except OSError:
         return None
-    return st.st_size, st.st_mtime_ns
+    return st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_ino, st.st_dev
 
 
 class _ReadAhead:
     """The one image file read before its section is opened.
 
-    `start` reads a file on a thread of its own; `take` hands the image to
-    the loader of that file and empties the slot. One file at a time: a start
-    on another file drops whatever was read before it. The image is handed
-    over only when the file's stamp was the same before and after the read
-    and is still the same at the hand-over, so a file replaced on disk in
-    between is read again by the loader.
+    `start` asks for a file; one worker thread reads it and holds the image
+    until `take` hands it to the loader of that file. One read at a time and
+    one image held: a start on another file replaces the request, a request
+    replaced before the worker reaches it is never read, and a read that
+    finishes for a replaced request is dropped. `drop` empties the slot (a
+    series closed or changed): a read under way then finishes into nothing,
+    and nothing waits for it. The image is handed over only when the file's
+    stamp was the same before and after the read and is still the same at the
+    hand-over, so a file replaced on disk in between is read again.
     """
 
     def __init__(self):
-        self._lock = threading.Lock()
-        self._path = None
-        self._thread = None
-        self._result = None  # (stamp, QImage) once the read finished
+        self._cond = threading.Condition()
+        self._wanted = None   # the path asked for last: pending, under way, or held
+        self._result = None   # (stamp, QImage or None) once the read of _wanted finished
+        self._worker = None   # the one thread, alive while there is a read to make
 
     def start(self, path : str) -> None:
-        """Read the image at path, unless it is already read or being read."""
-        with self._lock:
-            if path == self._path:
+        """Ask for the image at path, unless it is the one asked for already."""
+        with self._cond:
+            if path == self._wanted:
                 return
-            self._path = path
+            self._wanted = path
             self._result = None
-            self._thread = threading.Thread(
-                target=self._read, args=(path,), name="image-read-ahead",
-                daemon=True,
-            )
-            self._thread.start()
+            if self._worker is None or not self._worker.is_alive():
+                self._worker = threading.Thread(
+                    target=self._run, name="image-read-ahead", daemon=True,
+                )
+                self._worker.start()
 
-    def _read(self, path : str) -> None:
+    def _run(self) -> None:
+        while True:
+            with self._cond:
+                path = self._wanted
+                if path is None or self._result is not None:
+                    # done, under the lock: a start that comes next sees no
+                    # worker and makes one, and no take waits on this one
+                    self._worker = None
+                    self._cond.notify_all()
+                    return
+            try:
+                result = self._read(path)
+            except Exception:
+                result = (None, None)
+            with self._cond:
+                if self._wanted == path:
+                    self._result = result
+                self._cond.notify_all()
+
+    @staticmethod
+    def _read(path : str):
         before = _fileStamp(path)
         image = QImage(path) if before is not None else None
         if image is not None and (image.isNull() or _fileStamp(path) != before):
             image = None
-        with self._lock:
-            if self._path == path:
-                self._result = (before, image)
+        return before, image
 
     def take(self, path : str):
         """The image read ahead for path, or None.
 
-        Waits for a read of path still under way. A read of another file is
-        left where it is: a layer built for some other purpose (a snap, the
-        brightness and contrast optimizer) must not cost the next section
-        change its image. The next start replaces it.
+        Waits for the read of path when it is under way or pending. A request
+        for another file is left where it is: a layer built for some other
+        purpose (a snap, the brightness and contrast optimizer) must not cost
+        the next section change its image. The next start replaces it.
         """
-        with self._lock:
-            if path != self._path:
+        with self._cond:
+            if path != self._wanted:
                 return None
-            thread = self._thread
-        thread.join()
-        with self._lock:
-            result = self._result if path == self._path else None
-            self._path = self._thread = self._result = None
+            while (self._result is None and self._wanted == path
+                   and self._worker is not None):
+                self._cond.wait()
+            result = self._result if self._wanted == path else None
+            self._wanted = self._result = None
         if result is None:
             return None
         stamp, image = result
@@ -564,8 +586,20 @@ class _ReadAhead:
             return None
         return image
 
+    def drop(self) -> None:
+        """Forget the request and the image held. A read under way is not
+        waited for; its result is dropped when it finishes."""
+        with self._cond:
+            self._wanted = self._result = None
+            self._cond.notify_all()
+
 
 _READ_AHEAD = _ReadAhead()
+
+
+def dropReadAhead() -> None:
+    """Forget any image read ahead: the series it was for closed or changed."""
+    _READ_AHEAD.drop()
 
 
 _BYTE_FORMATS = (QImage.Format.Format_Grayscale8, QImage.Format.Format_Indexed8)

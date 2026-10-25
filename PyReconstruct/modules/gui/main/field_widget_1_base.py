@@ -19,6 +19,7 @@ from PySide6.QtCore import (
 
 from PyReconstruct.modules.datatypes import Series, Section, Trace, Transform
 from PyReconstruct.modules.backend.view import SectionLayer, ZarrLayer
+from PyReconstruct.modules.backend.view.image_layer import dropReadAhead
 from PyReconstruct.modules.backend.view.trace_layer import traceInRoiBox
 from PyReconstruct.modules.backend.func import SeriesStates
 from PyReconstruct.modules.backend.table import TableManager
@@ -155,6 +156,10 @@ class FieldWidgetBase:
         """
         self.series = series
         series.setPassWriteHook(self.refreshPassWrite)
+
+        ## An image read ahead for the series before this one is of no use
+        ## to it, and must not outlive it
+        dropReadAhead()
 
         ## Initialize hover columns from series option
         from PyReconstruct.modules.gui.dialog.hover_columns import HoverColumnsDialog

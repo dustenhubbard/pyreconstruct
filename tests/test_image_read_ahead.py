@@ -7,8 +7,10 @@ file again. The image shown is always the file as it is at that moment: a
 file replaced in between is read again. Nothing is read ahead on a flicker
 between the A and B sections or for a zarr.
 """
+import gc
 import os
 import threading
+import weakref
 
 import numpy as np
 import pytest
@@ -19,7 +21,7 @@ from PyReconstruct.modules.backend.view import image_layer
 pytestmark = pytest.mark.gui
 
 W, H = 32, 24
-# the first sections of the fixture series, by the image name each one keeps
+# the first sections of the sample series, by the image name each one keeps
 NAMES = {0: "000ZGBJY.tif", 1: "001ZGBJY.tif", 2: "002ZGBJY.tif", 3: "003ZGBJY.tif"}
 
 
@@ -42,7 +44,7 @@ def _gray(image : QImage) -> np.ndarray:
 
 @pytest.fixture
 def images(tmp_path, qapp):
-    """A folder of small, distinct TIFFs named as the fixture series' images."""
+    """A folder of small, distinct TIFFs named as the sample series' images."""
     for n, name in NAMES.items():
         _write(tmp_path / name, n)
     return tmp_path
@@ -72,10 +74,32 @@ def decodes(monkeypatch):
 
 
 def _wait(slot):
-    thread = slot._thread
-    if thread is not None:
-        thread.join(10)
-        assert not thread.is_alive()
+    """Until the read asked for has finished (or nothing is asked for)."""
+    with slot._cond:
+        while slot._wanted is not None and slot._result is None and slot._worker is not None:
+            assert slot._cond.wait(10), "the read did not finish"
+
+
+def _slow_decoder(monkeypatch):
+    """Image files decoded through the layer's module on a thread other than
+    the main one wait on the returned event; the paths are listed as the
+    decodes start."""
+    release = threading.Event()
+    started = []
+
+    class Slow(QImage):
+        def __init__(self, *args):
+            super().__init__(*args)
+            if args and isinstance(args[0], str) and threading.current_thread() is not threading.main_thread():
+                started.append(args[0])
+                assert release.wait(15)
+
+    monkeypatch.setattr(image_layer, "QImage", Slow)
+    return release, started
+
+
+def _workers():
+    return [t for t in threading.enumerate() if t.name == "image-read-ahead" and t.is_alive()]
 
 
 def _bump(path, k : int):
@@ -159,14 +183,14 @@ def test_an_unreadable_image_reads_nothing(tmp_path, qapp, read_ahead):
 
 @pytest.fixture
 def field(main_window, images, read_ahead):
-    """The field on section 0 of the fixture series, over the images folder.
+    """The field on section 0 of the sample series, over the images folder.
 
     The series opens on a later section; the change to 0 goes back, so
     nothing is read ahead by it (there is no section before 0).
     """
     main_window.series.src_dir = str(images)
     main_window.changeSection(0)
-    assert read_ahead._path is None
+    assert read_ahead._wanted is None
     return main_window.field
 
 
@@ -180,7 +204,7 @@ def test_a_change_reads_the_next_section_ahead_and_the_next_change_takes_it(
     assert field.section.n == 0
     mw.changeSection(1)
     # the section one on, read on another thread
-    assert read_ahead._path == str(images / NAMES[2])
+    assert read_ahead._wanted == str(images / NAMES[2])
     _wait(read_ahead)
     ahead = [(p, t) for p, t in decodes if p == str(images / NAMES[2])]
     assert len(ahead) == 1 and ahead[0][1] != _main()
@@ -191,36 +215,36 @@ def test_a_change_reads_the_next_section_ahead_and_the_next_change_takes_it(
     # taken, not read again
     assert [p for p, _ in decodes if p == str(images / NAMES[2])] == [ahead[0][0]]
     # and the read moved one on
-    assert read_ahead._path == str(images / NAMES[3])
+    assert read_ahead._wanted == str(images / NAMES[3])
 
 
 def test_a_change_back_reads_the_section_before(field, images, read_ahead):
     mw = field.mainwindow
     mw.changeSection(2)
     mw.changeSection(1)
-    assert read_ahead._path == str(images / NAMES[0])
+    assert read_ahead._wanted == str(images / NAMES[0])
 
 
 def test_a_flicker_between_a_and_b_reads_nothing_new(field, images, read_ahead):
     mw = field.mainwindow
     mw.changeSection(1)
-    assert read_ahead._path == str(images / NAMES[2])
+    assert read_ahead._wanted == str(images / NAMES[2])
     mw.changeSection(0)  # the B section: a swap, no file read
-    assert read_ahead._path == str(images / NAMES[2])
+    assert read_ahead._wanted == str(images / NAMES[2])
     mw.changeSection(1)
-    assert read_ahead._path == str(images / NAMES[2])
+    assert read_ahead._wanted == str(images / NAMES[2])
 
 
 def test_the_first_and_last_sections_read_nothing_past_the_end(field, images, read_ahead):
     mw = field.mainwindow
     last = sorted(mw.series.sections)[-1]
     mw.changeSection(last)
-    assert read_ahead._path is None
+    assert read_ahead._wanted is None
     mw.changeSection(1)  # back, so the section before it is read
-    assert read_ahead._path == str(images / NAMES[0])
+    assert read_ahead._wanted == str(images / NAMES[0])
     mw.changeSection(0)  # takes that read; nothing before the first section
     assert np.array_equal(_gray(field.section_layer.image), _pixels(0))
-    assert read_ahead._path is None
+    assert read_ahead._wanted is None
 
 
 def test_a_file_replaced_between_the_read_and_the_change_is_read_again(
@@ -240,4 +264,120 @@ def test_a_zarr_series_reads_nothing_ahead(main_window, tmp_path, read_ahead):
     main_window.series.src_dir = str(tmp_path / "images.zarr")
     main_window.field.section_layer.loadImage()
     main_window.changeSection(1)
-    assert read_ahead._path is None
+    assert read_ahead._wanted is None
+
+
+# one read at a time, one image held
+
+def test_requests_made_during_a_read_leave_one_read_under_way(images, read_ahead, monkeypatch):
+    release, started = _slow_decoder(monkeypatch)
+    paths = [str(images / NAMES[n]) for n in (0, 1, 2)]
+    read_ahead.start(paths[0])
+    for _ in range(100):
+        if started:
+            break
+        threading.Event().wait(0.02)
+    assert started == [paths[0]]
+    read_ahead.start(paths[1])
+    read_ahead.start(paths[2])
+    # still one worker, still one decode started: the newer requests wait
+    assert len(_workers()) == 1
+    assert started == [paths[0]]
+    release.set()
+    image = read_ahead.take(paths[2])
+    # the first read was dropped, the second was never made, the third was read
+    assert started == [paths[0], paths[2]]
+    assert image is not None
+    assert np.array_equal(_gray(image), _pixels(2))
+    _wait(read_ahead)
+    for _ in range(100):
+        if not _workers():
+            break
+        threading.Event().wait(0.02)
+    assert _workers() == []
+
+
+def test_far_jumps_in_the_field_keep_one_read_under_way(field, images, read_ahead, monkeypatch):
+    mw = field.mainwindow
+    for n in (4, 5, 6):
+        _write(images / mw.series.data["sections"][n]["src"], n)
+    release, started = _slow_decoder(monkeypatch)
+    try:
+        for n in (1, 3, 5):
+            mw.changeSection(n)
+        assert len(_workers()) <= 1
+        assert len(started) == 1
+    finally:
+        release.set()
+    # the last jump's neighbor is the one read
+    image = read_ahead.take(str(images / mw.series.data["sections"][6]["src"]))
+    assert image is not None
+    assert len(started) == 2
+
+
+# the series closes or changes
+
+def test_closing_the_window_drops_the_image_held(field, images, read_ahead):
+    mw = field.mainwindow
+    mw.changeSection(1)
+    _wait(read_ahead)
+    held = weakref.ref(read_ahead._result[1])
+    mw.series.modified = False
+    assert mw.close()
+    gc.collect()
+    assert read_ahead._wanted is None
+    assert held() is None
+
+
+def test_closing_the_window_does_not_wait_for_a_read_under_way(field, images, read_ahead, monkeypatch):
+    mw = field.mainwindow
+    release, started = _slow_decoder(monkeypatch)
+    try:
+        mw.changeSection(1)
+        for _ in range(100):
+            if started:
+                break
+            threading.Event().wait(0.02)
+        assert started
+        mw.series.modified = False
+        assert mw.close()
+        assert read_ahead._wanted is None
+    finally:
+        release.set()
+    for _ in range(100):
+        if not _workers():
+            break
+        threading.Event().wait(0.02)
+    # the read finished into nothing
+    assert _workers() == []
+    assert read_ahead._result is None
+    assert read_ahead._wanted is None
+
+
+def test_opening_another_series_drops_the_image_held(field, images, read_ahead):
+    mw = field.mainwindow
+    mw.changeSection(1)
+    _wait(read_ahead)
+    held = weakref.ref(read_ahead._result[1])
+    before = mw.series
+    mw.openSeries(jser_fp=str(before.jser_fp), query_prev=False)
+    gc.collect()
+    assert mw.series is not before
+    assert read_ahead._wanted is None
+    assert held() is None
+
+
+# the file on disk is the one shown
+
+def test_a_same_size_replacement_with_the_old_modification_time_is_read_again(images, read_ahead):
+    path = images / NAMES[0]
+    read_ahead.start(str(path))
+    _wait(read_ahead)
+    old = path.stat()
+    other = images / "other.tif"
+    _write(other, 9)
+    assert other.stat().st_size == old.st_size
+    os.utime(other, ns=(old.st_atime_ns, old.st_mtime_ns))
+    os.replace(other, path)
+    assert read_ahead.take(str(path)) is None
+    assert np.array_equal(_gray(QImage(str(path))), _pixels(9))
