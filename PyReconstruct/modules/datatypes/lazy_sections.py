@@ -36,7 +36,9 @@ than reading a series short a section.
 import json
 import os
 import re
+import secrets
 import sqlite3
+import stat
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,7 +52,11 @@ MAGIC = b"PYRECON-LAZY-SECTION 1\n"
 ## In a working folder that may hold stubs; no numeric extension, so no scan
 ## takes it for a section
 MARKER = "lazy-sections.json"
-FILL_SUFFIX = ".fill.tmp"
+## A fill writes `.fill-<6 hex>.tmp` beside the stub, short whatever the
+## series name, and made new each time (never an existing file opened)
+FILL_TEMP = re.compile(r"\.fill-[0-9a-f]{6}\.tmp")
+## the temp name earlier builds of this change wrote, `<section file>.fill.tmp`
+OLD_FILL_SUFFIX = ".fill.tmp"
 ## meta: the working folders an open from this store wrote stubs into (JSON list)
 META_FOLDERS = "lazy_folders"
 
@@ -119,7 +125,7 @@ def recordFolder(held, folder : str):
     store = held.store
     try:
         listed = json.loads(store.meta(META_FOLDERS) or "[]")
-        kept = [f for f in listed if f != folder and os.path.isfile(os.path.join(f, MARKER))]
+        kept = [f for f in listed if f != folder and os.path.lexists(os.path.join(f, MARKER))]
         store.setMeta(META_FOLDERS, json.dumps(kept + [os.path.abspath(folder)]))
     except (OSError, sqlite3.Error) as e:
         store_open._raiseIfBug(e)
@@ -142,12 +148,12 @@ def needsStore(meta : dict, store_name : str) -> bool:
 
 def _mayHoldStubsOf(folder : str, store_name : str) -> bool:
     """True when the folder's marker names the store, or cannot be read."""
-    try:
-        with open(os.path.join(folder, MARKER), "rb") as f:
-            return json.loads(f.read()).get("store") == store_name
-    except (FileNotFoundError, NotADirectoryError):
+    marker = os.path.join(folder, MARKER)
+    if not os.path.lexists(marker):
         return False
-    except (OSError, ValueError, AttributeError):
+    try:
+        return json.loads(_readRegular(marker, 4096)).get("store") == store_name
+    except (OSError, ValueError, AttributeError, RecursionError):
         return True
 
 
@@ -181,11 +187,10 @@ def readStub(fp : str):
             SectionUnavailable: the file starts as a stub but the rest cannot
                 be read as one
     """
-    with open(fp, "rb") as f:
-        head = f.read(len(MAGIC))
-        if head != MAGIC:
-            return None
-        body = f.read(STUB_MAX_BYTES + 1)
+    data = _readRegular(fp, len(MAGIC) + STUB_MAX_BYTES + 1)
+    if not data.startswith(MAGIC):
+        return None
+    body = data[len(MAGIC):]
     try:
         stub = json.loads(body) if len(body) <= STUB_MAX_BYTES else None
     except (ValueError, RecursionError):
@@ -193,6 +198,40 @@ def readStub(fp : str):
     if not _validStub(stub, fp):
         raise SectionUnavailable(f"{os.path.basename(fp)} is a stub that cannot be read")
     return stub
+
+
+def _readRegular(fp : str, limit : int) -> bytes:
+    """Up to `limit` bytes of fp, refused unless it is a regular file.
+
+    Opened without blocking and checked on the open file, so a pipe, a
+    device or a folder in its place (or a link to one) is refused, never
+    waited on. A link to a regular file is read: a fill replaces the link
+    itself, not what it points to.
+
+        Raises:
+            SectionUnavailable: fp cannot be opened or read, or is not a
+                regular file
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+    try:
+        fd = os.open(fp, flags)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise SectionUnavailable(f"{os.path.basename(fp)} is not a regular file")
+            chunks, left = [], limit
+            while left > 0:
+                chunk = os.read(fd, left)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                left -= len(chunk)
+            return b"".join(chunks)
+        finally:
+            os.close(fd)
+    except SectionUnavailable:
+        raise
+    except OSError as e:
+        raise SectionUnavailable(f"{os.path.basename(fp)} could not be read ({e})") from e
 
 
 def _isCount(value, limit : int) -> bool:
@@ -305,9 +344,17 @@ def fill(fp : str, jser_fp : str = "", index=None) -> bool:
     if stub is None:
         return False
     data = sectionBytes(stub, jser_fp, index)
-    tmp = fp + FILL_SUFFIX
+    folder = os.path.dirname(fp)
+    while True:
+        tmp = os.path.join(folder, f".fill-{secrets.token_hex(3)}.tmp")
+        try:
+            # "x": a new file, never one already there
+            f = open(tmp, "xb")
+            break
+        except FileExistsError:
+            continue
     try:
-        with open(tmp, "wb") as f:
+        with f:
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
@@ -378,7 +425,7 @@ def presentFolder(folder : str, jser_fp : str, notifier=None) -> bool:
     filled: the folder is renamed aside whole and the user told where, so
     the .jser opens instead; nothing is deleted.
     """
-    if not os.path.isfile(os.path.join(folder, MARKER)):
+    if not os.path.lexists(os.path.join(folder, MARKER)):
         return True
     try:
         _fillFolder(folder, jser_fp)
@@ -406,8 +453,11 @@ def _fillFolder(folder : str, jser_fp : str):
         if stem and ext.isnumeric():
             fill(os.path.join(folder, name), jser_fp)
     for name in os.listdir(folder):
-        if name.endswith(FILL_SUFFIX) or name == MARKER:
-            os.remove(os.path.join(folder, name))
+        if FILL_TEMP.fullmatch(name) or name.endswith(OLD_FILL_SUFFIX) or name == MARKER:
+            try:
+                os.remove(os.path.join(folder, name))
+            except FileNotFoundError:
+                pass
 
 
 def fillRecorded(held):

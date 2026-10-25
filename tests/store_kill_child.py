@@ -254,7 +254,7 @@ def armFill(point):
     real_replace = atomic_io.replace_with_retry
 
     def replace(src, dst, *args, **kwargs):
-        if str(src).endswith(lazy_sections.FILL_SUFFIX):
+        if lazy_sections.FILL_TEMP.fullmatch(os.path.basename(str(src))):
             stop(point)
         return real_replace(src, dst, *args, **kwargs)
 

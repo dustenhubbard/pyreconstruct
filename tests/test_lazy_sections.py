@@ -6,13 +6,16 @@ series does after that open must give the bytes it gives when every section
 file is written at open, so most of these run the same steps both ways and
 compare the files and the .jser.
 """
+import contextlib
 import hashlib
 import io
 import json
 import os
 import random
 import shutil
+import signal
 import sqlite3
+import stat
 import subprocess
 import sys
 import tarfile
@@ -345,7 +348,7 @@ def test_stubs_fill_on_worker_threads(tmp_path, switch_on, monkeypatch):  # noqa
         assert {n: Path(wdir, n).read_bytes() for n in series.sections.values()} == {
             n: expected[n] for n in series.sections.values()
         }
-        assert not list(Path(wdir).glob(f"*{lazy_sections.FILL_SUFFIX}"))
+        assert not list(Path(wdir).glob(".fill-*.tmp"))
     finally:
         series.close()
 
@@ -454,7 +457,7 @@ def test_a_stub_no_source_matches_is_kept_and_a_save_of_the_jser_refuses(tmp_pat
         with pytest.raises(lazy_sections.SectionUnavailable):
             series.loadSection(snum)
         assert stub_fp.read_bytes() == stub_bytes
-        assert not list(Path(series.getwdir()).glob(f"*{lazy_sections.FILL_SUFFIX}"))
+        assert not list(Path(series.getwdir()).glob(".fill-*.tmp"))
         with pytest.raises(SeriesSaveError):
             series.saveJser()
         assert fp.read_bytes() == jser_bytes
@@ -1014,3 +1017,137 @@ def test_damaged_stubs_in_a_resumed_folder_set_it_aside_or_resume_whole(tmp_path
         if not ok:
             wrong.append((name, "set aside changed, or resumed with other bytes"))
     assert wrong == []
+
+
+class _Hung(BaseException):
+    pass
+
+
+@contextlib.contextmanager
+def _deadline(seconds=10):
+    """Fail the test, rather than hang it, if the block blocks."""
+    def hung(*a):
+        raise _Hung(f"blocked for {seconds} s")
+    previous = signal.signal(signal.SIGALRM, hung)
+    signal.alarm(seconds)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def _place_not_a_file(path, kind, tmp_path):
+    """Put a pipe, a link to one, a folder, or a link to a device at path."""
+    path.unlink()
+    if kind == "fifo":
+        os.mkfifo(path)
+    elif kind == "link-to-fifo":
+        target = tmp_path / f"pipe-{path.name}"
+        os.mkfifo(target)
+        path.symlink_to(target)
+    elif kind == "folder":
+        path.mkdir()
+    else:
+        path.symlink_to(os.devnull)
+
+
+def _entries(folder) -> dict:
+    """Each entry of a folder: a regular file's bytes, else what kind it is."""
+    out = {}
+    for p in Path(folder).iterdir():
+        mode = os.lstat(p).st_mode
+        out[p.name] = (
+            p.read_bytes() if stat.S_ISREG(mode)
+            else ("link", os.readlink(p)) if stat.S_ISLNK(mode)
+            else "fifo" if stat.S_ISFIFO(mode) else "folder"
+        )
+    return out
+
+
+NOT_A_FILE = ["fifo", "link-to-fifo", "folder", "link-to-device"]
+needs_fifo = pytest.mark.skipif(not hasattr(os, "mkfifo") or os.name == "nt",
+                                reason="named pipes, links and SIGALRM are POSIX")
+
+
+@needs_fifo
+@pytest.mark.parametrize("kind", NOT_A_FILE)
+def test_a_stub_that_is_not_a_file_in_a_folder_by_another_path_never_blocks_the_open(kind, tmp_path, switch_on, monkeypatch):  # noqa: F811
+    src = _kept(_copy(PARITY, tmp_path / "original"))
+    alias, folder, _ = _left_by_a_link(src, tmp_path)
+    _place_not_a_file(folder / f"{alias.stem}.1", kind, tmp_path)
+    before = _entries(folder)
+    with _deadline():
+        second = _open(src)
+    try:
+        assert store_save.heldStore(second) is None
+        assert second.loadSection(0).thickness == 0.05
+    finally:
+        second.close()
+    assert _entries(folder) == before
+
+
+@needs_fifo
+@pytest.mark.parametrize("kind", NOT_A_FILE)
+def test_a_stub_that_is_not_a_file_in_this_session_fails_its_load_without_blocking(kind, tmp_path, switch_on, monkeypatch):  # noqa: F811
+    fp = _kept(_copy(PARITY, tmp_path / "s"))
+    series = _open(fp)
+    try:
+        stub_fp = Path(series.getwdir(), series.sections[1])
+        _place_not_a_file(stub_fp, kind, tmp_path)
+        before = _entries(series.getwdir())
+        with _deadline(), pytest.raises(lazy_sections.SectionUnavailable):
+            series.loadSection(1)
+        assert _entries(series.getwdir()) == before
+    finally:
+        _crash(series)
+
+
+@needs_fifo
+@pytest.mark.parametrize("kind", NOT_A_FILE)
+def test_a_stub_that_is_not_a_file_in_a_resumed_folder_sets_it_aside_without_blocking(kind, tmp_path, switch_on, monkeypatch):  # noqa: F811
+    fp = _kept(_copy(PARITY, tmp_path / "s"))
+    series = _open(fp)
+    wdir = Path(series.getwdir())
+    _crash(series)
+    _place_not_a_file(wdir / f"{fp.stem}.0", kind, tmp_path)
+    before = _entries(wdir)
+    with _deadline():
+        opened = _open(fp, notifier=_Quiet())
+    opened.close()
+    aside = list(wdir.parent.glob(f"{wdir.name}.lazy-*"))
+    assert len(aside) == 1 and _entries(aside[0]) == before
+
+
+@pytest.mark.skipif(os.name == "nt", reason="a 246 character name passes MAX_PATH")
+def test_a_series_name_as_long_as_main_allows_fills_its_sections(tmp_path, switch_on, monkeypatch):  # noqa: F811
+    folder = tmp_path / "s"
+    folder.mkdir()
+    fp = folder / f"{'n' * 246}.jser"
+    shutil.copyfile(PARITY, fp)
+    expected = _today(fp, tmp_path, monkeypatch)["files"]
+    _kept(fp)
+    series = _open(fp)
+    try:
+        assert _stubbed(series) == set(series.sections)
+        for snum, name in series.sections.items():
+            series.loadSection(snum)
+            assert Path(series.getwdir(), name).read_bytes() == expected[name]
+        assert not [n for n in os.listdir(series.getwdir()) if n.endswith(".tmp")]
+    finally:
+        series.close()
+
+
+def test_a_resume_removes_fill_temps_of_either_name(tmp_path, switch_on, monkeypatch):  # noqa: F811
+    fp = _kept(_copy(PARITY, tmp_path / "s"))
+    series = _open(fp)
+    wdir = Path(series.getwdir())
+    _crash(series)
+    (wdir / ".fill-0a1b2c.tmp").write_bytes(b"half a section")
+    (wdir / f"{fp.stem}.1.fill.tmp").write_bytes(b"half a section")
+    resumed = _open(fp, notifier=_NoDialog())
+    try:
+        assert Path(resumed.getwdir()) == wdir and _stubbed(resumed) == set()
+        assert not [n for n in os.listdir(wdir) if n.endswith(".tmp")]
+    finally:
+        resumed.close()
