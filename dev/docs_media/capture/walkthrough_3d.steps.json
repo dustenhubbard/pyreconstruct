@@ -1,5 +1,5 @@
 {
-  "note": "Step list for the walkthrough-video tool's draft command. walkthrough_3d.py fills in size, images and the measured targets and writes the full steps.json beside the frames. The keys entries are the key casts: the click on last_row is a Shift-click, the one on right_click_row a right-click. The camera stays at zoom 1: the video shows each frame pixel for pixel.",
+  "note": "Step list for the draft command of dev/docs_media/walkthrough/walkthrough.py. walkthrough_3d.py fills in size, images and the measured targets and writes the full steps.json beside the frames. The keys entries are the key casts: the click on last_row is a Shift-click, the one on right_click_row a right-click. The camera stays at zoom 1: the video shows each frame pixel for pixel.",
   "camera_start": {
     "x": 1280,
     "y": 720,

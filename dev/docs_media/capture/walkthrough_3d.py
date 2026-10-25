@@ -10,7 +10,7 @@ scene opens.
 What this makes, in <folder>:
 
   * one 2560 x 1440 PNG per screen state, without a pointer (FRAMES);
-  * steps.json, the step list for the walkthrough-video tool's `draft`
+  * steps.json, the step list for walkthrough.py's `draft`
     command, with the click point of each control measured from the live
     widgets on this run (walkthrough_3d.steps.json, filled in);
   * capture-verification.json, the size and sha256 of every file, the pinned inputs,
@@ -25,9 +25,10 @@ PyReconstruct as a 1280 x 720 screen shows it, at Retina sharpness. And the last
 frame puts the 3D scene window over the main window, the way the two sit on
 screen, since one grab holds one window.
 
-To make the video, give steps.json to the walkthrough-video renderer:
+To make the video, give steps.json to dev/docs_media/walkthrough/walkthrough.py:
 `walkthrough.py draft <folder>/steps.json`, then
-`walkthrough.py render <folder>/scene.json --width 2560 --crf 21 -o 11-add-to-scene.mp4`.
+`walkthrough.py render <folder>/scene.json --width 2560 --crf 21 -o 11-add-to-scene.mp4`
+(its README.md has the whole workflow).
 The camera stays at zoom 1, so the video shows each frame pixel for pixel. The
 guide's copy is docs/assets/videos/user-guide/11-add-to-scene.mp4, and its
 poster is 01-series-open.png, saved as 11-add-to-scene-start.png beside the
