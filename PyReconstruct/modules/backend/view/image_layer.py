@@ -554,6 +554,9 @@ class _ReadAhead:
                 if self._wanted == path:
                     self._result = result
                 self._cond.notify_all()
+            # the slot holds the image now, or no one does: this thread must
+            # not keep a replaced image alive through the next read
+            del result
 
     @staticmethod
     def _read(path : str):

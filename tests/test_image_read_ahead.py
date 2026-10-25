@@ -381,3 +381,56 @@ def test_a_same_size_replacement_with_the_old_modification_time_is_read_again(im
     os.replace(other, path)
     assert read_ahead.take(str(path)) is None
     assert np.array_equal(_gray(QImage(str(path))), _pixels(9))
+
+
+def _gated_decoder(monkeypatch):
+    """Like _slow_decoder, with one gate per path: a decode of a path waits on
+    its own event, so one read can finish while the next is held. `refs`
+    keeps a weak reference to each image decoded, by path."""
+    gates = {}
+    started = []
+    refs = {}
+
+    class Gated(QImage):
+        def __init__(self, *args):
+            super().__init__(*args)
+            if args and isinstance(args[0], str) and threading.current_thread() is not threading.main_thread():
+                started.append(args[0])
+                refs[args[0]] = weakref.ref(self)
+                assert gates.setdefault(args[0], threading.Event()).wait(15)
+
+    monkeypatch.setattr(image_layer, "QImage", Gated)
+    return gates, started, refs
+
+
+def _until(check):
+    for _ in range(250):
+        if check():
+            return
+        threading.Event().wait(0.02)
+    assert check()
+
+
+def test_a_replaced_image_is_released_before_the_next_read(images, read_ahead, monkeypatch):
+    gates, started, refs = _gated_decoder(monkeypatch)
+    first, second = str(images / NAMES[0]), str(images / NAMES[1])
+    gates[first], gates[second] = threading.Event(), threading.Event()
+    read_ahead.start(first)
+    _until(lambda: first in started)
+    # replaced while its read is under way, then the read finishes
+    read_ahead.start(second)
+    gates[first].set()
+    _until(lambda: second in started)
+    assert started == [first, second]
+    # the replaced image is gone while the next one is still being read
+    gc.collect()
+    assert refs[first]() is None
+    # and stays gone when the slot is emptied under that read
+    read_ahead.drop()
+    gc.collect()
+    assert refs[first]() is None
+    gates[second].set()
+    _until(lambda: not _workers())
+    gc.collect()
+    assert read_ahead._result is None
+    assert refs[second]() is None
