@@ -75,8 +75,9 @@ large.
 
    Top-level `timing` overrides the defaults in `DRAFT` in `walkthrough.py`.
    Top-level `loop`, `true` or seconds, is for a clip that plays on a loop:
-   the pointer fades in at the start, and after it fades out at the end the
-   first screen fades back in (0.4 s by default), so the loop has no jump.
+   the pointer fades in at the start, the camera returns to its opening view
+   (in place of `camera_end`), and after the pointer fades out the first
+   screen fades back in (0.4 s by default), so the loop has no jump.
 4. **Draft, preview and render:**
 
    ```sh
