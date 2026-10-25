@@ -173,7 +173,7 @@ def test_a_close_the_move_refuses_deletes_nothing(series, monkeypatch):
 def test_a_delete_that_fails_after_the_move_still_closes(series, monkeypatch):
     import os
     import shutil
-    from PyReconstruct.modules.datatypes.series import SeriesClosedError
+    from PyReconstruct.modules.datatypes.series import RETIRED_MARKER, SeriesClosedError
     hidden_dir = series.hidden_dir
     parent = os.path.dirname(hidden_dir)
     before = sorted(os.listdir(hidden_dir))
@@ -187,7 +187,12 @@ def test_a_delete_that_fails_after_the_move_still_closes(series, monkeypatch):
     assert not os.path.isdir(hidden_dir)
     aside = _closing_dirs(parent)
     assert len(aside) == 1
-    assert sorted(os.listdir(os.path.join(parent, aside[0]))) == before
+    aside_dir = os.path.join(parent, aside[0])
+    # the marker that lets the next open of this series remove the folder
+    marker = os.path.join(aside_dir, RETIRED_MARKER)
+    assert sorted(os.listdir(aside_dir)) == sorted(before + [RETIRED_MARKER])
+    with open(marker, encoding="utf-8") as f:
+        assert f.read() == os.path.basename(hidden_dir)
     with pytest.raises(SeriesClosedError):
         series.save()
 

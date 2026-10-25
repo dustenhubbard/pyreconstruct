@@ -692,3 +692,99 @@ def test_a_backup_into_a_working_folder_reports_the_folder(tmp_path, notes):
     assert len(notes) == 2 and all("Backup folder not found" in n for n in notes)
     assert sorted(p.name for p in working.iterdir()) == ["ABC.ser"]
     assert series.autobackupOn() is False
+
+
+## A link into or out of a working folder
+
+def _link(target, link):
+    os.symlink(str(target), str(link), target_is_directory=True)
+    return link
+
+
+def test_a_folder_reached_through_a_link_into_a_working_folder_is_refused(tmp_path):
+    """The path as written never names the working folder; its real path does."""
+    series = _series()
+    working = _working_folder(tmp_path)
+    (working / "backups").mkdir()
+    alias = _link(working / "backups", tmp_path / "backup-alias")
+
+    series.setOption("autobackup", True)
+    series.setOption("backup_dir", str(alias))
+    assert series.backupFolder() == ""
+
+    series.setBackupUsesDefaults(True)
+    _set_defaults(series, str(alias / "{series}"))
+    assert series.backupFolder() == ""
+    assert series.backupFolder(create=True) == ""
+    assert sorted(p.name for p in working.iterdir()) == ["ABC.ser", "backups"]
+    assert list((working / "backups").iterdir()) == []
+
+
+def test_a_link_to_the_working_folder_itself_is_refused(tmp_path):
+    series = _series()
+    working = _working_folder(tmp_path)
+    alias = _link(working, tmp_path / "work-alias")
+    series.setOption("autobackup", True)
+    series.setOption("backup_dir", str(alias))
+    assert series.backupFolder() == ""
+
+
+def test_a_link_out_of_a_working_folder_is_refused_too(tmp_path):
+    """Named through the working folder, so the close removes the path."""
+    series = _series()
+    working = _working_folder(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link = _link(outside, working / "backups")
+    series.setOption("autobackup", True)
+    series.setOption("backup_dir", str(link))
+    assert series.backupFolder() == ""
+
+
+def test_a_link_to_a_folder_outside_every_working_folder_is_kept(tmp_path):
+    series = _series()
+    _working_folder(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    alias = _link(outside, tmp_path / "outside-alias")
+    series.setOption("autobackup", True)
+    series.setOption("backup_dir", str(alias))
+    assert series.backupFolder() == str(alias)
+
+
+def test_a_backup_through_a_link_into_the_working_folder_is_never_written(
+    series_jser, tmp_path, notes
+):
+    """A real series: the backup is refused, and the close deletes nothing of a backup."""
+    from PyReconstruct.modules.backend.progress import NullProgressReporter
+    from PyReconstruct.modules.gui.main.main_window import MainWindow
+
+    series = Series.openJser(str(series_jser), progress=NullProgressReporter)
+    series.setSettingsStore(DictSettingsStore())
+    try:
+        working = tmp_path / ".series"
+        assert working.is_dir()
+        (working / "backups").mkdir()
+        alias = _link(working / "backups", tmp_path / "backup-alias")
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        outside_alias = _link(outside, tmp_path / "outside-alias")
+
+        series.setOption("autobackup", True)
+        series.setOption("backup_dir", str(alias))
+        written = []
+        series.saveJser = lambda fp=None, **k: written.append(fp)
+        MainWindow.backup(_window(series), check_auto=True)
+        assert written == []
+        assert all("Backup folder not found" in n for n in notes) and notes
+
+        # the refused backup turned auto-backup off for this series
+        series.setOption("autobackup", True)
+        series.setOption("backup_dir", str(outside_alias))
+        MainWindow.backup(_window(series), check_auto=True)
+        assert len(written) == 1 and os.path.dirname(written[0]) == str(outside_alias)
+        (outside / "snapshot.jser").write_bytes(b"backup")
+    finally:
+        series.close()
+    assert not working.exists()
+    assert (outside / "snapshot.jser").read_bytes() == b"backup"

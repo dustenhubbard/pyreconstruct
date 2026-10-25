@@ -278,12 +278,18 @@ def test_jser_recovery_keeps_section_temp_and_does_not_load_it(series_jser):
 
 ## Working folders a close moved aside
 
-def make_closing_dir(folder, name=".closing-0badcafe", age=20 * 60):
-    """A working folder a close moved aside and could not delete."""
+def make_closing_dir(folder, name=".closing-0badcafe", age=20 * 60, marker=".series"):
+    """A folder a close of `.series` moved aside and could not delete.
+
+    `marker` is what the close wrote into it: the working folder's name. None
+    makes a folder with no marker, as a series named like one would have.
+    """
     aside = folder / name
     aside.mkdir()
     (aside / "series.ser").write_bytes(b"{}")
     (aside / "series.0").write_bytes(b"{}")
+    if marker is not None:
+        (aside / series_mod.RETIRED_MARKER).write_text(marker, encoding="utf-8")
     mtime = time.time() - age
     os.utime(aside, (mtime, mtime))
     return aside
@@ -299,11 +305,66 @@ def test_jser_open_removes_a_stale_moved_aside_working_folder(series_jser):
         series.close()
 
 
+def test_jser_open_removes_what_its_own_close_left(series_jser, monkeypatch):
+    """A real close whose delete fails, then the next open of the same series."""
+    series = Series.openJser(str(series_jser), progress=NullProgressReporter)
+    monkeypatch.setattr(series_mod.shutil, "rmtree", lambda path, *a, **k: None)
+    series.close()
+    monkeypatch.undo()
+    left = [p for p in series_jser.parent.iterdir() if p.name.startswith(".closing-")]
+    assert len(left) == 1
+    assert (left[0] / series_mod.RETIRED_MARKER).read_text(encoding="utf-8") == ".series"
+    old = time.time() - 20 * 60
+    os.utime(left[0], (old, old))
+
+    reopened = Series.openJser(str(series_jser), progress=NullProgressReporter)
+    try:
+        assert not left[0].exists()
+        assert reopened.sections
+    finally:
+        reopened.close()
+
+
 def test_jser_open_keeps_a_recent_moved_aside_working_folder(series_jser):
     recent = make_closing_dir(series_jser.parent, ".closing-deadbeef", age=0)
     series = Series.openJser(str(series_jser), progress=NullProgressReporter)
     try:
-        assert sorted(p.name for p in recent.iterdir()) == ["series.0", "series.ser"]
+        assert sorted(p.name for p in recent.iterdir()) == [
+            series_mod.RETIRED_MARKER, "series.0", "series.ser",
+        ]
+    finally:
+        series.close()
+
+
+def test_jser_open_keeps_a_working_folder_named_like_a_moved_one(series_jser):
+    """A series named closing-deadbeef has `.closing-deadbeef` as its own folder."""
+    folder = series_jser.parent
+    neighbor = folder / "closing-deadbeef.jser"
+    neighbor.write_bytes(series_jser.read_bytes())
+    work = folder / ".closing-deadbeef"
+    work.mkdir()
+    (work / "closing-deadbeef.ser").write_bytes(b"{}")
+    (work / "closing-deadbeef.0").write_bytes(b"unsaved work")
+    old = time.time() - 20 * 60
+    os.utime(work, (old, old))
+
+    series = Series.openJser(str(series_jser), progress=NullProgressReporter)
+    try:
+        assert sorted(p.name for p in work.iterdir()) == [
+            "closing-deadbeef.0", "closing-deadbeef.ser",
+        ]
+        assert (work / "closing-deadbeef.0").read_bytes() == b"unsaved work"
+    finally:
+        series.close()
+
+
+@pytest.mark.parametrize("marker", [None, ".other", "series", ""])
+def test_jser_open_keeps_a_moved_aside_folder_that_is_not_this_series(series_jser, marker):
+    kept = make_closing_dir(series_jser.parent, marker=marker)
+    series = Series.openJser(str(series_jser), progress=NullProgressReporter)
+    try:
+        assert kept.is_dir()
+        assert (kept / "series.0").exists()
     finally:
         series.close()
 

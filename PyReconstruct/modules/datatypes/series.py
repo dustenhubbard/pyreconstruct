@@ -550,33 +550,67 @@ def _closingDir(hidden_dir : str) -> str:
             return closing_dir
 
 
+#: The file a close writes into the folder it moved aside, holding the name of
+#: the working folder it was. The one thing that marks a folder as retired.
+RETIRED_MARKER = ".retired"
+
+
+def _markRetired(closing_dir : str, hidden_dir : str):
+    """Record inside a moved-aside folder which working folder it was.
+
+    A later open of the same series removes a marked folder the delete left
+    behind (_sweepRetiredFolders). A `.closing-<hex>` folder without the
+    marker is never taken as retired: it may be the working folder of a
+    series of that name. Best effort: the folder is about to be deleted, and
+    a marker that cannot be written only leaves it in place.
+    """
+    try:
+        with open(os.path.join(closing_dir, RETIRED_MARKER), "w", encoding="utf-8") as f:
+            f.write(os.path.basename(hidden_dir))
+    except OSError:
+        pass
+
+
+def _holdsSeriesFile(folder : str) -> bool:
+    """True if `folder` is a dot folder with a `.ser` directly in it."""
+    if not os.path.basename(folder).startswith("."):
+        return False
+    try:
+        with os.scandir(folder) as entries:
+            return any(
+                e.name.lower().endswith(".ser") and e.is_file() for e in entries
+            )
+    except (OSError, ValueError):
+        return False
+
+
 def _insideWorkingFolder(folder : str) -> bool:
     """True if `folder` is, or is inside, a series' working folder.
 
     A working folder is a `.<name>` folder holding a `.ser`. A close deletes
     the whole folder (Series.close), so nothing a user asks PyReconstruct to
-    keep, a backup folder above all, may be in one. A path that cannot be
-    read (missing, or a NUL in it) is not inside one as far as this can tell;
-    the caller reports it.
+    keep, a backup folder above all, may be in one. Checked as written and
+    with its links resolved: a link from outside into a working folder
+    reaches files the close deletes, and a link from inside one is a path the
+    close removes. A path that cannot be read (missing, or a NUL in it) is
+    not inside one as far as this can tell; the caller reports it.
     """
     if not folder:
         return False
-    path = os.path.abspath(folder)
-    while True:
-        if os.path.basename(path).startswith("."):
-            try:
-                with os.scandir(path) as entries:
-                    if any(
-                        e.name.lower().endswith(".ser") and e.is_file()
-                        for e in entries
-                    ):
-                        return True
-            except (OSError, ValueError):
-                pass
-        parent = os.path.dirname(path)
-        if parent == path:
-            return False
-        path = parent
+    paths = {os.path.abspath(folder)}
+    try:
+        paths.add(os.path.realpath(folder))
+    except ValueError:
+        pass  # a NUL in the path: reported by the caller
+    for path in paths:
+        while True:
+            if _holdsSeriesFile(path):
+                return True
+            parent = os.path.dirname(path)
+            if parent == path:
+                break
+            path = parent
+    return False
 
 
 def _putBack(aside : str, folder : str) -> bool:
@@ -774,33 +808,58 @@ def _sweepStaleSaveTemps(*folders):
     The 10 minute modification-time margin leaves recent files alone because
     another save may still be writing them. Age is a conservative heuristic,
     not a guarantee that a writer paused longer than the margin is inactive.
-
-    A `.closing-<hex>` folder is a working folder a close moved aside and
-    could not delete (Series.close); nothing reads it, and it goes the same
-    way once past the margin.
     """
     cutoff = datetime.now(timezone.utc).timestamp() - 10 * 60
     for folder in folders:
         try:
             with os.scandir(folder or os.curdir) as entries:
                 for entry in entries:
+                    if not re.fullmatch(r"\.save-[0-9a-f]{6}\.tmp", entry.name):
+                        continue
                     try:
-                        if re.fullmatch(r"\.save-[0-9a-f]{6}\.tmp", entry.name):
-                            if (
-                                entry.is_file(follow_symlinks=False)
-                                and entry.stat(follow_symlinks=False).st_mtime < cutoff
-                            ):
-                                os.remove(entry.path)
-                        elif re.fullmatch(r"\.closing-[0-9a-f]{8}", entry.name):
-                            if (
-                                entry.is_dir(follow_symlinks=False)
-                                and entry.stat(follow_symlinks=False).st_mtime < cutoff
-                            ):
-                                shutil.rmtree(entry.path, ignore_errors=True)
+                        if (
+                            entry.is_file(follow_symlinks=False)
+                            and entry.stat(follow_symlinks=False).st_mtime < cutoff
+                        ):
+                            os.remove(entry.path)
                     except OSError:
                         pass  # locked, vanished, or otherwise inaccessible
         except OSError:
             pass  # best-effort cleanup must never prevent opening a series
+
+
+def _sweepRetiredFolders(sdir : str, hidden_dir : str):
+    """Remove the folders a close of this series moved aside and could not delete.
+
+    Only a `.closing-<hex>` sibling whose marker names this series' working
+    folder (_markRetired) goes, and only past the same 10 minute margin as
+    the save temps. A folder of that name with no marker, or another series'
+    marker, may be a series' working folder or its unsaved work, whatever its
+    age, and is left alone. Best effort: a folder that cannot be removed stays.
+    """
+    name = os.path.basename(hidden_dir)
+    cutoff = datetime.now(timezone.utc).timestamp() - 10 * 60
+    try:
+        with os.scandir(sdir or os.curdir) as entries:
+            for entry in entries:
+                if not re.fullmatch(r"\.closing-[0-9a-f]{8}", entry.name):
+                    continue
+                try:
+                    if (
+                        not entry.is_dir(follow_symlinks=False)
+                        or entry.stat(follow_symlinks=False).st_mtime >= cutoff
+                    ):
+                        continue
+                    with open(
+                        os.path.join(entry.path, RETIRED_MARKER), encoding="utf-8"
+                    ) as f:
+                        if f.read() != name:
+                            continue
+                    shutil.rmtree(entry.path, ignore_errors=True)
+                except (OSError, UnicodeDecodeError):
+                    pass  # no marker, locked, vanished, or otherwise inaccessible
+    except OSError:
+        pass  # best-effort cleanup must never prevent opening a series
 
 
 def renamedSeriesFile(filename : str, old_name : str, new_name : str) -> str:
@@ -1404,6 +1463,7 @@ class Series():
                 raise _notPutBack(fp, os.path.join(sdir, f".{sname}"), kept, failure)
 
         _sweepStaleSaveTemps(sdir, hidden_dir)
+        _sweepRetiredFolders(sdir, hidden_dir)
         return series, collisions, (source.sha256 if store is None else None)
 
     def saveJser(self, save_fp : str = None, close : bool = False):
@@ -1966,7 +2026,8 @@ class Series():
             # Nothing the series reads is under its name now, so it is closed
             # whatever the delete does. A folder the delete leaves behind (a
             # held file) is never offered as unsaved work, and the next open
-            # beside it sweeps it (_sweepStaleSaveTemps).
+            # of this series removes it by its marker (_sweepRetiredFolders).
+            _markRetired(closing_dir, self.hidden_dir)
             self.closed = True
             shutil.rmtree(closing_dir, ignore_errors=True)
 
