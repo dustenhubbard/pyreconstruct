@@ -597,6 +597,8 @@ def draft(spec):
         # once it has faded out the first screen fades back, so the loop has
         # no jump
         scene["cursor_fade_in"] = 0
+        gone = scene["cursor_fade_out"] + STYLE["cursor_fade"]
+        duration = max(duration, math.ceil((gone + d["tail"]) * 10) / 10)
         if states[-1]["image"] != states[0]["image"]:
             fade = d["loop_fade"] if loop is True else loop
             at = round(scene["cursor_fade_out"] + STYLE["cursor_fade"] + 0.1, 3)
