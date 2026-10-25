@@ -136,16 +136,18 @@ def needsStore(meta : dict, store_name : str) -> bool:
         folders = json.loads(meta.get(META_FOLDERS) or "[]")
     except ValueError:
         return True
-    for folder in folders:
-        try:
-            with open(os.path.join(folder, MARKER), "rb") as f:
-                if json.loads(f.read()).get("store") == store_name:
-                    return True
-        except (FileNotFoundError, NotADirectoryError):
-            continue
-        except (OSError, ValueError, AttributeError):
-            return True
-    return False
+    return any(_mayHoldStubsOf(folder, store_name) for folder in folders)
+
+
+def _mayHoldStubsOf(folder : str, store_name : str) -> bool:
+    """True when the folder's marker names the store, or cannot be read."""
+    try:
+        with open(os.path.join(folder, MARKER), "rb") as f:
+            return json.loads(f.read()).get("store") == store_name
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except (OSError, ValueError, AttributeError):
+        return True
 
 
 def attach(series, snums):
@@ -289,6 +291,12 @@ def forget(series, snum : int):
     """Section snum's stub was removed with its section (Series.deleteSections)."""
     with series._lazy_lock:
         series._lazy.discard(snum)
+        if not series._lazy:
+            # that was the last stub: cleanup need not keep the store for it
+            try:
+                os.remove(os.path.join(series.getwdir(), MARKER))
+            except FileNotFoundError:
+                pass
 
 
 def workingSection(series, snum : int):
@@ -320,10 +328,7 @@ def presentFolder(folder : str, jser_fp : str, notifier=None) -> bool:
     if not os.path.isfile(os.path.join(folder, MARKER)):
         return True
     try:
-        for name in sorted(os.listdir(folder)):
-            stem, _, ext = name.rpartition(".")
-            if stem and ext.isnumeric():
-                fill(os.path.join(folder, name), jser_fp)
+        _fillFolder(folder, jser_fp)
     except SectionUnavailable as e:
         aside = f"{folder}.lazy-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
         os.rename(folder, aside)
@@ -333,10 +338,57 @@ def presentFolder(folder : str, jser_fp : str, notifier=None) -> bool:
             f"The unsaved work is unchanged in:\n{aside}"
         ))
         return False
+    return True
+
+
+def _fillFolder(folder : str, jser_fp : str):
+    """Fill every stub in a folder, then remove its marker and any fill left over.
+
+        Raises:
+            SectionUnavailable: a stub no source holds; the folder is as it was,
+                less the stubs filled before it
+    """
+    for name in sorted(os.listdir(folder)):
+        stem, _, ext = name.rpartition(".")
+        if stem and ext.isnumeric():
+            fill(os.path.join(folder, name), jser_fp)
     for name in os.listdir(folder):
         if name.endswith(FILL_SUFFIX) or name == MARKER:
             os.remove(os.path.join(folder, name))
-    return True
+
+
+def fillRecorded(held):
+    """Fill the stubs of every working folder the store recorded, before a
+    session that takes the store can write it.
+
+    A folder left by a crash, opened by another path to the same .jser (a
+    link, a `.<name>-2` folder), still names rows a Save or a close in this
+    session would replace. The store's lock is held, so no other session is
+    using it.
+
+        Raises:
+            StoreUnavailable: a stub no source holds; that folder is left as
+                it is, and the store is not used, so nothing replaces its rows
+    """
+    from . import store_open
+
+    store = held.store
+    try:
+        folders = json.loads(store.meta(META_FOLDERS) or "[]")
+    except (ValueError, sqlite3.Error) as e:
+        if isinstance(e, sqlite3.Error):
+            store_open._raiseIfBug(e)
+        raise store_open.StoreUnavailable(f"its record of working folders could not be read ({e})") from e
+    name = os.path.basename(store.db_fp)
+    for folder in folders:
+        if not _mayHoldStubsOf(folder, name):
+            continue
+        try:
+            _fillFolder(folder, held.jser_fp)
+        except OSError as e:
+            raise store_open.StoreUnavailable(
+                f"the working folder {folder} still needs it, and not every section could be written out ({e})"
+            ) from e
 
 
 def _tell(notifier, message : str):

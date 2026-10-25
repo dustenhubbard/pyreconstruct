@@ -44,7 +44,7 @@ from PyReconstruct.modules.constants import fast_loads, fast_dumps
 from PyReconstruct.modules.constants.fast_json import stdlib_dumps
 from PyReconstruct.modules.constants.jser_splice import SpliceIndex, _stat_key, section_digest
 
-from . import store_save
+from . import lazy_sections, store_save
 from .hybrid_store import HybridStore, _now, storePaths
 from .local_stores import ENV_SWITCH, META_OPENED, enabled  # noqa: F401  (Series.openJser)
 from .log import LOG_READ_ERRORS
@@ -301,7 +301,11 @@ class StoreForOpen():
             store.con.execute(STATS_SCHEMA)
             # for cleanup, which removes a clean store not opened for a while
             store.setMeta(META_OPENED, _now())
-            return StoreForOpen(store, jser_fp)
+            held = StoreForOpen(store, jser_fp)
+            # a folder another path left with stubs is filled before this
+            # session can write the rows they name (lazy_sections.py)
+            lazy_sections.fillRecorded(held)
+            return held
         except (OSError, sqlite3.Error) as e:
             _raiseIfBug(e)
             store.close()

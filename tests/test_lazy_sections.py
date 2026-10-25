@@ -745,3 +745,69 @@ def test_a_fill_that_fails_keeps_the_store_and_says_so(how, tmp_path, switch_on,
         assert any("not every section" in n for n in notes)
     finally:
         series.close()
+
+
+def _left_by_a_link(src, tmp_path):
+    """A folder opened through a link to src, one section edited, left as a crash leaves it."""
+    alias = tmp_path / "alias.jser"
+    alias.symlink_to(src)
+    first = _open(alias)
+    section = first.loadSection(0)
+    section.thickness = 0.321
+    section.save()
+    first.save()
+    folder = Path(first.getwdir())
+    stubbed = _stubbed(first)
+    _crash(first)
+    return alias, folder, stubbed
+
+
+@pytest.mark.parametrize("ranges", [False, True], ids=["no-ranges", "ranges"])
+def test_a_session_by_another_path_leaves_a_crashed_folder_whole(ranges, tmp_path, switch_on, monkeypatch):  # noqa: F811
+    src = _saved_by_this_app(tmp_path) if ranges else _kept(_copy(PARITY, tmp_path / "original"))
+    alias, folder, stubbed = _left_by_a_link(src, tmp_path)
+    assert stubbed
+    # a session on the file itself saves over a section the folder had as a stub
+    second = _open(src)
+    assert store_save.heldStore(second) is not None
+    section = second.loadSection(1)
+    section.thickness = 0.456
+    section.save()
+    assert second.saveToStore()
+    second.close()
+    asker = _Quiet()
+    resumed = _open(alias, notifier=asker)
+    try:
+        assert Path(resumed.getwdir()) == folder and asker.told == []
+        assert resumed.loadSection(0).thickness == 0.321
+        assert resumed.loadSection(1).thickness != 0.456
+    finally:
+        resumed.close()
+
+
+def test_a_crashed_folder_by_another_path_no_source_matches_keeps_the_store_unused(tmp_path, switch_on, notes, monkeypatch):  # noqa: F811
+    src = _kept(_copy(PARITY, tmp_path / "original"))
+    alias, folder, stubbed = _left_by_a_link(src, tmp_path)
+    snum = min(stubbed)
+    _tamper_store(src, snum)
+    before = {p.name: p.read_bytes() for p in folder.iterdir()}
+    second = _open(src)
+    try:
+        # opened as today, from the .jser, and the store is not taken
+        assert store_save.heldStore(second) is None and _stubbed(second) == set()
+        assert any(str(folder) in n for n in notes)
+    finally:
+        second.close()
+    assert {p.name: p.read_bytes() for p in folder.iterdir()} == before
+
+
+def test_deleting_the_last_stub_lets_cleanup_remove_the_store(tmp_path, switch_on):  # noqa: F811
+    fp = _kept(_copy(PARITY, tmp_path / "s"))
+    series = _open(fp)
+    for snum in sorted(series.sections)[:-1]:
+        series.loadSection(snum)
+    series.deleteSections([max(series.sections)])
+    assert not series._lazy
+    _crash(series)
+    state, db_fp = _remove_if_clean(fp)
+    assert state.clean and not os.path.exists(db_fp)
