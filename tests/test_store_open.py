@@ -858,7 +858,7 @@ def test_a_file_that_is_not_a_store_opens_as_today_and_is_left_as_it_was(tmp_pat
 def test_a_store_read_that_fails_partway_opens_as_today(error, tmp_path, switch_on, notes, monkeypatch):
     fp = _copy(SERIES_FILES[1], tmp_path / "s")
     _open(fp).close()
-    real = HybridStore.readSection
+    real = HybridStore.readSectionEncoded
     calls = []
 
     def fails_second(self, snum, *a, **k):
@@ -867,7 +867,7 @@ def test_a_store_read_that_fails_partway_opens_as_today(error, tmp_path, switch_
             raise error
         return real(self, snum, *a, **k)
 
-    monkeypatch.setattr(HybridStore, "readSection", fails_second)
+    monkeypatch.setattr(HybridStore, "readSectionEncoded", fails_second)
     _assert_falls_back(fp, tmp_path, monkeypatch, notes, str(error))
     assert len(calls) == 2
     # nothing of the failed open is left beside the file
@@ -898,7 +898,7 @@ def test_an_sqlite_error_only_code_can_cause_is_raised_not_hidden(error, tmp_pat
     def bug(self, snum, *a, **k):
         raise error("Incorrect number of bindings supplied")
 
-    monkeypatch.setattr(HybridStore, "readSection", bug)
+    monkeypatch.setattr(HybridStore, "readSectionEncoded", bug)
     with pytest.raises(error):
         _open(fp)
     assert notes == []

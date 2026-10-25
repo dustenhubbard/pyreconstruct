@@ -100,6 +100,27 @@ def orjson_dumps(obj) -> bytes:
     return _to_ascii(orjson.dumps(obj, option=orjson.OPT_NON_STR_KEYS))
 
 
+def orjson_dumps_coords(a) -> bytes:
+    """A float64 array as ``orjson_dumps`` writes the same Python floats.
+
+    orjson writes a numpy float64 with the shortest digits that read back to
+    it, as it writes a float, so ``[a.tolist()]`` and this give the same bytes
+    without the list of Python floats in between. Numbers are ASCII already.
+    Only callable when orjson is installed (``HAVE_ORJSON``).
+    """
+    return orjson.dumps(a, option=orjson.OPT_SERIALIZE_NUMPY)
+
+
+def orjson_fragment(raw : bytes):
+    """JSON bytes ``orjson_dumps`` wrote, to place in a document as they are.
+
+    ``orjson_dumps`` copies a fragment into its output byte for byte, so a
+    document is built from parts already encoded (escaped to ASCII included)
+    without reading them back first. Only callable when orjson is installed.
+    """
+    return orjson.Fragment(raw)
+
+
 def stdlib_dumps(obj) -> bytes:
     """``fast_dumps``'s stdlib leg on its own.
 

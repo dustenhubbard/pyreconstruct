@@ -478,9 +478,11 @@ class _StoreSource():
         return len(self.snums)
 
     def sections(self):
+        # the open only writes each section (Series._unpackJser), so its
+        # traces come as the file's bytes, not as lists (readSectionEncoded)
         for snum in self.snums:
             try:
-                section_data = self.store.readSection(snum)
+                section_data = self.store.readSectionEncoded(snum)
             except (OSError, sqlite3.Error) as e:
                 _raiseIfBug(e)
                 raise StoreUnavailable(str(e)) from e
