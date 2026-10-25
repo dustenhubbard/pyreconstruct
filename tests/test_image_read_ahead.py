@@ -305,25 +305,93 @@ def test_requests_made_during_a_read_leave_one_read_under_way(images, read_ahead
     assert _workers() == []
 
 
-def test_far_jumps_in_the_field_keep_one_read_under_way(field, images, read_ahead, monkeypatch):
-    mw = field.mainwindow
+def _far_jump_images(mw, images):
+    """The images of sections 4 to 6, and the paths read ahead by jumps to 1, 3, 5."""
     for n in (4, 5, 6):
         _write(images / mw.series.data["sections"][n]["src"], n)
+    return [str(images / mw.series.data["sections"][n]["src"]) for n in (2, 4, 6)]
+
+
+def _check_far_jump_outcome(read_ahead, started, ahead, allowed):
+    """What holds in every order the worker can run in: one worker at most,
+    one image held at most, no request read twice, no request read that was
+    replaced before the worker reached it (`allowed` says which could have
+    been), and the last jump's image is the one taken."""
+    assert len(_workers()) <= 1
+    assert read_ahead._wanted == ahead[2]
+    assert len(started) == len(set(started))
+    assert set(started) <= set(allowed)
+    assert started[-1] == ahead[2]
+    image = read_ahead.take(ahead[2])
+    assert image is not None
+    assert np.array_equal(_gray(image), _pixels(6))
+    assert read_ahead._result is None and read_ahead._wanted is None
+    _until(lambda: not _workers())
+
+
+def test_far_jumps_while_the_first_read_is_under_way(field, images, read_ahead, monkeypatch):
+    """The worker is held in the first jump's read while the next two jumps
+    come: one worker, one read; the second request is replaced before it is
+    read, the third is read after the first finishes."""
+    mw = field.mainwindow
+    ahead = _far_jump_images(mw, images)
+    gates, started, _ = _gated_decoder(monkeypatch)
+    for path in ahead:
+        gates[path] = threading.Event()
+    mw.changeSection(1)
+    _until(lambda: started == [ahead[0]])
+    mw.changeSection(3)
+    mw.changeSection(5)
+    assert len(_workers()) == 1
+    assert started == [ahead[0]]
+    for gate in gates.values():
+        gate.set()
+    _until(lambda: len(started) == 2)
+    assert started == [ahead[0], ahead[2]]
+    _check_far_jump_outcome(read_ahead, started, ahead, allowed=[ahead[0], ahead[2]])
+
+
+def test_far_jumps_before_the_worker_runs(field, images, read_ahead, monkeypatch):
+    """The worker does not run until all three jumps are made: it reads the
+    last request only."""
+    mw = field.mainwindow
+    ahead = _far_jump_images(mw, images)
+    gates, started, _ = _gated_decoder(monkeypatch)
+    for path in ahead:
+        gates[path] = threading.Event()
+        gates[path].set()
+    go = threading.Event()
+    run = image_layer._ReadAhead._run
+
+    def held_run(self):
+        assert go.wait(15)
+        run(self)
+
+    monkeypatch.setattr(image_layer._ReadAhead, "_run", held_run)
+    for n in (1, 3, 5):
+        mw.changeSection(n)
+    assert len(_workers()) == 1
+    assert started == []
+    go.set()
+    _until(lambda: started)
+    assert started == [ahead[2]]
+    _check_far_jump_outcome(read_ahead, started, ahead, allowed=[ahead[2]])
+
+
+def test_far_jumps_in_the_field_keep_one_read_under_way(field, images, read_ahead, monkeypatch):
+    """The worker runs as it will: whichever order it takes, the outcome
+    is the same."""
+    mw = field.mainwindow
+    ahead = _far_jump_images(mw, images)
     release, started = _slow_decoder(monkeypatch)
     try:
         for n in (1, 3, 5):
             mw.changeSection(n)
-        # the one worker reaches its first decode in its own time; the two
-        # later requests then wait behind it
-        _until(lambda: started)
         assert len(_workers()) == 1
-        assert len(started) == 1
     finally:
         release.set()
-    # the last jump's neighbor is the one read
-    image = read_ahead.take(str(images / mw.series.data["sections"][6]["src"]))
-    assert image is not None
-    assert len(started) == 2
+    _until(lambda: started and started[-1] == ahead[2])
+    _check_far_jump_outcome(read_ahead, started, ahead, allowed=ahead)
 
 
 # the series closes or changes
