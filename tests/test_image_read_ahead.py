@@ -102,6 +102,14 @@ def _workers():
     return [t for t in threading.enumerate() if t.name == "image-read-ahead" and t.is_alive()]
 
 
+def _until(check):
+    for _ in range(250):
+        if check():
+            return
+        threading.Event().wait(0.02)
+    assert check()
+
+
 def _bump(path, k : int):
     """Replace the file's pixels and move its modification time on."""
     _write(path, k)
@@ -305,7 +313,10 @@ def test_far_jumps_in_the_field_keep_one_read_under_way(field, images, read_ahea
     try:
         for n in (1, 3, 5):
             mw.changeSection(n)
-        assert len(_workers()) <= 1
+        # the one worker reaches its first decode in its own time; the two
+        # later requests then wait behind it
+        _until(lambda: started)
+        assert len(_workers()) == 1
         assert len(started) == 1
     finally:
         release.set()
@@ -401,14 +412,6 @@ def _gated_decoder(monkeypatch):
 
     monkeypatch.setattr(image_layer, "QImage", Gated)
     return gates, started, refs
-
-
-def _until(check):
-    for _ in range(250):
-        if check():
-            return
-        threading.Event().wait(0.02)
-    assert check()
 
 
 def test_a_replaced_image_is_released_before_the_next_read(images, read_ahead, monkeypatch):
