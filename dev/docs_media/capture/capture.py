@@ -88,9 +88,9 @@ FLOW_ONLY = {"06-flag-placed"}
 # Guide images this script does not shoot, so --guide leaves them: the installer
 # window is not the app, and the clips' posters are shot at the clips' own
 # window size by guide_clips.py and walkthrough_3d.py.
-NOT_CAPTURED = {"01-macos-dmg-window.png", "04-open-series-start.png",
-                "05-move-between-sections-start.png", "06-draw-closed-trace-start.png",
-                "09-open-object-list-start.png", "11-add-to-scene-start.png"}
+NOT_CAPTURED = {"01-macos-dmg-window.png", "04-open-series-poster.png",
+                "05-move-between-sections-poster.png", "06-draw-closed-trace-poster.png",
+                "09-open-object-list-poster.png", "11-add-to-scene-poster.png"}
 
 REAL_DOMAIN = "com.khlab.PyReconstruct"
 REAL_PREFS = Path.home() / "Library" / "Preferences"

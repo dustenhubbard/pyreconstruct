@@ -18,7 +18,7 @@ REPO = Path(__file__).resolve().parents[1]
 CAPTURE_DIR = REPO / "dev" / "docs_media" / "capture"
 GUIDE = REPO / "docs" / "USER_GUIDE.md"
 CLIP = REPO / "docs" / "assets" / "videos" / "user-guide" / "11-add-to-scene.mp4"
-POSTER = REPO / "docs" / "assets" / "images" / "user-guide" / "11-add-to-scene-start.png"
+POSTER = REPO / "docs" / "assets" / "images" / "user-guide" / "11-add-to-scene-poster.png"
 
 
 def load(name, file):
@@ -97,11 +97,23 @@ def test_the_guide_embeds_the_clip_with_its_poster():
                          GUIDE.read_text(), re.S)
     assert len(figures) == 1
     figure = figures[0]
-    assert "](assets/images/user-guide/11-add-to-scene-start.png)" in figure
+    assert "](assets/images/user-guide/11-add-to-scene-poster.png)" in figure
     assert "[▶ 16 s · loops](assets/videos/user-guide/11-add-to-scene.mp4){ .clip-src }" in figure
     assert "![Clip: " in figure
     assert "<figcaption markdown>**" in figure
     assert CLIP.is_file()
+
+
+def test_the_poster_is_the_3d_scene_the_clip_ends_on(walkthrough, tmp_path):
+    steps = json.loads(walkthrough.STEPS_TEMPLATE.read_text())
+    assert steps["steps"][-1]["after"] == walkthrough.POSTER == "scene"
+    for key, file in walkthrough.FRAMES.items():
+        (tmp_path / file).write_bytes(key.encode())
+    images = tmp_path / "images"
+    images.mkdir()
+    walkthrough.copy_poster(tmp_path, images)
+    assert [p.name for p in images.iterdir()] == [POSTER.name]
+    assert (images / POSTER.name).read_bytes() == b"scene"
 
 
 def test_the_poster_is_a_2x_still_the_capture_script_leaves_alone(capture):  # noqa: F811
@@ -139,3 +151,16 @@ def test_each_clip_poster_gives_the_page_its_size():
         attrs = poster.group(2) or ""
         assert f'data-width="{width // 2}"' in attrs, poster.group(1)
         assert f'data-height="{height // 2}"' in attrs, poster.group(1)
+
+
+def test_no_two_clip_posters_are_the_same_picture():
+    # each clip's poster shows what that clip does, so no two can match
+    figures = re.findall(r'<figure class="clip[^"]*" markdown>(.*?)</figure>', GUIDE.read_text(), re.S)
+    seen = {}
+    for figure in figures:
+        path = re.search(r"\]\((assets/images/user-guide/[^)]+)\)", figure).group(1)
+        with Image.open(REPO / "docs" / path) as image:
+            pixels = image.convert("RGB").tobytes()
+        assert pixels not in seen, (path, seen.get(pixels))
+        seen[pixels] = path
+    assert len(seen) == 5

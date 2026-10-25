@@ -29,6 +29,12 @@ frame is scaled up or down. `--crf 21` keeps the file small with no visible
 loss. Keep fine grain out of demo images: noise is what makes a video file
 large.
 
+## Posters
+
+A clip's poster is the still that shows what the clip does, usually its last
+screen before the loop returns, not the screen it opens on. No two clips on one
+site share a poster.
+
 ## Workflow
 
 1. **Plan the steps.** Write down each screen and the one control clicked to
