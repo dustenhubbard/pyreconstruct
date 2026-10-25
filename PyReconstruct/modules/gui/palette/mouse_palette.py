@@ -41,6 +41,22 @@ def save_palette_visibility(settings : QSettings, state : dict) -> None:
 # persist across launches -- one ``palette/<group>_<axis>`` key per group.
 PALETTE_POS_GROUPS = ("mode", "trace", "inc", "bc", "sb")
 
+# Where each group sits until the user drags it (x, y fractions).
+DEFAULT_POSITIONS = {
+    "mode":  (0.99, 0.01),
+    "trace": (0.51, 0.99),
+    "inc":   (0.99, 0.99),
+    "bc":    (0.99, 0.8),
+    "sb":    (0.01, 0.99),
+}
+
+
+def set_default_positions(palette) -> None:
+    """Put every group of `palette` at its default spot."""
+    for group, (x, y) in DEFAULT_POSITIONS.items():
+        setattr(palette, f"{group}_x", x)
+        setattr(palette, f"{group}_y", y)
+
 
 def _palette_pos_key(group : str, axis : str) -> str:
     return f"palette/{group}_{axis}"
@@ -143,11 +159,7 @@ class MousePalette():
         # Set every default first, then override with any persisted positions, so
         # each group renders in its saved spot. Saved on drag end (MoveableButton)
         # and cleared by resetPos().
-        self.mode_x,  self.mode_y  = 0.99, 0.01
-        self.trace_x, self.trace_y = 0.51, 0.99
-        self.inc_x,   self.inc_y   = 0.99, 0.99
-        self.bc_x,    self.bc_y    = 0.99, 0.8
-        self.sb_x,    self.sb_y    = 0.01, 0.99
+        set_default_positions(self)
         self.loadPositionState()
 
         # create mode buttons; macOS Dev builds draw them as line icons
@@ -711,7 +723,39 @@ class MousePalette():
         y = getattr(self, f"{group}_y")
         x = (x * (x2 - x1)) + x1
         y = (y * (y2 - y1)) + y1
+        if group in ("inc", "bc") and self.atDefaultPosition(group):
+            x = self.clearOfTools(group, x, y)
         return x, y
+
+    def atDefaultPosition(self, group):
+        """True if the user has not dragged the group from its default spot."""
+        x = getattr(self, f"{group}_x")
+        y = getattr(self, f"{group}_y")
+        return (x, y) == DEFAULT_POSITIONS[group]
+
+    def clearOfTools(self, group, x, y):
+        """The x for a group at (x, y) that keeps it clear of the tool column.
+
+        The section buttons and the sliders default to the field's right edge,
+        under the tool column. In a short window the column reaches down to
+        them and they cover its last buttons, so a group that would touch
+        the column moves left of it. Only a group at its default spot moves:
+        one the user dragged stays where it was put.
+        """
+        w, h = {
+            "inc": (self.ibw, self.ibh*2 + 15),
+            "bc": (self.bcsize*6 + 5, self.bcsize*2 + 20),
+        }[group]
+        gap = 10
+        tx, ty = self.getButtonCoords("mode")
+        th = (self.mblen + 10) * len(self.mode_buttons) - 10
+        touches = (
+            x < tx + self.mblen + gap and tx < x + w + gap and
+            y < ty + th + gap and ty < y + h + gap
+        )
+        if not touches:
+            return x
+        return max(self.mainwindow.field.x(), tx - gap - w)
 
     def moveButton(self, dx, dy, group):
         """Move a button group.
@@ -915,11 +959,7 @@ class MousePalette():
     
     def resetPos(self):
         """Reset every palette group to its default spot and forget saved positions."""
-        self.mode_x,  self.mode_y  = 0.99, 0.01
-        self.trace_x, self.trace_y = 0.51, 0.99
-        self.inc_x,   self.inc_y   = 0.99, 0.99
-        self.bc_x,    self.bc_y    = 0.99, 0.8
-        self.sb_x,    self.sb_y    = 0.01, 0.99
+        set_default_positions(self)
         clear_palette_positions(_position_settings())
         self.resize()
     
