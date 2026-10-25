@@ -157,16 +157,18 @@ def test_save_as_onto_a_series_open_in_another_window(
         sec.src = "B_UNSAVED_EDIT.tif"
         sec.save()
         wb.field.section.src = "B_CURRENT_EDIT.tif"
-        wb.saveAllData()
+        # marked modified first, as an edit in the app is: saveAllData writes
+        # nothing for a series that is not modified
         wb.seriesModified(True)
+        wb.saveAllData()
 
         # A: edits of its own, so a mixed result would show
         a_sec = wa.series.loadSection(other)
         a_sec.src = "A_IMAGE.tif"
         a_sec.save()
         wa.field.section.src = "A_CURRENT.tif"
-        wa.saveAllData()  # Save As flushes this first anyway
         wa.seriesModified(True)
+        wa.saveAllData()  # Save As flushes this first anyway
 
         # B's heartbeat, fresh, the way its timer keeps it; then hold the
         # timer so the byte-for-byte comparison below cannot race it

@@ -2066,19 +2066,35 @@ class MainWindow(QMainWindow):
             pass
 
     def _ensureSeriesCode(self):
-        """Derive the series code from the name, or ask the user for one."""
-        # get the series code from the user if needed
-        if not self.series.isWelcomeSeries() and not self.series.code:
-            detected_code = re.search(
-                self.series.getOption("series_code_pattern"),
-                self.series.name
-            )
-            if detected_code:
-                self.series.code = detected_code.group()
-            # the dialog is not cancelable and loops until a code is entered, so
-            # it can only be raised when someone is there to answer it
-            if user_is_present():
-                self.setSeriesCode(cancelable=False)
+        """Derive the series code from the name, or ask the user for one.
+
+        A code the name supplies is not an edit: it is written to the series
+        file and nothing is marked modified, so a section change with no
+        edits saves no section. The .jser takes it when the series closes,
+        without asking (saveToJser), so the next open does not ask for it
+        again. A code the user typed over it is an edit, so the series is
+        marked modified and the code is saved with it. With no code and
+        nobody to ask, nothing changes.
+        """
+        if self.series.isWelcomeSeries() or self.series.code:
+            return
+        detected = re.search(
+            self.series.getOption("series_code_pattern"),
+            self.series.name
+        )
+        detected_code = detected.group() if detected else ""
+        if detected_code:
+            self.series.code = detected_code
+        # the dialog is not cancelable and loops until a code is entered, so
+        # it can only be raised when someone is there to answer it
+        if user_is_present():
+            self.setSeriesCode(cancelable=False)
+        if not self.series.code:
+            return
+        if self.series.code == detected_code:
+            self.series.save()
+            self.series.unsaved_series_data = True
+        else:
             self.seriesModified()
 
     def newSeries(
@@ -3269,6 +3285,19 @@ class MainWindow(QMainWindow):
         
         # User closing and series not modified
         if close and not self.series.modified:
+            # the series code set at open goes into the .jser without asking:
+            # none of the user's work changed, and the next open would ask
+            # for the code again otherwise. Through the store when Save
+            # writes the store (the .jser is then written from it below). A
+            # failed write keeps the series open, as any failed save does.
+            if self.series.unsaved_series_data and self.series.jser_fp:
+                try:
+                    stored = self.series.saveToStore()
+                except (OSError, SeriesSaveError):
+                    # the user was told; the working folder and the code stay
+                    return "cancel"
+                if not stored and not self._writeJser():
+                    return "cancel"
             if not self._writeStoreSave():
                 return "cancel"
             self.series.close()
