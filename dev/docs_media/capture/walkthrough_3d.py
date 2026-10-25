@@ -9,7 +9,7 @@ scene opens.
 
 What this makes, in <folder>:
 
-  * one 3840 x 2160 PNG per screen state, without a pointer (FRAMES);
+  * one 2560 x 1440 PNG per screen state, without a pointer (FRAMES);
   * steps.json, the step list for the walkthrough-video tool's `draft`
     command, with the click point of each control measured from the live
     widgets on this run (walkthrough_3d.steps.json, filled in);
@@ -20,8 +20,8 @@ How it shoots, and what is pinned, is capture.py's: the theme, username,
 isolated settings and tripwire, and QWidget.grab() of the live window. Three
 things differ. The series is neurites.py's, a dendrite with a spine, an
 axon and an astroglial process, written fresh for each run. The main window
-is 1920 x 1080 logical pixels, so a frame is 3840 x 2160 on a 2x screen, the
-size the video tool zooms into. And the last frame puts the 3D scene window over the main
+is 1280 x 720 logical pixels, so a frame is 2560 x 1440 on a 2x screen: the
+app as a 1280 x 720 screen shows it, at Retina sharpness. And the last frame puts the 3D scene window over the main
 window, the way the two sit on screen, since one grab holds one window.
 
 Made-up data only. No lab data, no file dialog, no recent-files list.
@@ -50,15 +50,21 @@ def _load(name, file):
 capture = _load("docs_capture", "capture.py")
 neurites = _load("docs_neurites", "neurites.py")
 
-# logical pixels; 3840 x 2160 native at 2x. Frameless, as in capture.py, so
-# macOS lets it be larger than the screen.
-capture.WINDOW_SIZE = (1920, 1080)
-FRAME_SIZE = (3840, 2160)
+# A screencast shows the app as a 1280 x 720 screen shows it, at 2x: the
+# window is 1280 x 720 logical pixels, a frame is 2560 x 1440, and the video
+# shows each frame pixel for pixel (DECISIONS, 2026-10-24). At the left edge
+# of the screen, so the window fits on a 1280-wide one; the pointer waits
+# in the menu bar above it, where no hover state is drawn.
+capture.WINDOW_SIZE = (1280, 720)
+capture.WINDOW_POS = (0, 40)
+capture.POINTER_PARK = (1200, 12)
+FRAME_SIZE = (2560, 1440)
 # the 3D scene window: shot on screen at capture.WINDOW_POS, drawn into the
-# last frame at SCENE_AT (native pixels), over the field
-SCENE_SIZE = (1100, 720)
-SCENE_AT = (1060, 300)
-SHADOW = 36  # native pixels of soft shadow around the scene window
+# last frame at SCENE_AT (native pixels), over the field and clear of the
+# sliders and palettes
+SCENE_SIZE = (720, 480)
+SCENE_AT = (690, 190)
+SHADOW = 24  # native pixels of soft shadow around the scene window
 # the Object list's rows, in its order; the video selects them all
 OBJECTS = ["ast01", "ax01", "d01", "d01sp01"]
 RIGHT_CLICK = "d01"
