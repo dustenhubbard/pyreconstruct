@@ -31,6 +31,26 @@ voice = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(voice)
 
 
+# The menus every rule test runs against: a fixed set written here, so no test
+# result depends on how menubar.py or context_menu_list.py is written. The
+# reader itself is tested on inline source further down.
+PINNED_ROOTS = frozenset({
+    "File", "Edit", "Series", "Section", "Lists", "Alignments", "Autosegment",
+    "View", "Help", "Trace", "Object", "Ztrace", "3D",
+})
+PINNED_LABELS = PINNED_ROOTS | {
+    "New series", "Options", "Brightness/contrast", "Images", "Export meshes",
+}
+
+
+@pytest.fixture(autouse=True)
+def pinned_menus(monkeypatch):
+    """Rule tests see PINNED_ROOTS and PINNED_LABELS, never the live menu files."""
+    monkeypatch.setattr(
+        voice, "_MENUS", (PINNED_ROOTS, frozenset(label.lower() for label in PINNED_LABELS))
+    )
+
+
 def rules(bullet):
     """The rule numbers the check reports for one flattened bullet."""
     return sorted({rule for rule, _ in voice.check_bullet(bullet)})
@@ -271,7 +291,6 @@ def test_an_unreadable_menu_file_keeps_the_step_report_only(tmp_path, monkeypatc
     assert "fragment voice: ok" in capsys.readouterr().out
     monkeypatch.setattr(voice, "_MENUS", None)
     assert rules("**Help > What's new shows the notes.** Open it.") == [6]  # the fallback still knows Help
-    monkeypatch.setattr(voice, "_MENUS", None)
 
 
 def test_the_live_menu_files_yield_some_labels():

@@ -133,8 +133,10 @@ def _labeled_dicts(node, inside=False):
             yield from _labeled_dicts(child, True)
 
 
-def menu_labels(files=MENU_FILES):
+def menu_labels(files=None):
     """``(roots, labels)``: the menu names the menubar and field context menu define.
+
+    ``files`` defaults to ``MENU_FILES`` as it stands when called.
 
     ``roots`` are the top-level menus and the context-menu roots; ``labels``
     adds every submenu. Read as data from the ``"text"`` entries of the menu
@@ -143,6 +145,8 @@ def menu_labels(files=MENU_FILES):
     the check is about fragments, and a menu file it cannot read is not a
     finding against them.
     """
+    if files is None:
+        files = MENU_FILES
     roots, labels = set(), set()
     try:
         for path in files:
