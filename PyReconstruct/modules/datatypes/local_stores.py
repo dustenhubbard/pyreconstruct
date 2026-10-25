@@ -77,7 +77,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import hybrid_store, store_save
+from . import hybrid_store, lazy_sections, store_save
 from .hybrid_store import (
     APPLICATION_ID, REQUIRED_TABLES, SCHEMA_VERSION, SQLITE_MAGIC, storePaths, storeRoot,
 )
@@ -114,6 +114,7 @@ IN_USE = "is open in PyReconstruct"
 NO_JSER = "its .jser was not found"
 UNREADABLE = "could not be read"
 WINDOWS = "is not removed on Windows"
+STUBS = "is still needed by the working folder of its .jser"
 
 ## held while this process holds a store's lock here, so the check at open
 ## never takes cleanup's brief hold for another window's
@@ -405,6 +406,10 @@ def _readState(folder : _Folder, name : str) -> StoreState:
         jser = meta.get("jser_path")
         if meta.get("imported_utc") is not None and not (jser and os.path.isfile(jser)):
             state.why = NO_JSER
+            return state
+        if jser and lazy_sections.namesStore(jser, name):
+            # the .jser's working folder has stubs filled from this store
+            state.why = STUBS
             return state
         state.clean = True
         return state
@@ -709,6 +714,7 @@ def turnOff(series, write_out=None) -> TurnOffReport:
             else:
                 report.failed.append(series.jser_fp)
         if not store_save.ahead(series):
+            store_save.fillStubs(series)
             store_save.release(series)
     root = storeFolder()
     if root is None:

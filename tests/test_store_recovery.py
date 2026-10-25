@@ -46,7 +46,7 @@ from pathlib import Path
 import pytest
 
 from PyReconstruct import cli
-from PyReconstruct.modules.datatypes import hybrid_store, store_open, store_recovery, store_save
+from PyReconstruct.modules.datatypes import hybrid_store, lazy_sections, store_open, store_recovery, store_save
 from PyReconstruct.modules.datatypes import series as series_module
 from PyReconstruct.modules.datatypes.hybrid_store import HybridStore
 
@@ -115,6 +115,13 @@ def test_with_the_switch_off_no_recovery_runs_and_the_store_is_left_as_it_was(
         monkeypatch.setattr(store_recovery, name, refuse)
     monkeypatch.setattr(store_open.StoreForOpen, "attempt", staticmethod(refuse))
     expected_resumed = _snapshot_of_folder(fp)
+    # a stub left in the folder is filled from the store all the same
+    # (lazy_sections.py): the bytes today's open of the .jser writes for it
+    today_files = _today(fp, tmp_path, monkeypatch)["files"]
+    expected_resumed.pop(lazy_sections.MARKER)
+    for name, data in list(expected_resumed.items()):
+        if data.startswith(lazy_sections.MAGIC):
+            expected_resumed[name] = today_files[name]
     # the working folder: resumed as today
     series = _open(fp, notifier=_NoNotifier())
     try:

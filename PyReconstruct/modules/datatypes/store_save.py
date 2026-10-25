@@ -273,7 +273,20 @@ def _giveUp(series, held, err : Exception):
         _raiseIfBug(e)
         # left as it was, and its hash still names the last .jser it held:
         # an open reads it only for that file's bytes
+    fillStubs(series)
     release(series)
+
+
+def fillStubs(series):
+    """Before the series lets go of its store mid-session: fill its stubs
+    (lazy_sections.py). One that cannot be filled is noted in the log, and a
+    load or Save of it refuses later."""
+    from . import store_open
+
+    try:
+        series.presentAllSections()
+    except OSError as e:
+        store_open.log_note(f"Not every section of {os.path.basename(series.jser_fp)} was written out: {e}")
 
 
 def _commit(series, held, keys : dict, tail : dict, written):

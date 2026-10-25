@@ -638,10 +638,8 @@ class Section():
         self._columns = None
         self._column_rows : dict = {}
 
-        self.filepath = os.path.join(  # hidden trace file
-            self.series.getwdir(),
-            self.series.sections[n]
-        )
+        # hidden trace file, filled first if it is a stub (lazy_sections.py)
+        self.filepath = self.series.presentSection(n)
 
         self.selected_traces : list[Trace] = []
         self.selected_ztraces = []

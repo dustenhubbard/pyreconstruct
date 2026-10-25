@@ -463,6 +463,8 @@ class _StoreSource():
     ## The sections are stored as today's open writes them, after
     ## Section.updateJSON: the open writes them as they are
     migrated = True
+    ## sections the open writes a stub for (lazy_sections.py), not read here
+    skip : "set | frozenset" = frozenset()
 
     def __init__(self, store : HybridStore):
         self.store = store
@@ -481,6 +483,8 @@ class _StoreSource():
         # the open only writes each section (Series._unpackJser), so its
         # traces come as the file's bytes, not as lists (readSectionEncoded)
         for snum in self.snums:
+            if snum in self.skip:
+                continue
             try:
                 section_data = self.store.readSectionEncoded(snum)
             except (OSError, sqlite3.Error) as e:
@@ -505,6 +509,8 @@ class _WorkingFolderSource():
     """
 
     def __init__(self, series):
+        # only after an open from the .jser, which writes no stub
+        assert not series._lazy
         wdir = series.getwdir()
         self.files = {
             snum: os.path.join(wdir, fname) for snum, fname in sorted(series.sections.items())

@@ -31,7 +31,7 @@ from pathlib import Path
 import pytest
 
 from PyReconstruct.modules.backend.progress import NullProgressReporter
-from PyReconstruct.modules.datatypes import hybrid_store, network_folder, store_open
+from PyReconstruct.modules.datatypes import hybrid_store, lazy_sections, network_folder, store_open
 from PyReconstruct.modules.datatypes import section as section_module
 from PyReconstruct.modules.datatypes.hybrid_store import HybridStore, storePaths
 from PyReconstruct.modules.datatypes.series import Series
@@ -165,14 +165,22 @@ def _sections(data : SeriesData) -> dict:
 
 
 def _snapshot(series) -> dict:
-    """What an open gives: the working folder, the series, the object list."""
+    """What an open gives: the working folder, the series, the object list.
+
+    Every section file is filled first (an open from the store writes stubs,
+    lazy_sections.py), so the files are what the open's sections hold.
+    """
     wdir = series.getwdir()
     data = series.data
     getters = _getters(data)  # before anything builds the TraceData
+    series.presentAllSections()
     index = getattr(series, "_jser_splice_index", None)
     ids = data.object_ids
     return {
-        "files": {f: Path(wdir, f).read_bytes() for f in sorted(os.listdir(wdir))},
+        "files": {
+            f: Path(wdir, f).read_bytes() for f in sorted(os.listdir(wdir))
+            if f != lazy_sections.MARKER
+        },
         "sections_listed": dict(series.sections),
         "series": repr(series.getDict()),
         "obj_attrs": repr(series.obj_attrs),
@@ -858,6 +866,8 @@ def test_a_file_that_is_not_a_store_opens_as_today_and_is_left_as_it_was(tmp_pat
 def test_a_store_read_that_fails_partway_opens_as_today(error, tmp_path, switch_on, notes, monkeypatch):
     fp = _copy(SERIES_FILES[1], tmp_path / "s")
     _open(fp).close()
+    # every section read at open, as for one the store holds otherwise than its file
+    monkeypatch.setattr(lazy_sections, "stubs", lambda held: {})
     real = HybridStore.readSectionEncoded
     calls = []
 
@@ -894,6 +904,8 @@ def test_a_fault_in_the_store_code_is_raised_not_hidden(tmp_path, switch_on, not
 def test_an_sqlite_error_only_code_can_cause_is_raised_not_hidden(error, tmp_path, switch_on, notes, monkeypatch):
     fp = _copy(PARITY, tmp_path / "s")
     _open(fp).close()
+    # every section read at open, as for one the store holds otherwise than its file
+    monkeypatch.setattr(lazy_sections, "stubs", lambda held: {})
 
     def bug(self, snum, *a, **k):
         raise error("Incorrect number of bindings supplied")

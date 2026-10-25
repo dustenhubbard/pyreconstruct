@@ -24,8 +24,21 @@ a boundary in the product's own I/O, where the wrapper only waits:
 ``close-injected-jser-half-write`` is not a boundary: it forces half of the
 write that carries section 3 onto disk, as in tests/save_kill_child.py.
 
-``none`` runs to the end and prints ``SAVED``. A point that is never reached
-also ends in ``SAVED``, and the test fails on it.
+A ``lazy-`` point first closes the series the import kept, then reopens it
+from the store, which writes a stub for each section (lazy_sections.py), and
+goes on from there:
+
+  * during the reopen: with two stubs written in its folder, and with the
+    folder in place but its .ser not yet moved in;
+  * the first fill's file written and synced, not yet put over its stub;
+  * every edit in the working folder, the Save not run;
+  * the store Save's points above;
+  * right after the reopen, a Save As (as File > Save As does: move, then
+    Save) with two stubs filled.
+
+``none`` runs to the end and prints ``SAVED``; ``none-lazy`` does too, through
+the lazy reopen and a close. A point that is never reached also ends in
+``SAVED``, and the test fails on it.
 
 PySide6 cannot be imported here, so this process cannot reach the real
 application settings (QSettings); the settings it reads come from memory.
@@ -57,7 +70,7 @@ from PyReconstruct.modules.backend.notifier import NullNotifier  # noqa: E402
 from PyReconstruct.modules.backend.progress import NullProgressReporter  # noqa: E402
 from PyReconstruct.modules.constants import jser_format  # noqa: E402
 from PyReconstruct.modules.datatypes import Trace  # noqa: E402
-from PyReconstruct.modules.datatypes import hybrid_store, store_open, store_save  # noqa: E402
+from PyReconstruct.modules.datatypes import hybrid_store, lazy_sections, store_open, store_save  # noqa: E402
 from PyReconstruct.modules.datatypes.series import Series  # noqa: E402
 
 #: Every kill point, in the order the child reaches them.
@@ -71,9 +84,16 @@ POINTS = (
     "close-jser-before-rename",  # the new .jser complete and synced, not renamed
     "close-jser-after-rename",  # the new .jser in place, not yet recorded by the store
     "close-remove",  # the .jser written; the folder moved aside, two files removed there
+    "lazy-reopen-between-stubs",  # two stubs written in the reopen's own folder
+    "lazy-reopen-before-ser",  # the reopen's folder in place, its .ser not moved in
+    "lazy-fill-before-replace",  # the first fill written and synced, not over its stub
+    "lazy-edit-before-save",  # every edit in the working folder, the Save not run
+    "lazy-store-save-before-commit",  # as store-save-before-commit, after a lazy reopen
+    "lazy-store-save-after-commit",  # as store-save-after-commit, after a lazy reopen
+    "lazy-saveas-between-fills",  # after the reopen, Save As has filled two stubs
 )
 
-CONTROLS = ("none",)
+CONTROLS = ("none", "none-lazy")
 
 #: Sections edited before the Save, and the one still open in the window.
 EDITED = (0, 2, 4)
@@ -119,6 +139,7 @@ def armImport(point):
 
 
 def armSave(point):
+    name = point.removeprefix("lazy-")
     real_commit = store_save._commit
 
     def commit(*args, **kwargs):
@@ -127,7 +148,7 @@ def armSave(point):
             result = real_commit(*args, **kwargs)
         finally:
             _saving.clear()
-        if point == "store-save-after-commit":
+        if name == "store-save-after-commit":
             stop(point)
         return result
 
@@ -136,7 +157,7 @@ def armSave(point):
     real_pack = hybrid_store.packSection
 
     def pack(snum, section_data):
-        if point == "store-save-between-sections" and _saving and snum == CURRENT:
+        if name == "store-save-between-sections" and _saving and snum == CURRENT:
             stop(point)
         return real_pack(snum, section_data)
 
@@ -145,7 +166,7 @@ def armSave(point):
     real_exit = store_open._transaction.__exit__
 
     def exit_(self, exc_type, exc, tb):
-        if point == "store-save-before-commit" and _saving and exc_type is None:
+        if name == "store-save-before-commit" and _saving and exc_type is None:
             stop(point)
         return real_exit(self, exc_type, exc, tb)
 
@@ -206,6 +227,55 @@ def armClose(point, series):
         os.remove = os.unlink = unlink
 
 
+def armReopen(point):
+    real_stub = lazy_sections.writeStub
+    written = []
+
+    def write_stub(fp, stub):
+        if point == "lazy-reopen-between-stubs" and len(written) == 2:
+            stop(point)
+        real_stub(fp, stub)
+        written.append(fp)
+
+    lazy_sections.writeStub = write_stub
+
+    real_replace = os.replace
+
+    def replace(src, dst, *args, **kwargs):
+        moving_ser = os.path.basename(os.path.dirname(src)).startswith(".opening-") and dst.endswith(".ser")
+        if point == "lazy-reopen-before-ser" and moving_ser:
+            stop(point)
+        return real_replace(src, dst, *args, **kwargs)
+
+    os.replace = replace
+
+
+def armFill(point):
+    real_replace = atomic_io.replace_with_retry
+
+    def replace(src, dst, *args, **kwargs):
+        if str(src).endswith(lazy_sections.FILL_SUFFIX):
+            stop(point)
+        return real_replace(src, dst, *args, **kwargs)
+
+    atomic_io.replace_with_retry = replace
+
+
+def armSaveAs(point):
+    real_fill = lazy_sections.fill
+    filled = []
+
+    def fill(fp, *args, **kwargs):
+        if len(filled) == 2:
+            stop(point)
+        done = real_fill(fp, *args, **kwargs)
+        if done:
+            filled.append(fp)
+        return done
+
+    lazy_sections.fill = fill
+
+
 class _StoppingFile:
     """The .jser temp file, stopping halfway through one write when told to."""
 
@@ -235,11 +305,30 @@ def main(jser_fp, point):
 
     if point.startswith("import-"):
         armImport(point)
-    series = Series.openJser(jser_fp, progress=NullProgressReporter, notifier=NullNotifier())
-    series.setProgressReporter(NullProgressReporter)
-    series.setNotifier(NullNotifier())
+    series = open_series(jser_fp)
     if store_save.heldStore(series) is None:
         sys.exit("the open did not keep the series in its store")
+    lazy = point.startswith("lazy-") or point == "none-lazy"
+    if lazy:
+        # the next open comes from the store, and writes stubs
+        series.close()
+        armReopen(point)
+        series = open_series(jser_fp)
+        if not series._lazy or store_save.heldStore(series) is None:
+            sys.exit("the reopen did not come from the store with stubs")
+        if point == "lazy-fill-before-replace":
+            armFill(point)
+        if point == "lazy-saveas-between-fills":
+            # What MainWindow.saveAsToJser does, every section still a stub:
+            # move the series, then Save
+            armSaveAs(point)
+            other = os.path.join(os.path.dirname(jser_fp), "saved-as", os.path.basename(jser_fp))
+            os.makedirs(os.path.dirname(other))
+            series.move(other)
+            series.saveJser()
+            series.close()
+            print("SAVED", flush=True)
+            return
 
     # Edits, each section written to the working folder as it is left
     for snum in EDITED:
@@ -255,11 +344,14 @@ def main(jser_fp, point):
     edit(current, tag=1)
 
     print("SAVING", flush=True)
-    if point.startswith("store-save-"):
+    if point.removeprefix("lazy-").startswith("store-save-"):
         armSave(point)
     # What MainWindow.saveToJser does in store mode: saveAllData, then the store
     if current.isModified():
         current.save(update_series_data=False)
+    if point == "lazy-edit-before-save":
+        series.save()  # as saveAllData leaves the series file
+        stop(point)
     if not series.saveToStore():
         sys.exit("the Save did not go to the store")
     print("STORED", flush=True)
@@ -268,6 +360,13 @@ def main(jser_fp, point):
         armClose(point, series)
     series.close()
     print("SAVED", flush=True)
+
+
+def open_series(jser_fp):
+    series = Series.openJser(jser_fp, progress=NullProgressReporter, notifier=NullNotifier())
+    series.setProgressReporter(NullProgressReporter)
+    series.setNotifier(NullNotifier())
+    return series
 
 
 if __name__ == "__main__":
