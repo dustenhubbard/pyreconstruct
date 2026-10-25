@@ -261,6 +261,25 @@ def test_a_looping_clip_ends_on_its_first_screen_after_the_pointer_is_gone(tool,
     assert scene.cursor_opacity(0) == 0 and scene.cursor_opacity(0.5) == 1
 
 
+def test_a_loop_whose_camera_moves_ends_on_its_opening_frame(tool, tmp_path):
+    for name, color in (("a", (200, 60, 60)), ("b", (60, 200, 60))):
+        image = Image.new("RGB", (160, 90), color)
+        ImageDraw.Draw(image).rectangle((30, 30, 60, 50), fill=(250, 250, 250))  # detail to line up
+        image.save(tmp_path / f"{name}.png")
+    path = tmp_path / "moving.json"
+    # no fixed camera: the view follows the targets, zoomed in
+    path.write_text(json.dumps(tool.draft({
+        "size": [160, 90], "images": {"a": "a.png", "b": "b.png"}, "loop": True,
+        "steps": [{"image": "a", "click": [20, 20]}, {"image": "b", "click": [140, 70]}]})))
+    scene = tool.Scene(path)
+    assert scene.camera_at(scene.duration) == scene.camera_at(0)
+    assert len({scene.camera_at(i / 10) for i in range(int(scene.duration * 10))}) > 1
+    renderer = tool.Renderer(scene, 160)
+    first = renderer.frame(0).astype(int)
+    last = renderer.frame((tool.frame_count(scene) - 1) / scene.fps).astype(int)
+    assert abs(first - last).max() <= 2
+
+
 def test_a_loop_waits_for_a_slower_pointer_fade(tool, tmp_path):
     for name, color in (("a", (200, 60, 60)), ("b", (60, 200, 60)), ("c", (60, 60, 200))):
         Image.new("RGB", (160, 90), color).save(tmp_path / f"{name}.png")

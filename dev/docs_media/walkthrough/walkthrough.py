@@ -593,6 +593,9 @@ def draft(spec):
     t += st.get("end_dwell", 0)
     scene["cursor_fade_out"] = round(t + d["outro_delay"], 3)
     end = clamp(dict(spec["camera_end"])) if "camera_end" in spec else follow(cam, cursor, d["start_zoom"])
+    if spec.get("loop"):
+        # a loop ends on its opening view, so its first frame follows its last
+        end = {k: camera[0][k] for k in ("x", "y", "zoom")}
     key(t + 0.22, cam)
     key(t + 0.22 + d["outro"], end)
     duration = math.ceil((t + 0.22 + d["outro"] + d["tail"]) * 10) / 10
