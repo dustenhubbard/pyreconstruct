@@ -6,6 +6,7 @@ clicks, key badges, drags, strokes and looping endings.
 import importlib.util
 import json
 import math
+import random
 import shutil
 import subprocess
 import sys
@@ -342,6 +343,107 @@ def test_settled_counts_every_timed_element(tool, kind):
     scene = {"states": [{"time": 0, "image": "a"}], "moves": [], "clicks": [0.5], "keys": [],
              "camera": [{"time": 0, "x": 0, "y": 0, "zoom": 1}], "cursor_fade_out": 0.5, **late}
     assert tool.settled(scene, tool.STYLE) == pytest.approx(9)
+
+
+def stills(tmp_path, size=(160, 90)):
+    """Three plain stills, each with a light block, so any offset shows."""
+    for name, color in (("a", (200, 60, 60)), ("b", (60, 200, 60)), ("c", (60, 60, 200))):
+        image = Image.new("RGB", size, color)
+        ImageDraw.Draw(image).rectangle((30, 30, 60, 50), fill=(250, 250, 250))
+        image.save(tmp_path / f"{name}.png")
+
+
+def last_frame_time(tool, scene):
+    return (tool.frame_count(scene) - 1) / scene.fps
+
+
+def assert_loops_cleanly(tool, scene):
+    """The last frame matches the first, and nothing is still under way in it."""
+    last = last_frame_time(tool, scene)
+    image, previous, _ = scene.state_at(last)
+    assert image == scene.states[0]["image"] and previous is None
+    assert scene.keys_at(last) == []
+    assert scene.strokes_at(last) == []
+    assert not any(0 <= last - c < scene.style["ring_duration"] for c in scene.clicks)
+    assert scene.cursor_opacity(last) == 0
+    assert scene.camera_at(last) == scene.camera_at(0)
+    renderer = tool.Renderer(scene, scene.size[0])
+    first = renderer.frame(0).astype(int)
+    assert abs(first - renderer.frame(last).astype(int)).max() <= 2
+
+
+@pytest.mark.parametrize("kind", ["key badge", "stroke"])
+def test_a_loop_with_no_tail_ends_after_everything_has_finished(tool, tmp_path, kind):
+    # each ends exactly on the 0.1 s grid that durations are rounded to
+    stills(tmp_path)
+    if kind == "key badge":
+        last = {"image": "b", "click": [140, 70], "camera": STILL, "keys": "Right-click", "after": "a"}
+        timing = {"tail": 0, "key_hold": 2.04}
+    else:
+        last = {"image": "b", "drag": [[30, 30], [130, 30], [130, 70]], "camera": STILL,
+                "stroke": {"color": STROKE, "width": 2}, "after": "a", "after_fade": 1.93}
+        timing = {"tail": 0}
+    spec = {"size": [160, 90], "images": {"a": "a.png", "b": "b.png", "c": "c.png"},
+            "camera_start": STILL, "camera_end": STILL, "loop": True, "timing": timing,
+            "steps": [{"image": "a", "click": [20, 20], "camera": STILL}, last]}
+    path = tmp_path / "no-tail.json"
+    path.write_text(json.dumps(tool.draft(spec)))
+    assert_loops_cleanly(tool, tool.Scene(path))
+
+
+def random_loop(seed):
+    """A drafted loop scene made from `seed`: any mix of steps and timings."""
+    rng = random.Random(seed)
+
+    def at():
+        return [rng.randint(5, 155), rng.randint(5, 85)]
+
+    steps = []
+    for _ in range(rng.randint(1, 4)):
+        step = {"image": rng.choice("abc")}
+        kind = rng.choice(["click", "point", "drag"])
+        if kind == "drag":
+            path = [at() for _ in range(rng.randint(2, 4))]
+            path.append([path[0][0] + 7, path[0][1] + 3])  # some length, always
+            step.update(drag=path, drag_time=rng.choice([0.5, 1.0, 2.0]))
+            if rng.random() < 0.5:
+                step["stroke"] = {"color": [255, 0, 255], "width": 2}
+            if rng.random() < 0.3:
+                step["frames"] = rng.sample(["a", "b", "c"], rng.randint(1, 3))
+        else:
+            step[kind] = at()
+        if rng.random() < 0.4:
+            step["fade"] = rng.choice([True, 0.3, 1.0])
+        if rng.random() < 0.4:
+            step["keys"] = rng.choice(["⇧ Shift", "Right-click", "A"])
+        if rng.random() < 0.5:
+            step["camera"] = STILL
+        else:
+            step["zoom"] = rng.choice([1, 1.5, 2])
+        steps.append(step)
+    if rng.random() < 0.7:
+        steps[-1]["after"] = rng.choice("abc")
+        if rng.random() < 0.5:
+            steps[-1]["after_fade"] = rng.choice([0.2, 1.0, 1.93])
+    return {
+        "size": [160, 90], "images": {"a": "a.png", "b": "b.png", "c": "c.png"}, "steps": steps,
+        "loop": rng.choice([True, 0.3, 1.5]),
+        "timing": {"tail": rng.choice([0, 0, 0.1, 0.3]), "outro": rng.choice([0, 0.1, 0.5, 1.65]),
+                   "outro_delay": rng.choice([0, 0.37]), "key_hold": rng.choice([0.5, 2.04, 3])},
+        "style": {"cursor_fade": rng.choice([0.2, 0.4, 3]), "fps": rng.choice([10, 30, 60]),
+                  "ring_duration": rng.choice([0.45, 2])},
+    }
+
+
+def test_random_drafted_loops_end_on_their_opening_frame(tool, tmp_path):
+    stills(tmp_path)
+    for seed in range(48):
+        path = tmp_path / f"random-{seed}.json"
+        path.write_text(json.dumps(tool.draft(random_loop(seed))))
+        try:
+            assert_loops_cleanly(tool, tool.Scene(path))
+        except AssertionError as error:
+            raise AssertionError(f"seed {seed}: {random_loop(seed)}") from error
 
 
 def test_a_loop_waits_for_a_slower_pointer_fade(tool, tmp_path):

@@ -626,14 +626,19 @@ def draft(spec):
         # once everything else has finished the first screen fades back, so
         # the loop has no jump
         scene["cursor_fade_in"] = 0
+        style = {**STYLE, **spec.get("style", {})}
         done = settled({**scene, "states": states, "moves": moves, "clicks": clicks,
-                        "keys": keys, "camera": camera}, {**STYLE, **spec.get("style", {})})
-        duration = max(duration, math.ceil((done + d["tail"]) * 10) / 10)
+                        "keys": keys, "camera": camera}, style)
         if states[-1]["image"] != states[0]["image"]:
             fade = d["loop_fade"] if loop is True else loop
             at = round(done + 0.1, 3)
             states.append({"time": at, "image": states[0]["image"], "fade": fade})
-            duration = max(duration, math.ceil((at + fade + d["tail"]) * 10) / 10)
+            done = at + fade
+        # the last frame shows one frame before the end: it must come once
+        # everything has finished, tail or not
+        fps = int(style["fps"])
+        while (round(duration * fps) - 1) / fps < done + d["tail"] - 1e-9:
+            duration = round(duration + 0.1, 1)
     key(duration, end)
     scene.update(duration=duration, states=states, moves=moves, clicks=clicks, camera=camera)
     if keys:
