@@ -9,11 +9,20 @@ trace a section holds must move the store with it, through a Section method
 or through resyncColumnarStore().
 
 test_section_columnar_dual_write.py scans the source for a new direct edit
-site. The tests here drive the operations the application has, through
-Section, Series and the field, and after each one check the store against the
-object model, that the generation moved, and that the trace layer's bounds
-are the bounds of the live points. A direct edit is planted at the end to
-show that each of those checks fires.
+site. The tests here drive the operations the application has, in three
+groups, each checked with the instrument its path allows:
+
+- Section methods, a merge, and the field's smoothing, undo and redo act on
+  a section the test holds. After each, the store must match the object
+  model, its generation must have moved, and a trace layer's bounds must be
+  the bounds of the live points.
+- Series methods (smoothing an object, the self-crossing repair, copying
+  traces to sections) load and save each section themselves, and the save
+  rebuilds the store and reports any drift it finds. After each, no drift
+  report may appear and the reloaded points must show the edit.
+- A planted direct edit shows that the store check, the generation and the
+  cached bounds each see it, that resyncColumnarStore() clears it, and that
+  a save reports it and leaves a current store.
 """
 
 import numpy as np
@@ -143,6 +152,12 @@ def test_a_merge_from_another_magnification_moves_both_stores(real_series, secti
 
 
 # --- edits through Series, which save each section they touch ---------------
+#
+# These load their own Section objects and save them before returning, so the
+# generation and bounds of a section the test holds say nothing about them.
+# The save rebuilds the store and prints DRIFT when the store it replaces had
+# fallen behind the object model: a resync dropped from any of these paths
+# shows up there.
 
 def test_smoothing_an_object_leaves_no_drift_for_the_save_to_find(real_series, capsys):
     numbers = sorted(real_series.getObjectSections([OBJECT]))
@@ -267,7 +282,11 @@ def test_a_direct_edit_fails_each_check_until_the_store_is_resynced(section, lay
     _storeIsCurrent(section, layer, generation, "resyncColumnarStore")
 
 
-def test_the_save_reports_a_direct_edit(section, capsys):
+def test_the_save_reports_a_direct_edit_and_leaves_a_current_store(section, layer, capsys):
+    generation = section._columns.generation
     _editInPlace(_firstTrace(section))
+
     section.save()
+
     assert DRIFT in capsys.readouterr().err
+    _storeIsCurrent(section, layer, generation, "save")
