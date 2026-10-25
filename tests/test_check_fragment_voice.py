@@ -180,10 +180,41 @@ def test_rule_6_the_house_form_passes():
         "**The scale bar follows the zoom.** It is limited to `Scale bar size`.",
         # a key and an environment variable
         "**The 3D scene opens on Wayland.** It works without `QT_QPA_PLATFORM=xcb` or `B`.",
+        # alphabetic comparisons: no item is a menu
+        "**The view is clearer.** A value such as `A > B` is accepted.",
+        "**The view is clearer.** A step where new > Old is kept.",
     ],
 )
 def test_rule_6_ordinary_code_and_comparisons_pass(bullet):
     assert rules(bullet) == []
+
+
+@pytest.mark.parametrize(
+    "bullet, expected",
+    [
+        # items with a slash, a hyphen, a leading digit; the field context menu
+        ("**The view is clearer.** Open `Edit ▸ Brightness/contrast`.", ["in backticks"]),
+        ("**The view is clearer.** Open `View ▸ Show z-traces`.", ["in backticks"]),
+        ("**The view is clearer.** Open `Series ▸ 3D ▸ Load 3D scene`.", ["in backticks"]),
+        ("**The view is clearer.** Open Series ▸ Brightness/contrast profiles...", ['"..."']),
+        ("**Traces keep their hosts.** Right-click and choose `Trace` > `Set hosts`.", ['">"', "in backticks"]),
+        # a submenu name, not a top-level menu, is enough
+        ("**A 4D zarr opens.** `New series` > `From neuroglancer zarr...` reads it.", ['">"', "in backticks", '"..."']),
+        # the menu name need not be the first word of the item
+        ("**The scale bar is thinner.** The Series > Options page sets it.", ['">"']),
+    ],
+)
+def test_rule_6_real_menu_labels_are_recognized(bullet, expected):
+    findings = [m for r, m in voice.check_bullet(bullet) if r == 6]
+    assert len(findings) == len(expected), findings
+    for message, marker in zip(findings, expected):
+        assert marker in message, (message, marker)
+
+
+def test_menu_labels_come_from_the_menubar():
+    labels = voice.menu_labels()
+    assert {"File", "Series", "View", "Help", "New series", "3D", "Trace", "Object"} <= labels
+    assert voice.menu_labels(files=()) == voice.FALLBACK_MENUS
 
 
 # Shapes that look like a break and are not.

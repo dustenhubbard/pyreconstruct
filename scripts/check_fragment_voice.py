@@ -14,10 +14,13 @@ reader. The numbers are the README's.
      between the items, not in backticks, and no "..." after an item.
 
 Code spans are left out of the sentence count and the "Before," search, so a
-path like ``a.b/c.png`` is not a sentence break. For rule 6 a menu path is text
-in menu-path shape: capitalized items around a separator, an item ending in
-"...", or a backticked capitalized item ending in "...". A comparison such as
-``15 > 10`` or a file name such as ``a...b.png`` is not one.
+path like ``a.b/c.png`` is not a sentence break. For rule 6 a menu path is two
+or more items joined by ``▸`` or ``>``, one of which is a menu or submenu name
+PyReconstruct's menubar or field context menu defines (read from
+``gui/main/menubar.py`` and ``gui/main/context_menu_list.py``); items may hold
+slashes, hyphens and digits (``Brightness/contrast``, ``Show z-traces``, ``3D``).
+A lone backticked item ending in "..." also counts. A comparison such as
+``15 > 10`` or ``A > B``, or a file name such as ``a...b.png``, is not a path.
 
 Each finding is one line, ``path:line: rule N: what, and the fix``, plus a
 GitHub annotation on that line of the fragment when run in Actions. A fragment
@@ -40,6 +43,7 @@ Stdlib only, so this runs with no project environment at all.
 """
 
 import argparse
+import ast
 import os
 import re
 import sys
@@ -70,30 +74,86 @@ BEFORE_RE = re.compile(r"(?:^|[.!?]\s+|\*\*\s*)Before,")
 
 THE_APP_RE = re.compile(r"\bthe app\b", re.IGNORECASE)
 
-# Rule 6 patterns. A menu item is a capitalized word run, optionally in
-# backticks, optionally ending in "...": `Options`, Options..., `Save as...`.
+ROOT = Path(__file__).resolve().parents[1]
+MENU_FILES = (
+    ROOT / "PyReconstruct/modules/gui/main/menubar.py",
+    ROOT / "PyReconstruct/modules/gui/main/context_menu_list.py",
+)
+# The menus and submenus, for a checkout without the package (a tag export).
+FALLBACK_MENUS = frozenset({
+    "File", "Edit", "Series", "Section", "Lists", "Alignments", "Autosegment",
+    "View", "Help", "Trace", "Object", "Ztrace", "New series", "Options", "3D",
+})
+
+# Rule 6 patterns. A menu item is a run of words that may hold slashes,
+# hyphens, digits and apostrophes (Brightness/contrast, Show z-traces, 3D),
+# optionally in backticks, optionally ending in "...". A path is two or more
+# items joined by the house separator or ">".
 ELLIPSIS = r"(?:\.\.\.|…)"
-ITEM = r"[A-Z][A-Za-z0-9'’]*(?:[ ][A-Za-z0-9'’#{}]+)*"
-# ">" as the separator between two items: a letter or an ellipsis before it,
-# a capitalized item after it. "15 > 10" has digits on both sides.
-GT_SEPARATOR_RE = re.compile(r"(?:[A-Za-z]|" + ELLIPSIS + r")`?\s>\s`?[A-Z]")
-# A code span that is a menu path: a path with a separator inside the
-# backticks, or a lone capitalized item ending in "...".
-CODE_MENU_RE = re.compile(
-    r"`" + ITEM + ELLIPSIS + r"?(?:\s*(?:▸|>)\s*" + ITEM + ELLIPSIS + r"?)+`"
-    r"|`" + ITEM + ELLIPSIS + r"`"
-)
-# Backticked items joined by a separator: `File` ▸ `Save as`, `Help` > `What's new`.
-CODE_AROUND_SEP_RE = re.compile(
-    r"`\s*▸|▸\s*`|`" + ITEM + ELLIPSIS + r"?`\s>\s`" + ITEM
-)
-# "..." on a menu item: before a separator (Options... ▸ View), after one
-# (▸ View log file...), or on a lone backticked item (CODE_MENU_RE above).
-ELLIPSIS_ON_ITEM_RE = re.compile(
-    ELLIPSIS + r"`?\s*(?:▸|>)\s`?[A-Z]"
-    r"|(?:▸|(?:[A-Za-z]|" + ELLIPSIS + r")`?\s>)\s*`?" + ITEM + ELLIPSIS
-)
+ITEM_CHARS = r"[A-Za-z0-9'’/#{}&+-]"
+ITEM = ITEM_CHARS + r"+(?: " + ITEM_CHARS + r"+)*"
+PATH_ITEM = r"`?" + ITEM + ELLIPSIS + r"?`?"
+PATH_RE = re.compile(PATH_ITEM + r"(?:\s*(?:▸|>)\s*" + PATH_ITEM + r")+")
+SEP_SPLIT_RE = re.compile(r"\s*(?:▸|>)\s*")
+# A lone backticked item ending in "...": a menu item written the old way.
 CODE_ITEM_ELLIPSIS_RE = re.compile(r"`" + ITEM + ELLIPSIS + r"`")
+
+
+def menu_labels(files=MENU_FILES):
+    """Every menu and submenu name the menubar and field context menu define.
+
+    Read as data from the ``"text"`` entries of the menu dicts, without
+    importing Qt. The fallback set stands in when the files are not there.
+    """
+    labels = set()
+    for path in files:
+        if not path.exists():
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.Dict):
+                continue
+            for key, value in zip(node.keys, node.values):
+                if (
+                    isinstance(key, ast.Constant) and key.value == "text"
+                    and isinstance(value, ast.Constant) and isinstance(value.value, str)
+                ):
+                    labels.add(value.value)
+    return frozenset(labels) if labels else FALLBACK_MENUS
+
+
+_MENU_LABELS = None
+
+
+def _menus():
+    global _MENU_LABELS
+    if _MENU_LABELS is None:
+        _MENU_LABELS = {label.lower() for label in menu_labels()}
+    return _MENU_LABELS
+
+
+def _items(path_text):
+    """The items of a matched path, backticks and "..." removed."""
+    return [
+        re.sub(ELLIPSIS, "", item.strip("`")).strip()
+        for item in SEP_SPLIT_RE.split(path_text)
+    ]
+
+
+def menu_paths(text):
+    """Each run of items joined by ``▸`` or ``>`` that names a known menu.
+
+    An item counts as known when it is a menu or submenu label, or one of its
+    words is; ``A > B`` and ``new > Old`` name none and are left alone.
+    """
+    menus = _menus()
+    found = []
+    for match in PATH_RE.finditer(text):
+        for item in _items(match.group(0)):
+            words = item.lower().split()
+            if item.lower() in menus or any(word in menus for word in words):
+                found.append(match.group(0))
+                break
+    return found
 
 
 def is_fragment(path):
@@ -178,11 +238,12 @@ def check_bullet(text):
         findings.append((5, 'says "the app"; write "PyReconstruct"'))
 
     # Rule 6: one menu-path form.
-    if GT_SEPARATOR_RE.search(text):
+    paths = menu_paths(text)
+    if any(">" in path for path in paths):
         findings.append((6, f'menu path uses ">"; write it as {HOUSE_FORM}'))
-    if CODE_MENU_RE.search(text) or CODE_AROUND_SEP_RE.search(text):
+    if any("`" in path for path in paths) or CODE_ITEM_ELLIPSIS_RE.search(text):
         findings.append((6, f"menu path in backticks; write it plain, {HOUSE_FORM}"))
-    if ELLIPSIS_ON_ITEM_RE.search(text) or CODE_ITEM_ELLIPSIS_RE.search(text):
+    if any(re.search(ELLIPSIS, path) for path in paths) or CODE_ITEM_ELLIPSIS_RE.search(text):
         findings.append((6, f'menu path ends an item with "..."; drop it, {HOUSE_FORM}'))
 
     return findings
