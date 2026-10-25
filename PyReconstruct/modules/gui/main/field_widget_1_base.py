@@ -19,6 +19,7 @@ from PySide6.QtCore import (
 
 from PyReconstruct.modules.datatypes import Series, Section, Trace, Transform
 from PyReconstruct.modules.backend.view import SectionLayer, ZarrLayer
+from PyReconstruct.modules.backend.view.image_layer import dropReadAhead
 from PyReconstruct.modules.backend.view.trace_layer import traceInRoiBox
 from PyReconstruct.modules.backend.func import SeriesStates
 from PyReconstruct.modules.backend.table import TableManager
@@ -155,6 +156,10 @@ class FieldWidgetBase:
         """
         self.series = series
         series.setPassWriteHook(self.refreshPassWrite)
+
+        ## An image read ahead for the series before this one is of no use
+        ## to it, and must not outlive it
+        dropReadAhead()
 
         ## Initialize hover columns from series option
         from PyReconstruct.modules.gui.dialog.hover_columns import HoverColumnsDialog
@@ -637,6 +642,10 @@ class FieldWidgetBase:
             else:
                 self.section.selected_traces = []
 
+            # the next change is most often one more step the same way:
+            # read that section's image while this one is on the screen
+            self.readAheadImage(new_section_num - self.b_section.n)
+
         # create section undo/redo state object if needed
         states = self.series_states[new_section_num]
         if not states.initialized:
@@ -661,6 +670,23 @@ class FieldWidgetBase:
         # generate view and update status bar
         self.generateView()
     
+    def readAheadImage(self, direction : int) -> None:
+        """Start reading the image of the section one step from this one.
+
+        The read runs on its own thread (ImageLayer.readAhead); the change
+        to that section then finds its image decoded.
+
+            Params:
+                direction (int): forward (positive) or back (negative) in
+                    section order
+        """
+        if not direction:
+            return
+        snums = sorted(self.series.sections)
+        i = snums.index(self.section.n) + (1 if direction > 0 else -1)
+        if 0 <= i < len(snums):
+            self.section_layer.readAhead(snums[i])
+
     def reload(self, clear_states=False) -> None:
         """Reload the section data (used if section files were modified, usually through object list).
         

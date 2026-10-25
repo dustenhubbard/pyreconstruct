@@ -1,5 +1,6 @@
 import os
 import math
+import threading
 
 import zarr
 import numpy as np
@@ -68,7 +69,11 @@ class ImageLayer():
         # if saved as normal images
         else:
             src_path = self.section.src_fp
-            self.image = QImage(src_path)
+            # the image read ahead for this section, when there is one and
+            # the file is still the one it was read from; else read it now
+            self.image = _READ_AHEAD.take(src_path)
+            if self.image is None:
+                self.image = QImage(src_path)
             if self.image.isNull():
                 self.image_found = False
             else:
@@ -83,6 +88,29 @@ class ImageLayer():
                 # premultiplied at full depth first
                 self._draw_image = _drawableImage(loaded, self.image)
                 self._pixels = _PixelView(self._draw_image)
+
+    def readAhead(self, section_num : int) -> None:
+        """Start reading another section's image, for a change to it later.
+
+        A section change decodes the whole image file of the section it
+        opens, on the thread that draws. Reading the next section's file on
+        another thread while this section is on the screen takes that wait
+        out of the change (Qt lets go of the interpreter lock while it
+        decodes, so the read overlaps whatever else runs). The image is kept
+        in one place, _READ_AHEAD, and loadImage takes it when that section
+        is opened, if the file is still the one that was read. Nothing is
+        read ahead for a zarr: its arrays open by scale as the view asks.
+
+            Params:
+                section_num (int): the section whose image to read
+        """
+        if self.is_zarr_file:
+            return
+        data = self.series.data["sections"].get(section_num)
+        src = data.get("src") if data else None
+        if not src:
+            return
+        _READ_AHEAD.start(os.path.join(self.series.src_dir, src))
 
     def _openScale(self, scale : int):
         """This section's zarr image at one scale, opened read-only.
@@ -461,6 +489,120 @@ def _blank(w : int, h : int) -> QImage:
     image = QImage(w, h, QImage.Format.Format_ARGB32_Premultiplied)
     image.fill(Qt.black)
     return image
+
+
+def _fileStamp(path : str):
+    """What tells one version of a file from another, or None when the file
+    cannot be stat'ed: size, modification and change times, inode and device.
+    A replacement file has another inode; a rewrite in place moves the change
+    time, which nothing but the system clock sets."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_ino, st.st_dev
+
+
+class _ReadAhead:
+    """The one image file read before its section is opened.
+
+    `start` asks for a file; one worker thread reads it and holds the image
+    until `take` hands it to the loader of that file. One read at a time and
+    one image held: a start on another file replaces the request, a request
+    replaced before the worker reaches it is never read, and a read that
+    finishes for a replaced request is dropped. `drop` empties the slot (a
+    series closed or changed): a read under way then finishes into nothing,
+    and nothing waits for it. The image is handed over only when the file's
+    stamp was the same before and after the read and is still the same at the
+    hand-over, so a file replaced on disk in between is read again.
+    """
+
+    def __init__(self):
+        self._cond = threading.Condition()
+        self._wanted = None   # the path asked for last: pending, under way, or held
+        self._result = None   # (stamp, QImage or None) once the read of _wanted finished
+        self._worker = None   # the one thread, alive while there is a read to make
+
+    def start(self, path : str) -> None:
+        """Ask for the image at path, unless it is the one asked for already."""
+        with self._cond:
+            if path == self._wanted:
+                return
+            self._wanted = path
+            self._result = None
+            if self._worker is None or not self._worker.is_alive():
+                self._worker = threading.Thread(
+                    target=self._run, name="image-read-ahead", daemon=True,
+                )
+                self._worker.start()
+
+    def _run(self) -> None:
+        while True:
+            with self._cond:
+                path = self._wanted
+                if path is None or self._result is not None:
+                    # done, under the lock: a start that comes next sees no
+                    # worker and makes one, and no take waits on this one
+                    self._worker = None
+                    self._cond.notify_all()
+                    return
+            try:
+                result = self._read(path)
+            except Exception:
+                result = (None, None)
+            with self._cond:
+                if self._wanted == path:
+                    self._result = result
+                self._cond.notify_all()
+            # the slot holds the image now, or no one does: this thread must
+            # not keep a replaced image alive through the next read
+            del result
+
+    @staticmethod
+    def _read(path : str):
+        before = _fileStamp(path)
+        image = QImage(path) if before is not None else None
+        if image is not None and (image.isNull() or _fileStamp(path) != before):
+            image = None
+        return before, image
+
+    def take(self, path : str):
+        """The image read ahead for path, or None.
+
+        Waits for the read of path when it is under way or pending. A request
+        for another file is left where it is: a layer built for some other
+        purpose (a snap, the brightness and contrast optimizer) must not cost
+        the next section change its image. The next start replaces it.
+        """
+        with self._cond:
+            if path != self._wanted:
+                return None
+            while (self._result is None and self._wanted == path
+                   and self._worker is not None):
+                self._cond.wait()
+            result = self._result if self._wanted == path else None
+            self._wanted = self._result = None
+        if result is None:
+            return None
+        stamp, image = result
+        if image is None or _fileStamp(path) != stamp:
+            return None
+        return image
+
+    def drop(self) -> None:
+        """Forget the request and the image held. A read under way is not
+        waited for; its result is dropped when it finishes."""
+        with self._cond:
+            self._wanted = self._result = None
+            self._cond.notify_all()
+
+
+_READ_AHEAD = _ReadAhead()
+
+
+def dropReadAhead() -> None:
+    """Forget any image read ahead: the series it was for closed or changed."""
+    _READ_AHEAD.drop()
 
 
 _BYTE_FORMATS = (QImage.Format.Format_Grayscale8, QImage.Format.Format_Indexed8)
