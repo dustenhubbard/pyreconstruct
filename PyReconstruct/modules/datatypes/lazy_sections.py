@@ -35,6 +35,7 @@ than reading a series short a section.
 
 import json
 import os
+import re
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -160,8 +161,21 @@ def attach(series, snums):
 ## reading a stub, and filling it
 ## ---------------------------------------------------------------------------
 
+## What a stub may hold: anything else is a stub that cannot be read
+STUB_MAX_BYTES = 64 << 10
+SNUM_LIMIT = 1 << 31
+OFFSET_LIMIT = (1 << 63) - 1
+_STORE_NAME = re.compile(r"[0-9a-f]{16}\.v[0-9]+\.pyrstore")
+_KEY = re.compile(r"[0-9a-f]{64}")
+
+
 def readStub(fp : str):
     """The stub at fp, or None when fp is a section file.
+
+    Every field is checked against what an open writes: the section number,
+    the same as the file's, below SNUM_LIMIT; the key, a sha256 in hex; the
+    store, a store's file name; the range, null or a start and a length that
+    end within OFFSET_LIMIT.
 
         Raises:
             SectionUnavailable: the file starts as a stub but the rest cannot
@@ -171,24 +185,38 @@ def readStub(fp : str):
         head = f.read(len(MAGIC))
         if head != MAGIC:
             return None
-        body = f.read()
+        body = f.read(STUB_MAX_BYTES + 1)
     try:
-        stub = json.loads(body)
-        rng = stub.get("range")
-        ok = (
-            type(stub["snum"]) is int and isinstance(stub["store"], str)
-            and stub["store"] == os.path.basename(stub["store"])
-            and len(bytes.fromhex(stub["key"])) == 32
-            and (rng is None or (
-                isinstance(rng, list) and len(rng) == 2
-                and all(type(n) is int and n >= 0 for n in rng)
-            ))
-        )
-    except (ValueError, TypeError, KeyError, AttributeError):
-        ok = False
-    if not ok:
+        stub = json.loads(body) if len(body) <= STUB_MAX_BYTES else None
+    except (ValueError, RecursionError):
+        stub = None
+    if not _validStub(stub, fp):
         raise SectionUnavailable(f"{os.path.basename(fp)} is a stub that cannot be read")
     return stub
+
+
+def _isCount(value, limit : int) -> bool:
+    return type(value) is int and 0 <= value < limit
+
+
+def _validStub(stub, fp : str) -> bool:
+    if type(stub) is not dict:
+        return False
+    snum, key, store, rng = (stub.get(k) for k in ("snum", "key", "store", "range"))
+    ext = fp.rpartition(".")[2]
+    if not (_isCount(snum, SNUM_LIMIT) and ext.isdigit() and ext.isascii() and int(ext) == snum):
+        return False
+    if not (type(key) is str and _KEY.fullmatch(key)):
+        return False
+    if not (type(store) is str and _STORE_NAME.fullmatch(store)):
+        return False
+    if rng is None:
+        return True
+    return (
+        type(rng) is list and len(rng) == 2
+        and _isCount(rng[0], OFFSET_LIMIT) and _isCount(rng[1], OFFSET_LIMIT)
+        and rng[0] + rng[1] <= OFFSET_LIMIT
+    )
 
 
 class _Reader(HybridStore):
@@ -235,6 +263,9 @@ def _fromRange(path : str, rng) -> "bytes | None":
     offset, length = rng[0], rng[1]
     try:
         with open(path, "rb") as f:
+            # a range past the file's end holds no section
+            if offset + length > os.fstat(f.fileno()).st_size:
+                return None
             f.seek(offset)
             data = f.read(length)
     except OSError:

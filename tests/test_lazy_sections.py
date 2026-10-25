@@ -10,6 +10,7 @@ import hashlib
 import io
 import json
 import os
+import random
 import shutil
 import sqlite3
 import subprocess
@@ -875,3 +876,141 @@ def test_a_bad_stub_in_a_resumed_folder_sets_it_aside_whole(tmp_path, switch_on,
     aside = [p for p in wdir.parent.iterdir() if p.name.startswith(f"{wdir.name}.lazy-")]
     assert len(aside) == 1 and {p.name: p.read_bytes() for p in aside[0].iterdir()} == before
     assert len(asker.told) == 1
+
+
+def _damaged_stubs(valid : dict) -> list:
+    """(name, bytes) for many stubs that keep the first line and damage the rest.
+
+    Every field missing, or set to a wrong type, a huge, negative or boundary
+    value; bodies that are not an object; and random bytes. Some values are
+    still valid for their field (a stub may stay readable): what a caller
+    must never do is fail with anything but a refusal.
+    """
+    values = [
+        None, True, False, 0, 1, -1, 2**31 - 1, 2**31, 2**63 - 1, 2**63, 2**64, -(2**63), 10**100,
+        1.5, float("nan"), float("inf"), "", "1", "x", "0" * 64, "zz" * 32, "AB" * 32, "../x", "/abs",
+        ".", "..", [], [0], [0, 1], [0, 1, 2], [-1, 1], [1, -1], [2**63, 1], [0, 2**63], [2**64, 1],
+        [0, 2**64], [2**63 - 1, 1], [2**62, 2**62], ["0", "1"], [True, 1], [1.0, 1], {}, {"a": 1},
+    ]
+    cases = []
+    for field in ("snum", "key", "store", "range"):
+        cases.append((f"{field}-missing", {k: v for k, v in valid.items() if k != field}))
+        cases += [(f"{field}={v!r}"[:60], {**valid, field: v}) for v in values]
+    # the store gone, so the range is what the fill reads
+    gone = {**valid, "store": "0" * 16 + ".v1.pyrstore"}
+    cases += [(f"no-store-range={v!r}"[:60], {**gone, "range": v}) for v in values]
+    cases += [("no-store-range-past-end", {**gone, "range": [0, 2**62]})]
+    cases = [(name, json.dumps(doc).encode()) for name, doc in cases]
+    cases += [
+        ("list", b"[]"), ("number", b"1"), ("null", b"null"), ("string", b'"x"'), ("empty", b""),
+        ("open-brace", b"{"), ("not-utf-8", b"\xff\xfe{}"), ("deep", b"[" * 200_000),
+        ("too-long", json.dumps({**valid, "pad": "x" * 70_000}).encode()),
+    ]
+    rng = random.Random(329)
+    cases += [(f"random-{i}", rng.randbytes(rng.randint(0, 300))) for i in range(40)]
+    return [(name, lazy_sections.MAGIC + body) for name, body in cases]
+
+
+def _snapshot_dirs(*dirs):
+    """The files directly in each folder (a store makes its .work folder again)."""
+    return {d: {p.name: p.read_bytes() for p in d.iterdir() if p.is_file()} for d in dirs}
+
+
+def _restore_dirs(snapshot):
+    for d, files in snapshot.items():
+        shutil.rmtree(d, ignore_errors=True)
+        d.mkdir()
+        for name, data in files.items():
+            (d / name).write_bytes(data)
+
+
+def test_damaged_stubs_in_a_folder_by_another_path_never_stop_the_open(tmp_path, switch_on, monkeypatch):  # noqa: F811
+    src = _kept(_copy(PARITY, tmp_path / "original"))
+    eager = _today(src, tmp_path, monkeypatch)["files"][f"{src.stem}.1"]
+    alias, folder, _ = _left_by_a_link(src, tmp_path)
+    stub_fp = folder / f"{alias.stem}.1"
+    pristine = _snapshot_dirs(folder, Path(switch_on))
+    saved = src.read_bytes()
+    wrong = []
+    for name, data in _damaged_stubs(lazy_sections.readStub(str(stub_fp))):
+        _restore_dirs(pristine)
+        stub_fp.write_bytes(data)
+        before = {p.name: p.read_bytes() for p in folder.iterdir()}
+        try:
+            second = _open(src)
+        except BaseException as e:  # noqa: BLE001  (named below)
+            wrong.append((name, repr(e)))
+            continue
+        try:
+            if store_save.heldStore(second) is None:
+                ok = {p.name: p.read_bytes() for p in folder.iterdir()} == before
+            else:
+                ok = stub_fp.read_bytes() == eager and lazy_sections.MARKER not in os.listdir(folder)
+            ok = ok and second.loadSection(0).thickness == 0.05 and src.read_bytes() == saved
+        finally:
+            second.close()
+        if not ok:
+            wrong.append((name, "folder or .jser changed"))
+    assert wrong == []
+
+
+def test_damaged_stubs_in_this_session_fail_only_their_load(tmp_path, switch_on, monkeypatch):  # noqa: F811
+    fp = _kept(_copy(PARITY, tmp_path / "s"))
+    eager = _today(fp, tmp_path, monkeypatch)["files"][f"{fp.stem}.1"]
+    series = _open(fp)
+    stub_fp = Path(series.getwdir(), series.sections[1])
+    valid = lazy_sections.readStub(str(stub_fp))
+    series.close()
+    wrong = []
+    for name, data in _damaged_stubs(valid):
+        series = _open(fp)
+        try:
+            stub_fp.write_bytes(data)
+            try:
+                series.loadSection(1)
+                ok = stub_fp.read_bytes() == eager
+            except lazy_sections.SectionUnavailable:
+                ok = stub_fp.read_bytes() == data
+            except BaseException as e:  # noqa: BLE001  (named below)
+                ok = repr(e)
+        finally:
+            series.close()
+        if ok is not True:
+            wrong.append((name, ok))
+    assert wrong == []
+
+
+def test_damaged_stubs_in_a_resumed_folder_set_it_aside_or_resume_whole(tmp_path, switch_on, monkeypatch):  # noqa: F811
+    fp = _kept(_copy(PARITY, tmp_path / "s"))
+    eager = _today(fp, tmp_path, monkeypatch)["files"][f"{fp.stem}.0"]
+    series = _open(fp)
+    wdir = Path(series.getwdir())
+    stub_fp = wdir / series.sections[0]
+    valid = lazy_sections.readStub(str(stub_fp))
+    _crash(series)
+    pristine = _snapshot_dirs(wdir, Path(switch_on))
+    monkeypatch.delenv(store_open.ENV_SWITCH)
+    wrong = []
+    for name, data in _damaged_stubs(valid):
+        _restore_dirs(pristine)
+        for aside in wdir.parent.glob(f"{wdir.name}.lazy-*"):
+            shutil.rmtree(aside)
+        stub_fp.write_bytes(data)
+        before = {p.name: p.read_bytes() for p in wdir.iterdir()}
+        asker = _Quiet()
+        try:
+            opened = _open(fp, notifier=asker)
+        except BaseException as e:  # noqa: BLE001  (named below)
+            wrong.append((name, repr(e)))
+            continue
+        try:
+            aside = list(wdir.parent.glob(f"{wdir.name}.lazy-*"))
+            if aside:
+                ok = len(aside) == 1 and {p.name: p.read_bytes() for p in aside[0].iterdir()} == before
+            else:
+                ok = Path(opened.getwdir()) == wdir and stub_fp.read_bytes() == eager
+        finally:
+            opened.close()
+        if not ok:
+            wrong.append((name, "set aside changed, or resumed with other bytes"))
+    assert wrong == []
