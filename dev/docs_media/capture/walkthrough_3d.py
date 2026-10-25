@@ -18,10 +18,10 @@ What this makes, in <folder>:
 
 How it shoots, and what is pinned, is capture.py's: the theme, username,
 isolated settings and tripwire, and QWidget.grab() of the live window. Three
-things differ. The series is neurites.py's, a dendrite with a spine, an axon
-and a glial process, written fresh for each run. The main window is 1920 x 1080 logical
-pixels, so a frame is 3840 x 2160 on a 2x screen, the size the video tool
-zooms into. And the last frame puts the 3D scene window over the main
+things differ. The series is neurites.py's, a dendrite with a spine, an
+axon and an astroglial process, written fresh for each run. The main window
+is 1920 x 1080 logical pixels, so a frame is 3840 x 2160 on a 2x screen, the
+size the video tool zooms into. And the last frame puts the 3D scene window over the main
 window, the way the two sit on screen, since one grab holds one window.
 
 Made-up data only. No lab data, no file dialog, no recent-files list.
@@ -60,7 +60,7 @@ SCENE_SIZE = (1100, 720)
 SCENE_AT = (1060, 300)
 SHADOW = 36  # native pixels of soft shadow around the scene window
 # the Object list's rows, in its order; the video selects them all
-OBJECTS = ["a01", "d01", "d01s01", "g01"]
+OBJECTS = ["ast01", "ax01", "d01", "d01sp01"]
 RIGHT_CLICK = "d01"
 VIEW_MARGIN = 0.12  # of the image, on each side
 

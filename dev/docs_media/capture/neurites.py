@@ -6,12 +6,13 @@ Writes neurites.jser and one image per section into <folder>. Nothing in it is
 lab data: every shape is drawn here from a formula, and the images are drawn
 from the same shapes, so each trace follows the outline it sits on.
 
-The four objects stand for what the app is mostly used to trace:
+The four objects stand for what the app is mostly used to trace, named the
+way the lab names them (d dendrite, sp spine, ax axon, ast astroglia):
 
   * d01, a dendrite: a tube that runs at a slant through the sections;
-  * d01s01, a spine on it: a thin neck and a round head (ball and stick);
-  * a01, an axon: a thin string with three swellings (beads on a string);
-  * g01, a glial process: a thin curved sheet beside the dendrite.
+  * d01sp01, a spine on it: a thin neck and a round head (ball and stick);
+  * ax01, an axon: a thin string with three swellings (beads on a string);
+  * ast01, an astroglial process: a thin curved sheet beside the dendrite.
 
 The output depends on nothing but this file, so a rerun gives the same series.
 """
@@ -31,7 +32,7 @@ CODE = "neuro"
 PALETTE = json.loads((Path(__file__).resolve().parents[2] / "assets" / "checker" / "files"
                       / "shapes1.jser").read_text())["series"]
 
-COLORS = {"d01": [255, 170, 0], "d01s01": [255, 0, 255], "a01": [0, 190, 255], "g01": [0, 200, 90]}
+COLORS = {"d01": [255, 170, 0], "d01sp01": [255, 0, 255], "ax01": [0, 190, 255], "ast01": [0, 200, 90]}
 
 
 def circle(cx, cy, r, n=64, wobble=0.0, phase=0.0):
@@ -75,17 +76,17 @@ def shapes(k):
         s = math.sqrt(1 - ((k - head_mid) / head_half) ** 2)
         hx, hy, hr = dx + dr + 0.55, dy - 0.05, 0.27 * s
         if abs(k - head_mid) <= 1:
-            out["d01s01"] = [ball_and_stick(dx + math.sqrt(dr ** 2 - (hy - dy) ** 2) - 0.02, hx, hy, hr, 0.05)]
+            out["d01sp01"] = [ball_and_stick(dx + math.sqrt(dr ** 2 - (hy - dy) ** 2) - 0.02, hx, hy, hr, 0.05)]
         else:
-            out["d01s01"] = [circle(hx, hy, hr, n=48)]
+            out["d01sp01"] = [circle(hx, hy, hr, n=48)]
 
     # the axon: thin, with three swellings along its length
     u = k / (SECTIONS - 1)
     ax, ay = 3.55 - 0.45 * u, 0.55 + 0.3 * u
     r = 0.075 + sum(0.2 * math.exp(-((k - c) / 2.6) ** 2) for c in (6, 20, 33))
-    out["a01"] = [circle(ax, ay, r, n=48)]
+    out["ax01"] = [circle(ax, ay, r, n=48)]
 
-    # the glial process: a thin band around the dendrite's upper left
+    # the astroglial process: a thin band around the dendrite's upper left
     start = math.radians(95 + 20 * math.sin(k / 7))
     span = math.radians(110 + 25 * math.cos(k / 9))
     inner, outer = dr + 0.09, dr + 0.17 + 0.03 * math.sin(k / 5)
@@ -93,7 +94,7 @@ def shapes(k):
     arc = [start + span * i / n for i in range(n + 1)]
     band = [(dx + outer * math.cos(t), dy + outer * math.sin(t)) for t in arc]
     band += [(dx + inner * math.cos(t), dy + inner * math.sin(t)) for t in reversed(arc)]
-    out["g01"] = [band]
+    out["ast01"] = [band]
     return out
 
 
@@ -109,25 +110,25 @@ def draw_image(polygons, path, rng):
 
     ground = rng.normal(118, 14, (h // 8, w // 8)).clip(0, 255).astype("uint8")
     image = Image.fromarray(ground).resize((w, h), Image.BICUBIC)
-    fills = {"d01": 196, "d01s01": 196, "a01": 182, "g01": 150}
+    fills = {"d01": 196, "d01sp01": 196, "ax01": 182, "ast01": 150}
     # the membrane is the rim of each object's whole outline, so a spine's
     # neck and head read as one cell, and the neck joins the dendrite open
     masks = {}
-    for name in ("g01", "d01", "d01s01", "a01"):
+    for name in ("ast01", "d01", "d01sp01", "ax01"):
         mask = Image.new("L", (w, h), 0)
         for poly in polygons.get(name, []):
             ImageDraw.Draw(mask).polygon(px(poly), fill=255)
         masks[name] = mask
-    if "d01s01" in polygons:
-        masks["d01"] = Image.fromarray(np.maximum(np.asarray(masks["d01"]), np.asarray(masks["d01s01"])))
-        del masks["d01s01"]
+    if "d01sp01" in polygons:
+        masks["d01"] = Image.fromarray(np.maximum(np.asarray(masks["d01"]), np.asarray(masks["d01sp01"])))
+        del masks["d01sp01"]
     for name, mask in masks.items():
         image.paste(fills[name], mask=mask)
         rim = np.asarray(mask, dtype=np.int16) - np.asarray(mask.filter(ImageFilter.MinFilter(7)))
         image.paste(58, mask=Image.fromarray(rim.clip(0, 255).astype("uint8")))
     draw = ImageDraw.Draw(image)
     # vesicles in the axon's swellings
-    for poly in polygons["a01"]:
+    for poly in polygons["ax01"]:
         xs, ys = zip(*poly)
         cx, cy = sum(xs) / len(xs), sum(ys) / len(ys)
         r = (max(xs) - min(xs)) / 2

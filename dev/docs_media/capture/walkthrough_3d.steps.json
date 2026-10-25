@@ -1,5 +1,5 @@
 {
-  "note": "Step list for the walkthrough-video tool's draft command. walkthrough_3d.py fills in size, images and the measured targets and writes the full steps.json beside the frames. The click on last_row is a Shift-click, and the one on right_click_row a right-click; the written steps beside the video say so.",
+  "note": "Step list for the walkthrough-video tool's draft command. walkthrough_3d.py fills in size, images and the measured targets and writes the full steps.json beside the frames. The keys entries are the key casts: the click on last_row is a Shift-click, the one on right_click_row a right-click.",
   "camera_start": {
     "x": 1480,
     "y": 830,
@@ -53,7 +53,8 @@
         "x": 1200,
         "y": 675,
         "zoom": 1.6
-      }
+      },
+      "keys": "⇧ Shift"
     },
     {
       "image": "list-all",
@@ -63,7 +64,8 @@
         "x": 1200,
         "y": 675,
         "zoom": 1.6
-      }
+      },
+      "keys": "Right-click"
     },
     {
       "image": "menu",
