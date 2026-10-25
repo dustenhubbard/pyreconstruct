@@ -1,8 +1,8 @@
 name: tests
 
-# A ruff lint pass, the pytest suite, and a mypy job that fails only on new
-# errors. Fires on every pull request whatever it targets, and on pushes to main
-# itself (the post-merge validation). The tests import PySide6
+# A ruff lint pass, the pytest suite with a strict site build, and a mypy job
+# that fails only on new errors. Fires on every pull request whatever it
+# targets, and on pushes to main itself (the post-merge validation). The tests import PySide6
 # (gui.main), so the job installs the headless Qt system libs and runs under the
 # offscreen QPA platform, with no X server / xvfb needed.
 #
@@ -411,6 +411,18 @@ jobs:
         # uv provisions Python 3.11 itself from .python-version; --no-default-groups skips
         # the git-built `dev` group (funlib) the suite does not need; --extra test adds pytest.
         run: uv sync --frozen --no-default-groups --extra test
+
+      - name: Site builds (mkdocs --strict)
+        # The site is part of what a pull request can break: a broken link in
+        # docs/, a page missing from the nav, an image that is not there.
+        # docs.yml builds it too, but only when docs/** or mkdocs.yml change, so
+        # it cannot be a required check without leaving every other pull
+        # request waiting on a check that never reports. Running the build here
+        # puts it inside `test`, which is required. About a second warm.
+        #
+        # --no-project: the docs build must not sync the app's own environment;
+        # docs/requirements.txt is the whole of what it needs, same as docs.yml.
+        run: uv run --no-project --with-requirements docs/requirements.txt mkdocs build --strict
 
       - name: Widget tests are present (fail if the gui marker collects nothing)
         # The failure this catches is a green run with the widget tests silently
