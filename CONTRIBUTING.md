@@ -88,6 +88,28 @@ Most commands live in more than one spot. If you add or change one, check:
 - the Options dialog, if it has a setting
 - macOS and Windows. Test on the one you have and say which in the PR.
 
+### Docs
+
+If your PR changes anything a user sees, update the User Guide section for that
+screen in `docs/USER_GUIDE.md`. The tool and shortcut tables in it are generated:
+run `python3 scripts/docs_tables.py --write` and commit the result. The tests fail
+until you do.
+
+If there is nothing to document, start a line in the PR body with this:
+
+```
+No docs change: the dialog's layout moved, nothing it does changed
+```
+
+The screenshots are shot by a script on macOS (`dev/docs_media/capture/capture.py`),
+not by hand. If your change moves what one of them shows, say so in the PR and I
+will reshoot it.
+
+The site builds with `mkdocs build --strict` as part of the test run, so a broken
+link in `docs/` fails the suite. [docs/requirements.txt](docs/requirements.txt) has
+what the build needs; `uv run --no-project --with-requirements docs/requirements.txt
+mkdocs serve` previews it.
+
 ### Changelog
 
 If your PR changes anything under `PyReconstruct/`, add a changelog entry:
