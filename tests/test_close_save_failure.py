@@ -154,3 +154,76 @@ def test_a_save_as_at_close_that_cannot_write_leaves_the_window_open(
 
     assert main_window.close() is True
     _saved(target, snum, edited)
+
+
+# --- the close itself raises --------------------------------------------------
+
+def _held_close(window, monkeypatch):
+    """Make the series' close raise, as a working file another program holds open does.
+
+    Returns the errors the user is shown, and the errors that reached the
+    exception hook (each of those would open a second error window).
+    """
+    shown = []
+    monkeypatch.setattr(
+        window.series, "_surfaceSaveError",
+        lambda fp, err, message=None: shown.append(err),
+    )
+    hooked = []
+    monkeypatch.setattr(sys, "excepthook", lambda *exc: hooked.append(exc))
+
+    held = window.series.filepath
+
+    def refused():
+        raise PermissionError(13, "Permission denied", held)
+
+    monkeypatch.setattr(window.series, "close", refused)
+    return shown, hooked
+
+
+@pytest.mark.parametrize("how", ["close", "quit"])
+def test_a_close_that_raises_leaves_the_window_open(
+    how, main_window, main_window_dialogs, series_jser, monkeypatch,
+):
+    snum, edited = _move_a_trace(main_window)
+    outgoing = main_window.series
+    main_window_dialogs.save_response = "yes"
+
+    with monkeypatch.context() as m:
+        shown, hooked = _held_close(main_window, m)
+        if how == "close":
+            assert main_window.close() is False
+        else:
+            main_window.quit_act.trigger()
+
+    assert len(shown) == 1 and isinstance(shown[0], PermissionError)
+    assert hooked == []
+    assert main_window.series is outgoing
+    assert not outgoing.closed
+    assert os.path.isdir(outgoing.hidden_dir)
+    assert main_window.isVisible()
+
+    # the series is still the one in the window, and it still saves
+    main_window.field.section.save()
+    assert main_window.saveToJser() is None
+    assert outgoing.modified is False
+
+    # the file is free again: the same close now goes
+    assert main_window.close() is True
+    assert outgoing.closed
+    _saved(series_jser, snum, edited)
+
+
+def test_a_close_that_raises_drops_a_pending_restart(
+    main_window, main_window_dialogs, monkeypatch,
+):
+    """A refused close resets the restart flag, as a canceled one does."""
+    _move_a_trace(main_window)
+    main_window_dialogs.save_response = "yes"
+    main_window.restart_mainwindow = True
+
+    with monkeypatch.context() as m:
+        _held_close(main_window, m)
+        assert main_window.close() is False
+
+    assert main_window.restart_mainwindow is False

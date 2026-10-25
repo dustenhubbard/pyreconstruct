@@ -6226,7 +6226,27 @@ class MainWindow(QMainWindow):
         # did not survive a relaunch. A canceled close leaves the early capture
         # behind, which is merely current.
         self._captureListLayout()
-        response = self.saveToJser(notify=True, close=True)
+        try:
+            response = self.saveToJser(notify=True, close=True)
+        except Exception as e:
+            # A close that raises (a working file another program holds open
+            # refuses its removal) used to leave here before event.ignore(),
+            # so Qt accepted the event and the window closed on a series
+            # still open in it. Any exception at this boundary means the
+            # close did not finish, so it is refused like a canceled one,
+            # and the error is shown in the same Save failed window as a
+            # .jser that could not be written. Window close and Quit (the
+            # menu row, Cmd+Q) both arrive here.
+            self.series._surfaceSaveError(
+                self.series.jser_fp, e,
+                message=(
+                    f"The series could not be closed: {e}\n\n"
+                    "The series is still open and nothing was lost. If a "
+                    "file in its working folder is in use by another "
+                    "program, close that program, then close or quit again."
+                ),
+            )
+            response = "cancel"
         if response == "cancel":
             event.ignore()
             # an update staged in place stays staged for the next quit
