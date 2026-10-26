@@ -1,7 +1,8 @@
 """A .jser opened from the Finder while an open, an import or a quit runs.
 
 Imports into the open series (alignments, transforms, .roi traces, a trace
-palette, overlay labels) and a change of its image folder are covered too.
+palette, overlay labels), a change of its image folder and a conversion of
+its images are covered too.
 
 An open, a new series, an import, a Save As and a quit each show dialogs, and
 every dialog runs the event loop, where macOS delivers a Finder open
@@ -243,7 +244,7 @@ def test_a_finder_open_under_the_zarr_label_import_imports_into_the_first(
     assert not window.seriesTransitionRunning()
 
 
-# --- imports into the open series, and a change of its image folder -----------
+# --- imports into the open series, and changes to its images -----------------
 #
 # Each of these writes into window.series after a dialog or a progress bar.
 # The Finder open comes in under that dialog, and the write has to land in the
@@ -484,16 +485,57 @@ def test_a_finder_open_under_the_image_folder_dialog_changes_the_first(
     assert first.src_dir == str(images)
 
 
+def test_a_finder_open_under_the_zarr_conversion_dialog_converts_the_first(
+    main_window, main_window_dialogs, finder, monkeypatch, tmp_path
+):
+    from PyReconstruct.modules.backend.progress import NullProgressReporter
+    from PyReconstruct.modules.datatypes.series import Series
+    from PyReconstruct.modules.gui.main import main_window as mw
+    window = main_window
+    first = window.series
+    _, c_fp, unsaved_fp, unsaved = _two_more_series(window, tmp_path)
+    c = Series.openJser(c_fp, progress=NullProgressReporter)
+    c.src_dir = str(tmp_path / "c_images")
+    c.save()
+    c.saveJser()
+    c.close()
+    first.src_dir = str(tmp_path / "a_images")
+    # images the converter can take: found, and not a zarr already
+    window.field.section_layer.image_found = True
+    window.field.section_layer.is_zarr_file = False
+    launched = []
+    monkeypatch.setattr(
+        mw.subprocess, "Popen", lambda argv, **kwargs: launched.append(list(argv))
+    )
+    out = str(tmp_path / "scaled.zarr")
+
+    def choose(*args, **kwargs):
+        # the save dialog for the new zarr
+        finder(c_fp)
+        return out
+
+    monkeypatch.setattr(mw.FileDialog, "get", staticmethod(choose))
+    window.srcToZarr()
+
+    _assert_kept_on(window, first, main_window_dialogs, c_fp, unsaved_fp, unsaved)
+    [argv] = launched
+    assert argv[-2:] == [str(tmp_path / "a_images"), out]
+
+
 @pytest.mark.parametrize("action", [
     "import_jser_alignments_act", "importtransforms_act",
     "import_swift_transforms_act", "importroi_act",
-    "importtracepalettecsv_act", "change_src_act",
+    "importtracepalettecsv_act", "change_src_act", "zarrimage_act",
 ])
 def test_the_menu_actions_run_as_a_transition(main_window, monkeypatch, action):
     import sys
 
     from PyReconstruct.modules.gui.main import main_window as mw
     _stand_in_roifile(monkeypatch)
+    # Convert to scaled images asks for its output only for found images
+    # that are not a zarr already
+    main_window.field.section_layer.image_found = True
+    main_window.field.section_layer.is_zarr_file = False
     seen, errors = [], []
 
     def cancel(*args, **kwargs):

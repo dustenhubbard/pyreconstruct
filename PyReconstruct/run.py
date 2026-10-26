@@ -36,8 +36,8 @@ class FileOpenWatcher(QObject):
     argv, both at launch and while running. Before the main window exists the
     path parks in ``pending`` (runPyReconstruct spins the event loop once to
     collect it); after that the event opens the series in the live window,
-    unless an open, import, Save As, quit or image folder change is running
-    there, in which case it is refused with a notice. Windows and Linux pass
+    unless an open, import, Save As, quit, image folder change or image
+    conversion is running there, in which case it is refused with a notice. Windows and Linux pass
     the path as argv and never send this event, so the filter is a no-op
     there.
     """
