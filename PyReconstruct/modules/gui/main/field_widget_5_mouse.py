@@ -731,6 +731,7 @@ class FieldWidgetMouse(FieldWidgetData):
             self.last_x = event.x()
             self.last_y = event.y()
             self.current_trace = [(self.last_x, self.last_y)]
+            self.trace_press_travel = 0
 
         ## Start line tracing of only trace mode set
         trace_mode = self.series.getOption("trace_mode")
@@ -749,8 +750,30 @@ class FieldWidgetMouse(FieldWidgetData):
             
         else:
             
+            if self.lclick:
+                self.trace_press_travel = max(
+                    self.trace_press_travel,
+                    abs(event.x() - self.clicked_x),
+                    abs(event.y() - self.clicked_y),
+                )
             self.pencilMove(event)
     
+    def isStillPress(self, event):
+        """Check if the trace press has stayed within the click tolerance.
+
+            Params:
+                event: the release event
+            Returns:
+                (bool) True if the pointer, release included, never moved
+                    farther than `click_tolerance` pixels from the press point
+        """
+        travel = max(
+            self.trace_press_travel,
+            abs(event.x() - self.clicked_x),
+            abs(event.y() - self.clicked_y),
+        )
+        return travel <= self.click_tolerance
+
     def traceRelease(self, event):
         """Called when mouse is released in trace mode."""
         
@@ -760,8 +783,11 @@ class FieldWidgetMouse(FieldWidgetData):
         if self.is_line_tracing:
             self.lineRelease(event)
 
-        ## User decided to line trace (in combo trace_mode)
-        elif trace_mode == "combo" and self.isSingleClicking():
+        ## User decided to line trace (in combo trace_mode): a quick click,
+        ## or a press of any length that barely moved
+        elif trace_mode == "combo" and (
+            self.isSingleClicking() or self.isStillPress(event)
+        ):
             self.current_trace = [self.current_trace[0]]
             self.is_line_tracing = True
             self.activateMouseBoundaryTimer()
