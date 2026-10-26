@@ -21,6 +21,7 @@ The GUI method is driven against duck-typed stubs (the pattern used by
 test_set_series_mag / test_missing_return_guards), so no real MainWindow or Qt
 event loop is required.
 """
+import contextlib
 import os
 import types
 
@@ -77,6 +78,7 @@ class _MainWindowStub:
         self.section = types.SimpleNamespace(src="shapes_0.tif")
         self.field = _FieldStub(self.series, self.section)
         self.modified_calls = []
+        self.seriesTransition = contextlib.nullcontext
 
     def seriesModified(self, modified=True):
         self.modified_calls.append(modified)

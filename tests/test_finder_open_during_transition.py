@@ -1,5 +1,8 @@
 """A .jser opened from the Finder while an open, an import or a quit runs.
 
+Imports into the open series (alignments, transforms, .roi traces, a trace
+palette, overlay labels) and a change of its image folder are covered too.
+
 An open, a new series, an import, a Save As and a quit each show dialogs, and
 every dialog runs the event loop, where macOS delivers a Finder open
 (run.FileOpenWatcher). Opening that series there changed which series the
@@ -238,3 +241,270 @@ def test_a_finder_open_under_the_zarr_label_import_imports_into_the_first(
     assert _holds(unsaved_fp, unsaved)
     assert sum(c_fp in n for n in main_window_dialogs.notices) == 2
     assert not window.seriesTransitionRunning()
+
+
+# --- imports into the open series, and a change of its image folder -----------
+#
+# Each of these writes into window.series after a dialog or a progress bar.
+# The Finder open comes in under that dialog, and the write has to land in the
+# series the import started on.
+
+
+def _assert_kept_on(window, first, dialogs, c_fp, unsaved_fp, unsaved):
+    assert window.series is first and not first.closed
+    assert _holds(unsaved_fp, unsaved)
+    assert any(c_fp in n for n in dialogs.notices)
+    assert not window.seriesTransitionRunning()
+
+
+def test_a_finder_open_under_the_alignment_import_imports_into_the_first(
+    main_window, main_window_dialogs, finder, monkeypatch, tmp_path
+):
+    from PyReconstruct.modules.gui.main import main_window as mw
+    window = main_window
+    first = window.series
+    snum = first.current_section
+    b_fp, c_fp, unsaved_fp, unsaved = _two_more_series(window, tmp_path)
+
+    def choose(dialog):
+        # the alignment dialog runs its own event loop
+        finder(c_fp)
+        return [("default", "from_b")], True
+
+    monkeypatch.setattr(mw.ImportAlignmentsDialog, "exec", choose)
+    window.importAlignmentsFromSeries(b_fp)
+
+    _assert_kept_on(window, first, main_window_dialogs, c_fp, unsaved_fp, unsaved)
+    assert "from_b" in first.loadSection(snum).tforms
+
+
+def test_a_finder_open_under_the_transforms_file_dialog_imports_into_the_first(
+    main_window, main_window_dialogs, finder, monkeypatch, tmp_path
+):
+    from test_alignment_menu_after_import import _write_tforms_file
+
+    from PyReconstruct.modules.gui.main import main_window as mw
+    window = main_window
+    first = window.series
+    snum = first.current_section
+    _, c_fp, unsaved_fp, unsaved = _two_more_series(window, tmp_path)
+    fp = _write_tforms_file(first, tmp_path / "from_txt.txt")
+
+    def choose(*args, **kwargs):
+        finder(c_fp)
+        return fp
+
+    monkeypatch.setattr(mw.FileDialog, "get", staticmethod(choose))
+    window.importTransforms()
+
+    _assert_kept_on(window, first, main_window_dialogs, c_fp, unsaved_fp, unsaved)
+    assert first.alignment.startswith("from_txt")
+    assert first.alignment in first.loadSection(snum).tforms
+
+
+def test_a_finder_open_under_the_swift_scale_dialog_imports_into_the_first(
+    main_window, main_window_dialogs, finder, monkeypatch, tmp_path
+):
+    from test_alignment_menu_after_import import _write_swift_project
+
+    from PyReconstruct.modules.gui.main import main_window as mw
+    window = main_window
+    first = window.series
+    snum = first.current_section
+    _, c_fp, unsaved_fp, unsaved = _two_more_series(window, tmp_path)
+    fp = _write_swift_project(first, tmp_path / "from_swift.json")
+    before = set(first.alignments)
+
+    def choose(*args, **kwargs):
+        # the scale and calibration grid dialog
+        finder(c_fp)
+        return ["1", [("Includes cal grid", False)]], True
+
+    monkeypatch.setattr(mw.QuickDialog, "get", staticmethod(choose))
+    window.importSwiftTransforms(fp)
+
+    _assert_kept_on(window, first, main_window_dialogs, c_fp, unsaved_fp, unsaved)
+    assert first.alignment not in before
+    assert first.alignment in first.loadSection(snum).tforms
+
+
+def _stand_in_roifile(monkeypatch):
+    """A roifile module that reads a polygon from a JSON list of points.
+
+    The roifile package is optional and the test environment lacks it; the
+    Roi class, the field geometry and the trace write stay real.
+    """
+    import json
+    import sys
+    import types
+
+    import numpy as np
+
+    class _ImagejRoi:
+        roitype = 0  # POLYGON
+        options = 0
+        composite = False
+
+        def __init__(self, points):
+            self.points = points
+
+        @classmethod
+        def fromfile(cls, fp):
+            with open(fp) as f:
+                return cls(json.load(f))
+
+        def coordinates(self, multi=False):
+            return [np.array(self.points, dtype=float)]
+
+    module = types.ModuleType("roifile")
+    module.ImagejRoi = _ImagejRoi
+    monkeypatch.setitem(sys.modules, "roifile", module)
+
+
+def _write_blank_image(field):
+    import cv2
+    import numpy as np
+    from pathlib import Path
+    image = Path(field.section.src_fp)
+    image.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(image), np.zeros((400, 400), dtype=np.uint8))
+
+
+def test_a_finder_open_under_the_roi_file_dialog_draws_into_the_first(
+    main_window, main_window_dialogs, finder, monkeypatch, tmp_path
+):
+    import json
+
+    from PyReconstruct.modules.gui.main import main_window as mw
+    _stand_in_roifile(monkeypatch)
+    window = main_window
+    first = window.series
+    snum = first.current_section
+    _, c_fp, unsaved_fp, unsaved = _two_more_series(window, tmp_path)
+    fp = tmp_path / "from_roi.roi"
+    fp.write_text(json.dumps([[10, 10], [110, 10], [110, 110], [10, 110]]))
+    monkeypatch.chdir(tmp_path)
+    _write_blank_image(window.field)
+
+    def choose(*args, **kwargs):
+        finder(c_fp)
+        # the image of whichever series the field now shows
+        _write_blank_image(window.field)
+        return [str(fp)]
+
+    monkeypatch.setattr(mw.FileDialog, "get", staticmethod(choose))
+    window.importROIFiles()
+    window.saveAllData()
+
+    _assert_kept_on(window, first, main_window_dialogs, c_fp, unsaved_fp, unsaved)
+    assert "from_roi" in first.loadSection(snum).contours
+
+
+def test_a_finder_open_under_the_palette_file_dialog_imports_into_the_first(
+    main_window, main_window_dialogs, finder, monkeypatch, tmp_path
+):
+    from PyReconstruct.modules.gui.main import main_window as mw
+    window = main_window
+    first = window.series
+    _, c_fp, unsaved_fp, unsaved = _two_more_series(window, tmp_path)
+    fp = str(tmp_path / "from_csv.csv")
+    first.exportTracePaletteCSV(fp)
+
+    def choose(*args, **kwargs):
+        finder(c_fp)
+        return fp
+
+    monkeypatch.setattr(mw.FileDialog, "get", staticmethod(choose))
+    window.importTracePaletteCSV()
+
+    _assert_kept_on(window, first, main_window_dialogs, c_fp, unsaved_fp, unsaved)
+    assert "from_csv" in first.palette_traces
+    assert first.palette_index[0] == "from_csv"
+
+
+def test_a_finder_open_under_the_overlay_label_import_imports_into_the_first(
+    qapp, main_window, main_window_dialogs, finder, monkeypatch, tmp_path
+):
+    import time
+
+    from PySide6.QtCore import QCoreApplication, QUrl
+    from PySide6.QtGui import QFileOpenEvent
+
+    from PyReconstruct.modules.backend.autoseg import conversions
+    window = main_window
+    first = window.series
+    snum = first.current_section
+    _, c_fp, unsaved_fp, unsaved = _two_more_series(window, tmp_path)
+    first.zarr_overlay_fp = _labels_zarr(tmp_path, window, snum)
+    first.zarr_overlay_group = "labels_x"
+    window.field.createZarrLayer()
+    window.field.generateView()
+    name = conversions.AUTOSEG_TRACE_PREFIX + "123456"
+
+    import_section = conversions.importSection
+
+    def finder_open_then_import_section(*args, **kwargs):
+        # the workers run under the progress bar's event loop: C is opened
+        # from the Finder, and this worker writes once that open is handled
+        QCoreApplication.postEvent(
+            qapp, QFileOpenEvent(QUrl.fromLocalFile(c_fp))
+        )
+        start = time.monotonic()
+        while time.monotonic() - start < 10 and not first.closed and not any(
+            c_fp in n for n in main_window_dialogs.notices
+        ):
+            time.sleep(0.01)
+        return import_section(*args, **kwargs)
+
+    monkeypatch.setattr(conversions, "importSection", finder_open_then_import_section)
+    window.importLabels(all=True)
+
+    _assert_kept_on(window, first, main_window_dialogs, c_fp, unsaved_fp, unsaved)
+    assert name in first.loadSection(snum).contours
+
+
+def test_a_finder_open_under_the_image_folder_dialog_changes_the_first(
+    main_window, main_window_dialogs, finder, monkeypatch, tmp_path
+):
+    from PyReconstruct.modules.gui.main import main_window as mw
+    window = main_window
+    first = window.series
+    _, c_fp, unsaved_fp, unsaved = _two_more_series(window, tmp_path)
+    images = tmp_path / "images"
+    images.mkdir()
+
+    def choose(*args, **kwargs):
+        finder(c_fp)
+        return str(images)
+
+    monkeypatch.setattr(mw.FileDialog, "get", staticmethod(choose))
+    window.changeSrcDir()
+
+    _assert_kept_on(window, first, main_window_dialogs, c_fp, unsaved_fp, unsaved)
+    assert first.src_dir == str(images)
+
+
+@pytest.mark.parametrize("action", [
+    "import_jser_alignments_act", "importtransforms_act",
+    "import_swift_transforms_act", "importroi_act",
+    "importtracepalettecsv_act", "change_src_act",
+])
+def test_the_menu_actions_run_as_a_transition(main_window, monkeypatch, action):
+    import sys
+
+    from PyReconstruct.modules.gui.main import main_window as mw
+    _stand_in_roifile(monkeypatch)
+    seen, errors = [], []
+
+    def cancel(*args, **kwargs):
+        seen.append(main_window.seriesTransitionRunning())
+        return None
+
+    monkeypatch.setattr(mw.FileDialog, "get", staticmethod(cancel))
+    monkeypatch.setattr(sys, "excepthook", lambda *args: errors.append(args))
+    getattr(main_window, action).trigger()
+
+    # the action reached the dialog with its default arguments
+    assert seen == [True]
+    assert errors == []
+    assert not main_window.seriesTransitionRunning()
