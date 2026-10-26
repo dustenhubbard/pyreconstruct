@@ -12,6 +12,7 @@ Driven against a real `MainWindow` and `FieldWidget`, through the field's own
 """
 
 import pytest
+from PySide6.QtCore import Qt
 
 from PyReconstruct.modules.gui.main.field_widget_5_mouse import (
     CLOSEDTRACE,
@@ -99,3 +100,24 @@ def test_poly_mode_starts_line_tracing_on_press(main_window):
     finally:
         field.mouseReleaseEvent(FakeMouseEvent(X, Y, UP))
         _drop_line(field)
+
+
+@pytest.mark.parametrize("path", [[], [(1, 0)]])
+def test_release_after_field_menu_does_not_start_line(
+    main_window, monkeypatch, path
+):
+    """A right press opens the field menu; its release is no trace click.
+
+    The menu takes the press, so no trace was started. A slow release that
+    barely moved used to reach the line start with an empty trace.
+    """
+    monkeypatch.setattr(main_window.field_menu, "exec", lambda *a: None)
+    field = _field(main_window, CLOSEDTRACE, "combo")
+    field.current_trace = []
+    field.mousePressEvent(FakeMouseEvent(X, Y, Qt.RightButton))
+    field.click_time = 0
+    for dx, dy in path:
+        field.mouseMoveEvent(FakeMouseEvent(X + dx, Y + dy, Qt.RightButton))
+    field.mouseReleaseEvent(FakeMouseEvent(X + 1, Y, UP))
+    assert not field.is_line_tracing
+    assert field.current_trace == []

@@ -784,8 +784,10 @@ class FieldWidgetMouse(FieldWidgetData):
             self.lineRelease(event)
 
         ## User decided to line trace (in combo trace_mode): a quick click,
-        ## or a press of any length that barely moved
-        elif trace_mode == "combo" and (
+        ## or a press of any length that barely moved. Only a left press
+        ## that started a trace counts: a press the field menu took, or one
+        ## made in another tool, leaves no point to start from.
+        elif trace_mode == "combo" and self.lclick and self.current_trace and (
             self.isSingleClicking() or self.isStillPress(event)
         ):
             self.current_trace = [self.current_trace[0]]
