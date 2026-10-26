@@ -1455,6 +1455,70 @@ def test_a_store_imported_by_a_build_that_keeps_no_keys_is_imported_again(
         series.close()
 
 
+def _saved_by_a_marker_unaware_build_of_fork_38bc1d7d(fp, monkeypatch):
+    """A Save to the store alone by the store code of fork 38bc1d7d, which keeps
+    keys but reads every key as naming its row, then a crash."""
+    middle_open = _historical("38bc1d7d", "store_open")
+    middle_save = _historical("38bc1d7d", "store_save")
+    middle_open.store_save = middle_save
+    with monkeypatch.context() as m:
+        m.setattr(series_module, "store_open", middle_open)
+        m.setattr(series_module, "store_save", middle_save)
+        series = _open(fp)
+        assert middle_save.heldStore(series) is not None
+        series.setAttr("axon", "comment", "saved by the middle build")
+        series.save()
+        assert series.saveToStore() and middle_save.ahead(series)
+        _crash(series)
+
+
+def _saved_by_a_build_that_reads_every_key_as_current(fp, monkeypatch):
+    """The same Save, by this build reading every key as naming its row, then a crash."""
+    with monkeypatch.context() as m:
+        m.setattr(store_save, "keysCurrent", lambda store: True)
+        series = _open(fp)
+        assert store_save.heldStore(series) is not None
+        series.setAttr("axon", "comment", "saved by the middle build")
+        series.save()
+        assert series.saveToStore() and store_save.ahead(series)
+        _crash(series)
+
+
+@pytest.mark.parametrize("builds", [
+    (_reimported_by_a_build_before_keys, _saved_by_a_marker_unaware_build_of_fork_38bc1d7d),
+    (_reimported_without_keys, _saved_by_a_build_that_reads_every_key_as_current),
+], ids=["forks 3505375a and 38bc1d7d", "emulated"])
+def test_a_save_kept_over_keys_of_an_older_import_closes_as_the_store_holds_it(
+    builds, tmp_path, switch_on, store_mode, monkeypatch,  # noqa: F811
+):
+    reimport, save = builds
+    fp = _kept(PARITY, tmp_path)
+    # section 0 at 0.125, imported again with the keys of the import before
+    reimport(fp, monkeypatch)
+    # another build takes that store and saves to it alone; section 0 keeps its old key
+    save(fp, monkeypatch)
+    _decline(fp)
+    held = tmp_path / "held.jser"
+    store_recovery.exportStore(str(fp), str(held))
+    doc = fast_loads(held.read_bytes())
+    assert doc["sections"][0]["thickness"] == 0.125
+    assert doc["series"]["obj_attrs"]["axon"]["comment"] == "saved by the middle build"
+    # the export is acknowledged; drop that so the open offers the Save again
+    store = HybridStore.forJser(str(fp))
+    store.setMeta(store_save.META_WRITTEN_OUT, None)
+    store.close()
+    asker = _Asked(True)
+    series = _open(fp, notifier=asker)
+    try:
+        assert asker.asked and store_save.ahead(series)
+        assert series.loadSection(0).thickness == 0.125
+        series.close()
+    finally:
+        store_save.release(series)
+    assert series.closed
+    assert fp.read_bytes() == held.read_bytes()
+
+
 def _no_hard_links(monkeypatch):
     def link(*a, **k):
         raise OSError(errno.ENOTSUP, "no hard links")

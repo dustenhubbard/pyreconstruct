@@ -505,21 +505,25 @@ def _change_in_the_jser(series, snum):
         f.write(b"0" if byte != b"0" else b"1")
 
 
-def _saved_over_a_changed_section(tmp_path, visited):
+def _saved_over_a_changed_section(tmp_path, edited):
     """A series saved to its store after section 1 changed there under its key.
 
-    The .jser's copy of section 1 changed too. With `visited`, section 1 was
-    loaded first, so its working file holds it as it was saved.
+    The .jser's copy of section 1 changed too. With `edited`, section 1's
+    working file changed after the Save (thickness 0.2), so no source holds
+    section 1 as it was saved; else it is a stub, which holds no section.
     """
     fp = _written_by_this_app(tmp_path)
     series = _open(fp)
-    if visited:
-        assert series.loadSection(1).thickness == 0.05
+    if edited:
+        section = series.loadSection(1)
     _change_in_the_store(fp, 1)
     _change_in_the_jser(series, 1)
     series.setAttr("axon", "comment", "a separately saved edit")
     series.save()
     assert series.saveToStore()
+    if edited:
+        section.thickness = 0.2
+        section.save()
     return fp, series
 
 
@@ -529,56 +533,177 @@ def _notices(series):
     return notices
 
 
-@pytest.mark.parametrize("visited", [False, True], ids=["stub", "working-file"])
+def _all_kept(fp, before, series, edited):
+    """Nothing a refused write from the store changed or dropped."""
+    assert fp.read_bytes() == before
+    assert not series.closed and os.path.isdir(series.hidden_dir)
+    assert store_save.heldStore(series) is not None and store_save.ahead(series)
+    store = store_save.heldStore(series).store
+    assert store.seriesData()["obj_attrs"]["axon"]["comment"] == "a separately saved edit"
+    if edited:
+        assert series.loadSection(1).thickness == 0.2
+
+
+@pytest.mark.parametrize("edited", [False, True], ids=["stub", "edited-working-file"])
 def test_close_refuses_a_store_section_changed_under_its_key(
-    visited, tmp_path, switch_on, store_mode, monkeypatch,  # noqa: F811
+    edited, tmp_path, switch_on, store_mode, monkeypatch,  # noqa: F811
 ):
-    fp, series = _saved_over_a_changed_section(tmp_path, visited)
+    fp, series = _saved_over_a_changed_section(tmp_path, edited)
     before = fp.read_bytes()
     notices = _notices(series)
     with pytest.raises(series_module.SeriesSaveError):
         series.close()
-    assert fp.read_bytes() == before
     assert len(notices) == 1 and "section 1 in the local store" in notices[0]
-    assert not series.closed and os.path.isdir(series.hidden_dir)
-    assert store_save.heldStore(series) is not None and store_save.ahead(series)
-    if visited:
-        assert series.loadSection(1).thickness == 0.05
+    _all_kept(fp, before, series, edited)
     store_save.release(series)
 
 
 def test_save_as_refuses_a_store_section_changed_under_its_key(
     tmp_path, switch_on, store_mode, monkeypatch,  # noqa: F811
 ):
-    # visited: Save As writes out every other section from the store first
-    fp, series = _saved_over_a_changed_section(tmp_path, visited=True)
+    # edited: Save As writes out every other section from the store first
+    fp, series = _saved_over_a_changed_section(tmp_path, edited=True)
     before = fp.read_bytes()
-    hidden_dir = series.hidden_dir
     notices = _notices(series)
     new_fp = tmp_path / "moved" / "renamed.jser"
     new_fp.parent.mkdir()
     with pytest.raises(series_module.SeriesSaveError):
         series.move(str(new_fp))
-    assert fp.read_bytes() == before
     assert len(notices) == 1 and "section 1 in the local store" in notices[0]
-    assert series.jser_fp == str(fp) and os.path.isdir(hidden_dir)
-    assert os.listdir(new_fp.parent) == []
-    assert store_save.heldStore(series) is not None and store_save.ahead(series)
-    assert series.loadSection(1).thickness == 0.05
+    assert series.jser_fp == str(fp) and os.listdir(new_fp.parent) == []
+    _all_kept(fp, before, series, edited=True)
     store_save.release(series)
 
 
 def test_a_pretty_write_checks_each_section_against_its_key(
     tmp_path, switch_on, store_mode, monkeypatch,  # noqa: F811
 ):
-    fp, series = _saved_over_a_changed_section(tmp_path, visited=True)
+    fp, series = _saved_over_a_changed_section(tmp_path, edited=True)
     monkeypatch.setenv(jser_format.PRETTY_ENV_VAR, "1")
     before = fp.read_bytes()
     notices = _notices(series)
     with pytest.raises(series_module.SeriesSaveError):
         series.close()
-    assert fp.read_bytes() == before
     assert len(notices) == 1 and "section 1 in the local store" in notices[0]
+    _all_kept(fp, before, series, edited=True)
+    store_save.release(series)
+
+
+# ---------------------------------------------------------------------------
+# a section changed in the store under its key, written from a matching source
+# ---------------------------------------------------------------------------
+
+def _changed_after_its_save(tmp_path, monkeypatch, source, pretty=False):
+    """A store-only Save, then one saved section changed in the store under its key.
+
+    Returns (.jser, the bytes today's Save writes, the series, that section).
+    With source "working-file" it is the edited section, whose working file
+    holds it as saved and the .jser does not. With "jser" it is another,
+    still a stub, which the .jser holds; the .jser is touched, so its splice
+    index no longer matches it and the write reads the section from the store.
+    With `pretty`, the .jser this app wrote is minified, and every later write pretty.
+    """
+    fp = _written_by_this_app(tmp_path)
+    if pretty:
+        monkeypatch.setenv(jser_format.PRETTY_ENV_VAR, "1")
+    expected = _today_saved(fp, tmp_path, monkeypatch)
+    series = _open(fp)
+    edited = _edit(series)
+    assert series.saveToStore()
+    if source == "working-file":
+        snum = edited
+    else:
+        snum = max(n for n in series.sections if n != edited)
+        assert snum in series._lazy
+        st = fp.stat()
+        os.utime(fp, ns=(st.st_atime_ns, st.st_mtime_ns + 10**9))
+    _change_in_the_store(fp, snum)
+    return fp, expected, series, snum
+
+
+def _kept_again_from_the_jser(fp, snum, monkeypatch):
+    """The store gave up the .jser: the next open reads the .jser, then keeps it."""
+    opens = _store_opens(monkeypatch)
+    for came_from_store in (False, True):
+        series = _open(fp)
+        try:
+            assert opens == ([series.name] if came_from_store else [])
+            assert series.loadSection(snum).thickness != 0.123
+        finally:
+            series.close()
+
+
+@pytest.mark.parametrize("source", ["working-file", "jser"])
+@pytest.mark.parametrize("pretty", [False, True], ids=["compact", "pretty"])
+def test_close_writes_a_section_changed_under_its_key_from_a_matching_source(
+    source, pretty, tmp_path, switch_on, store_mode, monkeypatch,  # noqa: F811
+):
+    fp, expected, series, snum = _changed_after_its_save(tmp_path, monkeypatch, source, pretty)
+    notices = _notices(series)
+    series.close()
+    assert notices == [] and series.closed
+    assert fp.read_bytes() == expected
+    _kept_again_from_the_jser(fp, snum, monkeypatch)
+
+
+def test_save_as_writes_a_section_changed_under_its_key_from_its_working_file(
+    tmp_path, switch_on, store_mode, monkeypatch,  # noqa: F811
+):
+    fp, expected, series, snum = _changed_after_its_save(tmp_path, monkeypatch, "working-file")
+    new_fp = tmp_path / "moved" / "renamed.jser"
+    new_fp.parent.mkdir()
+    series.move(str(new_fp))
+    assert store_save.heldStore(series) is None
+    assert fp.read_bytes() == expected
+    series.saveJser()
+    series.close()
+    assert new_fp.exists()
+
+
+def test_turning_the_store_off_writes_a_section_changed_under_its_key_from_its_working_file(
+    tmp_path, switch_on, store_mode, monkeypatch,  # noqa: F811
+):
+    from PyReconstruct.modules.datatypes import local_stores
+
+    fp, expected, series, snum = _changed_after_its_save(tmp_path, monkeypatch, "working-file")
+    report = local_stores.turnOff(series)
+    assert report.written == [str(fp)] and report.failed == []
+    assert store_save.heldStore(series) is None
+    assert fp.read_bytes() == expected
+    series.close()
+
+
+def test_a_resumed_working_folder_writes_a_section_changed_under_its_key_from_its_file(
+    tmp_path, switch_on, store_mode, monkeypatch,  # noqa: F811
+):
+    fp, expected, series, snum = _changed_after_its_save(tmp_path, monkeypatch, "working-file")
+    # a force quit: the working folder and the store stay
+    store_save.release(series)
+    series.leave_open = True
+    series.close()
+    series = _open(fp)
+    assert store_save.heldStore(series) is not None and store_save.ahead(series)
+    # the key is unchanged, so this Save does not take the section again
+    assert series.saveToStore()
+    series.close()
+    assert fp.read_bytes() == expected
+
+
+def test_a_section_found_in_no_other_source_with_its_key_is_refused(
+    tmp_path, switch_on, store_mode, monkeypatch,  # noqa: F811
+):
+    fp, expected, series, snum = _changed_after_its_save(tmp_path, monkeypatch, "working-file")
+    before = fp.read_bytes()
+    section = series.loadSection(snum)
+    section.thickness = 0.2
+    section.save()
+    notices = _notices(series)
+    with pytest.raises(series_module.SeriesSaveError):
+        series.close()
+    assert len(notices) == 1 and f"section {snum} in the local store" in notices[0]
+    assert fp.read_bytes() == before
+    assert store_save.heldStore(series) is not None and store_save.ahead(series)
+    assert series.loadSection(snum).thickness == 0.2
     store_save.release(series)
 
 

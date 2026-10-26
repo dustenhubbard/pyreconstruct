@@ -17,6 +17,9 @@ stub in one replace. When no source matches, `SectionUnavailable` (an
 OSError) is raised, the stub stays, and nothing is written: a load fails as
 for an unreadable file, and a Save that writes the .jser refuses as it does
 for one. A Save into the store alone takes a stub's key without reading it.
+A .jser written from the store takes a section the store does not hold as
+its key names the same way, from its working file or the .jser
+(`savedBytes`).
 
 Save does not write a section it leaves unchanged: `workingSection` gives a
 stub's key, and its bytes from a checked source when the writer must encode
@@ -81,6 +84,10 @@ def stubs(held) -> dict:
 
     store = held.store
     try:
+        # keys of an older import do not name the rows (store_save.keysCurrent):
+        # every section is written in full
+        if not store_save.keysCurrent(store):
+            return {}
         keys = store_save._keys(store)
         index = held.spliceIndex()
         base = {
@@ -212,8 +219,9 @@ def readStub(fp : str):
     return stub
 
 
-def _readRegular(fp : str, limit : int) -> bytes:
-    """Up to `limit` bytes of fp, refused unless it is a regular file.
+def _readRegular(fp : str, limit=None) -> bytes:
+    """Up to `limit` bytes of fp (None: the whole file), refused unless it is
+    a regular file.
 
     Opened without blocking and checked on the open file, so a pipe, a
     device or a folder in its place (or a link to one) is refused, never
@@ -228,9 +236,10 @@ def _readRegular(fp : str, limit : int) -> bytes:
     try:
         fd = os.open(fp, flags)
         try:
-            if not stat.S_ISREG(os.fstat(fd).st_mode):
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
                 raise SectionUnavailable(f"{os.path.basename(fp)} is not a regular file")
-            chunks, left = [], limit
+            chunks, left = [], st.st_size + 1 if limit is None else limit
             while left > 0:
                 chunk = os.read(fd, left)
                 if not chunk:
@@ -339,13 +348,47 @@ def sectionBytes(stub : dict, jser_fp : str = "", index=None) -> bytes:
     if index is not None and key in index.ranges:
         candidates.append(lambda: _fromRange(index.path, index.ranges[key][:2]))
     candidates.append(lambda: _fromRange(jser_fp, stub.get("range")))
-    for read in candidates:
+    data = checkedBytes(key, candidates)
+    if data is None:
+        raise SectionUnavailable(
+            f"section {stub['snum']} is in neither the local store nor the .jser as it was saved"
+        )
+    return data
+
+
+def checkedBytes(key : bytes, reads) -> "bytes | None":
+    """The bytes of the first of `reads` whose sha256 is `key`, or None.
+
+        Params:
+            reads (iterable): callables, each returning bytes or None
+    """
+    for read in reads:
         data = read()
         if data is not None and section_digest(data) == key:
             return data
-    raise SectionUnavailable(
-        f"section {stub['snum']} is in neither the local store nor the .jser as it was saved"
-    )
+    return None
+
+
+def savedBytes(series, snum : int, key : bytes, indexes=()) -> "bytes | None":
+    """Section snum's bytes with sha256 `key`, from a source other than the
+    store: its working file, else its range in a .jser (`indexes`, splice
+    indexes tried in order whatever the file's stat). None when none holds them.
+    """
+    def working():
+        fname = series.sections.get(snum)
+        if fname is None:
+            return None
+        try:
+            return _readRegular(os.path.join(series.getwdir(), fname))
+        except SectionUnavailable:
+            return None
+
+    def inJser(index):
+        return lambda: _fromRange(index.path, index.ranges[key][:2])
+
+    candidates = [working]
+    candidates += [inJser(index) for index in indexes if index is not None and key in index.ranges]
+    return checkedBytes(key, candidates)
 
 
 def fill(fp : str, jser_fp : str = "", index=None) -> bool:

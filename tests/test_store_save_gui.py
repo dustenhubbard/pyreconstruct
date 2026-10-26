@@ -359,10 +359,13 @@ def test_save_as_over_a_store_section_changed_under_its_key_moves_nothing(
     window = _window(kept)
     snum, _ = _saved_in_the_store(window)
     other = max(n for n in window.series.sections if n != snum)
-    # a working file, so Save As can write out every other section first
-    window.series.loadSection(other)
+    # a working file, so Save As can write out every other section first;
+    # changed since the Save, so no source holds the section as saved
+    section = window.series.loadSection(other)
     header = _change_in_the_store(kept, other)
     _change_in_the_jser(window.series, other)
+    section.thickness = 0.2
+    section.save()
     before = kept.read_bytes()
     shown = []
     window.series._surfaceSaveError = lambda fp, err, message=None: shown.append(err)
@@ -384,3 +387,31 @@ def test_save_as_over_a_store_section_changed_under_its_key_moves_nothing(
         finally:
             con.close()
         window.close()
+
+
+def test_save_as_writes_a_store_section_changed_under_its_key_from_its_working_file(
+    kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    snum, _ = _saved_in_the_store(window)
+    # the working file holds the section as saved; the .jser does not
+    _change_in_the_store(kept, snum)
+    shown = []
+    window.series._surfaceSaveError = lambda fp, err, message=None: shown.append(err)
+    new_fp = tmp_path / "moved" / "renamed.jser"
+    new_fp.parent.mkdir()
+    main_window_dialogs.file_responses.append(str(new_fp))
+    try:
+        assert window.saveAsToJser() is None
+        assert shown == []
+        assert window.series.jser_fp == str(new_fp) and new_fp.exists()
+        assert store_save.heldStore(window.series) is None
+    finally:
+        window.close()
+    for fp in (kept, new_fp):
+        series = Series.openJser(str(fp), progress=NullProgressReporter)
+        try:
+            assert series.loadSection(snum).thickness != 0.123
+        finally:
+            series.close()

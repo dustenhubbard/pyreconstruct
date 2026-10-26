@@ -357,8 +357,13 @@ class StoreForOpen():
         """The store as `Series._unpackJser` reads a .jser."""
         return _StoreSource(self.store)
 
-    def spliceIndex(self):
-        """The splice index the last import recorded, if the .jser is still that file."""
+    def spliceIndex(self, any_stat=False):
+        """The splice index the last import recorded, if the .jser is still that file.
+
+            Params:
+                any_stat (bool): whatever the file's stat now, for a reader
+                    that checks each range it reads by sha256
+        """
         try:
             raw = self.store.meta(META_SPLICE)
         except sqlite3.Error as e:
@@ -369,7 +374,7 @@ class StoreForOpen():
         doc = fast_loads(raw)
         stat_key = tuple(doc["stat_key"])
         try:
-            if _stat_key(os.stat(self.jser_fp)) != stat_key:
+            if not any_stat and _stat_key(os.stat(self.jser_fp)) != stat_key:
                 return None
         except OSError:
             return None

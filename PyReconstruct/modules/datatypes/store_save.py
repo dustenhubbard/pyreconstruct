@@ -306,6 +306,8 @@ def _giveUp(series, held, err : Exception):
             store.setMeta(store_open.META_SHA, None)
             store.setMeta(store_open.META_STATS, None)
             store.setMeta(META_DIRTY, 0)
+            # a .jser it was writing is in place, or none is
+            store.setMeta(META_WRITING, None)
     except sqlite3.Error as e:
         _raiseIfBug(e)
         # left as it was, and its hash still names the last .jser it held:
@@ -644,16 +646,25 @@ def writeJser(series):
     Save, and the sections the last .jser holds are copied from it (the
     splice index the store keeps). An automatic backup is the caller's.
 
+    A section whose bytes in the store are not the ones its key names
+    (`unlikeTheirKeys`) is written from its working file, or from its range
+    in the .jser, when those bytes have that sha256, as a stub is filled
+    (lazy_sections.py). The store then gives up its claim on the .jser, so
+    the next open reads the .jser and keeps it again. Keys of an older import
+    (`keysCurrent`) name no row: every section is written as the store holds
+    it, as `store_recovery.exportStore` writes it.
+
         Raises:
             SeriesSaveError: if the store cannot be read, a section in it
-                is not the one its key names (`unlikeTheirKeys`), or another
-                save of this series is running. The .jser is not replaced.
+                is not the one its key names and no other source holds it,
+                or another save of this series is running. The .jser is not
+                replaced.
             OSError: if the file cannot be written. The .jser is not replaced.
     """
-    from . import store_open
+    from . import lazy_sections, store_open
     from .series import _atomicWrite
     from PyReconstruct.modules.constants.jser_format import write_jser
-    from PyReconstruct.modules.constants.jser_splice import JserSplice
+    from PyReconstruct.modules.constants.jser_splice import JserSplice, SpliceIndex
 
     held = heldStore(series)
     store = held.store
@@ -663,14 +674,16 @@ def writeJser(series):
     try:
         snums = store.sectionNumbers()
         keys = _keys(store)
+        current = keysCurrent(store)
         series_data = store.seriesData()
         log = store.logText()
-        index = held.spliceIndex()
+        index = held.spliceIndex() if current else None
     except (sqlite3.Error, store_open.StoreUnavailable) as e:
         _raiseIfBug(e)
         series._refuseSave(jser_fp, f"the local store could not be read ({e}).")
     if not snums or set(keys) != set(snums):
         series._refuseSave(jser_fp, "the local store does not hold every section of the series.")
+    expected = {n: keys[n][0] if current else None for n in snums}
 
     slots = [None] * (snums[-1] + 1)
     for snum in snums:
@@ -678,6 +691,8 @@ def writeJser(series):
 
     reporter = series._progressReporterFactory()(text="Saving series...", cancel=False)
     series._jser_save_running = True
+    # snum -> its saved bytes from a source other than the store
+    repaired : dict = {}
     try:
         def sections():
             for i, snum in enumerate(slots):
@@ -688,6 +703,8 @@ def writeJser(series):
                 yield KeyedSection(keys[snum][0], lambda snum=snum: readSection(snum))
 
         def readSection(snum):
+            if snum in repaired:
+                return fast_loads(repaired[snum])
             try:
                 return store.readSection(snum)
             except sqlite3.Error as e:
@@ -697,14 +714,47 @@ def writeJser(series):
         def tail():
             return {"series": series_data, "log": log}
 
+        def repairs(changed):
+            # the ranges of the last .jser, read only where their bytes hash right
+            try:
+                indexes = [held.spliceIndex(any_stat=True)]
+            except store_open.StoreUnavailable:
+                indexes = []
+            indexes.append(getattr(series, "_jser_splice_index", None))
+            found = {}
+            for snum in changed:
+                data = lazy_sections.savedBytes(series, snum, expected[snum], indexes)
+                if data is None:
+                    return None
+                found[snum] = data
+            return found
+
         if index is not None and not index.matchesDisk():
             index = None
-        splice = JserSplice(index)
-        hasher = JserHasher()
+        written = {}
+
+        def attempt(f, index):
+            f.seek(0)
+            f.truncate()
+            written["splice"] = splice = JserSplice(index)
+            written["hasher"] = hasher = JserHasher()
+            write_jser(hasher.wrap(f), sections, tail, splice=splice)
+            return unlikeTheirKeys(expected, splice, readSection)
 
         def write(f):
-            write_jser(hasher.wrap(f), sections, tail, splice=splice)
-            changed = unlikeTheirKeys({n: keys[n][0] for n in snums}, splice, readSection)
+            changed = attempt(f, index)
+            if changed:
+                found = repairs(changed)
+                if found is not None:
+                    repaired.update(found)
+                    # written from the bytes found, not copied
+                    copied = None
+                    if index is not None:
+                        found_keys = {expected[n] for n in found}
+                        copied = SpliceIndex(index.path, index.stat_key, {
+                            k: r for k, r in index.ranges.items() if k not in found_keys
+                        })
+                    changed = attempt(f, copied)
             if changed:
                 series._refuseSave(jser_fp, (
                     f"section {changed[0]} in the local store is not the section "
@@ -713,7 +763,7 @@ def writeJser(series):
                 ))
             # before the file is put in place: a crash after that, before the
             # record below, leaves a .jser the next open knows as this one
-            digest = hasher.digest()
+            digest = written["hasher"].digest()
             if digest is not None:
                 _noteWriting(store, digest)
 
@@ -725,8 +775,16 @@ def writeJser(series):
             if isinstance(e, OSError):
                 series._surfaceSaveError(jser_fp, e)
             raise
-        series._jser_splice_index = new_index = splice.indexFor(jser_fp)
-        digest = hasher.digest()
+        # a layout keyed by keys of an older import would name other bytes
+        new_index = written["splice"].indexFor(jser_fp) if current else None
+        series._jser_splice_index = new_index
+        if repaired:
+            _giveUp(series, held, NotKept(
+                f"section {min(repaired)} in it is not the section that was saved; "
+                f"the .jser was written from the saved section"
+            ))
+            return
+        digest = written["hasher"].digest()
         try:
             if digest is None:
                 digest = store_open.jserDigest(jser_fp)
@@ -764,7 +822,7 @@ def unlikeTheirKeys(expected : dict, splice, read) -> list:
     layout = splice.layout
     if layout is not None and len(layout) == len(expected):
         return [
-            snum for snum, (key, _, _, digest) in zip(expected, layout)
+            snum for (snum, key), (_, _, _, digest) in zip(expected.items(), layout)
             if key is not None and digest != key
         ]
     return [
