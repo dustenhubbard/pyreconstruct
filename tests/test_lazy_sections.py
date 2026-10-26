@@ -1153,3 +1153,34 @@ def test_a_resume_removes_fill_temps_of_either_name(tmp_path, switch_on, monkeyp
         assert not [n for n in os.listdir(wdir) if n.endswith(".tmp")]
     finally:
         resumed.close()
+
+
+@pytest.mark.skipif(os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+                    reason="chmod 0 does not stop Windows or root from searching a folder")
+@pytest.mark.parametrize("path_kind", ["canonical", "link"])
+def test_cleanup_keeps_the_store_of_a_folder_it_cannot_search(path_kind, tmp_path, switch_on, monkeypatch):  # noqa: F811
+    src = _kept(_copy(PARITY, tmp_path / "original"))
+    opened_by = src
+    if path_kind == "link":
+        opened_by = tmp_path / "alias.jser"
+        opened_by.symlink_to(src)
+    first = _open(opened_by)
+    section = first.loadSection(0)
+    section.thickness = 0.321
+    section.save()
+    first.save()
+    folder = Path(first.getwdir())
+    _crash(first)
+    before = {p.name: p.read_bytes() for p in folder.iterdir()}
+    folder.chmod(0)
+    try:
+        state, db_fp = _remove_if_clean(src)
+    finally:
+        folder.chmod(0o700)
+    assert not state.clean and state.why == local_stores.STUBS and os.path.isfile(db_fp)
+    assert {p.name: p.read_bytes() for p in folder.iterdir()} == before
+    resumed = _open(opened_by, notifier=_NoDialog())
+    try:
+        assert resumed.loadSection(0).thickness == 0.321
+    finally:
+        resumed.close()

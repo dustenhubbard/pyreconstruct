@@ -125,7 +125,7 @@ def recordFolder(held, folder : str):
     store = held.store
     try:
         listed = json.loads(store.meta(META_FOLDERS) or "[]")
-        kept = [f for f in listed if f != folder and os.path.lexists(os.path.join(f, MARKER))]
+        kept = [f for f in listed if f != folder and _mayExist(os.path.join(f, MARKER))]
         store.setMeta(META_FOLDERS, json.dumps(kept + [os.path.abspath(folder)]))
     except (OSError, sqlite3.Error) as e:
         store_open._raiseIfBug(e)
@@ -146,10 +146,22 @@ def needsStore(meta : dict, store_name : str) -> bool:
     return any(_mayHoldStubsOf(folder, store_name) for folder in folders)
 
 
+def _mayExist(path : str) -> bool:
+    """False only when path is surely not there; a folder that cannot be
+    searched (no permission, a disk error) may hold it."""
+    try:
+        os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError:
+        return True
+    return True
+
+
 def _mayHoldStubsOf(folder : str, store_name : str) -> bool:
     """True when the folder's marker names the store, or cannot be read."""
     marker = os.path.join(folder, MARKER)
-    if not os.path.lexists(marker):
+    if not _mayExist(marker):
         return False
     try:
         return json.loads(_readRegular(marker, 4096)).get("store") == store_name
@@ -425,7 +437,7 @@ def presentFolder(folder : str, jser_fp : str, notifier=None) -> bool:
     filled: the folder is renamed aside whole and the user told where, so
     the .jser opens instead; nothing is deleted.
     """
-    if not os.path.lexists(os.path.join(folder, MARKER)):
+    if not _mayExist(os.path.join(folder, MARKER)):
         return True
     try:
         _fillFolder(folder, jser_fp)
@@ -448,7 +460,11 @@ def _fillFolder(folder : str, jser_fp : str):
             SectionUnavailable: a stub no source holds; the folder is as it was,
                 less the stubs filled before it
     """
-    for name in sorted(os.listdir(folder)):
+    try:
+        names = sorted(os.listdir(folder))
+    except OSError as e:
+        raise SectionUnavailable(f"{folder} could not be read ({e})") from e
+    for name in names:
         stem, _, ext = name.rpartition(".")
         if stem and ext.isnumeric():
             fill(os.path.join(folder, name), jser_fp)
