@@ -33,6 +33,7 @@ Read at call time, not import time, so tests can flip the environment
 without reimporting, and so import order against the runtime hook cannot
 matter.
 """
+import hashlib
 import json
 import os
 
@@ -48,6 +49,33 @@ def settings_app():
     """The application name of this flavor (``PyReconstruct Dev`` under the
     Dev bundle's environment, ``PyReconstruct`` otherwise)."""
     return os.environ.get("PYRECON_APP_NAME", SHARED_APP)
+
+
+# Stands between the app and the digest in the settings name of a series
+# code that holds a NUL (see series_app).
+NUL_CODE_MARKER = " NUL-"
+
+
+def series_app(app, code):
+    """The application name of one series' own settings: ``<app>-<code>``.
+
+    The name becomes a file name in the Ini format (Linux, and the test
+    suite), and no file name can hold a NUL. Given one, `QLockFile` retries
+    the lock forever, so a series whose code holds a NUL would hang every
+    per-series read. A code typed in Series code is refused a NUL, but one
+    read from a series file is not.
+
+    So a code with a NUL is named ``<app> NUL-<digest>``: the SHA-256 of
+    the code, in 64 lowercase hex digits. The name has no separator or dot
+    for the Ini format to read as a path, so it stays one file of its own.
+    Every ``<app>-<code>`` name has "-" right after the app name, so none
+    is spelled like it. Every code without a NUL names the domain it
+    always has.
+    """
+    if "\0" not in code:
+        return f"{app}-{code}"
+    digest = hashlib.sha256(code.encode("utf-8", "surrogatepass")).hexdigest()
+    return f"{app}{NUL_CODE_MARKER}{digest}"
 
 
 def shared_domain():
@@ -240,12 +268,12 @@ def fold_series_settings_once(code, flavored=None, shared=None):
         if settings_app() == SHARED_APP:
             return False
         from PySide6.QtCore import QSettings
-        flavored = QSettings(SETTINGS_ORG, f"{settings_app()}-{code}")
+        flavored = QSettings(SETTINGS_ORG, series_app(settings_app(), code))
     if flavored.contains(FOLD_MARKER):
         return False
     if shared is None:
         from PySide6.QtCore import QSettings
-        shared = QSettings(SETTINGS_ORG, f"{SHARED_APP}-{code}")
+        shared = QSettings(SETTINGS_ORG, series_app(SHARED_APP, code))
     return bool(_fold(
         flavored, shared, mark_always=False, validate_list_layout=True
     ))
