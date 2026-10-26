@@ -3524,8 +3524,9 @@ class MainWindow(QMainWindow):
                 self.field.b_section
             )
         except SeriesSaveError:
-            # the old .jser could not be written from the local store: the
-            # user was told, and nothing moved
+            # a section could not be written out of the local store, or the
+            # old .jser could not be written from it: the user was told, and
+            # nothing moved
             return "cancel"
 
         # the 3D scene tells the open series' objects apart by path

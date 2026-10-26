@@ -1916,11 +1916,21 @@ class Series():
                 new_jser_fp (str): the new location for the series
                 section (Section): the section file being used (in GUI)
                 b_section (Section): the secondary section file being used (in GUI)
+            Raises:
+                SeriesSaveError: a section could not be written out of the
+                    local store, or the old .jser could not be written from
+                    it; the user was told, and nothing moved
             """
         # the local store is keyed by the old path: it writes the old file if
         # it holds a Save that file lacks, and the series lets go of it. Its
-        # stubs are filled first, since nothing backs them after that
-        self.presentAllSections()
+        # stubs are filled first, since nothing backs them after that. A stub
+        # that cannot be filled (SectionUnavailable) stops the move before
+        # anything moves: the series stays open at its old path, with its
+        # store and working folder
+        try:
+            self.presentAllSections()
+        except OSError as e:
+            self._refuseSave(self.jser_fp, f"{e}, so the series was not moved")
         store_save.closing(self)
 
         ## Move/Rename hidden directory
