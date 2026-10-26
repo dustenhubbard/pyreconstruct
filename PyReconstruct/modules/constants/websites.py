@@ -11,7 +11,8 @@ gh_repo = fork_repo
 # docs/USER_GUIDE.md, replaces the older GitHub wiki pages.
 user_guide = "https://pyreconstruct.org/USER_GUIDE/"
 # Class-documents menu link (Help > Online resources > "Class documents";
-# Help > "Class documents" on macOS): the course handouts, docs/class/.
+# Help > "Class documents" on macOS): the course handouts, served separately
+# from this repository's docs site.
 class_docs = "https://pyreconstruct.org/class/"
 gh_issues = fork_repo + "/issues"
 # The two issue forms (.github/ISSUE_TEMPLATE/*.yml), opened by their own Help

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {# A page sets `robots: noindex` in its front matter to keep search engines
-   from listing it. The class documents use this; see docs/class/index.md. #}
+   from listing it. #}
 {% block extrahead %}
   {{ super() }}
   {% set site_url = config.site_url.rstrip('/') ~ '/' %}
