@@ -122,7 +122,7 @@ def finishWrite(held, digest : str):
     try:
         with store_open._transaction(store):
             store.recordJser(held.jser_fp)
-            store.setMeta(store_open.META_SHA, digest)
+            store_save.recordJserSha(store, digest)
             # the layout of that file was never recorded: the next Save writes in full
             store.setMeta(store_open.META_SPLICE, None)
             store.setMeta(store_save.META_WRITING, None)
@@ -597,9 +597,11 @@ def exportStore(path : str, out_fp=None) -> str:
             FileNotFoundError: no such store
             FileExistsError: out_fp exists
             StoreBusyError: a window has the series open
-            ValueError: the store holds no section
+            ValueError: the store holds no section, or a section whose
+                bytes are not the ones its key names
     """
     from PyReconstruct.modules.constants.jser_format import write_jser
+    from PyReconstruct.modules.constants.jser_splice import JserSplice, KeyedSection
 
     if path.lower().endswith(STORE_EXT):
         db_fp = os.path.abspath(path)
@@ -629,21 +631,59 @@ def exportStore(path : str, out_fp=None) -> str:
         for snum in snums:
             slots[snum] = snum
 
+        expected = _savedKeys(store, snums)
+
         def sections():
             for snum in slots:
-                yield None if snum is None else store.readSection(snum)
+                yield None if snum is None else KeyedSection(
+                    expected[snum], lambda snum=snum: store.readSection(snum)
+                )
 
         def tail():
             return {"series": series_data, "log": log}
 
+        def write(f):
+            splice = JserSplice(None)
+            write_jser(f, sections, tail, splice=splice)
+            changed = store_save.unlikeTheirKeys(expected, splice, store.readSection)
+            if changed:
+                raise ValueError(
+                    f"section {changed[0]} in the local copy {db_fp} is not the section "
+                    f"that was saved: it changed outside PyReconstruct. The local copy "
+                    f"is kept as it is"
+                )
+
         unsaved = store.meta(store_save.META_DIRTY) == "1" or store.hasPending()
-        _writeNew(out_fp, lambda f: write_jser(f, sections, tail))
+        _writeNew(out_fp, write)
         if unsaved:
             with store_open._transaction(store):
                 store.setMeta(META_WRITTEN_OUT, out_fp)
     finally:
         store.close()
     return out_fp
+
+
+def _savedKeys(store, snums : list) -> dict:
+    """snum -> the key a section's stored bytes must have, or None when its key
+    does not name them (a row with working rows over it, one held as an open
+    writes it, or a store that keeps no keys). Read only: the store is not changed.
+
+    Keys are trusted only when they name the sections of the store's last
+    import (`store_save.keysCurrent`): an open stopped between the import
+    and its keys, or a build that keeps no keys, leaves the new rows beside
+    the keys of the old ones.
+    """
+    if not store_save.keysCurrent(store) or store.con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='section_key'"
+    ).fetchone() is None:
+        return dict.fromkeys(snums)
+    pending = {snum for (snum,) in store.con.execute("SELECT snum FROM pending_section")}
+    named = {
+        snum: bytes(key)
+        for snum, key in store.con.execute("SELECT snum, key FROM section_key WHERE as_working=1")
+        if snum not in pending
+    }
+    return {snum: named.get(snum) for snum in snums}
 
 
 def _defaultOut(recorded, db_fp : str) -> str:

@@ -39,13 +39,17 @@ import io
 import os
 import shutil
 import sqlite3
+import subprocess
 import sys
+import types
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from PyReconstruct import cli
+from PyReconstruct.modules.backend.progress import NullProgressReporter
+from PyReconstruct.modules.constants import fast_dumps, fast_loads
 from PyReconstruct.modules.datatypes import hybrid_store, lazy_sections, store_open, store_recovery, store_save
 from PyReconstruct.modules.datatypes import series as series_module
 from PyReconstruct.modules.datatypes.hybrid_store import HybridStore
@@ -53,7 +57,8 @@ from PyReconstruct.modules.datatypes.hybrid_store import HybridStore
 from test_hybrid_store import PARITY, SERIES_FILES, store_root  # noqa: F401  (fixture)
 from test_store_open import _Asked, _copy, _open, _snapshot, _store_opens, _today, store_root_glob
 from test_store_open import notes, switch_on  # noqa: F401  (fixture)
-from test_store_save import _edit, _edit_last, _kept, _today_saved, log_clock, store_mode  # noqa: F401  (fixture)
+from test_store_save import _change_in_the_store, _edit, _edit_last, _kept, _today_saved
+from test_store_save import log_clock, store_mode  # noqa: F401  (fixture)
 from test_store_save_gui import _saved_in_the_store, _window, kept  # noqa: F401  (fixture)
 
 
@@ -1307,6 +1312,147 @@ def test_the_command_line_writes_a_jser_s_store_to_a_new_file_and_replaces_none(
     assert code == 1 and "was not replaced" in text
     assert out.read_bytes() == b"mine"
     assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".export-")] == []
+
+
+def test_the_command_line_writes_no_jser_from_a_section_changed_under_its_key(
+    tmp_path, switch_on, store_mode, monkeypatch,  # noqa: F811
+):
+    fp = _kept(PARITY, tmp_path)
+    series = _open(fp)
+    edited = _edit(series)
+    assert series.saveToStore() is True
+    other = max(n for n in series.sections if n != edited)
+    _crash(series)
+    _change_in_the_store(fp, other)
+    out = tmp_path / "new.jser"
+    code, text = _cli(monkeypatch, str(fp), str(out))
+    assert code == 1 and f"section {other} in the local copy" in text
+    assert not out.exists()
+    assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".export-")] == []
+    assert _meta(fp, store_save.META_DIRTY) == "1"
+    assert _meta(fp, store_save.META_WRITTEN_OUT) is None
+
+
+def _saved_without_the_store(fp, monkeypatch):
+    """Section 0 at thickness 0.125, saved to the .jser by today's Save."""
+    with monkeypatch.context() as m:
+        m.delenv(store_open.ENV_SWITCH)
+        series = _open(fp)
+        section = series.loadSection(0)
+        section.thickness = 0.125
+        section.save()
+        series.saveJser()
+        series.close()
+
+
+def _import_keeps(fp):
+    """The store of fp holds the .jser as imported, beside keys of the import before."""
+    store = HybridStore.forJser(str(fp))
+    try:
+        assert store.meta(store_open.META_STATS) == store.meta("imported_utc") is not None
+        assert store.readSection(0) == fast_loads(fp.read_bytes())["sections"][0]
+        (key,) = store.con.execute("SELECT key FROM section_key WHERE snum=0").fetchone()
+        assert hashlib.sha256(fast_dumps(store.readSection(0))).digest() != bytes(key)
+    finally:
+        store.close()
+
+
+def _reimported_without_keys(fp, monkeypatch):
+    """The .jser changed, then imported again by a build that keeps no section keys."""
+    _saved_without_the_store(fp, monkeypatch)
+    with monkeypatch.context() as m:
+        m.setattr(store_save, "recordKeys", lambda store, keys: None)
+        _open(fp).close()
+    _import_keeps(fp)
+
+
+def _historical(ref, basename):
+    """A module of PyReconstruct.modules.datatypes as commit ref has it, or a skip."""
+    path = f"PyReconstruct/modules/datatypes/{basename}.py"
+    proc = subprocess.run(
+        ["git", "-C", str(Path(__file__).resolve().parents[1]), "show", f"{ref}:{path}"],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        pytest.skip(f"cannot read {ref}:{path}: {proc.stderr[:200]}")
+    module = types.ModuleType(f"PyReconstruct.modules.datatypes.old_{basename}")
+    module.__package__ = "PyReconstruct.modules.datatypes"
+    exec(compile(proc.stdout, f"{ref}:{path}", "exec"), module.__dict__)
+    return module
+
+
+def _reimported_by_a_build_before_keys(fp, monkeypatch):
+    """The .jser changed, then imported again by the store code of fork 3505375a."""
+    old_open = _historical("3505375a", "store_open")
+    old_hybrid = _historical("3505375a", "hybrid_store")
+    _saved_without_the_store(fp, monkeypatch)
+    series, collisions, digest = series_module.Series._unpackJser(
+        str(fp), NullProgressReporter, _NoNotifier(), hashed=True
+    )
+    held = old_open.StoreForOpen(old_hybrid.HybridStore.forJser(str(fp)), str(fp))
+    try:
+        held.importOpened(series, collisions, digest)
+    finally:
+        held.close()
+        series.close()
+    _import_keeps(fp)
+
+
+def test_the_command_line_writes_a_store_whose_import_stopped_before_its_keys(
+    tmp_path, switch_on, monkeypatch,  # noqa: F811
+):
+    fp = _kept(PARITY, tmp_path)
+    _saved_without_the_store(fp, monkeypatch)
+
+    def refused(*args, **kwargs):
+        raise store_open._NotMeasuredAlike("not measured alike")
+
+    # the open imports the new .jser, then stops before it records the keys
+    with monkeypatch.context() as m:
+        m.setattr(store_open, "_statsRow", refused)
+        series = _open(fp)
+        assert store_save.heldStore(series) is None
+        series.close()
+    out = tmp_path / "new.jser"
+    code, text = _cli(monkeypatch, str(fp), str(out))
+    assert (code, text.strip()) == (0, str(out))
+    assert fast_loads(out.read_bytes())["sections"][0]["thickness"] == 0.125
+
+
+@pytest.mark.parametrize("reimport", [_reimported_without_keys, _reimported_by_a_build_before_keys],
+                         ids=["no keys kept", "fork 3505375a"])
+def test_the_command_line_writes_a_store_imported_by_a_build_that_keeps_no_keys(
+    reimport, tmp_path, switch_on, monkeypatch,  # noqa: F811
+):
+    fp = _kept(PARITY, tmp_path)
+    reimport(fp, monkeypatch)
+    out = tmp_path / "new.jser"
+    code, text = _cli(monkeypatch, str(fp), str(out))
+    assert (code, text.strip()) == (0, str(out))
+    assert fast_loads(out.read_bytes())["sections"][0]["thickness"] == 0.125
+
+
+@pytest.mark.parametrize("reimport", [_reimported_without_keys, _reimported_by_a_build_before_keys],
+                         ids=["no keys kept", "fork 3505375a"])
+def test_a_store_imported_by_a_build_that_keeps_no_keys_is_imported_again(
+    reimport, tmp_path, switch_on, store_mode, monkeypatch,  # noqa: F811
+):
+    fp = _kept(PARITY, tmp_path)
+    reimport(fp, monkeypatch)
+    opens = _store_opens(monkeypatch)
+    series = _open(fp)
+    assert opens == []
+    assert series.loadSection(0).thickness == 0.125
+    series.setAttr("axon", "comment", "a separately saved edit")
+    series.save()
+    assert series.saveToStore()
+    series.close()
+    assert fast_loads(fp.read_bytes())["sections"][0]["thickness"] == 0.125
+    series = _open(fp)
+    try:
+        assert opens == [series.name]
+    finally:
+        series.close()
 
 
 def _no_hard_links(monkeypatch):

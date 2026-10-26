@@ -340,6 +340,9 @@ class StoreForOpen():
                 return False
             if store.meta(META_STATS) != store.meta("imported_utc"):
                 return False
+            # stubs and Save take each section's key as naming its stored bytes
+            if not store_save.keysCurrent(store):
+                return False
             stored = {r[0] for r in store.con.execute("SELECT snum FROM section_stats")}
             if stored != set(store.sectionNumbers()):
                 return False
@@ -428,6 +431,7 @@ class StoreForOpen():
                 store.setMeta(META_STATS, None)
                 store.setMeta(META_SPLICE, None)
                 store.setMeta(META_SHA, None)
+                store.setMeta(store_save.META_KEYS_FOR, None)
             source = _WorkingFolderSource(series)
             # the alignments as the open found them, before it measured
             alignments = _Alignments(source.series["alignment"], source.series["obj_attrs"])

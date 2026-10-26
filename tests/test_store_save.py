@@ -24,6 +24,7 @@ What these pin:
 """
 import hashlib
 import os
+import sqlite3
 
 import pytest
 
@@ -463,6 +464,122 @@ def test_save_as_writes_the_old_file_first_and_lets_the_store_go(
     series.saveJser()
     series.close()
     assert new_fp.exists()
+
+
+def _written_by_this_app(tmp_path):
+    """A kept series whose .jser this app wrote, so its store can splice from it."""
+    fp = _copy(PARITY, tmp_path / "s")
+    series = _open(fp)
+    series.saveJser()
+    series.close()
+    return fp
+
+
+def _change_in_the_store(fp, snum, thickness=0.123):
+    """Change section snum's row in the store of fp, leaving its key as it was.
+
+    Returns the row's header as it was. Another program or a damaged disk
+    does this: the key is unchanged, so a Save skips the row.
+    """
+    con = sqlite3.connect(hybrid_store.storePaths(str(fp))[0], isolation_level=None)
+    try:
+        con.execute("PRAGMA busy_timeout=5000")
+        (header,) = con.execute("SELECT header FROM section WHERE snum=?", (snum,)).fetchone()
+        doc = fast_loads(header)
+        doc["thickness"] = thickness
+        con.execute("UPDATE section SET header=? WHERE snum=?", (fast_dumps(doc), snum))
+    finally:
+        con.close()
+    return header
+
+
+def _change_in_the_jser(series, snum):
+    """Change one byte of section snum where the .jser holds it, so no write copies it."""
+    held = store_save.heldStore(series)
+    key = store_save._keys(held.store)[snum][0]
+    offset, length = held.spliceIndex().ranges[key][:2]
+    with open(series.jser_fp, "r+b") as f:
+        f.seek(offset + length // 2)
+        byte = f.read(1)
+        f.seek(offset + length // 2)
+        f.write(b"0" if byte != b"0" else b"1")
+
+
+def _saved_over_a_changed_section(tmp_path, visited):
+    """A series saved to its store after section 1 changed there under its key.
+
+    The .jser's copy of section 1 changed too. With `visited`, section 1 was
+    loaded first, so its working file holds it as it was saved.
+    """
+    fp = _written_by_this_app(tmp_path)
+    series = _open(fp)
+    if visited:
+        assert series.loadSection(1).thickness == 0.05
+    _change_in_the_store(fp, 1)
+    _change_in_the_jser(series, 1)
+    series.setAttr("axon", "comment", "a separately saved edit")
+    series.save()
+    assert series.saveToStore()
+    return fp, series
+
+
+def _notices(series):
+    notices = []
+    series._surfaceSaveError = lambda fp, err, message=None: notices.append(str(err))
+    return notices
+
+
+@pytest.mark.parametrize("visited", [False, True], ids=["stub", "working-file"])
+def test_close_refuses_a_store_section_changed_under_its_key(
+    visited, tmp_path, switch_on, store_mode, monkeypatch,  # noqa: F811
+):
+    fp, series = _saved_over_a_changed_section(tmp_path, visited)
+    before = fp.read_bytes()
+    notices = _notices(series)
+    with pytest.raises(series_module.SeriesSaveError):
+        series.close()
+    assert fp.read_bytes() == before
+    assert len(notices) == 1 and "section 1 in the local store" in notices[0]
+    assert not series.closed and os.path.isdir(series.hidden_dir)
+    assert store_save.heldStore(series) is not None and store_save.ahead(series)
+    if visited:
+        assert series.loadSection(1).thickness == 0.05
+    store_save.release(series)
+
+
+def test_save_as_refuses_a_store_section_changed_under_its_key(
+    tmp_path, switch_on, store_mode, monkeypatch,  # noqa: F811
+):
+    # visited: Save As writes out every other section from the store first
+    fp, series = _saved_over_a_changed_section(tmp_path, visited=True)
+    before = fp.read_bytes()
+    hidden_dir = series.hidden_dir
+    notices = _notices(series)
+    new_fp = tmp_path / "moved" / "renamed.jser"
+    new_fp.parent.mkdir()
+    with pytest.raises(series_module.SeriesSaveError):
+        series.move(str(new_fp))
+    assert fp.read_bytes() == before
+    assert len(notices) == 1 and "section 1 in the local store" in notices[0]
+    assert series.jser_fp == str(fp) and os.path.isdir(hidden_dir)
+    assert os.listdir(new_fp.parent) == []
+    assert store_save.heldStore(series) is not None and store_save.ahead(series)
+    assert series.loadSection(1).thickness == 0.05
+    store_save.release(series)
+
+
+def test_a_pretty_write_checks_each_section_against_its_key(
+    tmp_path, switch_on, store_mode, monkeypatch,  # noqa: F811
+):
+    fp, series = _saved_over_a_changed_section(tmp_path, visited=True)
+    monkeypatch.setenv(jser_format.PRETTY_ENV_VAR, "1")
+    before = fp.read_bytes()
+    notices = _notices(series)
+    with pytest.raises(series_module.SeriesSaveError):
+        series.close()
+    assert fp.read_bytes() == before
+    assert len(notices) == 1 and "section 1 in the local store" in notices[0]
+    store_save.release(series)
 
 
 # ---------------------------------------------------------------------------

@@ -66,6 +66,11 @@ CREATE TABLE IF NOT EXISTS section_key(
 )
 """
 
+## meta: the import and the .jser (imported_utc and jser_sha256) the
+## section_key rows were recorded for, written with them. A build that
+## imports without keeping keys changes both and leaves this, so keys of an
+## older import are never taken for its rows
+META_KEYS_FOR = "keys_for"
 ## meta: "1" while the store holds a Save the .jser lacks (hybrid_store.py)
 META_DIRTY = "dirty"
 ## meta: when the store last took a Save the .jser lacks (UTC)
@@ -185,6 +190,37 @@ def recordKeys(store, keys : dict):
         "INSERT INTO section_key(snum, key, opens_alike, as_working) VALUES (?, ?, ?, 1)",
         [(snum, key, int(alike)) for snum, (key, alike) in sorted(keys.items())],
     )
+    noteKeys(store)
+
+
+def _keysFor(store):
+    from . import store_open
+
+    imported, digest = store.meta("imported_utc"), store.meta(store_open.META_SHA)
+    return None if imported is None or digest is None else f"{imported} {digest}"
+
+
+def noteKeys(store):
+    """Record that the section keys name the rows of this import and .jser
+    (META_KEYS_FOR), in the transaction that records the keys."""
+    store.setMeta(META_KEYS_FOR, _keysFor(store))
+
+
+def recordJserSha(store, digest):
+    """Record the sha256 of the .jser the store now holds. Keys current
+    before stay current; keys that were not stay so."""
+    from . import store_open
+
+    current = keysCurrent(store)
+    store.setMeta(store_open.META_SHA, digest)
+    if current:
+        noteKeys(store)
+
+
+def keysCurrent(store) -> bool:
+    """True when the store's section keys name the sections it holds (META_KEYS_FOR)."""
+    current = _keysFor(store)
+    return current is not None and store.meta(META_KEYS_FOR) == current
 
 
 def _keys(store) -> dict:
@@ -389,7 +425,7 @@ def _commit(series, held, keys : dict, tail : dict, written):
         if written is not None:
             digest, index = written
             store.recordJser(series.jser_fp)
-            store.setMeta(store_open.META_SHA, digest)
+            recordJserSha(store, digest)
             store.setMeta(store_open.META_SPLICE, store_open._spliceMeta(_asOpened(index, store)))
             store.setMeta(META_DIRTY, 0)
         elif content_changed:
@@ -609,8 +645,9 @@ def writeJser(series):
     splice index the store keeps). An automatic backup is the caller's.
 
         Raises:
-            SeriesSaveError: if the store cannot be read, or another save
-                of this series is running. The .jser is not replaced.
+            SeriesSaveError: if the store cannot be read, a section in it
+                is not the one its key names (`unlikeTheirKeys`), or another
+                save of this series is running. The .jser is not replaced.
             OSError: if the file cannot be written. The .jser is not replaced.
     """
     from . import store_open
@@ -667,6 +704,13 @@ def writeJser(series):
 
         def write(f):
             write_jser(hasher.wrap(f), sections, tail, splice=splice)
+            changed = unlikeTheirKeys({n: keys[n][0] for n in snums}, splice, readSection)
+            if changed:
+                series._refuseSave(jser_fp, (
+                    f"section {changed[0]} in the local store is not the section "
+                    f"that was saved: it changed outside PyReconstruct. The working "
+                    f"folder and the local store are kept as they are."
+                ))
             # before the file is put in place: a crash after that, before the
             # record below, leaves a .jser the next open knows as this one
             digest = hasher.digest()
@@ -688,7 +732,7 @@ def writeJser(series):
                 digest = store_open.jserDigest(jser_fp)
             with store_open._transaction(store):
                 store.recordJser(jser_fp)
-                store.setMeta(store_open.META_SHA, digest)
+                recordJserSha(store, digest)
                 store.setMeta(store_open.META_SPLICE, store_open._spliceMeta(_asOpened(new_index, store)))
                 store.setMeta(META_WRITING, None)
                 store.setMeta(META_DIRTY, 0)
@@ -699,6 +743,34 @@ def writeJser(series):
     finally:
         series._jser_save_running = False
         reporter.finish()
+
+
+def unlikeTheirKeys(expected : dict, splice, read) -> list:
+    """The sections a .jser write just wrote whose bytes are not the ones their key names.
+
+    A Save keeps a section's key, the sha256 of its working file, and skips
+    its row while the key is unchanged, so a row changed outside the app
+    under its key is found only here. The minified write hashed every section
+    as it encoded or copied it (the splice layout), so this costs nothing.
+    Any other form (pretty, or the stdlib writer) records no layout, and each
+    section is read again (`read`) and encoded once more.
+
+        Params:
+            expected (dict): snum -> the key its bytes must have, or None
+                for a section that is not checked, in the order written
+            splice (JserSplice): the write's splice
+            read (callable): snum -> the section dict, as the write read it
+    """
+    layout = splice.layout
+    if layout is not None and len(layout) == len(expected):
+        return [
+            snum for snum, (key, _, _, digest) in zip(expected, layout)
+            if key is not None and digest != key
+        ]
+    return [
+        snum for snum, key in expected.items()
+        if key is not None and section_digest(fast_dumps(read(snum))) != key
+    ]
 
 
 def _noteWriting(store, digest):

@@ -3517,11 +3517,16 @@ class MainWindow(QMainWindow):
 
         ## Move hidden folder to new jser directory
         old_jser_fp = self.series.jser_fp
-        self.series.move(
-            new_jser_fp,
-            self.field.section,
-            self.field.b_section
-        )
+        try:
+            self.series.move(
+                new_jser_fp,
+                self.field.section,
+                self.field.b_section
+            )
+        except SeriesSaveError:
+            # the old .jser could not be written from the local store: the
+            # user was told, and nothing moved
+            return "cancel"
 
         # the 3D scene tells the open series' objects apart by path
         if self.viewer and not self.viewer.is_closed:
