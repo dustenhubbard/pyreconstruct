@@ -9,6 +9,7 @@ export still returned its path (a Zarr of zeros), the retrain branch of
 The pool here runs each worker inline and returns what the real one does:
 False if any worker raised.
 """
+import contextlib
 import types
 
 import numpy as np
@@ -183,6 +184,7 @@ def test_menu_import_stops_only_on_a_failed_group(monkeypatch, results, attempte
         series=object(),
         field=types.SimpleNamespace(reload=lambda: None, refuseWhileRoiBox=lambda: False),
         saveAllData=lambda: None,
+        seriesTransition=contextlib.nullcontext,
     )
 
     main_window.MainWindow.importFromZarrLabels(window)

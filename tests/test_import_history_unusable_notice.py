@@ -32,6 +32,7 @@ The third is where an over-eager warning would show up, and it is the reason
 tests 4 and 5 exist: a merge whose history *is* usable, and a merge that never
 asked for the history check, must both go through in silence.
 """
+import contextlib
 import types
 
 import pytest
@@ -324,6 +325,7 @@ def importWindow(monkeypatch, self_lines, other_lines, check_history=True):
             reload=lambda: None,
             table_manager=types.SimpleNamespace(refresh=lambda: None),
         ),
+        seriesTransition=contextlib.nullcontext,
     )
     return window, calls
 

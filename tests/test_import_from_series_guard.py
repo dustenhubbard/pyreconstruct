@@ -7,6 +7,7 @@ sibling openSeries already guards this exact case; importFromSeries did not.
 Exercised against a duck-typed stub with the module-level collaborators
 monkeypatched, so no real MainWindow / Qt is required.
 """
+import contextlib
 import types
 
 from PyReconstruct.modules.gui.main import main_window as mw
@@ -32,6 +33,7 @@ def test_import_from_series_aborts_when_open_cancelled(monkeypatch):
         series=types.SimpleNamespace(avg_mag=0.01),
         saveAllData=lambda: None,
         field=types.SimpleNamespace(refuseWhileRoiBox=lambda: False),
+        seriesTransition=contextlib.nullcontext,
     )
 
     mw.MainWindow.importFromSeries(stub)  # must not raise AttributeError
@@ -65,6 +67,7 @@ def test_import_from_series_proceeds_for_a_valid_series(monkeypatch):
         series=types.SimpleNamespace(avg_mag=0.01),
         saveAllData=lambda: None,
         field=types.SimpleNamespace(refuseWhileRoiBox=lambda: False),
+        seriesTransition=contextlib.nullcontext,
     )
 
     mw.MainWindow.importFromSeries(stub)
