@@ -50,6 +50,10 @@ def settings_app():
     return os.environ.get("PYRECON_APP_NAME", SHARED_APP)
 
 
+# Marks and escapes a series code that holds a NUL (see series_app).
+NUL_CODE_ESCAPE = "�"
+
+
 def series_app(app, code):
     """The application name of one series' own settings: ``<app>-<code>``.
 
@@ -57,11 +61,20 @@ def series_app(app, code):
     suite), and no file name can hold a NUL. Given one, `QLockFile` retries
     the lock forever, so a series whose code holds a NUL would hang every
     per-series read. A code typed in Series code is refused a NUL, but one
-    read from a series file is not, so the NUL is replaced here, as U+FFFD.
-    Every other code names the same domain it always has, so a series keeps
-    its stored settings.
+    read from a series file is not.
+
+    So a code with a NUL gets a name of its own kind, ``<app>`` U+FFFD
+    ``-<code>``, with each U+FFFD in the code written twice and each NUL
+    written as U+FFFD "0". No ``<app>-`` name starts that way, and the
+    escape tells any two such codes apart, so two different codes never
+    share a domain and one series cannot read or overwrite another's
+    settings. Every code without a NUL names the domain it always has.
     """
-    return f"{app}-{code.replace(chr(0), chr(0xFFFD))}"
+    if "\0" not in code:
+        return f"{app}-{code}"
+    esc = NUL_CODE_ESCAPE
+    escaped = code.replace(esc, esc * 2).replace("\0", esc + "0")
+    return f"{app}{esc}-{escaped}"
 
 
 def shared_domain():
