@@ -37,6 +37,8 @@ from test_store_open import (
     SOURCES, _NoDialog, _built_sections, _copy, _getters, _open, _today, rich_series,
 )
 from test_store_open import notes, switch_on  # noqa: F401  (fixture)
+# one minute for every history line, so the lazy and eager runs log the same time
+from test_store_save import log_clock  # noqa: F401  (fixture)
 
 
 def _kept(src):
