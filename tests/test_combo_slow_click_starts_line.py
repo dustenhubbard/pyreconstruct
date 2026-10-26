@@ -6,9 +6,6 @@ a scribble. A click used to count only if it lasted at most `max_click_time`
 drift, from a trackpad or a hand on the mouse, became a two-point scribble and
 drew nothing. Now a press whose pointer stays within `click_tolerance` pixels
 of the press point starts point-by-point tracing at any length.
-
-Driven against a real `MainWindow` and `FieldWidget`, through the field's own
-`mousePressEvent`, `mouseMoveEvent` and `mouseReleaseEvent`.
 """
 
 import pytest
@@ -17,6 +14,7 @@ from PySide6.QtCore import Qt
 from PyReconstruct.modules.gui.main.field_widget_5_mouse import (
     CLOSEDTRACE,
     OPENTRACE,
+    POINTER,
 )
 from test_lasso_ends_on_tool_change_and_pinch import (
     HELD,
@@ -121,3 +119,39 @@ def test_release_after_field_menu_does_not_start_line(
     field.mouseReleaseEvent(FakeMouseEvent(X + 1, Y, UP))
     assert not field.is_line_tracing
     assert field.current_trace == []
+
+
+@pytest.mark.parametrize("slow", [True, False])
+def test_release_of_pointer_press_does_not_start_line(main_window, slow):
+    """A press made in the pointer tool is no trace click after a tool change.
+
+    The pointer leaves its own points in the trace buffer, so the release
+    used to start a line from one of them.
+    """
+    field = _field(main_window, POINTER, "combo")
+    field.current_trace = []
+    field.mousePressEvent(FakeMouseEvent(X, Y, HELD))
+    field.mouseMoveEvent(FakeMouseEvent(X + 1, Y, HELD))
+    assert field.current_trace == [(X + 1, Y)]
+    field.setMouseMode(CLOSEDTRACE)
+    if slow:
+        field.click_time = 0
+    field.mouseReleaseEvent(FakeMouseEvent(X + 1, Y, UP))
+    try:
+        assert not field.is_line_tracing
+    finally:
+        _drop_line(field)
+
+
+def test_release_after_tool_change_mid_trace_press_does_not_start_line(
+    main_window,
+):
+    """A trace press ends with a tool change; its release starts nothing."""
+    field = _field(main_window, CLOSEDTRACE, "combo")
+    field.mousePressEvent(FakeMouseEvent(X, Y, HELD))
+    field.setMouseMode(OPENTRACE)
+    field.mouseReleaseEvent(FakeMouseEvent(X, Y, UP))
+    try:
+        assert not field.is_line_tracing
+    finally:
+        _drop_line(field)

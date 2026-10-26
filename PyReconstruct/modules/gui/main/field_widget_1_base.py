@@ -139,6 +139,8 @@ class FieldWidgetBase:
         # widget pixels a trace press may drift and still count as a click
         self.click_tolerance : int          = 4
         self.trace_press_travel : int       = 0
+        # the press under way was started by a trace tool (`tracePress`)
+        self.trace_press_owned : bool       = False
 
         self.timer : QTimer                 = None
         self.time : str                     = None

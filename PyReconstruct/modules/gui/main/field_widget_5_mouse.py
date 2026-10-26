@@ -44,6 +44,8 @@ class FieldWidgetMouse(FieldWidgetData):
         # tool, and that lasso keeps going.
         if mode != self.mouse_mode:
             self.cancelLasso()
+            # a trace press does not carry over to another tool
+            self.trace_press_owned = False
 
         self.mouse_mode = mode
 
@@ -450,6 +452,7 @@ class FieldWidgetMouse(FieldWidgetData):
         """
         self.lclick, self.rclick, self.mclick = False, False, False
         self.pointer_press_recorded = False
+        self.trace_press_owned = False
         self.press_dropped = True
 
     def pointerRelease(self, event):
@@ -732,6 +735,7 @@ class FieldWidgetMouse(FieldWidgetData):
             self.last_y = event.y()
             self.current_trace = [(self.last_x, self.last_y)]
             self.trace_press_travel = 0
+            self.trace_press_owned = True
 
         ## Start line tracing of only trace mode set
         trace_mode = self.series.getOption("trace_mode")
@@ -778,6 +782,7 @@ class FieldWidgetMouse(FieldWidgetData):
         """Called when mouse is released in trace mode."""
         
         trace_mode = self.series.getOption("trace_mode")
+        press_owned, self.trace_press_owned = self.trace_press_owned, False
 
         ## User is already line tracing
         if self.is_line_tracing:
@@ -785,9 +790,10 @@ class FieldWidgetMouse(FieldWidgetData):
 
         ## User decided to line trace (in combo trace_mode): a quick click,
         ## or a press of any length that barely moved. Only a left press
-        ## that started a trace counts: a press the field menu took, or one
-        ## made in another tool, leaves no point to start from.
-        elif trace_mode == "combo" and self.lclick and self.current_trace and (
+        ## that a trace tool started counts. The field menu takes its press,
+        ## and a tool change or a dropped press ends one, so the trace buffer
+        ## may hold another tool's points or none.
+        elif trace_mode == "combo" and self.lclick and press_owned and (
             self.isSingleClicking() or self.isStillPress(event)
         ):
             self.current_trace = [self.current_trace[0]]
