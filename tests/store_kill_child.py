@@ -21,6 +21,11 @@ a boundary in the product's own I/O, where the wrapper only waits:
     but not renamed, and renamed into place but not yet recorded by the store;
   * during the close's removal of the working folder, after two files.
 
+``close-repaired-jser-after-rename`` first changes section 0's row in the
+store under its key, as another program or a damaged disk would. The close
+then writes that section from its working file (store_save.writeJser), and
+the child stops with that .jser in place, before the store gives up its claim.
+
 ``close-injected-jser-half-write`` is not a boundary: it forces half of the
 write that carries section 3 onto disk, as in tests/save_kill_child.py.
 
@@ -45,6 +50,7 @@ application settings (QSettings); the settings it reads come from memory.
 """
 
 import os
+import sqlite3
 import sys
 import time
 
@@ -68,7 +74,7 @@ set_default_settings_store(DictSettingsStore())
 from PyReconstruct.modules.backend.func import atomic_io  # noqa: E402
 from PyReconstruct.modules.backend.notifier import NullNotifier  # noqa: E402
 from PyReconstruct.modules.backend.progress import NullProgressReporter  # noqa: E402
-from PyReconstruct.modules.constants import jser_format  # noqa: E402
+from PyReconstruct.modules.constants import fast_dumps, fast_loads, jser_format  # noqa: E402
 from PyReconstruct.modules.datatypes import Trace  # noqa: E402
 from PyReconstruct.modules.datatypes import hybrid_store, lazy_sections, store_open, store_save  # noqa: E402
 from PyReconstruct.modules.datatypes.series import Series  # noqa: E402
@@ -83,6 +89,7 @@ POINTS = (
     "close-injected-jser-half-write",  # half of section 3 forced into the temp .jser
     "close-jser-before-rename",  # the new .jser complete and synced, not renamed
     "close-jser-after-rename",  # the new .jser in place, not yet recorded by the store
+    "close-repaired-jser-after-rename",  # as above, section 0 written from its working file
     "close-remove",  # the .jser written; the folder moved aside, two files removed there
     "lazy-reopen-between-stubs",  # two stubs written in the reopen's own folder
     "lazy-reopen-before-ser",  # the reopen's folder in place, its .ser not moved in
@@ -184,7 +191,7 @@ def armClose(point, series):
         if point == "close-jser-before-rename" and at_jser:
             stop(point)
         real_replace(src, dst, *args, **kwargs)
-        if point == "close-jser-after-rename" and at_jser:
+        if point in ("close-jser-after-rename", "close-repaired-jser-after-rename") and at_jser:
             stop(point)
 
     atomic_io.replace_with_retry = replace
@@ -356,10 +363,25 @@ def main(jser_fp, point):
         sys.exit("the Save did not go to the store")
     print("STORED", flush=True)
 
+    if point == "close-repaired-jser-after-rename":
+        changeInTheStore(jser_fp, 0)
     if point.startswith("close-"):
         armClose(point, series)
     series.close()
     print("SAVED", flush=True)
+
+
+def changeInTheStore(jser_fp, snum):
+    """Change section snum's row in the store, leaving its key as it was."""
+    con = sqlite3.connect(hybrid_store.storePaths(jser_fp)[0], isolation_level=None)
+    try:
+        con.execute("PRAGMA busy_timeout=5000")
+        (header,) = con.execute("SELECT header FROM section WHERE snum=?", (snum,)).fetchone()
+        doc = fast_loads(header)
+        doc["thickness"] = 0.123
+        con.execute("UPDATE section SET header=? WHERE snum=?", (fast_dumps(doc), snum))
+    finally:
+        con.close()
 
 
 def open_series(jser_fp):
