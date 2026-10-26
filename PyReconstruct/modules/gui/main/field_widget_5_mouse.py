@@ -39,13 +39,12 @@ class FieldWidgetMouse(FieldWidgetData):
         """
         self.endPendingEvents()  # end pending mouse events
 
-        # A real tool change ends a lasso. The pointer shortcut pressed
-        # mid-lasso is not one: it calls this with the pointer already the
-        # tool, and that lasso keeps going.
+        # A real tool change ends a lasso or a trace press. The pointer
+        # shortcut pressed mid-lasso is not one: it calls this with the
+        # pointer already the tool, and that lasso keeps going.
         if mode != self.mouse_mode:
             self.cancelLasso()
-            # a trace press does not carry over to another tool
-            self.trace_press_owned = False
+            self.cancelTracePress()
 
         self.mouse_mode = mode
 
@@ -386,6 +385,29 @@ class FieldWidgetMouse(FieldWidgetData):
 
         return True
 
+    def cancelTracePress(self) -> bool:
+        """Drop a press a trace tool started, with its points.
+
+        Only ``traceRelease`` finishes a trace press. A tool change with the
+        button held handed the release to the new tool, which finished a press
+        it never saw: the other trace tool drew the points as a trace, the
+        knife cut along them, a stamp went down and Host started a link.
+        Dropped as a lasso is (``cancelLasso``): a trace made by a tool change
+        is one nobody asked for. A line under way has already ended, in
+        ``endPendingEvents``.
+
+            Returns:
+                (bool): True if a trace press was under way and was dropped
+        """
+        if not self.trace_press_owned:
+            return False
+
+        self.current_trace = []
+        self.dropPress()
+        self.update()
+
+        return True
+
     def dropPointerPress(self) -> bool:
         """Drop a pointer press that is not a lasso yet, with its points.
 
@@ -430,6 +452,8 @@ class FieldWidgetMouse(FieldWidgetData):
           another button is ignored, the knife ignores one mid-cut, and a
           right press takes over from the left one. Where that opens the
           context menu, the menu takes the press and ends a lasso under way.
+        * A real tool change ends a lasso or a trace press, with its points
+          (``cancelLasso``, ``cancelTracePress``).
         * A press made during a pinch is dropped as it arrives. Every mouse
           event is ignored while gesturing, so no tool sees it, and its click
           flags used to outlast the pinch: the moves after it acted on a
@@ -725,6 +749,8 @@ class FieldWidgetMouse(FieldWidgetData):
     def tracePress(self, event):
         """Called when mouse is pressed in trace mode."""
         
+        self.trace_press_owned = True
+
         if self.is_line_tracing:
             
             self.linePress(event)
@@ -735,7 +761,6 @@ class FieldWidgetMouse(FieldWidgetData):
             self.last_y = event.y()
             self.current_trace = [(self.last_x, self.last_y)]
             self.trace_press_travel = 0
-            self.trace_press_owned = True
 
         ## Start line tracing of only trace mode set
         trace_mode = self.series.getOption("trace_mode")
@@ -788,12 +813,16 @@ class FieldWidgetMouse(FieldWidgetData):
         if self.is_line_tracing:
             self.lineRelease(event)
 
+        ## Only a left press that a trace tool started is finished here. The
+        ## field menu takes its press, and a press made in another tool before
+        ## a tool change is that tool's, so the trace buffer may hold another
+        ## tool's points or none.
+        elif not (self.lclick and press_owned):
+            self.current_trace = []
+
         ## User decided to line trace (in combo trace_mode): a quick click,
-        ## or a press of any length that barely moved. Only a left press
-        ## that a trace tool started counts. The field menu takes its press,
-        ## and a tool change or a dropped press ends one, so the trace buffer
-        ## may hold another tool's points or none.
-        elif trace_mode == "combo" and self.lclick and press_owned and (
+        ## or a press of any length that barely moved
+        elif trace_mode == "combo" and (
             self.isSingleClicking() or self.isStillPress(event)
         ):
             self.current_trace = [self.current_trace[0]]
@@ -802,7 +831,7 @@ class FieldWidgetMouse(FieldWidgetData):
             self.mainwindow.checkActions()
 
         ## User is not line tracing
-        elif not self.is_line_tracing:
+        else:
             self.pencilRelease(event)
 
     def pencilMove(self, event):
