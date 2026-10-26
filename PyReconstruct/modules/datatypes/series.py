@@ -26,7 +26,7 @@ from .objects import Objects
 from .default_settings import default_settings, default_series_settings
 from .host_tree import HostTree
 from .filters import passesFilters
-from . import local_stores, store_open, store_recovery, store_save
+from . import lazy_sections, local_stores, store_open, store_recovery, store_save
 
 from PyReconstruct.modules.calc import traceGeometry
 
@@ -834,6 +834,9 @@ class Series():
     ## so an import writes no trace that this scan would then remove.
     PIXEL_DUST_DEFAULT_PX = 10.0
 
+    ## The section numbers whose working file is still a stub (lazy_sections.py)
+    _lazy : "set | frozenset" = frozenset()
+
     def __init__(self, filepath : str, sections : dict, get_series_data=True):
         """Load the series file.
 
@@ -1128,7 +1131,11 @@ class Series():
         sname = sname[:sname.rfind(".")]
         hidden_dir = os.path.join(sdir, f".{sname}")
         ser_filepath = os.path.join(hidden_dir, f"{sname}.ser")
-        if os.path.isdir(hidden_dir) and os.path.isfile(ser_filepath):
+        if (
+            os.path.isdir(hidden_dir) and os.path.isfile(ser_filepath)
+            # a stub left in it is filled first; one that cannot be sets it aside
+            and lazy_sections.presentFolder(hidden_dir, fp, notifier)
+        ):
             # gather sections
             sections = {}
             for f in os.listdir(hidden_dir):
@@ -1236,6 +1243,16 @@ class Series():
             sections = {}
             renames = {}
             opened_index = OpenedJserIndex(fp)
+            # from the store, a section it holds as its file gets a stub,
+            # filled on first need (lazy_sections.py)
+            stubs = lazy_sections.stubs(store) if store is not None else {}
+            for snum, stub in stubs.items():
+                sections[snum] = filename = sname + "." + str(snum)
+                lazy_sections.writeStub(os.path.join(work_dir, filename), stub)
+                progress += 1
+            if stubs:
+                lazy_sections.writeMarker(work_dir, next(iter(stubs.values()))["store"])
+                source.skip = set(stubs)
             for snum, section_data, found in source.sections():
                 filename = sname + "." + str(snum)
                 section_fp = os.path.join(work_dir, filename)
@@ -1346,6 +1363,9 @@ class Series():
                     aside = _setAside(hidden_dir)
                 hidden_dir = createHiddenDir(sdir, sname)
             placed = True
+            if stubs:
+                # before any stub is in place, so cleanup keeps the store
+                lazy_sections.recordFolder(store, hidden_dir)
             for name in sorted(os.listdir(work_dir), key=lambda n: n == series_name):
                 os.replace(
                     os.path.join(work_dir, name), os.path.join(hidden_dir, name)
@@ -1359,6 +1379,8 @@ class Series():
             series = Series(series_fp, sections, get_series_data=False)
             series.jser_fp = fp
             series._jser_splice_index = splice_index
+            if stubs:
+                lazy_sections.attach(series, stubs)
 
             # gather the series data
             if store is not None:
@@ -1606,6 +1628,20 @@ class Series():
                     if snum is None:
                         yield None
                         continue
+                    progress += 1
+                    try:
+                        # a stub: its key, and its bytes only if encoded
+                        stubbed = lazy_sections.workingSection(self, snum)
+                    except OSError as e:
+                        refuseUnreadable(snum, e)
+                    if stubbed is not None:
+                        reporter.set_progress(progress/final_value * 100)
+                        keys[snum] = stubbed[0]
+                        yield KeyedSection(
+                            stubbed[0],
+                            lambda load=stubbed[1], snum=snum: loadStub(load, snum)
+                        )
+                        continue
                     fp = os.path.join(self.hidden_dir, self.sections[snum])
                     try:
                         with open(fp, "rb") as f:
@@ -1613,7 +1649,6 @@ class Series():
                     except OSError as e:
                         refuseUnreadable(snum, e)
 
-                    progress += 1
                     reporter.set_progress(progress/final_value * 100)
                     keys[snum] = key = section_digest(raw)
                     # parsed only if this section is encoded, not copied
@@ -1627,6 +1662,12 @@ class Series():
                 try:
                     return fast_loads(raw)
                 except ValueError as e:
+                    refuseUnreadable(snum, e)
+
+            def loadStub(load, snum):
+                try:
+                    return load()
+                except (OSError, ValueError) as e:
                     refuseUnreadable(snum, e)
 
             def refuseUnreadable(snum, e):
@@ -1717,8 +1758,12 @@ class Series():
                 for i, snum in enumerate(snums):
                     fp = os.path.join(self.hidden_dir, self.sections[snum])
                     try:
-                        with open(fp, "rb") as f:
-                            keys[snum] = section_digest(f.read())
+                        stubbed = lazy_sections.workingSection(self, snum)
+                        if stubbed is not None:
+                            keys[snum] = stubbed[0]  # a stub: its key, unread
+                        else:
+                            with open(fp, "rb") as f:
+                                keys[snum] = section_digest(f.read())
                     except OSError as e:
                         self._refuseSave(
                             self.jser_fp,
@@ -1873,7 +1918,9 @@ class Series():
                 b_section (Section): the secondary section file being used (in GUI)
             """
         # the local store is keyed by the old path: it writes the old file if
-        # it holds a Save that file lacks, and the series lets go of it
+        # it holds a Save that file lacks, and the series lets go of it. Its
+        # stubs are filled first, since nothing backs them after that
+        self.presentAllSections()
         store_save.closing(self)
 
         ## Move/Rename hidden directory
@@ -2505,7 +2552,25 @@ class Series():
                 (str): the directory containing the series
         """
         return os.path.dirname(self.filepath)
-    
+
+    def presentSection(self, snum : int) -> str:
+        """The path of a section's working file, filled from the store first if
+        it is a stub (lazy_sections.py). Safe on any thread.
+
+            Raises:
+                SectionUnavailable (OSError): the stub's bytes are in neither
+                    the store nor the .jser; nothing was written
+        """
+        fp = os.path.join(self.getwdir(), self.sections[snum])
+        if snum in self._lazy:
+            lazy_sections.present(self, snum, fp)
+        return fp
+
+    def presentAllSections(self):
+        """Fill every stub in the working folder (presentSection)."""
+        for snum in sorted(self._lazy):
+            self.presentSection(snum)
+
     def loadSection(self, section_num : int) -> Section:
         """Load a section object.
         
@@ -5590,7 +5655,12 @@ class Series():
         """
         if not d:
             d = dict(tuple((snum, i) for i, snum in enumerate(sorted(self.sections))))
-        
+
+        # a stub names its section's number: filled before it is renamed
+        for old_snum, new_snum in d.items():
+            if old_snum != new_snum:
+                self.presentSection(old_snum)
+
         # rename the section files
         for old_snum, new_snum in d.items():
             os.rename(
@@ -6745,6 +6815,8 @@ class Series():
             # delete the file
             filename = self.sections[snum]
             os.remove(os.path.join(self.getwdir(), filename))
+            if snum in self._lazy:
+                lazy_sections.forget(self, snum)  # it was a stub
             # delete link to file
             del(self.sections[snum])
             # and the object ids of its traces

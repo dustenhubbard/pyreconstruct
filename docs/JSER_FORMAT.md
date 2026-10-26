@@ -294,7 +294,10 @@ Opening `series.jser` in a directory `D` does the following:
    a different series, it is left alone and the file is unpacked into a new folder
    (`D/.series-2/`, then `-3`, and so on).
 2. Writes one file per non-empty section, named `series.<section_number>`, containing
-   that section's JSON object.
+   that section's JSON object. An open from the local copy (a Dev setting) writes a
+   small stub in its place instead, whose first line is `PYRECON-LAZY-SECTION 1`, and
+   `lazy-sections.json` beside the stubs. Each stub becomes the section file, checked by
+   sha256, the first time the section is needed.
 3. Writes `D/.series/existing_log.csv`, containing the top-level `log` string verbatim.
 4. Writes `D/.series/series.ser`, containing the `series` object.
 

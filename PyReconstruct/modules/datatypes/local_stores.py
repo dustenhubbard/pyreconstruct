@@ -77,7 +77,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import hybrid_store, store_save
+from . import hybrid_store, lazy_sections, store_save
 from .hybrid_store import (
     APPLICATION_ID, REQUIRED_TABLES, SCHEMA_VERSION, SQLITE_MAGIC, storePaths, storeRoot,
 )
@@ -114,6 +114,7 @@ IN_USE = "is open in PyReconstruct"
 NO_JSER = "its .jser was not found"
 UNREADABLE = "could not be read"
 WINDOWS = "is not removed on Windows"
+STUBS = "is still needed by the working folder of its .jser"
 
 ## held while this process holds a store's lock here, so the check at open
 ## never takes cleanup's brief hold for another window's
@@ -406,6 +407,10 @@ def _readState(folder : _Folder, name : str) -> StoreState:
         if meta.get("imported_utc") is not None and not (jser and os.path.isfile(jser)):
             state.why = NO_JSER
             return state
+        if lazy_sections.needsStore(meta, name):
+            # a working folder it recorded has stubs filled from this store
+            state.why = STUBS
+            return state
         state.clean = True
         return state
     except (OSError, sqlite3.Error) as e:
@@ -649,6 +654,7 @@ class TurnOffReport:
     work : list = field(default_factory=list)      # other stores with work: their .jser
     aside : list = field(default_factory=list)     # set-aside stores not written out
     in_use : int = 0                               # stores other windows hold
+    kept : list = field(default_factory=list)      # .jser files whose sections the store still backs
 
 
 def _writeOut(series):
@@ -709,7 +715,10 @@ def turnOff(series, write_out=None) -> TurnOffReport:
             else:
                 report.failed.append(series.jser_fp)
         if not store_save.ahead(series):
-            store_save.release(series)
+            if store_save.fillStubs(series):
+                store_save.release(series)
+            else:
+                report.kept.append(series.jser_fp)
     root = storeFolder()
     if root is None:
         return report
@@ -745,6 +754,12 @@ def turnOffText(report : TurnOffReport) -> str:
             "The local copy could not be written to:\n" + "\n".join(report.failed)
             + "\nThe local copy is kept, with that Save in it. This series goes on "
             "saving to it, and its .jser is written when the series closes."
+        )
+    if report.kept:
+        parts.append(
+            "Not every section could be written out from the local copy of:\n"
+            + "\n".join(report.kept)
+            + "\nThe local copy is kept, and this series goes on using it until it closes."
         )
     if report.work:
         parts.append(

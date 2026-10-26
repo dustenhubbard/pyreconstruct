@@ -14,7 +14,7 @@ from PySide6.QtCore import QEvent
 from .main_imports import *
 
 from PyReconstruct.modules.datatypes.section import Section, zarrHasScaleLevels
-from PyReconstruct.modules.datatypes import local_stores, store_open, store_recovery, store_save
+from PyReconstruct.modules.datatypes import lazy_sections, local_stores, store_open, store_recovery, store_save
 from PyReconstruct.modules.datatypes.series import SeriesSaveError
 from PyReconstruct.modules.backend.image_name_match import (
     matchByNumber, zarrImageNames,
@@ -1837,6 +1837,9 @@ class MainWindow(QMainWindow):
         if scan is _OPEN_ABORTED:
             return _OPEN_ABORTED
         new_series_fp, sections = scan
+        # a stub left in it is filled first; one that cannot be sets it aside
+        if new_series_fp and not lazy_sections.presentFolder(hidden_series_dir, jser_fp):
+            return None
 
         # if a series file has been found
         if new_series_fp:

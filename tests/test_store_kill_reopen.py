@@ -23,6 +23,11 @@ folder, put back in place, since a store belongs to its .jser's path):
   it saves as the window does, and the .jser its close writes must be exactly
   the series after the edits (or, before any edit, the series as saved).
 
+A ``lazy-`` point kills the child after it reopened the series from the store,
+which writes a stub for each section (lazy_sections.py). A kill during that
+reopen leaves no working folder to offer ("not-offered"), and the next open
+replaces whatever the reopen left. Every route above runs for these too.
+
 After every route the next open must be a quiet one: no question, nothing set
 aside. "Exactly" is the whole .jser document, as parsed JSON, with only the
 date and time of each history line cut (tests/test_save_kill_reopen.py).
@@ -42,7 +47,7 @@ import sys
 import pytest
 
 from PyReconstruct.modules.backend.progress import NullProgressReporter
-from PyReconstruct.modules.datatypes import Series, hybrid_store, store_open, store_recovery, store_save
+from PyReconstruct.modules.datatypes import Series, hybrid_store, lazy_sections, store_open, store_recovery, store_save
 
 import test_save_kill_reopen as base
 from test_save_kill_reopen import FIXTURE, NAME, document
@@ -58,6 +63,7 @@ CHILD = os.path.join(ROOT, "tests", "store_kill_child.py")
 #   old-saved  the fixture as today's Save writes it, no edit
 #   new        the finished child
 #   gone-or-new  no series file left to offer, or "new"
+#   not-offered  no series file left to offer
 POINTS = {
     "import-between-sections": ("old", "old-saved", False),
     "import-before-numbers": ("old", "old-saved", False),
@@ -68,6 +74,13 @@ POINTS = {
     "close-jser-before-rename": ("new", "new", True),
     "close-jser-after-rename": ("new", "new", False),
     "close-remove": ("new", "gone-or-new", False),
+    "lazy-reopen-between-stubs": ("old", "not-offered", False),
+    "lazy-reopen-before-ser": ("old", "not-offered", False),
+    "lazy-fill-before-replace": ("old", "old-saved", False),
+    "lazy-edit-before-save": ("old", "new", False),
+    "lazy-store-save-before-commit": ("old", "new", False),
+    "lazy-store-save-after-commit": ("new", "new", True),
+    "lazy-saveas-between-fills": ("old", "old-saved", False),
 }
 
 
@@ -172,7 +185,14 @@ def states(tmp_path_factory):
         run_child(jser, "none", tmp / "new-stores", m)
         new = document(str(jser))
 
+        (tmp / "new-lazy").mkdir()
+        jser = tmp / "new-lazy" / f"{NAME}.jser"
+        shutil.copyfile(FIXTURE, jser)
+        run_child(jser, "none-lazy", tmp / "new-lazy-stores", m)
+        new_lazy = document(str(jser))
+
     assert new == today, "the .jser written through the store is not today's Save"
+    assert new_lazy == new, "the .jser written after a lazy reopen is not the eager one"
     assert len({json.dumps(d, sort_keys=True) for d in (old, old_saved, new)}) == 3
     return {"old": old, "old-saved": old_saved, "new": new}
 
@@ -227,6 +247,10 @@ def check_declined_twice(place, untouched, states, tmp_path):
 def check_accepted(place, expect, states):
     """Open the working folder: its Save and close write exactly the state it held."""
     place.restore()
+    if expect == "not-offered":
+        assert not base.has_working_series(str(place.folder)), "a working folder is offered"
+        check_quiet_reopen(place)
+        return
     if expect == "gone-or-new" and not base.has_working_series(str(place.folder)):
         return
     assert base.has_working_series(str(place.folder)), "the working folder is not offered"
@@ -236,6 +260,10 @@ def check_accepted(place, expect, states):
     try:
         for snum in series.sections:
             series.loadSection(snum)
+        wdir = series.getwdir()
+        assert not any(
+            lazy_sections.readStub(os.path.join(wdir, n)) for n in series.sections.values()
+        ), "a stub is left in the resumed folder"
         if not series.saveToStore():
             series.saveJser()
     finally:
