@@ -733,7 +733,13 @@ class FieldWidgetMouse(FieldWidgetData):
             self.last_y = event.y()
             self.current_trace = [(self.last_x, self.last_y)]
             self.trace_press_travel = 0
-            self.trace_click_pending = True
+            # only a left press made with no other button held can be a
+            # click; a side button pressed during a left press lands here
+            # too, since the held buttons still read as a left press
+            self.trace_click_pending = (
+                event.button() == Qt.LeftButton
+                and event.buttons() == Qt.LeftButton
+            )
 
         ## Start line tracing of only trace mode set
         trace_mode = self.series.getOption("trace_mode")

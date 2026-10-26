@@ -236,6 +236,34 @@ def test_slow_press_joined_by_another_button_is_released_as_before(
         _drop_line(field)
 
 
+@pytest.mark.parametrize("mode", [CLOSEDTRACE, OPENTRACE])
+@pytest.mark.parametrize(
+    "side", [Qt.MouseButton.XButton1, Qt.MouseButton.XButton2],
+    ids=["xbutton1", "xbutton2"],
+)
+@pytest.mark.parametrize("travel", [1, 20])
+def test_slow_press_joined_by_a_side_button_scribbles(
+    main_window, mode, side, travel
+):
+    """A side button reads as one more left press; it is no new trace click.
+
+    The press starts the trace again from where it was made, and the slow
+    release scribbles from there.
+    """
+    field = _field(main_window, mode, "combo")
+    left = Qt.MouseButton.LeftButton
+    point = _press(field, [(travel, 0)])
+    field.mousePressEvent(FakeMouseEvent(*point, left | side, button=side))
+    field.mouseReleaseEvent(FakeMouseEvent(*point, left, button=side))
+    field.mouseMoveEvent(FakeMouseEvent(point[0] + 1, Y, HELD))
+    _release(field, (point[0] + 1, Y))
+    try:
+        assert not field.is_line_tracing
+        assert len(_added(field)) == 1
+    finally:
+        _drop_line(field)
+
+
 def test_slow_pointer_press_released_in_a_trace_tool_adds_nothing(main_window):
     """A press the pointer started is not a trace click after a tool change."""
     field = _field(main_window, CLOSEDTRACE, "combo")
