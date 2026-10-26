@@ -783,7 +783,8 @@ class FieldWidgetMouse(FieldWidgetData):
 
         # The slow-click rule applies to one release only: the one that ends
         # the left press `tracePress` started as a new trace, in the same
-        # tool, with nothing in between (`endPendingEvents` clears it).
+        # tool, with nothing in between (`endPendingEvents` and any later
+        # press clear it).
         # Every other release is handled as before.
         click_pending, self.trace_click_pending = self.trace_click_pending, False
 

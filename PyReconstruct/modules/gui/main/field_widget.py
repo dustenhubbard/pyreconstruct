@@ -237,6 +237,11 @@ class FieldWidget(QWidget, FieldWidgetView):
                 self.setFocus()
                 return
 
+        # Only a press `tracePress` takes as a new trace can end in a slow
+        # click; a second button, the menu or a dropped press cannot
+        # (see traceRelease).
+        self.trace_click_pending = False
+
         # A press made while a dropped press is still held joins it, and
         # reading the held buttons below would hand the dropped one back
         # (`dropPress`).

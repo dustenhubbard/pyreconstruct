@@ -13,7 +13,8 @@ trace tool started as a new trace, in the same tool, with nothing in between.
 A tool change, a trace-palette pick, a pinch, a section change or an undo
 while the button is held ends that (`endPendingEvents`), and the release is
 handled as it was before. So is the release of a press another tool started,
-of a click on a line under way, and of a press the field menu took.
+of a click on a line under way, of a press the field menu took, and of a press
+another button joined.
 """
 
 import pytest
@@ -202,6 +203,37 @@ def test_release_after_field_menu_adds_nothing(main_window, field_menu):  # noqa
     assert not field.is_line_tracing
     assert field.current_trace == []
     assert _added(field) == []
+
+
+@pytest.mark.parametrize("mode", [CLOSEDTRACE, OPENTRACE])
+@pytest.mark.parametrize("chord", ["right_then_middle", "middle"])
+def test_slow_press_joined_by_another_button_is_released_as_before(
+    main_window, field_menu, mode, chord  # noqa: F811
+):
+    """A second button pressed during the left press puts the rule aside.
+
+    A right press opens the field menu and empties the trace; a middle press
+    made with the left one still held is ignored and hands the left one back.
+    The slow release then ends an empty trace, or scribbles what the left
+    press drew.
+    """
+    field = _field(main_window, mode, "combo")
+    left = Qt.MouseButton.LeftButton
+    point = _press(field, DRIFT)
+    if chord == "right_then_middle":
+        field.mousePressEvent(FakeMouseEvent(*point, left | Qt.MouseButton.RightButton))
+        field.mouseReleaseEvent(FakeMouseEvent(*point, left))
+        field.mouseMoveEvent(FakeMouseEvent(*point, left))
+    field.mousePressEvent(FakeMouseEvent(*point, left | Qt.MouseButton.MiddleButton))
+    field.mouseReleaseEvent(FakeMouseEvent(*point, left))
+    _release(field, point)
+    try:
+        menu = chord == "right_then_middle"
+        assert bool(field_menu) == menu
+        assert not field.is_line_tracing
+        assert len(_added(field)) == (0 if menu else 1)
+    finally:
+        _drop_line(field)
 
 
 def test_slow_pointer_press_released_in_a_trace_tool_adds_nothing(main_window):
