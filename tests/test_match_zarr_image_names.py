@@ -7,8 +7,8 @@ dialog lists the pairs and draws a few sections' traces over the proposed
 images, and on confirmation the names are applied through `setImageNames`,
 the path `Edit all image sources...` uses, so unsaved traces survive. The
 zarr is read and never written, and the series file is left to the save.
-Names chosen for a series that a .jser opened from the Finder has replaced
-are dropped with a notice, never applied to the series now open.
+A .jser opened from the Finder while the dialog is up is skipped with a
+notice, and the names go to the series the change started on.
 
 The tests run on shapes1 (five sections, traces, images) in place of the
 default fixture series.
@@ -333,11 +333,10 @@ def finder(qapp, main_window):
     qapp.removeEventFilter(watcher)
 
 
-def _open_from_finder(window, tmp_path):
-    """Open a copy of shapes1 as series B, the way a Finder double-click does.
+def _send_finder_open(tmp_path):
+    """Send the event a Finder double-click on a copy of shapes1 sends.
 
-    Asked to save the series it closes, the window gets "no" from the
-    dialog recorder.
+    Returns the file of that copy, series B.
     """
     from PySide6.QtCore import QUrl
     from PySide6.QtGui import QFileOpenEvent
@@ -351,7 +350,17 @@ def _open_from_finder(window, tmp_path):
         shutil.copy(image, folder / image.name)
     app = QApplication.instance()
     app.sendEvent(app, QFileOpenEvent(QUrl.fromLocalFile(str(fp))))
-    assert window.series.jser_fp == str(fp)
+    return str(fp)
+
+
+def _open_from_finder(window, tmp_path):
+    """Open a copy of shapes1 as series B, the way a Finder double-click does.
+
+    Asked to save the series it closes, the window gets "no" from the
+    dialog recorder.
+    """
+    fp = _send_finder_open(tmp_path)
+    assert window.series.jser_fp == fp
     return window.series
 
 
@@ -359,18 +368,17 @@ def _logged(series):
     return [log.event for log in series.log_set.all_logs]
 
 
-def test_a_series_opened_while_the_dialog_is_up_keeps_its_names(
+def test_a_finder_open_while_the_dialog_is_up_is_skipped(
     main_window, main_window_dialogs, finder, on_screen, monkeypatch, tmp_path
 ):
-    """The dialog's event loop lets a .jser from the Finder open meanwhile."""
+    """The dialog's event loop delivers a .jser from the Finder; it is not opened."""
     from PyReconstruct.modules.gui.main import main_window as mw
 
     first = main_window.series
-    opened = []
+    sent = []
 
     def exec_(dialog):
-        second = _open_from_finder(main_window, tmp_path)
-        opened.append((second, second.modified))
+        sent.append(_send_finder_open(tmp_path))
         return 1
 
     monkeypatch.setattr(mw.MatchImageNamesDialog, "exec", exec_)
@@ -379,15 +387,12 @@ def test_a_series_opened_while_the_dialog_is_up_keeps_its_names(
 
     main_window.changeSrcDir(fp)
 
-    [(second, modified)] = opened
-    assert main_window.series is second is not first
-    assert _names_on_disk(second) == SHAPES
+    [b_fp] = sent
+    assert main_window.series is first and not first.closed
+    assert _names_on_disk(first) == GRID
     assert main_window.field.section_layer.image_found
-    assert not any("grid.zarr" in event for event in _logged(second))
-    assert second.modified == modified
-    assert main_window_dialogs.notices == [
-        f"{first.name} was closed, so its image names were not changed."
-    ]
+    assert len(main_window_dialogs.notices) == 1
+    assert b_fp in main_window_dialogs.notices[0]
 
 
 def test_edit_all_image_sources_leaves_a_series_opened_meanwhile_alone(
