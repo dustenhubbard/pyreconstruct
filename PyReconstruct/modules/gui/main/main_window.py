@@ -1602,8 +1602,9 @@ class MainWindow(QMainWindow):
                 jser_fp (str): the file the Finder asked to open
         """
         notify(
-            "Open skipped: PyReconstruct is opening, saving or closing a "
-            "series.\n\nOpen this file again once that is done:\n" + jser_fp
+            "Open skipped: PyReconstruct is opening, importing into, saving "
+            "or closing a series.\n\nOpen this file again once that is "
+            "done:\n" + jser_fp
         )
 
     @_seriesTransition
@@ -5957,6 +5958,7 @@ class MainWindow(QMainWindow):
         self.series.setOption("recently_opened_series", [])
         self.createMenuBar()
 
+    @_seriesTransition
     def importFromSeries(self):
         """Import from another series."""
         # acts across the series, outside the ROI box too
@@ -6120,8 +6122,14 @@ class MainWindow(QMainWindow):
         self.mouse_palette.reset()
         self.changeTracingTrace(self.mouse_palette.selectedTrace())
 
+    @_seriesTransition
     def importFromZarrLabels(self):
-        """Import label data from a neuroglancer zarr."""
+        """Import label data from a neuroglancer zarr.
+
+        A series transition for its whole run: the label workers write into
+        self.series until labelsToObjects returns (startAll waits for them),
+        so a Finder open is refused until the last section is written.
+        """
         # acts across the series, outside the ROI box too
         if self.field.refuseWhileRoiBox():
             return
