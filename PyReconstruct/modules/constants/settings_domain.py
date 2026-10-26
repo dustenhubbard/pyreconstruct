@@ -33,6 +33,7 @@ Read at call time, not import time, so tests can flip the environment
 without reimporting, and so import order against the runtime hook cannot
 matter.
 """
+import hashlib
 import json
 import os
 
@@ -50,8 +51,9 @@ def settings_app():
     return os.environ.get("PYRECON_APP_NAME", SHARED_APP)
 
 
-# Marks and escapes a series code that holds a NUL (see series_app).
-NUL_CODE_ESCAPE = "�"
+# Stands between the app and the digest in the settings name of a series
+# code that holds a NUL (see series_app).
+NUL_CODE_MARKER = " NUL-"
 
 
 def series_app(app, code):
@@ -63,18 +65,17 @@ def series_app(app, code):
     per-series read. A code typed in Series code is refused a NUL, but one
     read from a series file is not.
 
-    So a code with a NUL gets a name of its own kind, ``<app>`` U+FFFD
-    ``-<code>``, with each U+FFFD in the code written twice and each NUL
-    written as U+FFFD "0". No ``<app>-`` name starts that way, and the
-    escape tells any two such codes apart, so two different codes never
-    share a domain and one series cannot read or overwrite another's
-    settings. Every code without a NUL names the domain it always has.
+    So a code with a NUL is named ``<app> NUL-<digest>``: the SHA-256 of
+    the code, in 64 lowercase hex digits. The name has no separator or dot
+    for the Ini format to read as a path, so it stays one file of its own.
+    Every ``<app>-<code>`` name has "-" right after the app name, so none
+    is spelled like it. Every code without a NUL names the domain it
+    always has.
     """
     if "\0" not in code:
         return f"{app}-{code}"
-    esc = NUL_CODE_ESCAPE
-    escaped = code.replace(esc, esc * 2).replace("\0", esc + "0")
-    return f"{app}{esc}-{escaped}"
+    digest = hashlib.sha256(code.encode("utf-8", "surrogatepass")).hexdigest()
+    return f"{app}{NUL_CODE_MARKER}{digest}"
 
 
 def shared_domain():
