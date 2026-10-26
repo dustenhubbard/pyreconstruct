@@ -1602,9 +1602,8 @@ class MainWindow(QMainWindow):
                 jser_fp (str): the file the Finder asked to open
         """
         notify(
-            "Open skipped: PyReconstruct is opening, importing into, saving "
-            "or closing a series.\n\nOpen this file again once that is "
-            "done:\n" + jser_fp
+            "Open skipped: PyReconstruct is busy with a dialog or a task.\n\n"
+            "Open this file again once that is done:\n" + jser_fp
         )
 
     @_seriesTransition

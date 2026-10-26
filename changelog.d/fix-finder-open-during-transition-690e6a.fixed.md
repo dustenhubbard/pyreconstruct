@@ -1,3 +1,3 @@
-- **A series opened from the Finder no longer loses its unsaved work.**
-  While PyReconstruct is opening, importing into, saving or closing a series,
-  it skips the open and says so.
+- **Opening a series from the Finder no longer redirects or loses work.**
+  While a dialog or progress window is open, or a series is opening,
+  importing, saving or closing, PyReconstruct skips the open and says so.
