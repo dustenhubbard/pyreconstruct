@@ -389,6 +389,49 @@ def test_save_as_over_a_store_section_changed_under_its_key_moves_nothing(
         window.close()
 
 
+def test_save_as_with_a_section_in_no_source_moves_nothing(
+    kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    other = max(series._lazy)
+    # a stub whose store row and .jser range both differ from its key
+    header = _change_in_the_store(kept, other)
+    _change_in_the_jser(series, other)
+    before = kept.read_bytes()
+    store_fp = hybrid_store.storePaths(str(kept))[0]
+    hidden_dir = series.hidden_dir
+    names = sorted(os.listdir(hidden_dir))
+    shown = []
+    series._surfaceSaveError = lambda fp, err, message=None: shown.append(err)
+    new_fp = tmp_path / "moved" / "renamed.jser"
+    new_fp.parent.mkdir()
+    main_window_dialogs.file_responses.append(str(new_fp))
+    try:
+        assert window.saveAsToJser() == "cancel"
+        assert len(shown) == 1 and f"section {other} " in str(shown[0])
+        assert main_window_dialogs.notices == []
+        assert window.series is series and not series.closed
+        assert series.jser_fp == str(kept) and series.hidden_dir == hidden_dir
+        assert kept.read_bytes() == before
+        assert sorted(os.listdir(hidden_dir)) == names
+        assert store_save.heldStore(series) is not None and os.path.isfile(store_fp)
+        assert os.listdir(new_fp.parent) == []
+        # the other sections still load at the old path
+        snum = min(n for n in series.sections if n != other)
+        window.changeSection(snum)
+        assert window.field.section.n == snum
+    finally:
+        # the row as it was saved, so the window can close
+        con = sqlite3.connect(store_fp, isolation_level=None)
+        try:
+            con.execute("UPDATE section SET header=? WHERE snum=?", (header, other))
+        finally:
+            con.close()
+        window.close()
+
+
 def test_save_as_writes_a_store_section_changed_under_its_key_from_its_working_file(
     kept, tmp_path, main_window_dialogs, monkeypatch,
 ):
