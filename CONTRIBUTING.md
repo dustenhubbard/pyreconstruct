@@ -101,9 +101,9 @@ If there is nothing to document, start a line in the PR body with this:
 No docs change: the dialog's layout moved, nothing it does changed
 ```
 
-The screenshots are shot by a script on macOS (`dev/docs_media/capture/capture.py`),
-not by hand. If your change moves what one of them shows, say so in the PR and I
-will reshoot it.
+The screenshots and clips are shot on macOS from PyReconstruct itself, not by
+hand. If your change moves what one of them shows, say so in the PR and I will
+reshoot it.
 
 The site builds with `mkdocs build --strict` as part of the test run, so a broken
 link in `docs/` fails the suite. [docs/requirements.txt](docs/requirements.txt) has

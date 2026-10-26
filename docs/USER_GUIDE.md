@@ -11,9 +11,9 @@ PyReconstruct user guide**, which opens the
 [lab wiki](https://wikis.utexas.edu/display/khlab/PyReconstruct+user+guide) at
 The University of Texas at Austin) and the in-app **Help ▸ Shortcuts list**.
 
-> **About screenshots.** The screenshots show PyReconstruct on macOS with a small
-> test series. A script in the source tree (`dev/docs_media/capture/capture.py`)
-> shoots the app screenshots again when PyReconstruct changes.
+> **About screenshots.** The screenshots and clips show PyReconstruct on macOS
+> with a small test series. They are shot from PyReconstruct itself, and shot
+> again when PyReconstruct changes.
 >
 > Contributions of screenshots are welcome. See [CONTRIBUTING.md](https://github.com/dustenhubbard/PyReconstruct/blob/main/CONTRIBUTING.md).
 
