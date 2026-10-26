@@ -666,8 +666,14 @@ def exportStore(path : str, out_fp=None) -> str:
 def _savedKeys(store, snums : list) -> dict:
     """snum -> the key a section's stored bytes must have, or None when its key
     does not name them (a row with working rows over it, one held as an open
-    writes it, or a store that keeps no keys). Read only: the store is not changed."""
-    if store.con.execute(
+    writes it, or a store that keeps no keys). Read only: the store is not changed.
+
+    Keys are trusted only when they belong to the store's last import: an
+    open records them after the import, in a later transaction, so an open
+    stopped in between leaves the new rows beside the keys of the old ones.
+    """
+    imported = store.meta("imported_utc")
+    if imported is None or store.meta(store_open.META_STATS) != imported or store.con.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='section_key'"
     ).fetchone() is None:
         return dict.fromkeys(snums)

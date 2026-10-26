@@ -46,6 +46,7 @@ from pathlib import Path
 import pytest
 
 from PyReconstruct import cli
+from PyReconstruct.modules.constants import fast_loads
 from PyReconstruct.modules.datatypes import hybrid_store, lazy_sections, store_open, store_recovery, store_save
 from PyReconstruct.modules.datatypes import series as series_module
 from PyReconstruct.modules.datatypes.hybrid_store import HybridStore
@@ -1327,6 +1328,34 @@ def test_the_command_line_writes_no_jser_from_a_section_changed_under_its_key(
     assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".export-")] == []
     assert _meta(fp, store_save.META_DIRTY) == "1"
     assert _meta(fp, store_save.META_WRITTEN_OUT) is None
+
+
+def test_the_command_line_writes_a_store_whose_import_stopped_before_its_keys(
+    tmp_path, switch_on, monkeypatch,  # noqa: F811
+):
+    fp = _kept(PARITY, tmp_path)
+    with monkeypatch.context() as m:
+        m.delenv(store_open.ENV_SWITCH)
+        series = _open(fp)
+        section = series.loadSection(0)
+        section.thickness = 0.125
+        section.save()
+        series.saveJser()
+        series.close()
+
+    def refused(*args, **kwargs):
+        raise store_open._NotMeasuredAlike("not measured alike")
+
+    # the open imports the new .jser, then stops before it records the keys
+    with monkeypatch.context() as m:
+        m.setattr(store_open, "_statsRow", refused)
+        series = _open(fp)
+        assert store_save.heldStore(series) is None
+        series.close()
+    out = tmp_path / "new.jser"
+    code, text = _cli(monkeypatch, str(fp), str(out))
+    assert (code, text.strip()) == (0, str(out))
+    assert fast_loads(out.read_bytes())["sections"][0]["thickness"] == 0.125
 
 
 def _no_hard_links(monkeypatch):
