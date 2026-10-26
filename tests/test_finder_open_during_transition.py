@@ -1,8 +1,7 @@
 """A .jser opened from the Finder while an open, an import or a quit runs.
 
-Imports into the open series (alignments, transforms, .roi traces, a trace
-palette, overlay labels), a change of its image folder and a conversion of
-its images are covered too.
+A Finder open during an alignment, transform, ROI, palette or label import,
+an image folder change or an image conversion is skipped with a notice.
 
 An open, a new series, an import, a Save As and a quit each show dialogs, and
 every dialog runs the event loop, where macOS delivers a Finder open
