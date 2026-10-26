@@ -39,14 +39,17 @@ import io
 import os
 import shutil
 import sqlite3
+import subprocess
 import sys
+import types
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from PyReconstruct import cli
-from PyReconstruct.modules.constants import fast_loads
+from PyReconstruct.modules.backend.progress import NullProgressReporter
+from PyReconstruct.modules.constants import fast_dumps, fast_loads
 from PyReconstruct.modules.datatypes import hybrid_store, lazy_sections, store_open, store_recovery, store_save
 from PyReconstruct.modules.datatypes import series as series_module
 from PyReconstruct.modules.datatypes.hybrid_store import HybridStore
@@ -1330,10 +1333,8 @@ def test_the_command_line_writes_no_jser_from_a_section_changed_under_its_key(
     assert _meta(fp, store_save.META_WRITTEN_OUT) is None
 
 
-def test_the_command_line_writes_a_store_whose_import_stopped_before_its_keys(
-    tmp_path, switch_on, monkeypatch,  # noqa: F811
-):
-    fp = _kept(PARITY, tmp_path)
+def _saved_without_the_store(fp, monkeypatch):
+    """Section 0 at thickness 0.125, saved to the .jser by today's Save."""
     with monkeypatch.context() as m:
         m.delenv(store_open.ENV_SWITCH)
         series = _open(fp)
@@ -1342,6 +1343,66 @@ def test_the_command_line_writes_a_store_whose_import_stopped_before_its_keys(
         section.save()
         series.saveJser()
         series.close()
+
+
+def _import_keeps(fp):
+    """The store of fp holds the .jser as imported, beside keys of the import before."""
+    store = HybridStore.forJser(str(fp))
+    try:
+        assert store.meta(store_open.META_STATS) == store.meta("imported_utc") is not None
+        assert store.readSection(0) == fast_loads(fp.read_bytes())["sections"][0]
+        (key,) = store.con.execute("SELECT key FROM section_key WHERE snum=0").fetchone()
+        assert hashlib.sha256(fast_dumps(store.readSection(0))).digest() != bytes(key)
+    finally:
+        store.close()
+
+
+def _reimported_without_keys(fp, monkeypatch):
+    """The .jser changed, then imported again by a build that keeps no section keys."""
+    _saved_without_the_store(fp, monkeypatch)
+    with monkeypatch.context() as m:
+        m.setattr(store_save, "recordKeys", lambda store, keys: None)
+        _open(fp).close()
+    _import_keeps(fp)
+
+
+def _historical(ref, basename):
+    """A module of PyReconstruct.modules.datatypes as commit ref has it, or a skip."""
+    path = f"PyReconstruct/modules/datatypes/{basename}.py"
+    proc = subprocess.run(
+        ["git", "-C", str(Path(__file__).resolve().parents[1]), "show", f"{ref}:{path}"],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        pytest.skip(f"cannot read {ref}:{path}: {proc.stderr[:200]}")
+    module = types.ModuleType(f"PyReconstruct.modules.datatypes.old_{basename}")
+    module.__package__ = "PyReconstruct.modules.datatypes"
+    exec(compile(proc.stdout, f"{ref}:{path}", "exec"), module.__dict__)
+    return module
+
+
+def _reimported_by_a_build_before_keys(fp, monkeypatch):
+    """The .jser changed, then imported again by the store code of fork 3505375a."""
+    old_open = _historical("3505375a", "store_open")
+    old_hybrid = _historical("3505375a", "hybrid_store")
+    _saved_without_the_store(fp, monkeypatch)
+    series, collisions, digest = series_module.Series._unpackJser(
+        str(fp), NullProgressReporter, _NoNotifier(), hashed=True
+    )
+    held = old_open.StoreForOpen(old_hybrid.HybridStore.forJser(str(fp)), str(fp))
+    try:
+        held.importOpened(series, collisions, digest)
+    finally:
+        held.close()
+        series.close()
+    _import_keeps(fp)
+
+
+def test_the_command_line_writes_a_store_whose_import_stopped_before_its_keys(
+    tmp_path, switch_on, monkeypatch,  # noqa: F811
+):
+    fp = _kept(PARITY, tmp_path)
+    _saved_without_the_store(fp, monkeypatch)
 
     def refused(*args, **kwargs):
         raise store_open._NotMeasuredAlike("not measured alike")
@@ -1356,6 +1417,42 @@ def test_the_command_line_writes_a_store_whose_import_stopped_before_its_keys(
     code, text = _cli(monkeypatch, str(fp), str(out))
     assert (code, text.strip()) == (0, str(out))
     assert fast_loads(out.read_bytes())["sections"][0]["thickness"] == 0.125
+
+
+@pytest.mark.parametrize("reimport", [_reimported_without_keys, _reimported_by_a_build_before_keys],
+                         ids=["no keys kept", "fork 3505375a"])
+def test_the_command_line_writes_a_store_imported_by_a_build_that_keeps_no_keys(
+    reimport, tmp_path, switch_on, monkeypatch,  # noqa: F811
+):
+    fp = _kept(PARITY, tmp_path)
+    reimport(fp, monkeypatch)
+    out = tmp_path / "new.jser"
+    code, text = _cli(monkeypatch, str(fp), str(out))
+    assert (code, text.strip()) == (0, str(out))
+    assert fast_loads(out.read_bytes())["sections"][0]["thickness"] == 0.125
+
+
+@pytest.mark.parametrize("reimport", [_reimported_without_keys, _reimported_by_a_build_before_keys],
+                         ids=["no keys kept", "fork 3505375a"])
+def test_a_store_imported_by_a_build_that_keeps_no_keys_is_imported_again(
+    reimport, tmp_path, switch_on, store_mode, monkeypatch,  # noqa: F811
+):
+    fp = _kept(PARITY, tmp_path)
+    reimport(fp, monkeypatch)
+    opens = _store_opens(monkeypatch)
+    series = _open(fp)
+    assert opens == []
+    assert series.loadSection(0).thickness == 0.125
+    series.setAttr("axon", "comment", "a separately saved edit")
+    series.save()
+    assert series.saveToStore()
+    series.close()
+    assert fast_loads(fp.read_bytes())["sections"][0]["thickness"] == 0.125
+    series = _open(fp)
+    try:
+        assert opens == [series.name]
+    finally:
+        series.close()
 
 
 def _no_hard_links(monkeypatch):

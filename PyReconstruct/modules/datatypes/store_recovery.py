@@ -122,7 +122,7 @@ def finishWrite(held, digest : str):
     try:
         with store_open._transaction(store):
             store.recordJser(held.jser_fp)
-            store.setMeta(store_open.META_SHA, digest)
+            store_save.recordJserSha(store, digest)
             # the layout of that file was never recorded: the next Save writes in full
             store.setMeta(store_open.META_SPLICE, None)
             store.setMeta(store_save.META_WRITING, None)
@@ -668,12 +668,12 @@ def _savedKeys(store, snums : list) -> dict:
     does not name them (a row with working rows over it, one held as an open
     writes it, or a store that keeps no keys). Read only: the store is not changed.
 
-    Keys are trusted only when they belong to the store's last import: an
-    open records them after the import, in a later transaction, so an open
-    stopped in between leaves the new rows beside the keys of the old ones.
+    Keys are trusted only when they name the sections of the store's last
+    import (`store_save.keysCurrent`): an open stopped between the import
+    and its keys, or a build that keeps no keys, leaves the new rows beside
+    the keys of the old ones.
     """
-    imported = store.meta("imported_utc")
-    if imported is None or store.meta(store_open.META_STATS) != imported or store.con.execute(
+    if not store_save.keysCurrent(store) or store.con.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='section_key'"
     ).fetchone() is None:
         return dict.fromkeys(snums)

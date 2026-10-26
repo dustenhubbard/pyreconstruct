@@ -66,6 +66,11 @@ CREATE TABLE IF NOT EXISTS section_key(
 )
 """
 
+## meta: the import and the .jser (imported_utc and jser_sha256) the
+## section_key rows were recorded for, written with them. A build that
+## imports without keeping keys changes both and leaves this, so keys of an
+## older import are never taken for its rows
+META_KEYS_FOR = "keys_for"
 ## meta: "1" while the store holds a Save the .jser lacks (hybrid_store.py)
 META_DIRTY = "dirty"
 ## meta: when the store last took a Save the .jser lacks (UTC)
@@ -185,6 +190,37 @@ def recordKeys(store, keys : dict):
         "INSERT INTO section_key(snum, key, opens_alike, as_working) VALUES (?, ?, ?, 1)",
         [(snum, key, int(alike)) for snum, (key, alike) in sorted(keys.items())],
     )
+    noteKeys(store)
+
+
+def _keysFor(store):
+    from . import store_open
+
+    imported, digest = store.meta("imported_utc"), store.meta(store_open.META_SHA)
+    return None if imported is None or digest is None else f"{imported} {digest}"
+
+
+def noteKeys(store):
+    """Record that the section keys name the rows of this import and .jser
+    (META_KEYS_FOR), in the transaction that records the keys."""
+    store.setMeta(META_KEYS_FOR, _keysFor(store))
+
+
+def recordJserSha(store, digest):
+    """Record the sha256 of the .jser the store now holds. Keys current
+    before stay current; keys that were not stay so."""
+    from . import store_open
+
+    current = keysCurrent(store)
+    store.setMeta(store_open.META_SHA, digest)
+    if current:
+        noteKeys(store)
+
+
+def keysCurrent(store) -> bool:
+    """True when the store's section keys name the sections it holds (META_KEYS_FOR)."""
+    current = _keysFor(store)
+    return current is not None and store.meta(META_KEYS_FOR) == current
 
 
 def _keys(store) -> dict:
@@ -389,7 +425,7 @@ def _commit(series, held, keys : dict, tail : dict, written):
         if written is not None:
             digest, index = written
             store.recordJser(series.jser_fp)
-            store.setMeta(store_open.META_SHA, digest)
+            recordJserSha(store, digest)
             store.setMeta(store_open.META_SPLICE, store_open._spliceMeta(_asOpened(index, store)))
             store.setMeta(META_DIRTY, 0)
         elif content_changed:
@@ -696,7 +732,7 @@ def writeJser(series):
                 digest = store_open.jserDigest(jser_fp)
             with store_open._transaction(store):
                 store.recordJser(jser_fp)
-                store.setMeta(store_open.META_SHA, digest)
+                recordJserSha(store, digest)
                 store.setMeta(store_open.META_SPLICE, store_open._spliceMeta(_asOpened(new_index, store)))
                 store.setMeta(META_WRITING, None)
                 store.setMeta(META_DIRTY, 0)
