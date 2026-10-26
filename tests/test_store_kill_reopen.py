@@ -73,6 +73,7 @@ POINTS = {
     "close-injected-jser-half-write": ("new", "new", True),
     "close-jser-before-rename": ("new", "new", True),
     "close-jser-after-rename": ("new", "new", False),
+    "close-repaired-jser-after-rename": ("new", "new", False),
     "close-remove": ("new", "gone-or-new", False),
     "lazy-reopen-between-stubs": ("old", "not-offered", False),
     "lazy-reopen-before-ser": ("old", "not-offered", False),

@@ -15,7 +15,10 @@ states against the .jser on disk (`standing`):
     .jser opens as it is.
   * WRITTEN: the .jser is the file a close was writing from the store, put in
     place before the store could record it. The store records it now, and
-    holds the .jser.
+    holds the .jser. When that close wrote a section from another source
+    than the store, because the store's row was not the section saved, the
+    store gives up its claim instead, as that close would have, and the open
+    reads the .jser and keeps it in the store again.
   * CHANGED: the .jser is neither. Another window or program wrote it. The
     store is set aside, and the .jser opens as it is.
   * UNREADABLE: the store holds working rows, or lacks a section's numbers
@@ -117,9 +120,20 @@ def _holdsSave(store) -> bool:
 
 
 def finishWrite(held, digest : str):
-    """Record the .jser a close wrote from the store, as that close would have."""
+    """Record the .jser a close wrote from the store, as that close would have.
+
+    A close that wrote a section from another source (META_REPAIRED) gave up
+    the store's claim on the .jser after the write; so does this.
+    """
     store = held.store
     try:
+        if store.meta(store_save.META_REPAIRED) == digest:
+            store_save.dropClaim(store)
+            store_open.log_note(
+                f"Local store not kept in step with {os.path.basename(held.jser_fp)}, which its "
+                f"last close wrote with a section the store does not hold as saved"
+            )
+            return
         with store_open._transaction(store):
             store.recordJser(held.jser_fp)
             store_save.recordJserSha(store, digest)

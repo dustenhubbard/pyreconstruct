@@ -79,6 +79,11 @@ META_SAVED = "saved_utc"
 ## the file is put in place until the store records it (store_recovery.py).
 ## A failed write and every later Save drop it: it names one Save's .jser
 META_WRITING = "writing_sha256"
+## meta: with META_WRITING, when that .jser has a section taken from another
+## source than the store (`writeJser`): its sha256 again, else absent. The
+## store's own row is not that section, so recovery gives up the store's
+## claim on that file rather than record it (store_recovery.finishWrite)
+META_REPAIRED = "repaired_sha256"
 ## meta: the .jser a store with no .jser of its own was written out to
 ## (store_recovery.py); a later Save drops it
 META_WRITTEN_OUT = "written_out"
@@ -300,20 +305,33 @@ def _giveUp(series, held, err : Exception):
     from . import store_open
 
     store_open.log_note(f"Local store not kept in step with {os.path.basename(series.jser_fp)}: {err}")
-    store = held.store
     try:
-        with store_open._transaction(store):
-            store.setMeta(store_open.META_SHA, None)
-            store.setMeta(store_open.META_STATS, None)
-            store.setMeta(META_DIRTY, 0)
-            # a .jser it was writing is in place, or none is
-            store.setMeta(META_WRITING, None)
+        dropClaim(held.store)
     except sqlite3.Error as e:
         _raiseIfBug(e)
         # left as it was, and its hash still names the last .jser it held:
         # an open reads it only for that file's bytes
     if fillStubs(series):
         release(series)
+
+
+def dropClaim(store):
+    """In one transaction: the store holds no .jser and no Save one lacks.
+
+    The next open imports the .jser again. A .jser it was writing is in
+    place, or none is.
+
+        Raises:
+            sqlite3.Error: the store could not be written; it is as it was
+    """
+    from . import store_open
+
+    with store_open._transaction(store):
+        store.setMeta(store_open.META_SHA, None)
+        store.setMeta(store_open.META_STATS, None)
+        store.setMeta(META_DIRTY, 0)
+        store.setMeta(META_WRITING, None)
+        store.setMeta(META_REPAIRED, None)
 
 
 def fillStubs(series) -> bool:
@@ -765,7 +783,7 @@ def writeJser(series):
             # record below, leaves a .jser the next open knows as this one
             digest = written["hasher"].digest()
             if digest is not None:
-                _noteWriting(store, digest)
+                _noteWriting(store, digest, repaired=bool(repaired))
 
         try:
             _atomicWrite(jser_fp, write)
@@ -831,9 +849,10 @@ def unlikeTheirKeys(expected : dict, splice, read) -> list:
     ]
 
 
-def _noteWriting(store, digest):
+def _noteWriting(store, digest, repaired=False):
     """Keep the sha256 of the .jser about to be put in place (META_WRITING),
-    or drop it (None).
+    or drop it (None). `repaired`: that .jser has a section the store does not
+    hold as saved (META_REPAIRED).
 
     Only crash recovery reads it, so a store that cannot take it is noted in
     the log and the write goes on: without it, a crash in that gap sets the
@@ -844,6 +863,7 @@ def _noteWriting(store, digest):
     try:
         with store_open._transaction(store):
             store.setMeta(META_WRITING, digest)
+            store.setMeta(META_REPAIRED, digest if repaired else None)
     except sqlite3.Error as e:
         _raiseIfBug(e)
         store_open.log_note(f"Local store did not note the .jser it is writing: {e}")
