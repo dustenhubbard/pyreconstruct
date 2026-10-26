@@ -572,8 +572,8 @@ Right-click either button to choose the drawing **mode**:
 - **Scribble**: hold and drag to draw freehand; release to finish.
 - **Poly**: click to place each vertex; **right-click to finish**; **Backspace**
   removes the last point.
-- **Combo** (default): a quick click starts a poly/clicked line; click-and-drag
-  scribbles.
+- **Combo** (default): a click starts a poly/clicked line, however long the
+  button is held, if the pointer stays still; click-and-drag scribbles.
 
 ![The Closed Trace settings dialog: Mode (Scribble, Poly or Combo), Closed Trace Shape (Trace, Rectangle or Ellipse), Automatically merge overlapping traces, and Apply rolling average while scribbling.](assets/images/user-guide/06-closed-trace-mode-dialog.png)
 

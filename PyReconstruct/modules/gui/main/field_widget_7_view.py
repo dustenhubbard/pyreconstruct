@@ -303,6 +303,10 @@ class FieldWidgetView(FieldWidgetPaint):
 
         # an ROI box drag ends the same way, with the box as it was
         self.cancelRoiBoxDrag()
+
+        # a trace press that was still a click is no longer one: its release
+        # is handled as it was before the slow-click rule (see traceRelease)
+        self.trace_click_pending = False
     
     def backspace(self):
         """Called when backspace OR Del is pressed: either delete traces or undo line trace."""

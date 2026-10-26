@@ -93,12 +93,15 @@ class FakeMouseEvent:
     `buttons` is what is down once the event has happened, the way Qt reports
     it: for a press, the button pressed and any already held; for a move, what
     is held; for a release, what is still held, so nothing for the last one.
+    `button` is the one button the event is for; it defaults to `buttons`,
+    so a press that joins a held button names its own.
     """
 
-    def __init__(self, x, y, buttons=UP):
+    def __init__(self, x, y, buttons=UP, button=None):
         self._x = x
         self._y = y
         self._buttons = buttons
+        self._button = buttons if button is None else button
 
     def x(self):
         return self._x
@@ -108,6 +111,9 @@ class FakeMouseEvent:
 
     def buttons(self):
         return self._buttons
+
+    def button(self):
+        return self._button
 
     def globalPos(self):
         return QPoint(self._x, self._y)
