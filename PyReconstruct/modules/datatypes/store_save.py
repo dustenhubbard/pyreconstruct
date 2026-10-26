@@ -609,8 +609,9 @@ def writeJser(series):
     splice index the store keeps). An automatic backup is the caller's.
 
         Raises:
-            SeriesSaveError: if the store cannot be read, or another save
-                of this series is running. The .jser is not replaced.
+            SeriesSaveError: if the store cannot be read, a section in it
+                is not the one its key names (`unlikeTheirKeys`), or another
+                save of this series is running. The .jser is not replaced.
             OSError: if the file cannot be written. The .jser is not replaced.
     """
     from . import store_open
@@ -667,6 +668,13 @@ def writeJser(series):
 
         def write(f):
             write_jser(hasher.wrap(f), sections, tail, splice=splice)
+            changed = unlikeTheirKeys({n: keys[n][0] for n in snums}, splice, readSection)
+            if changed:
+                series._refuseSave(jser_fp, (
+                    f"section {changed[0]} in the local store is not the section "
+                    f"that was saved: it changed outside PyReconstruct. The working "
+                    f"folder and the local store are kept as they are."
+                ))
             # before the file is put in place: a crash after that, before the
             # record below, leaves a .jser the next open knows as this one
             digest = hasher.digest()
@@ -699,6 +707,34 @@ def writeJser(series):
     finally:
         series._jser_save_running = False
         reporter.finish()
+
+
+def unlikeTheirKeys(expected : dict, splice, read) -> list:
+    """The sections a .jser write just wrote whose bytes are not the ones their key names.
+
+    A Save keeps a section's key, the sha256 of its working file, and skips
+    its row while the key is unchanged, so a row changed outside the app
+    under its key is found only here. The minified write hashed every section
+    as it encoded or copied it (the splice layout), so this costs nothing.
+    Any other form (pretty, or the stdlib writer) records no layout, and each
+    section is read again (`read`) and encoded once more.
+
+        Params:
+            expected (dict): snum -> the key its bytes must have, or None
+                for a section that is not checked, in the order written
+            splice (JserSplice): the write's splice
+            read (callable): snum -> the section dict, as the write read it
+    """
+    layout = splice.layout
+    if layout is not None and len(layout) == len(expected):
+        return [
+            snum for snum, (key, _, _, digest) in zip(expected, layout)
+            if key is not None and digest != key
+        ]
+    return [
+        snum for snum, key in expected.items()
+        if key is not None and section_digest(fast_dumps(read(snum))) != key
+    ]
 
 
 def _noteWriting(store, digest):

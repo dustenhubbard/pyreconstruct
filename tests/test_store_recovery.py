@@ -53,7 +53,8 @@ from PyReconstruct.modules.datatypes.hybrid_store import HybridStore
 from test_hybrid_store import PARITY, SERIES_FILES, store_root  # noqa: F401  (fixture)
 from test_store_open import _Asked, _copy, _open, _snapshot, _store_opens, _today, store_root_glob
 from test_store_open import notes, switch_on  # noqa: F401  (fixture)
-from test_store_save import _edit, _edit_last, _kept, _today_saved, log_clock, store_mode  # noqa: F401  (fixture)
+from test_store_save import _change_in_the_store, _edit, _edit_last, _kept, _today_saved
+from test_store_save import log_clock, store_mode  # noqa: F401  (fixture)
 from test_store_save_gui import _saved_in_the_store, _window, kept  # noqa: F401  (fixture)
 
 
@@ -1307,6 +1308,25 @@ def test_the_command_line_writes_a_jser_s_store_to_a_new_file_and_replaces_none(
     assert code == 1 and "was not replaced" in text
     assert out.read_bytes() == b"mine"
     assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".export-")] == []
+
+
+def test_the_command_line_writes_no_jser_from_a_section_changed_under_its_key(
+    tmp_path, switch_on, store_mode, monkeypatch,  # noqa: F811
+):
+    fp = _kept(PARITY, tmp_path)
+    series = _open(fp)
+    edited = _edit(series)
+    assert series.saveToStore() is True
+    other = max(n for n in series.sections if n != edited)
+    _crash(series)
+    _change_in_the_store(fp, other)
+    out = tmp_path / "new.jser"
+    code, text = _cli(monkeypatch, str(fp), str(out))
+    assert code == 1 and f"section {other} in the local copy" in text
+    assert not out.exists()
+    assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".export-")] == []
+    assert _meta(fp, store_save.META_DIRTY) == "1"
+    assert _meta(fp, store_save.META_WRITTEN_OUT) is None
 
 
 def _no_hard_links(monkeypatch):

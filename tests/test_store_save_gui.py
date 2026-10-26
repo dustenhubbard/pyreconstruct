@@ -8,15 +8,17 @@ and closes as today, and the row is not there.
 """
 import os
 import shutil
+import sqlite3
 
 import pytest
 
 from PyReconstruct.modules.backend.progress import NullProgressReporter
 from PyReconstruct.modules.datatypes import series as series_module
-from PyReconstruct.modules.datatypes import store_open, store_save
+from PyReconstruct.modules.datatypes import hybrid_store, store_open, store_save
 from PyReconstruct.modules.datatypes.series import Series
 
 from test_hybrid_store import store_root  # noqa: F401  (fixture)
+from test_store_save import _change_in_the_jser, _change_in_the_store
 
 pytestmark = pytest.mark.gui
 
@@ -348,3 +350,37 @@ def test_leaving_for_another_series_keeps_this_one_when_the_jser_cannot_be_writt
         window.close()
     assert len(backups) == 1
     _opened_as_today(kept, snum, edited, monkeypatch)
+
+
+def test_save_as_over_a_store_section_changed_under_its_key_moves_nothing(
+    kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    snum, _ = _saved_in_the_store(window)
+    other = max(n for n in window.series.sections if n != snum)
+    # a working file, so Save As can write out every other section first
+    window.series.loadSection(other)
+    header = _change_in_the_store(kept, other)
+    _change_in_the_jser(window.series, other)
+    before = kept.read_bytes()
+    shown = []
+    window.series._surfaceSaveError = lambda fp, err, message=None: shown.append(err)
+    new_fp = tmp_path / "moved" / "renamed.jser"
+    new_fp.parent.mkdir()
+    main_window_dialogs.file_responses.append(str(new_fp))
+    try:
+        assert window.saveAsToJser() == "cancel"
+        assert len(shown) == 1
+        assert window.series.jser_fp == str(kept)
+        assert kept.read_bytes() == before
+        assert os.listdir(new_fp.parent) == []
+        assert store_save.ahead(window.series)
+    finally:
+        # the row as it was saved, so the window can close
+        con = sqlite3.connect(hybrid_store.storePaths(str(kept))[0], isolation_level=None)
+        try:
+            con.execute("UPDATE section SET header=? WHERE snum=?", (header, other))
+        finally:
+            con.close()
+        window.close()
