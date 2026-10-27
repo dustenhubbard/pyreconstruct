@@ -2065,7 +2065,7 @@ class Series():
             """
         self._finishMove(self._moveTo(new_jser_fp, section, b_section))
 
-    def saveAs(self, new_jser_fp : str, section : Section = None, b_section : Section = None):
+    def saveAs(self, new_jser_fp : str, section : Optional[Section] = None, b_section : Optional[Section] = None):
         """Move the series to new_jser_fp, as move does, and write its .jser there.
 
         A .jser that cannot be written there moves the series back: it is open
@@ -2095,7 +2095,7 @@ class Series():
             self._save_notice_held = False
         self._finishMove(moved)
 
-    def _moveTo(self, new_jser_fp : str, section : Section = None, b_section : Section = None) -> "_Moved":
+    def _moveTo(self, new_jser_fp : str, section : Optional[Section] = None, b_section : Optional[Section] = None) -> "_Moved":
         """Move the working folder to new_jser_fp and point the series at it.
 
         The series lets go of its store, which is keyed by the old path, but
