@@ -565,6 +565,10 @@ def launch(qapp, monkeypatch, tmp_path):
         def processEvents(self):
             qapp.processEvents()
 
+        @staticmethod
+        def activeModalWidget():
+            return qapp.activeModalWidget()
+
         def setStyle(self, style):
             pass
 

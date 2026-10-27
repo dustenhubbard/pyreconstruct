@@ -25,7 +25,7 @@ if getattr(sys, "frozen", False):
     multiprocessing.freeze_support()
 
 import PySide6
-from PySide6.QtCore import QEvent, QObject
+from PySide6.QtCore import QEvent, QObject, QTimer
 from PySide6.QtWidgets import QApplication
 
 
@@ -37,29 +37,67 @@ class FileOpenWatcher(QObject):
     path parks in ``pending`` (runPyReconstruct spins the event loop once to
     collect it); after that the event opens the series in the live window,
     unless the window is busy (see busy), in which case it is refused with a
-    notice. Windows and Linux pass the path as argv and never send this
-    event, so the filter is a no-op there.
+    notice. An event under a dialog the window shows while it is being built
+    is refused too; its notice waits for the window (see main_window).
+    Windows and Linux pass the path as argv and never send this event, so
+    the filter is a no-op there.
     """
 
     def __init__(self):
         super().__init__()
         self.pending = None
-        self.main_window = None
+        self.refused = []  # refused before the window was set, not yet told
+        self._main_window = None
+
+    @property
+    def main_window(self):
+        """The window Finder opens go to, or None while there is none.
+
+        Setting a window hands it any open that came while it was being
+        built, on its first event-loop pass: a refused one gets its notice,
+        and a pending one opens unless the window is busy by then.
+        """
+        return self._main_window
+
+    @main_window.setter
+    def main_window(self, window):
+        self._main_window = window
+        if window is not None and (self.refused or self.pending):
+            QTimer.singleShot(0, window, lambda: self._settle(window))
+
+    def _settle(self, window):
+        if self._main_window is not window:
+            return  # the next window settles them
+        refused, self.refused = self.refused, []
+        for path in refused:
+            window.refuseFinderOpen(path)
+        path, self.pending = self.pending, None
+        if path:
+            self._admit(path)
 
     def eventFilter(self, obj, event):
         if event.type() == QEvent.FileOpen:
             path = event.file()
             if path:
-                if self.main_window is None:
-                    self.pending = path
-                # refused, not queued: a queued open would run before the
-                # busy command's own remaining steps
-                elif self.busy():
-                    self.main_window.refuseFinderOpen(path)
+                if self._main_window is None:
+                    # under a dialog of the window being built, as busy
+                    # refuses one under any later dialog
+                    if QApplication.activeModalWidget() is not None:
+                        self.refused.append(path)
+                    else:
+                        self.pending = path
                 else:
-                    self.main_window.openSeries(jser_fp=path)
+                    self._admit(path)
             return True
         return super().eventFilter(obj, event)
+
+    def _admit(self, path):
+        # refused, not queued: a queued open would run before the busy
+        # command's own remaining steps
+        if self.busy():
+            self._main_window.refuseFinderOpen(path)
+        else:
+            self._main_window.openSeries(jser_fp=path)
 
     def busy(self) -> bool:
         """True while a Finder open could change the series under a command.
@@ -80,7 +118,7 @@ class FileOpenWatcher(QObject):
         from PyReconstruct.modules.backend.threading import ThreadPoolProgBar
         return (
             QApplication.activeModalWidget() is not None
-            or self.main_window.seriesTransitionRunning()
+            or self._main_window.seriesTransitionRunning()
             or ThreadPoolProgBar.waiting()
         )
 
