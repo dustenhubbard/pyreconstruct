@@ -1,2 +1,2 @@
-- **Save As now reports file move and rename failures.** The notice identifies
-  where the working files remain.
+- **Save As now reports failures to move, rename or write the series.** The
+  notice says where the series and its working files are.

@@ -696,3 +696,131 @@ def test_save_as_to_another_drive_copies_the_working_folder_and_removes_the_old_
             assert series.loadSection(snum).n == snum
     finally:
         window.close()
+
+
+def _new_jser_full(new_fp):
+    """An _atomicWrite that fails for new_fp as a full disk does."""
+    write = series_module._atomicWrite
+
+    def full(fp, data):
+        if str(fp) == str(new_fp):
+            raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC), str(fp))
+        return write(fp, data)
+
+    return full
+
+
+def _back_where_it_was(message, kept, new_fp, hidden_dir):
+    assert os.strerror(errno.ENOSPC) in message
+    assert f"not saved to:\n{new_fp}" in message
+    assert f"open from:\n{kept}" in message and hidden_dir in message
+    assert "left unchanged" not in message
+
+
+def test_save_as_that_cannot_write_the_new_jser_moves_the_series_back(
+    kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    snum, saved = _saved_in_the_store(window)
+    again, working = _move_a_trace(window)
+    assert again == snum and working != saved
+    notices = _Notices()
+    series.setNotifier(notices)
+    hidden_dir = series.hidden_dir
+    new_fp = _save_as_target(tmp_path, main_window_dialogs)
+    retry_fp = tmp_path / "retry" / "retried.jser"
+    retry_fp.parent.mkdir()
+    try:
+        with monkeypatch.context() as m:
+            m.setattr(series_module, "_atomicWrite", _new_jser_full(new_fp))
+            assert window.saveAsToJser() == "cancel"
+        assert len(notices.messages) == 1
+        _back_where_it_was(notices.messages[0], kept, new_fp, hidden_dir)
+        assert main_window_dialogs.notices == []
+        assert window.series is series and not series.closed
+        assert series.jser_fp == str(kept) and series.hidden_dir == hidden_dir
+        assert store_save.heldStore(series) is not None
+        assert not store_save.ahead(series)
+        assert os.listdir(new_fp.parent) == []
+        assert window.field.section.filepath.startswith(hidden_dir)
+        assert series.loadSection(snum).getDict() == working
+
+        main_window_dialogs.file_responses.append(str(retry_fp))
+        assert window.saveAsToJser() is None
+        assert series.jser_fp == str(retry_fp)
+    finally:
+        window.close()
+    _opened_as_today(kept, snum, saved, monkeypatch)
+    _opened_as_today(retry_fp, snum, working, monkeypatch)
+
+
+def test_save_as_to_another_drive_that_cannot_write_the_new_jser_keeps_the_original(
+    kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    notices = _Notices()
+    series.setNotifier(notices)
+    was = _AsItWas(window, kept)
+    new_fp = _save_as_target(tmp_path, main_window_dialogs)
+    rename = os.rename
+
+    def other_drive(src, dst, *args, **kwargs):
+        if src == was.hidden_dir:
+            raise OSError(errno.EXDEV, os.strerror(errno.EXDEV), dst)
+        return rename(src, dst, *args, **kwargs)
+
+    try:
+        with monkeypatch.context() as m:
+            m.setattr(os, "rename", other_drive)
+            m.setattr(series_module, "_atomicWrite", _new_jser_full(new_fp))
+            assert window.saveAsToJser() == "cancel"
+        assert len(notices.messages) == 1
+        _back_where_it_was(notices.messages[0], kept, new_fp, was.hidden_dir)
+        was.check(new_fp)
+    finally:
+        window.close()
+
+
+def test_save_as_that_cannot_move_the_working_folder_back_says_where_it_is(
+    kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    notices = _Notices()
+    series.setNotifier(notices)
+    old_folder = series.hidden_dir
+    new_fp = _save_as_target(tmp_path, main_window_dialogs)
+    new_folder = str(new_fp.parent / ".renamed")
+    rename = os.rename
+
+    def no_way_back(src, dst, *args, **kwargs):
+        if src == new_folder:
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), dst)
+        return rename(src, dst, *args, **kwargs)
+
+    def no_copy(src, dst, *args, **kwargs):
+        raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), dst)
+
+    try:
+        with monkeypatch.context() as m:
+            m.setattr(series_module, "_atomicWrite", _new_jser_full(new_fp))
+            m.setattr(os, "rename", no_way_back)
+            m.setattr(shutil, "copytree", no_copy)
+            assert window.saveAsToJser() == "cancel"
+        assert len(notices.messages) == 1
+        message = notices.messages[0]
+        assert os.strerror(errno.ENOSPC) in message and os.strerror(errno.EACCES) in message
+        assert f"It is at:\n{new_folder}" in message
+        assert message.endswith(f"The last Save is in:\n{kept}")
+        assert not os.path.exists(old_folder) and os.path.isdir(new_folder)
+        assert series.hidden_dir == new_folder
+        assert store_save.heldStore(series) is None
+        for snum in sorted(series.sections):
+            assert series.loadSection(snum).n == snum
+    finally:
+        window.close()

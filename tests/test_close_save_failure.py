@@ -151,7 +151,10 @@ def test_a_save_as_at_close_that_cannot_write_leaves_the_window_open(
     _kept(main_window, outgoing, shown, hooked)
     assert main_window.isVisible()
     assert not target.exists()
+    assert outgoing.jser_fp == ""
 
+    # still never saved: the close asks where to save again
+    main_window_dialogs.file_responses = [str(target)]
     assert main_window.close() is True
     _saved(target, snum, edited)
 

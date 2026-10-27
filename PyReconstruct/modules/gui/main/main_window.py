@@ -3496,7 +3496,7 @@ class MainWindow(QMainWindow):
                 nothing to save either way). Also "cancel" when another save
                 of this series was still running, and when the series
                 could not be moved or its .jser could not be written (the
-                user was told).
+                user was told; see Series.saveAs).
         """
         # A Save As that arrives while a save is running (the progress dialog
         # lets queued events through) is refused first: before the working
@@ -3530,21 +3530,33 @@ class MainWindow(QMainWindow):
         if not self._saveAsTargetFree(new_jser_fp):
             return "cancel"
 
-        ## Move hidden folder to new jser directory
+        ## Move hidden folder to new jser directory and write the .jser there
         old_jser_fp = self.series.jser_fp
         try:
-            self.series.move(
+            self.series.saveAs(
                 new_jser_fp,
                 self.field.section,
                 self.field.b_section
             )
         except SeriesSaveError:
             # a section could not be written out of the local store, the old
-            # .jser could not be written from it, or the working folder could
-            # not be moved or renamed: the user was told where the working
-            # files are, which is the old path unless an undo failed too
+            # .jser could not be written from it, the working folder could
+            # not be moved or renamed, or the new .jser could not be written:
+            # the user was told where the series is, which is the old path
+            # unless moving the working folder back failed too
+            if self.series.jser_fp != old_jser_fp:
+                self._seriesMovedTo(old_jser_fp)
             return "cancel"
+        self._seriesMovedTo(old_jser_fp)
+        self._backupSaved()
+        if close:
+            self.series.close()
 
+        # mark series as unmodified
+        self.seriesModified(False)
+    
+    def _seriesMovedTo(self, old_jser_fp : str):
+        """Update the 3D scene and the undo states for a series that moved."""
         # the 3D scene tells the open series' objects apart by path
         if self.viewer and not self.viewer.is_closed:
             self.viewer.seriesMoved(old_jser_fp, self.series.jser_fp)
@@ -3554,15 +3566,7 @@ class MainWindow(QMainWindow):
         self.field.series_states[self.field.section]
         if self.field.b_section:
             self.field.series_states[self.field.b_section]
-        
-        if not self._writeJser():
-            return "cancel"
-        if close:
-            self.series.close()
 
-        # mark series as unmodified
-        self.seriesModified(False)
-    
     def setBackup(self):
         """Set up backup directory and settings."""
         confirmed = BackupDialog(self, self.series).exec()
