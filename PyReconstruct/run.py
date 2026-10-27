@@ -36,10 +36,9 @@ class FileOpenWatcher(QObject):
     argv, both at launch and while running. Before the main window exists the
     path parks in ``pending`` (runPyReconstruct spins the event loop once to
     collect it); after that the event opens the series in the live window,
-    unless an open, import, Save As, quit, image folder change or image
-    conversion is running there, in which case it is refused with a notice. Windows and Linux pass
-    the path as argv and never send this event, so the filter is a no-op
-    there.
+    unless the window is busy (see busy), in which case it is refused with a
+    notice. Windows and Linux pass the path as argv and never send this
+    event, so the filter is a no-op there.
     """
 
     def __init__(self):
@@ -53,15 +52,37 @@ class FileOpenWatcher(QObject):
             if path:
                 if self.main_window is None:
                     self.pending = path
-                # the event arrives under the dialogs of a running open,
-                # import, Save As or quit; it is refused there, not queued
-                # (MainWindow.seriesTransition)
-                elif self.main_window.seriesTransitionRunning():
+                # refused, not queued: a queued open would run before the
+                # busy command's own remaining steps
+                elif self.busy():
                     self.main_window.refuseFinderOpen(path)
                 else:
                     self.main_window.openSeries(jser_fp=path)
             return True
         return super().eventFilter(obj, event)
+
+    def busy(self) -> bool:
+        """True while a Finder open could change the series under a command.
+
+        macOS delivers the event under any dialog, native file dialogs
+        included. A command that shows a dialog or a progress window and then
+        uses self.series would finish on the series the Finder opened. So an
+        open is refused during:
+
+          * any modal dialog or progress window (activeModalWidget). A
+            native macOS file dialog runs outside any QEventLoop, and Qt
+            still lists its hidden QFileDialog as the modal widget.
+          * a series transition (MainWindow.seriesTransition), which spans
+            the gaps between its dialogs.
+          * workers that report in the status bar instead of a progress
+            window (ThreadPoolProgBar.waiting).
+        """
+        from PyReconstruct.modules.backend.threading import ThreadPoolProgBar
+        return (
+            QApplication.activeModalWidget() is not None
+            or self.main_window.seriesTransitionRunning()
+            or ThreadPoolProgBar.waiting()
+        )
 
 
 if __name__ == "__main__":

@@ -147,6 +147,14 @@ class MemoryInt():
 
 class ThreadPoolProgBar(ThreadPool):
 
+    # startAll calls waiting for their workers (run.FileOpenWatcher.busy)
+    _waits = 0
+
+    @staticmethod
+    def waiting() -> bool:
+        """True while any startAll waits for its workers."""
+        return ThreadPoolProgBar._waits > 0
+
     def startAll(self, text="", status_bar=None):
         """Start all queued workers and block until they finish.
 
@@ -223,12 +231,16 @@ class ThreadPoolProgBar(ThreadPool):
         # wait for the workers without busy-spinning processEvents
         if use_event_loop:
             if counter.n < final_value:
-                if status_bar is None:
-                    loop.exec()
-                else:
-                    # no modal dialog in this mode: keep user input out
-                    # while the workers run
-                    loop.exec(QEventLoop.ExcludeUserInputEvents)
+                ThreadPoolProgBar._waits += 1
+                try:
+                    if status_bar is None:
+                        loop.exec()
+                    else:
+                        # no modal dialog in this mode: keep user input out
+                        # while the workers run
+                        loop.exec(QEventLoop.ExcludeUserInputEvents)
+                finally:
+                    ThreadPoolProgBar._waits -= 1
         else:  # headless (no QApplication): just wait on the pool
             self.waitForDone()
 

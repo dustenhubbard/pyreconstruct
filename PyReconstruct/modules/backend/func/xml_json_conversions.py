@@ -118,9 +118,10 @@ def xmlToJSON(series_fp : str) -> Series:
     progbar = getProgbar(
         "Converting series..."
     )
+    # the series file, the alignment step and each section. One step too
+    # many showed the closed dialog again after the import, and it stayed up
     progress = 0
-    final_value = len(section_fps) + 1
-    if json_fp: final_value += 1
+    final_value = len(section_fps) + 2
 
     print("Converting series...")
     
