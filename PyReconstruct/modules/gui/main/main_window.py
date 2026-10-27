@@ -982,6 +982,7 @@ class MainWindow(QMainWindow):
         self.changeSrcDir(jser_dir)
         return bool(self.field.section_layer.image_found)
 
+    @_seriesTransition
     def changeSrcDir(self, new_src_dir : str = None, notify=False):
         """Open a series of dialogs to change the image source directory.
         
@@ -1177,8 +1178,14 @@ class MainWindow(QMainWindow):
         self.seriesModified(True)
         return True
 
+    @_seriesTransition
     def srcToZarr(self, create_new=True):
-        """Convert the series images to scaled zarr."""
+        """Convert the series images to scaled zarr.
+
+        A series transition until the converter is launched: its argv names
+        the series images. The converter runs as its own process and is not
+        handed the series, so a series opened after this returns is safe.
+        """
         if not self.field.section_layer.image_found:
             notify("Images not found.")
             return
@@ -1577,7 +1584,11 @@ class MainWindow(QMainWindow):
         quit then closed the series the Finder opened, deleting its unsaved
         work. The watcher checks seriesTransitionRunning and refuses such an
         open with a notice, so the running transition finishes on the series
-        it started with. The open is not queued: a queued open would run
+        it started with. An import into the open series (alignments,
+        transforms, traces, a palette, labels), a change of its image folder
+        and a conversion of its images are marked as well: each uses
+        self.series after a dialog or a progress bar, and a series opened in
+        between received the write or had its images converted. The open is not queued: a queued open would run
         before the caller's own remaining steps. A transition inside another
         (an import opens the new series, an open of a series never saved asks
         for Save As) leaves the outer one marked when it ends.
@@ -2449,6 +2460,7 @@ class MainWindow(QMainWindow):
         if self.field:
             self.checkActions()
     
+    @_seriesTransition
     def importAlignmentsFromSeries(self, jser_fp : str = None):
         """Import alignments from another series.
 
@@ -2503,6 +2515,7 @@ class MainWindow(QMainWindow):
 
         notify("Alignments imported successfully.")
 
+    @_seriesTransition
     def importTransforms(self, tforms_fp : str = None):
         """Import transforms from a text file.
 
@@ -2551,6 +2564,7 @@ class MainWindow(QMainWindow):
         # the import adds an alignment and makes it current
         self.refreshAlignmentActions(alignments_before)
 
+    @_seriesTransition
     def importSwiftTransforms(self, swift_fp=None):
         """Import transforms from a text file.
         
@@ -2743,6 +2757,7 @@ class MainWindow(QMainWindow):
         if self.field.b_section:
             self.changeSection(self.field.b_section.n, save=False)
 
+    @_seriesTransition
     def importROIFiles(self):
         """Import traces from ImageJ .roi files."""
 
@@ -4515,6 +4530,7 @@ class MainWindow(QMainWindow):
     #             self.setLayerGroup(zg)
     #             break
     
+    @_seriesTransition
     def importLabels(self, all=False):
         """Import labels from the interactive zarr overlay into the series.
 
@@ -5723,6 +5739,7 @@ class MainWindow(QMainWindow):
 
         self.series.exportTracePaletteCSV(fp)
     
+    @_seriesTransition
     def importTracePaletteCSV(self):
         """Import a trace palette from a CSV file."""
         fp = FileDialog.get(

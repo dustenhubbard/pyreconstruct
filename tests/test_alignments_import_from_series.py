@@ -29,6 +29,7 @@ on purpose: "warn only when a same-named alignment actually exists" is a set
 question, and pinning it as one keeps the prompt tests about the prompt.
 """
 
+import contextlib
 import types
 
 import pytest
@@ -350,6 +351,7 @@ def _handler_stub(import_calls):
             )
             self.saved = 0
             self.menus_rebuilt = 0
+            self.seriesTransition = contextlib.nullcontext
 
         def saveAllData(self):
             self.saved += 1
