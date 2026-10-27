@@ -319,3 +319,49 @@ def test_a_finder_open_after_a_legacy_series_import_opens(
 
     finder(c_fp)
     assert window.series.jser_fp == c_fp
+
+
+def test_a_finder_open_after_a_failed_legacy_series_import_opens(
+    main_window, main_window_dialogs, finder, tmp_path  # noqa: F811
+):
+    """A legacy import with a damaged .json reports it and closes its progress window."""
+    from PySide6.QtWidgets import QApplication
+    from test_new_series_hidden_dir import _write_legacy_series
+    window = main_window
+    first = window.series
+    _, c_fp, _, _ = _two_more_series(window, tmp_path)
+    xml_dir = tmp_path / "xml"
+    xml_dir.mkdir()
+    _write_legacy_series(str(xml_dir), "S", [1, 2])
+    (xml_dir / "S.json").write_text("{bad json")
+
+    window.newFromXML(str(xml_dir / "S.ser"))
+    assert window.series is first
+    assert len(main_window_dialogs.notices) == 1
+    assert QApplication.activeModalWidget() is None
+
+    finder(c_fp)
+    assert window.series.jser_fp == c_fp
+
+
+def test_a_legacy_section_that_fails_to_convert_closes_the_progress_window(
+    main_window, main_window_dialogs, monkeypatch, tmp_path
+):
+    """An error while a section converts leaves no progress window behind."""
+    from PySide6.QtWidgets import QApplication
+    from PyReconstruct.modules.backend.func import xml_json_conversions
+    from test_new_series_hidden_dir import _write_legacy_series
+    window = main_window
+    first = window.series
+    xml_dir = tmp_path / "xml"
+    xml_dir.mkdir()
+    _write_legacy_series(str(xml_dir), "S", [1, 2])
+
+    def fail(*args, **kwargs):
+        raise OSError("section file unreadable")
+
+    monkeypatch.setattr(xml_json_conversions, "sectionXMLtoJSON", fail)
+    with pytest.raises(OSError):
+        window.newFromXML(str(xml_dir / "S.ser"))
+    assert window.series is first
+    assert QApplication.activeModalWidget() is None

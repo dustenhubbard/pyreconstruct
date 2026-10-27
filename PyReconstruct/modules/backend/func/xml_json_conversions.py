@@ -118,79 +118,84 @@ def xmlToJSON(series_fp : str) -> Series:
     progbar = getProgbar(
         "Converting series..."
     )
-    # the series file, the alignment step and each section. One step too
-    # many showed the closed dialog again after the import, and it stayed up
-    progress = 0
-    final_value = len(section_fps) + 2
+    # closed however the conversion ends, an error or a cancel included: the
+    # progress window is modal and would stay over the main window
+    try:
+        # the series file, the alignment step and each section. One step too
+        # many showed the closed dialog again after the import, and it stayed up
+        progress = 0
+        final_value = len(section_fps) + 2
 
-    print("Converting series...")
-    
-    # convert the series file
-    json_series_fp = seriesXMLToJSON(
-        series_fp, list(section_fps.values()), hidden_dir
-    )
-    if progbar.wasCanceled(): return
-    progress += 1
-    progbar.setValue(progress/final_value * 100)
+        print("Converting series...")
 
-    # get the reconcropper data
-    alignment_dict = None
-    if json_is_named:
-        alignment_dict = getReconcropperData(json_fp)
-    elif json_fp:
-        # the only .json in the folder may not be a reconcropper file
-        try:
-            alignment_dict = getReconcropperData(json_fp)
-        except Exception as e:
-            print(f"Skipping {json_fp}: not reconcropper data ({e!r})")
-    if progbar.wasCanceled(): return
-    progress += 1
-    progbar.setValue(progress/final_value * 100)
-
-    # convert the section files and gather section names and tforms
-    print("Converting section files...")
-
-    sections = {}
-    section_tforms = {}
-
-    for snum, section_fp in sorted(section_fps.items()):
-        
-        sections[snum] = f"{sname}.{snum}"
-        tform = sectionXMLtoJSON(
-            section_fp, alignment_dict, hidden_dir, sections[snum]
+        # convert the series file
+        json_series_fp = seriesXMLToJSON(
+            series_fp, list(section_fps.values()), hidden_dir
         )
-
-        section_tforms[snum] = tform
-
         if progbar.wasCanceled(): return
         progress += 1
         progbar.setValue(progress/final_value * 100)
-    
-    # create an empty log file
-    with open(os.path.join(hidden_dir, "existing_log.csv"), "w", encoding="utf-8") as f:
-        f.write("Date, Time, User, Obj, Sections, Event")
-    
-    # open the series file, modify current section and ztraces
-    series = Series(json_series_fp, sections)
-    series.current_section = min(series.sections.keys())
 
-    # modify the ztraces
-    for ztrace in series.ztraces.values():
-        new_points = []
-        for point in ztrace.points:
-            x, y, snum = point
-            if snum in section_tforms:
-                new_point = (
-                    *section_tforms[snum].map(x, y, inverted=True),
-                    snum
-                )
-                new_points.append(new_point)
-        ztrace.points = new_points
-    
-    # log create the first log in the series
-    series.addLog(None, None, "Create series from XML files")
+        # get the reconcropper data
+        alignment_dict = None
+        if json_is_named:
+            alignment_dict = getReconcropperData(json_fp)
+        elif json_fp:
+            # the only .json in the folder may not be a reconcropper file
+            try:
+                alignment_dict = getReconcropperData(json_fp)
+            except Exception as e:
+                print(f"Skipping {json_fp}: not reconcropper data ({e!r})")
+        if progbar.wasCanceled(): return
+        progress += 1
+        progbar.setValue(progress/final_value * 100)
 
-    return series
+        # convert the section files and gather section names and tforms
+        print("Converting section files...")
+
+        sections = {}
+        section_tforms = {}
+
+        for snum, section_fp in sorted(section_fps.items()):
+
+            sections[snum] = f"{sname}.{snum}"
+            tform = sectionXMLtoJSON(
+                section_fp, alignment_dict, hidden_dir, sections[snum]
+            )
+
+            section_tforms[snum] = tform
+
+            if progbar.wasCanceled(): return
+            progress += 1
+            progbar.setValue(progress/final_value * 100)
+
+        # create an empty log file
+        with open(os.path.join(hidden_dir, "existing_log.csv"), "w", encoding="utf-8") as f:
+            f.write("Date, Time, User, Obj, Sections, Event")
+
+        # open the series file, modify current section and ztraces
+        series = Series(json_series_fp, sections)
+        series.current_section = min(series.sections.keys())
+
+        # modify the ztraces
+        for ztrace in series.ztraces.values():
+            new_points = []
+            for point in ztrace.points:
+                x, y, snum = point
+                if snum in section_tforms:
+                    new_point = (
+                        *section_tforms[snum].map(x, y, inverted=True),
+                        snum
+                    )
+                    new_points.append(new_point)
+            ztrace.points = new_points
+
+        # log create the first log in the series
+        series.addLog(None, None, "Create series from XML files")
+
+        return series
+    finally:
+        progbar.close()
 
 
 def seriesXMLToJSON(series_fp, section_fps, hidden_dir):
