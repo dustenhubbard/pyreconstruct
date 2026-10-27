@@ -1092,6 +1092,12 @@ auto-backup toggle are remembered **per series**; the naming template is shared
 across all series. (The backup folder and naming are also available under **Series ▸
 Options ▸ Backup**.)
 
+When backups go in a subfolder named by the series code (the checkbox in **File ▸
+Backup ▸ Settings…**, or `{series}` in the folder), codes that differ only by `/`,
+`\` or `_` share one subfolder, because each of those becomes `_` in the folder name.
+On a case-insensitive filesystem, codes that differ only in upper and lower case
+also share one subfolder. Each backup file still gets its own name, so none is overwritten.
+
 ![The Backup Settings dialog: This Series, My Defaults (all series) with the backup folder and auto-backup, and Backup Naming with the example backup file name.](assets/images/user-guide/12-backup-settings.png)
 
 Because backups are just `.jser` files, **restore a backup by opening it** with
