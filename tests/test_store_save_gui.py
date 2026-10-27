@@ -826,19 +826,30 @@ def test_save_as_that_cannot_move_the_working_folder_back_says_where_it_is(
         window.close()
 
 
-def _stopped_part_way_back(window, tmp_path, main_window_dialogs, monkeypatch, writes=False):
+def _stopped_part_way_back(
+    window, tmp_path, main_window_dialogs, monkeypatch, writes=False, new_fp=None, ser_first=False,
+):
     """Save As whose new .jser cannot be written, and whose move back stops part way.
 
     The folder is moved back, one file gets its old name back, the next
     cannot be renamed, and undoing the first fails. With writes, a new file
-    can still be written in the folder. Returns the notices.
+    can still be written in the folder. With ser_first, the folder lists its
+    .ser first. Returns the notices.
     """
     from PyReconstruct.modules.backend.func import atomic_io
 
     notices = _Notices()
     window.series.setNotifier(notices)
     old_folder = window.series.hidden_dir
-    new_fp = _save_as_target(tmp_path, main_window_dialogs)
+    other_name = new_fp is None
+    if other_name:
+        new_fp = _save_as_target(tmp_path, main_window_dialogs)
+    else:
+        main_window_dialogs.file_responses.append(str(new_fp))
+    listdir = os.listdir
+
+    def ser_listed_first(folder="."):
+        return sorted(listdir(folder), key=lambda f: not f.lower().endswith(".ser"))
     write = series_module._atomicWrite
     rename = os.rename
     replace = atomic_io.replace_with_retry
@@ -867,8 +878,12 @@ def _stopped_part_way_back(window, tmp_path, main_window_dialogs, monkeypatch, w
         m.setattr(series_module, "_atomicWrite", full)
         m.setattr(os, "rename", second_refused)
         m.setattr(atomic_io, "replace_with_retry", locked)
+        if ser_first:
+            m.setattr(os, "listdir", ser_listed_first)
         assert window.saveAsToJser() == "cancel"
     assert len(back) == 2
+    if not other_name:
+        return notices
     names = os.listdir(old_folder)
     assert any(f.startswith("renamed.") for f in names)
     assert any(f.startswith(f"{window.series.name}.") for f in names)
@@ -1009,3 +1024,99 @@ def test_save_as_that_cannot_write_the_new_series_file_shows_one_notice(
         was.check(new_fp)
     finally:
         window.close()
+
+
+def _ignores_case(folder):
+    probe = os.path.join(folder, "case-probe")
+    open(probe, "w").close()
+    try:
+        return os.path.exists(os.path.join(folder, "CASE-PROBE"))
+    finally:
+        os.remove(probe)
+
+
+def test_a_capitalization_only_save_as_that_stops_part_way_back_keeps_its_series_file(
+    kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    if not _ignores_case(str(kept.parent)):
+        pytest.skip("needs a folder on a disk that ignores case (macOS and Windows by default)")
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    snum, edited = _move_a_trace(window)
+    old_folder = series.hidden_dir
+    new_fp = kept.parent / kept.name.upper()
+    try:
+        _stopped_part_way_back(
+            window, tmp_path, main_window_dialogs, monkeypatch,
+            writes=True, new_fp=new_fp, ser_first=True,
+        )
+        assert [f for f in os.listdir(old_folder) if f.lower().endswith(".ser")]
+        assert os.path.isfile(series.filepath)
+        assert series.jser_fp == str(kept) and series.hidden_dir == old_folder
+        assert store_save.heldStore(series) is not None
+        for n in sorted(series.sections):
+            assert series.loadSection(n).n == n
+        with monkeypatch.context() as m:
+            m.delenv(store_open.ENV_SWITCH)
+            # the window is still open: this is the open a crash would leave
+            resumed = Series.openJser(str(kept), progress=NullProgressReporter)
+        assert resumed.leave_open and os.path.samefile(resumed.hidden_dir, old_folder)
+        assert resumed.loadSection(snum).getDict() == edited
+    finally:
+        window.close()
+
+
+def test_a_series_file_that_is_the_same_file_under_its_new_name_is_kept(
+    kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    old_folder = series.hidden_dir
+    found_ser = os.path.join(old_folder, "renamed.ser")
+    canonical = os.path.join(old_folder, f"{series.name}.ser")
+    samefile = os.path.samefile
+
+    def aliased(a, b):
+        # as on a disk where the two names reach one file
+        if {str(a), str(b)} == {found_ser, canonical}:
+            return True
+        return samefile(a, b)
+
+    try:
+        with monkeypatch.context() as m:
+            m.setattr(os.path, "samefile", aliased)
+            _stopped_part_way_back(window, tmp_path, main_window_dialogs, monkeypatch, writes=True)
+        assert os.path.isfile(found_ser)
+        assert series.filepath == found_ser
+        for n in sorted(series.sections):
+            assert series.loadSection(n).n == n
+    finally:
+        window.close()
+
+
+def test_a_capitalization_only_save_as_keeps_one_folder_and_one_series_file(
+    kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    if not _ignores_case(str(kept.parent)):
+        pytest.skip("needs a folder on a disk that ignores case (macOS and Windows by default)")
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    snum, edited = _move_a_trace(window)
+    new_fp = kept.parent / kept.name.upper()
+    main_window_dialogs.file_responses.append(str(new_fp))
+    try:
+        assert window.saveAsToJser() is None
+        assert series.jser_fp == str(new_fp) and os.path.isfile(new_fp)
+        folders = [f for f in os.listdir(kept.parent) if f.startswith(".")]
+        assert len(folders) == 1 and os.path.samefile(series.hidden_dir, kept.parent / folders[0])
+        sers = [f for f in os.listdir(series.hidden_dir) if f.lower().endswith(".ser")]
+        assert len(sers) == 1 and os.path.isfile(series.filepath)
+        for n in sorted(series.sections):
+            assert series.loadSection(n).n == n
+        assert series.loadSection(snum).getDict() == edited
+    finally:
+        window.close()
+    _opened_as_today(new_fp, snum, edited, monkeypatch)

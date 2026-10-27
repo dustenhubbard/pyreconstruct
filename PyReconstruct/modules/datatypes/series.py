@@ -958,8 +958,11 @@ class _Moved:
         keyed by the old one, is released.
         """
         series = self.series
-        at_old = folder == self.old_dir
+        # one folder under two spellings (a Save As that only changes the
+        # name's capitalization, on a disk that ignores case) is the old one
+        at_old = folder == self.old_dir or _sameFolder(folder, self.old_dir)
         if at_old:
+            folder = self.old_dir
             self.restore()
         else:
             if self.store is not None:
@@ -990,9 +993,11 @@ class _Moved:
 
         # an open after a crash resumes a working folder only by its
         # "<name>.ser" (Series.openJser), and replaces any other
+        # A name that differs only in case can be the same file: it is left
+        # as it is, and never removed as the old copy.
         ser = os.path.join(folder, f"{series.name}.ser")
         found_ser = series.filepath
-        if found_ser != ser:
+        if found_ser != ser and _isSameFile(found_ser, ser) is not True:
             series.filepath = ser
             series._save_notice_held = True
             try:
@@ -1000,12 +1005,21 @@ class _Moved:
             except OSError:
                 series.filepath = found_ser
             else:
-                try:
-                    os.remove(found_ser)
-                except OSError:
-                    pass
+                if _isSameFile(found_ser, ser) is False:
+                    try:
+                        os.remove(found_ser)
+                    except OSError:
+                        pass
             finally:
                 series._save_notice_held = False
+
+
+def _isSameFile(a : str, b : str) -> Optional[bool]:
+    """True if a and b are one file, False if two, None if that cannot be told."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return None
 
 
 def _sameFolder(a : str, b : str) -> bool:
@@ -2292,7 +2306,10 @@ class Series():
                 raise FileExistsError(
                     errno.EEXIST, os.strerror(errno.EEXIST), moved.old_dir
                 )
-            elif _moveWorkingFolder(moved.new_dir, moved.old_dir, moved.new_name, moved.old_name):
+            elif (
+                _moveWorkingFolder(moved.new_dir, moved.old_dir, moved.new_name, moved.old_name)
+                and not _sameFolder(moved.new_dir, moved.old_dir)
+            ):
                 # moved back as a copy; the folder at the new path is in the way
                 try:
                     removeSeriesFiles(moved.new_dir)
