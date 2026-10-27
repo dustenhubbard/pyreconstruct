@@ -696,3 +696,432 @@ def test_save_as_to_another_drive_copies_the_working_folder_and_removes_the_old_
             assert series.loadSection(snum).n == snum
     finally:
         window.close()
+
+
+def _new_jser_full(new_fp):
+    """An _atomicWrite that fails for new_fp as a full disk does."""
+    write = series_module._atomicWrite
+
+    def full(fp, data):
+        if str(fp) == str(new_fp):
+            raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC), str(fp))
+        return write(fp, data)
+
+    return full
+
+
+def _back_where_it_was(message, kept, new_fp, hidden_dir):
+    assert os.strerror(errno.ENOSPC) in message
+    assert f"not saved to:\n{new_fp}" in message
+    assert f"open from:\n{kept}" in message and hidden_dir in message
+    assert "left unchanged" not in message
+
+
+def test_save_as_that_cannot_write_the_new_jser_moves_the_series_back(
+    kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    snum, saved = _saved_in_the_store(window)
+    again, working = _move_a_trace(window)
+    assert again == snum and working != saved
+    notices = _Notices()
+    series.setNotifier(notices)
+    hidden_dir = series.hidden_dir
+    new_fp = _save_as_target(tmp_path, main_window_dialogs)
+    retry_fp = tmp_path / "retry" / "retried.jser"
+    retry_fp.parent.mkdir()
+    try:
+        with monkeypatch.context() as m:
+            m.setattr(series_module, "_atomicWrite", _new_jser_full(new_fp))
+            assert window.saveAsToJser() == "cancel"
+        assert len(notices.messages) == 1
+        _back_where_it_was(notices.messages[0], kept, new_fp, hidden_dir)
+        assert main_window_dialogs.notices == []
+        assert window.series is series and not series.closed
+        assert series.jser_fp == str(kept) and series.hidden_dir == hidden_dir
+        assert store_save.heldStore(series) is not None
+        assert not store_save.ahead(series)
+        assert os.listdir(new_fp.parent) == []
+        assert window.field.section.filepath.startswith(hidden_dir)
+        assert series.loadSection(snum).getDict() == working
+
+        main_window_dialogs.file_responses.append(str(retry_fp))
+        assert window.saveAsToJser() is None
+        assert series.jser_fp == str(retry_fp)
+    finally:
+        window.close()
+    _opened_as_today(kept, snum, saved, monkeypatch)
+    _opened_as_today(retry_fp, snum, working, monkeypatch)
+
+
+def test_save_as_to_another_drive_that_cannot_write_the_new_jser_keeps_the_original(
+    kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    notices = _Notices()
+    series.setNotifier(notices)
+    was = _AsItWas(window, kept)
+    new_fp = _save_as_target(tmp_path, main_window_dialogs)
+    rename = os.rename
+
+    def other_drive(src, dst, *args, **kwargs):
+        if src == was.hidden_dir:
+            raise OSError(errno.EXDEV, os.strerror(errno.EXDEV), dst)
+        return rename(src, dst, *args, **kwargs)
+
+    try:
+        with monkeypatch.context() as m:
+            m.setattr(os, "rename", other_drive)
+            m.setattr(series_module, "_atomicWrite", _new_jser_full(new_fp))
+            assert window.saveAsToJser() == "cancel"
+        assert len(notices.messages) == 1
+        _back_where_it_was(notices.messages[0], kept, new_fp, was.hidden_dir)
+        was.check(new_fp)
+    finally:
+        window.close()
+
+
+def test_save_as_that_cannot_move_the_working_folder_back_says_where_it_is(
+    kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    notices = _Notices()
+    series.setNotifier(notices)
+    old_folder = series.hidden_dir
+    new_fp = _save_as_target(tmp_path, main_window_dialogs)
+    new_folder = str(new_fp.parent / ".renamed")
+    rename = os.rename
+
+    def no_way_back(src, dst, *args, **kwargs):
+        if src == new_folder:
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), dst)
+        return rename(src, dst, *args, **kwargs)
+
+    def no_copy(src, dst, *args, **kwargs):
+        raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), dst)
+
+    try:
+        with monkeypatch.context() as m:
+            m.setattr(series_module, "_atomicWrite", _new_jser_full(new_fp))
+            m.setattr(os, "rename", no_way_back)
+            m.setattr(shutil, "copytree", no_copy)
+            assert window.saveAsToJser() == "cancel"
+        assert len(notices.messages) == 1
+        message = notices.messages[0]
+        assert os.strerror(errno.ENOSPC) in message and os.strerror(errno.EACCES) in message
+        assert f"It is at:\n{new_folder}" in message
+        assert message.endswith(f"The last Save is in:\n{kept}")
+        assert not os.path.exists(old_folder) and os.path.isdir(new_folder)
+        assert series.hidden_dir == new_folder
+        assert store_save.heldStore(series) is None
+        for snum in sorted(series.sections):
+            assert series.loadSection(snum).n == snum
+    finally:
+        window.close()
+
+
+def _stopped_part_way_back(
+    window, tmp_path, main_window_dialogs, monkeypatch, writes=False, new_fp=None, ser=None,
+):
+    """Save As whose new .jser cannot be written, and whose move back stops part way.
+
+    The folder is moved back, one file gets its old name back, the next
+    cannot be renamed, and undoing the first fails. With writes, a new file
+    can still be written in the folder. ser "first" or "last" says where the
+    folder lists its .ser. Returns the notices.
+    """
+    from PyReconstruct.modules.backend.func import atomic_io
+
+    notices = _Notices()
+    window.series.setNotifier(notices)
+    old_folder = window.series.hidden_dir
+    other_name = new_fp is None
+    if other_name:
+        new_fp = _save_as_target(tmp_path, main_window_dialogs)
+    else:
+        main_window_dialogs.file_responses.append(str(new_fp))
+    listdir = os.listdir
+
+    def ser_listed(folder="."):
+        names = sorted(listdir(folder))
+        return sorted(names, key=lambda f: f.lower().endswith(".ser") == (ser == "last"))
+    write = series_module._atomicWrite
+    rename = os.rename
+    replace = atomic_io.replace_with_retry
+    back = []
+
+    def full(fp, data):
+        if str(fp) == str(new_fp):
+            back.append("write failed")
+            raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC), str(fp))
+        return write(fp, data)
+
+    def second_refused(src, dst, *args, **kwargs):
+        if back and os.path.dirname(src) == old_folder:
+            if len(back) == 2:
+                raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), dst)
+            back.append(dst)
+        return rename(src, dst, *args, **kwargs)
+
+    def locked(src, dst, *args, **kwargs):
+        written = writes and os.path.basename(src).startswith(".save-")
+        if back and os.path.dirname(src) == old_folder and not written:
+            raise PermissionError(errno.EPERM, os.strerror(errno.EPERM), src)
+        return replace(src, dst, *args, **kwargs)
+
+    with monkeypatch.context() as m:
+        m.setattr(series_module, "_atomicWrite", full)
+        m.setattr(os, "rename", second_refused)
+        m.setattr(atomic_io, "replace_with_retry", locked)
+        if ser:
+            m.setattr(os, "listdir", ser_listed)
+        assert window.saveAsToJser() == "cancel"
+    assert len(back) == 2
+    if not other_name:
+        return notices
+    names = os.listdir(old_folder)
+    assert any(f.startswith("renamed.") for f in names)
+    assert any(f.startswith(f"{window.series.name}.") for f in names)
+    assert not os.path.exists(new_fp.parent / ".renamed")
+    return notices
+
+
+def _section_list(window):
+    window.field.table_manager.newTable("section")
+    return window.field.table_manager.tables["section"][-1]
+
+
+def test_save_as_that_stops_part_way_back_uses_the_folder_where_it_is(
+    kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    snum, edited = _move_a_trace(window)
+    old_folder = series.hidden_dir
+    try:
+        notices = _stopped_part_way_back(window, tmp_path, main_window_dialogs, monkeypatch)
+        assert len(notices.messages) == 1
+        message = notices.messages[0]
+        assert os.strerror(errno.ENOSPC) in message and os.strerror(errno.EPERM) in message
+        assert f"It is at:\n{old_folder}" in message and str(kept) in message
+        assert series.jser_fp == str(kept) and series.hidden_dir == old_folder
+        assert os.path.isfile(series.filepath)
+        assert store_save.heldStore(series) is not None
+        for n in sorted(series.sections):
+            assert os.path.isfile(os.path.join(old_folder, series.sections[n]))
+            assert series.loadSection(n).n == n
+        assert series.loadSection(snum).getDict() == edited
+        window.saveToJser()
+        assert store_save.ahead(series)
+    finally:
+        window.close()
+    _opened_as_today(kept, snum, edited, monkeypatch)
+
+
+def test_an_open_after_a_crash_resumes_the_folder_a_save_as_left_part_way_back(
+    kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    snum, edited = _move_a_trace(window)
+    old_folder = series.hidden_dir
+    try:
+        _stopped_part_way_back(
+            window, tmp_path, main_window_dialogs, monkeypatch, writes=True, ser="last",
+        )
+        assert series.filepath == os.path.join(old_folder, f"{series.name}.ser")
+        assert not os.path.exists(os.path.join(old_folder, "renamed.ser"))
+        with monkeypatch.context() as m:
+            m.delenv(store_open.ENV_SWITCH)
+            # the window is still open: this is the open a crash would leave
+            resumed = Series.openJser(str(kept), progress=NullProgressReporter)
+        assert resumed.hidden_dir == old_folder and resumed.leave_open
+        assert sorted(resumed.sections) == sorted(series.sections)
+        assert resumed.loadSection(snum).getDict() == edited
+    finally:
+        window.close()
+
+
+def _one_name_again(series):
+    names = sorted(
+        f for f in os.listdir(series.hidden_dir) if "." in f and f.rsplit(".", 1)[1].isdigit()
+    )
+    assert sorted(series.sections.values()) == names
+    for n in sorted(series.sections):
+        assert series.sections[n] == f"{series.name}.{n}"
+        assert series.loadSection(n).n == n
+
+
+def test_reorder_after_a_save_as_that_stops_part_way_back(
+    kept, tmp_path, main_window_dialogs, gui_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    snum, edited = _move_a_trace(window)
+    try:
+        _stopped_part_way_back(window, tmp_path, main_window_dialogs, monkeypatch)
+        for n in series.sections:
+            series.data["sections"][n]["locked"] = False
+        order = {n: i for i, n in enumerate(sorted(series.sections))}
+        _section_list(window).reorderSections()
+        assert gui_dialogs.notices == []
+        _one_name_again(series)
+        after = series.loadSection(order[snum]).getDict()
+        assert after == edited
+        window.saveToJser()
+    finally:
+        window.close()
+    _opened_as_today(kept, order[snum], after, monkeypatch)
+
+
+def test_insert_after_a_save_as_that_stops_part_way_back(
+    kept, tmp_path, main_window_dialogs, gui_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    try:
+        _stopped_part_way_back(window, tmp_path, main_window_dialogs, monkeypatch)
+        before = len(series.sections)
+        first = min(series.sections)
+        series.insertSection(first, _image(str(tmp_path)), 0.00254, 0.05)
+        assert len(series.sections) == before + 1
+        _one_name_again(series)
+    finally:
+        window.close()
+
+
+def test_save_as_that_cannot_write_the_new_series_file_shows_one_notice(
+    kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    notices = _Notices()
+    series.setNotifier(notices)
+    was = _AsItWas(window, kept)
+    new_fp = _save_as_target(tmp_path, main_window_dialogs)
+    new_ser = str(new_fp.parent / ".renamed" / "renamed.ser")
+    write = series_module._atomicWrite
+
+    def full(fp, data):
+        if str(fp) == new_ser:
+            raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC), str(fp))
+        return write(fp, data)
+
+    try:
+        with monkeypatch.context() as m:
+            m.setattr(series_module, "_atomicWrite", full)
+            assert window.saveAsToJser() == "cancel"
+        assert len(notices.messages) == 1
+        _back_where_it_was(notices.messages[0], kept, new_fp, was.hidden_dir)
+        was.check(new_fp)
+    finally:
+        window.close()
+
+
+def _ignores_case(folder):
+    probe = os.path.join(folder, "case-probe")
+    open(probe, "w").close()
+    try:
+        return os.path.exists(os.path.join(folder, "CASE-PROBE"))
+    finally:
+        os.remove(probe)
+
+
+def test_a_capitalization_only_save_as_that_stops_part_way_back_keeps_its_series_file(
+    kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    if not _ignores_case(str(kept.parent)):
+        pytest.skip("needs a folder on a disk that ignores case (macOS and Windows by default)")
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    snum, edited = _move_a_trace(window)
+    old_folder = series.hidden_dir
+    new_fp = kept.parent / kept.name.upper()
+    try:
+        _stopped_part_way_back(
+            window, tmp_path, main_window_dialogs, monkeypatch,
+            writes=True, new_fp=new_fp, ser="first",
+        )
+        assert [f for f in os.listdir(old_folder) if f.lower().endswith(".ser")]
+        assert os.path.isfile(series.filepath)
+        assert series.jser_fp == str(kept) and series.hidden_dir == old_folder
+        assert store_save.heldStore(series) is not None
+        for n in sorted(series.sections):
+            assert series.loadSection(n).n == n
+        with monkeypatch.context() as m:
+            m.delenv(store_open.ENV_SWITCH)
+            # the window is still open: this is the open a crash would leave
+            resumed = Series.openJser(str(kept), progress=NullProgressReporter)
+        assert resumed.leave_open and os.path.samefile(resumed.hidden_dir, old_folder)
+        assert resumed.loadSection(snum).getDict() == edited
+    finally:
+        window.close()
+
+
+def test_a_series_file_that_is_the_same_file_under_its_new_name_is_kept(
+    kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    old_folder = series.hidden_dir
+    found_ser = os.path.join(old_folder, "renamed.ser")
+    canonical = os.path.join(old_folder, f"{series.name}.ser")
+    samefile = os.path.samefile
+
+    def aliased(a, b):
+        # as on a disk where the two names reach one file
+        if {str(a), str(b)} == {found_ser, canonical}:
+            return True
+        return samefile(a, b)
+
+    try:
+        with monkeypatch.context() as m:
+            m.setattr(os.path, "samefile", aliased)
+            _stopped_part_way_back(
+                window, tmp_path, main_window_dialogs, monkeypatch, writes=True, ser="last",
+            )
+        assert os.path.isfile(found_ser)
+        assert series.filepath == found_ser
+        for n in sorted(series.sections):
+            assert series.loadSection(n).n == n
+    finally:
+        window.close()
+
+
+def test_a_capitalization_only_save_as_keeps_one_folder_and_one_series_file(
+    kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    if not _ignores_case(str(kept.parent)):
+        pytest.skip("needs a folder on a disk that ignores case (macOS and Windows by default)")
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    snum, edited = _move_a_trace(window)
+    new_fp = kept.parent / kept.name.upper()
+    main_window_dialogs.file_responses.append(str(new_fp))
+    try:
+        assert window.saveAsToJser() is None
+        assert series.jser_fp == str(new_fp) and os.path.isfile(new_fp)
+        folders = [f for f in os.listdir(kept.parent) if f.startswith(".")]
+        assert len(folders) == 1 and os.path.samefile(series.hidden_dir, kept.parent / folders[0])
+        sers = [f for f in os.listdir(series.hidden_dir) if f.lower().endswith(".ser")]
+        assert len(sers) == 1 and os.path.isfile(series.filepath)
+        for n in sorted(series.sections):
+            assert series.loadSection(n).n == n
+        assert series.loadSection(snum).getDict() == edited
+    finally:
+        window.close()
+    _opened_as_today(new_fp, snum, edited, monkeypatch)

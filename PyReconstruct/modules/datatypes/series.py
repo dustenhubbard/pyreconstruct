@@ -862,7 +862,7 @@ def _moveWorkingFolder(old_dir : str, new_dir : str, old_name : str, new_name : 
 
     # Save-As onto the current path: the hidden dir is already in place --
     # moving it onto itself would fail (or nest it), so just rename files
-    same_dir = os.path.isdir(new_dir) and os.path.samefile(old_dir, new_dir)
+    same_dir = _sameFolder(old_dir, new_dir)
     moved = copied = False
     renamed = []
     try:
@@ -922,6 +922,109 @@ def _moveWorkingFolder(old_dir : str, new_dir : str, old_name : str, new_name : 
             raise _FolderNotRestored(undo, new_dir if moved else old_dir) from e
         raise
     return copied
+
+
+class _Moved:
+    """What Series._moveTo changed, so a failed Save As can put it back."""
+
+    def __init__(self, series, section, b_section, old_name, new_name, old_dir, new_dir, copied):
+        self.series = series
+        self.old_name, self.new_name = old_name, new_name
+        self.old_dir, self.new_dir = old_dir, new_dir
+        self.copied = copied
+        self.store = store_save.heldStore(series)
+        self.jser_fp = series.jser_fp
+        self._paths = (series.hidden_dir, series.filepath, dict(series.sections))
+        self._loaded = [(s, s.filepath) for s in (section, b_section) if s]
+
+    def restore(self):
+        """Point the series and its loaded sections back, and give it its store."""
+        series = self.series
+        series.name = self.old_name
+        series.jser_fp = self.jser_fp
+        series.hidden_dir, series.filepath, series.sections = self._paths
+        for section, fp in self._loaded:
+            section.filepath = fp
+        if self.store is not None:
+            store_save.attach(series, self.store)
+
+    def settle(self, folder : str):
+        """Point the series at the working folder where a failed undo left it.
+
+        A move back can stop part way, with some files under the old series
+        name and some under the new one. Each file is found under whichever
+        name it has. At the old folder the series is back at its old .jser,
+        with its store; anywhere else it stays at the new path, and its store,
+        keyed by the old one, is released.
+        """
+        series = self.series
+        # one folder under two spellings (a Save As that only changes the
+        # name's capitalization, on a disk that ignores case) is the old one
+        at_old = folder == self.old_dir or _sameFolder(folder, self.old_dir)
+        if at_old:
+            folder = self.old_dir
+            self.restore()
+        else:
+            if self.store is not None:
+                store_save.attach(series, self.store)
+                store_save.release(series)
+        try:
+            names = set(os.listdir(folder))
+        except OSError:
+            names = set()
+
+        def found(fp):
+            old_f = os.path.basename(fp)
+            new_f = renamedSeriesFile(old_f, self.old_name, self.new_name)
+            if old_f in names and (at_old or new_f not in names):
+                return os.path.join(folder, old_f)
+            if new_f in names or not at_old:
+                return os.path.join(folder, new_f)
+            return os.path.join(folder, old_f)
+
+        hidden_dir, filepath, sections = self._paths
+        series.hidden_dir = folder
+        series.filepath = found(filepath)
+        series.sections = {
+            snum: os.path.basename(found(fname)) for snum, fname in sections.items()
+        }
+        for section, fp in self._loaded:
+            section.filepath = found(fp)
+
+        # an open after a crash resumes a working folder only by its
+        # "<name>.ser" (Series.openJser), and replaces any other
+        # A name that differs only in case can be the same file: it is left
+        # as it is, and never removed as the old copy.
+        ser = os.path.join(folder, f"{series.name}.ser")
+        found_ser = series.filepath
+        if found_ser != ser and _isSameFile(found_ser, ser) is not True:
+            series.filepath = ser
+            series._save_notice_held = True
+            try:
+                series.save()
+            except OSError:
+                series.filepath = found_ser
+            else:
+                if _isSameFile(found_ser, ser) is False:
+                    try:
+                        os.remove(found_ser)
+                    except OSError:
+                        pass
+            finally:
+                series._save_notice_held = False
+
+
+def _isSameFile(a : str, b : str) -> Optional[bool]:
+    """True if a and b are one file, False if two, None if that cannot be told."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return None
+
+
+def _sameFolder(a : str, b : str) -> bool:
+    """True if a and b are one existing folder (another case of one name, a link)."""
+    return os.path.isdir(a) and os.path.isdir(b) and os.path.samefile(a, b)
 
 
 def _isInside(path : str, folder : str) -> bool:
@@ -1818,7 +1921,7 @@ class Series():
                     hasher.wrap(f) if hasher else f, sections, tail, splice=splice
                 ))
             except OSError as e:
-                self._surfaceSaveError(jser_fp, e)
+                self._saveFailed(jser_fp, e)
                 raise
             # A save to another path (a backup) leaves the index on the
             # series' own file, which that save did not touch.
@@ -2015,7 +2118,7 @@ class Series():
                 SeriesSaveError: always
         """
         err = SeriesSaveError(reason)
-        self._surfaceSaveError(jser_fp, err)
+        self._saveFailed(jser_fp, err)
         raise err
 
     def move(self, new_jser_fp : str, section : Section = None, b_section : Section = None):
@@ -2033,6 +2136,51 @@ class Series():
                     at its old path with its store, unless undoing a move
                     failed too, when the notice says where the working folder is
             """
+        self._finishMove(self._moveTo(new_jser_fp, section, b_section))
+
+    def saveAs(self, new_jser_fp : str, section : Optional[Section] = None, b_section : Optional[Section] = None):
+        """Move the series to new_jser_fp, as move does, and write its .jser there.
+
+        A .jser that cannot be written there moves the series back: it is open
+        from its old .jser, which holds the last Save, with its store and its
+        working folder, which holds the changes since. A series never saved
+        goes back to its working folder with no .jser. When the working folder
+        cannot be moved back, the series uses it where it is, finding each file
+        under the old or the new name, and the notice says where the folder is
+        and where the last Save is.
+
+            Params:
+                new_jser_fp (str): the new location for the series
+                section (Section): the section file being used (in GUI)
+                b_section (Section): the secondary section file being used (in GUI)
+            Raises:
+                SeriesSaveError: as move, or the .jser could not be written;
+                    the user was told
+        """
+        moved = self._moveTo(new_jser_fp, section, b_section)
+        # one notice for a failed write, once the series is back where it was
+        self._save_notice_held = True
+        try:
+            self.saveJser()
+        except (OSError, SeriesSaveError) as e:
+            self._save_notice_held = False
+            self._undoMove(moved, e)
+        finally:
+            self._save_notice_held = False
+        self._finishMove(moved)
+
+    def _moveTo(self, new_jser_fp : str, section : Optional[Section] = None, b_section : Optional[Section] = None) -> "_Moved":
+        """Move the working folder to new_jser_fp and point the series at it.
+
+        The series lets go of its store, which is keyed by the old path, but
+        the store is not closed, and a copied working folder's original is
+        not removed: _finishMove does both, and _undoMove puts the series back.
+
+            Returns:
+                (_Moved): what the move changed
+            Raises:
+                SeriesSaveError: as move
+        """
         # the local store is keyed by the old path: it writes the old file if
         # it holds a Save that file lacks, and the series lets go of it once
         # it has moved. Its stubs are filled first, since nothing backs them
@@ -2079,6 +2227,11 @@ class Series():
                 f"It is still open from:\n{self.jser_fp}"
             ))
             raise err from e
+
+        moved = _Moved(
+            self, section, b_section, old_name, new_name,
+            old_hidden_dir, new_hidden_dir, copied,
+        )
         
         ## Rename series
         self.rename(new_name)
@@ -2089,29 +2242,106 @@ class Series():
         self.jser_fp = new_jser_fp
         self.hidden_dir = new_hidden_dir
 
-        def moved(fp):
+        def renamed(fp):
             return os.path.join(
                 new_hidden_dir,
                 renamedSeriesFile(os.path.basename(fp), old_name, new_name)
             )
 
-        self.filepath = moved(self.filepath)
+        self.filepath = renamed(self.filepath)
 
         ## Update loaded sections in GUI
         if section:
-            section.filepath = moved(section.filepath)
+            section.filepath = renamed(section.filepath)
 
         if b_section:
-            b_section.filepath = moved(b_section.filepath)
+            b_section.filepath = renamed(b_section.filepath)
 
-        store_save.release(self)
-        if copied:
+        store_save.attach(self, None)
+        return moved
+
+    def _finishMove(self, moved : "_Moved"):
+        """Close the store the series let go of, and remove a copied folder's original."""
+        if moved.store is not None:
+            store_save.attach(self, moved.store)
+            store_save.release(self)
+        if moved.copied:
             # the series names the copy now; the original is only in the way
             try:
-                removeSeriesFiles(old_hidden_dir)
-                shutil.rmtree(old_hidden_dir)
+                removeSeriesFiles(moved.old_dir)
+                shutil.rmtree(moved.old_dir)
             except OSError:
                 pass
+
+    def _undoMove(self, moved : "_Moved", err : Exception):
+        """Put the series back where _moveTo found it, tell the user, and raise.
+
+            Params:
+                moved (_Moved): what the move changed
+                err (Exception): what stopped the save after the move
+            Raises:
+                SeriesSaveError: always
+        """
+        new_jser_fp = self.jser_fp
+        if isinstance(err, SeriesSaveError):
+            save_err, cause = err, err.__cause__
+        else:
+            save_err, cause = SeriesSaveError(str(err)), err
+        if moved.jser_fp:
+            last_save = f"The last Save is in:\n{moved.jser_fp}"
+        else:
+            last_save = "It has not been saved yet."
+        try:
+            if moved.copied:
+                # the original was never touched; the copy is only in the way,
+                # and a part that cannot be removed is left
+                try:
+                    removeSeriesFiles(moved.new_dir)
+                    shutil.rmtree(moved.new_dir)
+                except OSError:
+                    pass
+            elif os.path.lexists(moved.old_dir) and not _sameFolder(moved.old_dir, moved.new_dir):
+                # something is at the old path now, and moving back would
+                # clear it
+                raise FileExistsError(
+                    errno.EEXIST, os.strerror(errno.EEXIST), moved.old_dir
+                )
+            elif (
+                _moveWorkingFolder(moved.new_dir, moved.old_dir, moved.new_name, moved.old_name)
+                and not _sameFolder(moved.new_dir, moved.old_dir)
+            ):
+                # moved back as a copy; the folder at the new path is in the way
+                try:
+                    removeSeriesFiles(moved.new_dir)
+                    shutil.rmtree(moved.new_dir)
+                except OSError:
+                    pass
+        except (OSError, subprocess.CalledProcessError) as undo:
+            # the folder is where the undo left it, possibly with files under
+            # both names; the series uses it there
+            folder = undo.folder if isinstance(undo, _FolderNotRestored) else moved.new_dir
+            moved.settle(folder)
+            self._surfaceSaveError(new_jser_fp, err, (
+                f"Save failed: {err}\n\n"
+                f"The working folder could not be moved back ({undo}). "
+                f"It is at:\n{folder}\n\n"
+                f"{last_save}"
+            ))
+            raise save_err from cause
+        moved.restore()
+        if new_jser_fp == self.jser_fp:
+            self._surfaceSaveError(new_jser_fp, err)
+        else:
+            if moved.jser_fp:
+                where = f"It is still open from:\n{self.jser_fp}\nwith its working folder at:"
+            else:
+                where = "It has not been saved yet. Its working folder is:"
+            self._surfaceSaveError(new_jser_fp, err, (
+                f"Save failed: {err}\n\n"
+                f"The series was not saved to:\n{new_jser_fp}\n\n"
+                f"{where}\n{self.hidden_dir}"
+            ))
+        raise save_err from cause
     
     def refuseClosedWrite(self, fp : str):
         """Raise SeriesClosedError for a write to a working file of a closed series.
@@ -2667,7 +2897,7 @@ class Series():
             # internal hidden working file -- write compact bytes atomically
             _atomicWrite(self.filepath, fast_dumps(d))
         except OSError as e:
-            self._surfaceSaveError(self.filepath, e)
+            self._saveFailed(self.filepath, e)
             raise
 
     def getwdir(self) -> str:
@@ -5786,10 +6016,12 @@ class Series():
             if old_snum != new_snum:
                 self.presentSection(old_snum)
 
-        # rename the section files
+        # rename the section files, each from the name the series has for it
+        # (after a Save As that could not move its folder all the way back,
+        # some files still carry the other series name)
         for old_snum, new_snum in d.items():
             os.rename(
-                os.path.join(self.hidden_dir, f"{self.name}.{old_snum}"),
+                os.path.join(self.hidden_dir, self.sections[old_snum]),
                 os.path.join(self.hidden_dir, f"{self.name}.{new_snum}.temp")
             )
         # remove temp ext
@@ -6127,6 +6359,11 @@ class Series():
         if notifier is None:
             notifier = _default_notifier()
         return notifier
+
+    def _saveFailed(self, fp : str, err : Exception):
+        """Show the usual 'Save failed' notice, unless Series.saveAs gives its own."""
+        if not getattr(self, "_save_notice_held", False):
+            self._surfaceSaveError(fp, err)
 
     def setNotifier(self, notifier):
         """Inject a Notifier for this series (e.g. headless use or tests).
