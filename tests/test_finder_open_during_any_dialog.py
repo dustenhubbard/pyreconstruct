@@ -304,3 +304,23 @@ def test_a_finder_open_while_workers_run_is_refused(
     assert release.is_set()
     _refused(window, first, main_window_dialogs, c_fp, unsaved_fp, unsaved)
     assert not ThreadPoolProgBar.waiting()
+
+
+def test_a_finder_open_after_a_legacy_series_import_opens(
+    main_window, main_window_dialogs, finder, monkeypatch, tmp_path  # noqa: F811
+):
+    """The import's progress window is closed once it is done."""
+    from PySide6.QtWidgets import QApplication
+    from test_new_series_hidden_dir import _write_legacy_series
+    window = main_window
+    _, c_fp, _, _ = _two_more_series(window, tmp_path)
+    xml_dir = tmp_path / "xml"
+    xml_dir.mkdir()
+    _write_legacy_series(str(xml_dir), "S", [1, 2])
+    monkeypatch.setattr(window, "saveAsToJser", lambda *a, **k: "cancel")
+
+    window.newFromXML(str(xml_dir / "S.ser"))
+    assert QApplication.activeModalWidget() is None
+
+    finder(c_fp)
+    assert window.series.jser_fp == c_fp
