@@ -1095,8 +1095,8 @@ Options ▸ Backup**.)
 When backups go in a subfolder named by the series code (the checkbox in **File ▸
 Backup ▸ Settings…**, or `{series}` in the folder), codes that differ only by `/`,
 `\` or `_` share one subfolder, because each of those becomes `_` in the folder name.
-On macOS and Windows, codes that differ only in upper and lower case share one as
-well. Each backup file still gets its own name, so none is overwritten.
+On a case-insensitive filesystem, codes that differ only in upper and lower case
+also share one subfolder. Each backup file still gets its own name, so none is overwritten.
 
 ![The Backup Settings dialog: This Series, My Defaults (all series) with the backup folder and auto-backup, and Backup Naming with the example backup file name.](assets/images/user-guide/12-backup-settings.png)
 
