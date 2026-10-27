@@ -1,14 +1,9 @@
 """A .jser opened from the Finder while any dialog or progress window is up.
 
 A command that shows a dialog and then writes into window.series finished on
-the series the Finder opened under that dialog. The watcher now refuses a
-Finder open while any modal dialog or progress window is up, and while
-workers report in the status bar. What is pinned here, with real dialogs
-running their own event loops and the watcher as the app installs it:
-
-  * the Finder open is refused with a notice naming the file, not queued
-  * the command's write lands in the series it started on
-  * a Finder open with nothing up, or once every dialog has closed, opens
+the series the Finder opened under that dialog. While a modal dialog, a
+progress window or a status bar worker wait is up, the Finder open is
+skipped with a notice, and the command writes into the series it started on.
 """
 import threading
 
