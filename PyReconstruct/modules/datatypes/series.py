@@ -840,11 +840,12 @@ class _FolderNotRestored(OSError):
 def _moveWorkingFolder(old_dir : str, new_dir : str, old_name : str, new_name : str) -> bool:
     """Move a series' working folder to new_dir and rename its files for new_name.
 
-    All of it happens or none of it does: a step that fails undoes the steps
-    before it, so the folder is back at old_dir under its old names, and the
-    error is raised. A folder that cannot be renamed into place (another
-    drive) is copied there, and old_dir is left for the caller to remove once
-    the series names the copy.
+    A step that fails undoes the steps before it, so the folder is back at
+    old_dir under its old names, and the error is raised. When an undo fails
+    too, _FolderNotRestored says where the folder is. A folder that cannot be
+    renamed into place (another drive) is copied there, and old_dir is left
+    for the caller to remove once the series names the copy; a failed copy is
+    removed when it can be, and old_dir is never touched.
 
         Params:
             old_dir (str): the series' working folder
@@ -904,7 +905,8 @@ def _moveWorkingFolder(old_dir : str, new_dir : str, old_name : str, new_name : 
                 renamed.append((src, dst))
     except BaseException as e:
         if copied:
-            # the original was never touched; the copy is only in the way
+            # the original was never touched; the copy is only in the way,
+            # and a part that cannot be removed is left
             try:
                 removeSeriesFiles(new_dir)
                 shutil.rmtree(new_dir)
@@ -2028,7 +2030,8 @@ class Series():
                     local store, the old .jser could not be written from it,
                     or the working folder could not be moved or its files
                     renamed; the user was told, and the series is still open
-                    at its old path, with its store and working folder
+                    at its old path with its store, unless undoing a move
+                    failed too, when the notice says where the working folder is
             """
         # the local store is keyed by the old path: it writes the old file if
         # it holds a Save that file lacks, and the series lets go of it once

@@ -3541,8 +3541,8 @@ class MainWindow(QMainWindow):
         except SeriesSaveError:
             # a section could not be written out of the local store, the old
             # .jser could not be written from it, or the working folder could
-            # not be moved or renamed: the user was told, and the series is
-            # still open at its old path
+            # not be moved or renamed: the user was told where the working
+            # files are, which is the old path unless an undo failed too
             return "cancel"
 
         # the 3D scene tells the open series' objects apart by path
