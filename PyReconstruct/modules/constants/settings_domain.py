@@ -51,9 +51,24 @@ def settings_app():
     return os.environ.get("PYRECON_APP_NAME", SHARED_APP)
 
 
-# Stands between the app and the digest in the settings name of a series
-# code that holds a NUL (see series_app).
+# The text between the app and the digest in the settings name of a series
+# code that holds a NUL, or a path segment the Ini format would resolve (see
+# series_app).
 NUL_CODE_MARKER = " NUL-"
+PATH_CODE_MARKER = " PATH-"
+
+
+def _resolves_as_path(code):
+    """True when the Ini format would read ``<app>-<code>`` as a path to a
+    file other than the one the name spells.
+
+    Split on "/", the first segment follows ``<app>-`` and the last takes
+    the ``.ini`` suffix, so neither can be empty, "." or "..". A segment
+    between them that is one of those is resolved away: ``a//b`` and
+    ``a/./b`` reach the file of ``a/b``, and ``/../PyReconstruct-x`` the
+    file of ``x``. A backslash is a plain character in a Linux file name.
+    """
+    return any(part in ("", ".", "..") for part in code.split("/")[1:-1])
 
 
 def series_app(app, code):
@@ -66,16 +81,23 @@ def series_app(app, code):
     read from a series file is not.
 
     So a code with a NUL is named ``<app> NUL-<digest>``: the SHA-256 of
-    the code, in 64 lowercase hex digits. The name has no separator or dot
-    for the Ini format to read as a path, so it stays one file of its own.
-    Every ``<app>-<code>`` name has "-" right after the app name, so none
-    is spelled like it. Every code without a NUL names the domain it
-    always has.
+    the code, in 64 lowercase hex digits. A code the Ini format would
+    resolve to another file (see _resolves_as_path) is named
+    ``<app> PATH-<digest>`` the same way, so it no longer reads or writes
+    the settings of another series, the shared store or the other app. The
+    names have no separator or dot for the Ini format to read as a path, so
+    each stays one file of its own. Every ``<app>-<code>`` name has "-"
+    right after the app name, so none is spelled like them. Every other
+    code names the domain it always has.
     """
-    if "\0" not in code:
+    if "\0" in code:
+        marker = NUL_CODE_MARKER
+    elif _resolves_as_path(code):
+        marker = PATH_CODE_MARKER
+    else:
         return f"{app}-{code}"
     digest = hashlib.sha256(code.encode("utf-8", "surrogatepass")).hexdigest()
-    return f"{app}{NUL_CODE_MARKER}{digest}"
+    return f"{app}{marker}{digest}"
 
 
 def shared_domain():
