@@ -3494,8 +3494,9 @@ class MainWindow(QMainWindow):
                 written in that case, and saveToJser relies on hearing about
                 it; None on success (and for the welcome series, which has
                 nothing to save either way). Also "cancel" when another save
-                of this series was still running, and when the .jser could
-                not be written (the user was told).
+                of this series was still running, and when the series
+                could not be moved or its .jser could not be written (the
+                user was told).
         """
         # A Save As that arrives while a save is running (the progress dialog
         # lets queued events through) is refused first: before the working
@@ -3538,9 +3539,10 @@ class MainWindow(QMainWindow):
                 self.field.b_section
             )
         except SeriesSaveError:
-            # a section could not be written out of the local store, or the
-            # old .jser could not be written from it: the user was told, and
-            # nothing moved
+            # a section could not be written out of the local store, the old
+            # .jser could not be written from it, or the working folder could
+            # not be moved or renamed: the user was told where the working
+            # files are, which is the old path unless an undo failed too
             return "cancel"
 
         # the 3D scene tells the open series' objects apart by path
