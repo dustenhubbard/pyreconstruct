@@ -1,1 +1,1 @@
-- **The progress window closes when a legacy series import finishes.**
+- **The progress window closes when a legacy series import finishes or fails.**
