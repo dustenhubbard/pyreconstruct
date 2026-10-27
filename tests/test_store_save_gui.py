@@ -827,14 +827,14 @@ def test_save_as_that_cannot_move_the_working_folder_back_says_where_it_is(
 
 
 def _stopped_part_way_back(
-    window, tmp_path, main_window_dialogs, monkeypatch, writes=False, new_fp=None, ser_first=False,
+    window, tmp_path, main_window_dialogs, monkeypatch, writes=False, new_fp=None, ser=None,
 ):
     """Save As whose new .jser cannot be written, and whose move back stops part way.
 
     The folder is moved back, one file gets its old name back, the next
     cannot be renamed, and undoing the first fails. With writes, a new file
-    can still be written in the folder. With ser_first, the folder lists its
-    .ser first. Returns the notices.
+    can still be written in the folder. ser "first" or "last" says where the
+    folder lists its .ser. Returns the notices.
     """
     from PyReconstruct.modules.backend.func import atomic_io
 
@@ -848,8 +848,9 @@ def _stopped_part_way_back(
         main_window_dialogs.file_responses.append(str(new_fp))
     listdir = os.listdir
 
-    def ser_listed_first(folder="."):
-        return sorted(listdir(folder), key=lambda f: not f.lower().endswith(".ser"))
+    def ser_listed(folder="."):
+        names = sorted(listdir(folder))
+        return sorted(names, key=lambda f: f.lower().endswith(".ser") == (ser == "last"))
     write = series_module._atomicWrite
     rename = os.rename
     replace = atomic_io.replace_with_retry
@@ -878,8 +879,8 @@ def _stopped_part_way_back(
         m.setattr(series_module, "_atomicWrite", full)
         m.setattr(os, "rename", second_refused)
         m.setattr(atomic_io, "replace_with_retry", locked)
-        if ser_first:
-            m.setattr(os, "listdir", ser_listed_first)
+        if ser:
+            m.setattr(os, "listdir", ser_listed)
         assert window.saveAsToJser() == "cancel"
     assert len(back) == 2
     if not other_name:
@@ -933,7 +934,9 @@ def test_an_open_after_a_crash_resumes_the_folder_a_save_as_left_part_way_back(
     snum, edited = _move_a_trace(window)
     old_folder = series.hidden_dir
     try:
-        _stopped_part_way_back(window, tmp_path, main_window_dialogs, monkeypatch, writes=True)
+        _stopped_part_way_back(
+            window, tmp_path, main_window_dialogs, monkeypatch, writes=True, ser="last",
+        )
         assert series.filepath == os.path.join(old_folder, f"{series.name}.ser")
         assert not os.path.exists(os.path.join(old_folder, "renamed.ser"))
         with monkeypatch.context() as m:
@@ -1049,7 +1052,7 @@ def test_a_capitalization_only_save_as_that_stops_part_way_back_keeps_its_series
     try:
         _stopped_part_way_back(
             window, tmp_path, main_window_dialogs, monkeypatch,
-            writes=True, new_fp=new_fp, ser_first=True,
+            writes=True, new_fp=new_fp, ser="first",
         )
         assert [f for f in os.listdir(old_folder) if f.lower().endswith(".ser")]
         assert os.path.isfile(series.filepath)
@@ -1087,7 +1090,9 @@ def test_a_series_file_that_is_the_same_file_under_its_new_name_is_kept(
     try:
         with monkeypatch.context() as m:
             m.setattr(os.path, "samefile", aliased)
-            _stopped_part_way_back(window, tmp_path, main_window_dialogs, monkeypatch, writes=True)
+            _stopped_part_way_back(
+                window, tmp_path, main_window_dialogs, monkeypatch, writes=True, ser="last",
+            )
         assert os.path.isfile(found_ser)
         assert series.filepath == found_ser
         for n in sorted(series.sections):
