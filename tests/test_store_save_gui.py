@@ -826,18 +826,18 @@ def test_save_as_that_cannot_move_the_working_folder_back_says_where_it_is(
         window.close()
 
 
-def test_save_as_that_stops_part_way_back_uses_the_folder_where_it_is(
-    kept, tmp_path, main_window_dialogs, monkeypatch,
-):
+def _stopped_part_way_back(window, tmp_path, main_window_dialogs, monkeypatch, writes=False):
+    """Save As whose new .jser cannot be written, and whose move back stops part way.
+
+    The folder is moved back, one file gets its old name back, the next
+    cannot be renamed, and undoing the first fails. With writes, a new file
+    can still be written in the folder. Returns the notices.
+    """
     from PyReconstruct.modules.backend.func import atomic_io
 
-    _store_mode(monkeypatch)
-    window = _window(kept)
-    series = window.series
-    snum, edited = _move_a_trace(window)
     notices = _Notices()
-    series.setNotifier(notices)
-    old_folder = series.hidden_dir
+    window.series.setNotifier(notices)
+    old_folder = window.series.hidden_dir
     new_fp = _save_as_target(tmp_path, main_window_dialogs)
     write = series_module._atomicWrite
     rename = os.rename
@@ -858,24 +858,43 @@ def test_save_as_that_stops_part_way_back_uses_the_folder_where_it_is(
         return rename(src, dst, *args, **kwargs)
 
     def locked(src, dst, *args, **kwargs):
-        if back and os.path.dirname(src) == old_folder:
+        written = writes and os.path.basename(src).startswith(".save-")
+        if back and os.path.dirname(src) == old_folder and not written:
             raise PermissionError(errno.EPERM, os.strerror(errno.EPERM), src)
         return replace(src, dst, *args, **kwargs)
 
+    with monkeypatch.context() as m:
+        m.setattr(series_module, "_atomicWrite", full)
+        m.setattr(os, "rename", second_refused)
+        m.setattr(atomic_io, "replace_with_retry", locked)
+        assert window.saveAsToJser() == "cancel"
+    assert len(back) == 2
+    names = os.listdir(old_folder)
+    assert any(f.startswith("renamed.") for f in names)
+    assert any(f.startswith(f"{window.series.name}.") for f in names)
+    assert not os.path.exists(new_fp.parent / ".renamed")
+    return notices
+
+
+def _section_list(window):
+    window.field.table_manager.newTable("section")
+    return window.field.table_manager.tables["section"][-1]
+
+
+def test_save_as_that_stops_part_way_back_uses_the_folder_where_it_is(
+    kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    snum, edited = _move_a_trace(window)
+    old_folder = series.hidden_dir
     try:
-        with monkeypatch.context() as m:
-            m.setattr(series_module, "_atomicWrite", full)
-            m.setattr(os, "rename", second_refused)
-            m.setattr(atomic_io, "replace_with_retry", locked)
-            assert window.saveAsToJser() == "cancel"
-        assert len(back) == 2
+        notices = _stopped_part_way_back(window, tmp_path, main_window_dialogs, monkeypatch)
         assert len(notices.messages) == 1
         message = notices.messages[0]
         assert os.strerror(errno.ENOSPC) in message and os.strerror(errno.EPERM) in message
         assert f"It is at:\n{old_folder}" in message and str(kept) in message
-        names = os.listdir(old_folder)
-        assert any(f.startswith("renamed.") for f in names)
-        assert not os.path.exists(new_fp.parent / ".renamed")
         assert series.jser_fp == str(kept) and series.hidden_dir == old_folder
         assert os.path.isfile(series.filepath)
         assert store_save.heldStore(series) is not None
@@ -888,6 +907,79 @@ def test_save_as_that_stops_part_way_back_uses_the_folder_where_it_is(
     finally:
         window.close()
     _opened_as_today(kept, snum, edited, monkeypatch)
+
+
+def test_an_open_after_a_crash_resumes_the_folder_a_save_as_left_part_way_back(
+    kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    snum, edited = _move_a_trace(window)
+    old_folder = series.hidden_dir
+    try:
+        _stopped_part_way_back(window, tmp_path, main_window_dialogs, monkeypatch, writes=True)
+        assert series.filepath == os.path.join(old_folder, f"{series.name}.ser")
+        assert not os.path.exists(os.path.join(old_folder, "renamed.ser"))
+        with monkeypatch.context() as m:
+            m.delenv(store_open.ENV_SWITCH)
+            # the window is still open: this is the open a crash would leave
+            resumed = Series.openJser(str(kept), progress=NullProgressReporter)
+        assert resumed.hidden_dir == old_folder and resumed.leave_open
+        assert sorted(resumed.sections) == sorted(series.sections)
+        assert resumed.loadSection(snum).getDict() == edited
+    finally:
+        window.close()
+
+
+def _one_name_again(series):
+    names = sorted(
+        f for f in os.listdir(series.hidden_dir) if "." in f and f.rsplit(".", 1)[1].isdigit()
+    )
+    assert sorted(series.sections.values()) == names
+    for n in sorted(series.sections):
+        assert series.sections[n] == f"{series.name}.{n}"
+        assert series.loadSection(n).n == n
+
+
+def test_reorder_after_a_save_as_that_stops_part_way_back(
+    kept, tmp_path, main_window_dialogs, gui_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    snum, edited = _move_a_trace(window)
+    try:
+        _stopped_part_way_back(window, tmp_path, main_window_dialogs, monkeypatch)
+        for n in series.sections:
+            series.data["sections"][n]["locked"] = False
+        order = {n: i for i, n in enumerate(sorted(series.sections))}
+        _section_list(window).reorderSections()
+        assert gui_dialogs.notices == []
+        _one_name_again(series)
+        after = series.loadSection(order[snum]).getDict()
+        assert after == edited
+        window.saveToJser()
+    finally:
+        window.close()
+    _opened_as_today(kept, order[snum], after, monkeypatch)
+
+
+def test_insert_after_a_save_as_that_stops_part_way_back(
+    kept, tmp_path, main_window_dialogs, gui_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    try:
+        _stopped_part_way_back(window, tmp_path, main_window_dialogs, monkeypatch)
+        before = len(series.sections)
+        first = min(series.sections)
+        series.insertSection(first, _image(str(tmp_path)), 0.00254, 0.05)
+        assert len(series.sections) == before + 1
+        _one_name_again(series)
+    finally:
+        window.close()
 
 
 def test_save_as_that_cannot_write_the_new_series_file_shows_one_notice(

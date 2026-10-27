@@ -988,6 +988,25 @@ class _Moved:
         for section, fp in self._loaded:
             section.filepath = found(fp)
 
+        # an open after a crash resumes a working folder only by its
+        # "<name>.ser" (Series.openJser), and replaces any other
+        ser = os.path.join(folder, f"{series.name}.ser")
+        found_ser = series.filepath
+        if found_ser != ser:
+            series.filepath = ser
+            series._save_notice_held = True
+            try:
+                series.save()
+            except OSError:
+                series.filepath = found_ser
+            else:
+                try:
+                    os.remove(found_ser)
+                except OSError:
+                    pass
+            finally:
+                series._save_notice_held = False
+
 
 def _sameFolder(a : str, b : str) -> bool:
     """True if a and b are one existing folder (another case of one name, a link)."""
@@ -5980,10 +5999,12 @@ class Series():
             if old_snum != new_snum:
                 self.presentSection(old_snum)
 
-        # rename the section files
+        # rename the section files, each from the name the series has for it
+        # (after a Save As that could not move its folder all the way back,
+        # some files still carry the other series name)
         for old_snum, new_snum in d.items():
             os.rename(
-                os.path.join(self.hidden_dir, f"{self.name}.{old_snum}"),
+                os.path.join(self.hidden_dir, self.sections[old_snum]),
                 os.path.join(self.hidden_dir, f"{self.name}.{new_snum}.temp")
             )
         # remove temp ext
