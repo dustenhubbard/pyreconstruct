@@ -824,3 +824,96 @@ def test_save_as_that_cannot_move_the_working_folder_back_says_where_it_is(
             assert series.loadSection(snum).n == snum
     finally:
         window.close()
+
+
+def test_save_as_that_stops_part_way_back_uses_the_folder_where_it_is(
+    kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    from PyReconstruct.modules.backend.func import atomic_io
+
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    snum, edited = _move_a_trace(window)
+    notices = _Notices()
+    series.setNotifier(notices)
+    old_folder = series.hidden_dir
+    new_fp = _save_as_target(tmp_path, main_window_dialogs)
+    write = series_module._atomicWrite
+    rename = os.rename
+    replace = atomic_io.replace_with_retry
+    back = []
+
+    def full(fp, data):
+        if str(fp) == str(new_fp):
+            back.append("write failed")
+            raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC), str(fp))
+        return write(fp, data)
+
+    def second_refused(src, dst, *args, **kwargs):
+        if back and os.path.dirname(src) == old_folder:
+            if len(back) == 2:
+                raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), dst)
+            back.append(dst)
+        return rename(src, dst, *args, **kwargs)
+
+    def locked(src, dst, *args, **kwargs):
+        if back and os.path.dirname(src) == old_folder:
+            raise PermissionError(errno.EPERM, os.strerror(errno.EPERM), src)
+        return replace(src, dst, *args, **kwargs)
+
+    try:
+        with monkeypatch.context() as m:
+            m.setattr(series_module, "_atomicWrite", full)
+            m.setattr(os, "rename", second_refused)
+            m.setattr(atomic_io, "replace_with_retry", locked)
+            assert window.saveAsToJser() == "cancel"
+        assert len(back) == 2
+        assert len(notices.messages) == 1
+        message = notices.messages[0]
+        assert os.strerror(errno.ENOSPC) in message and os.strerror(errno.EPERM) in message
+        assert f"It is at:\n{old_folder}" in message and str(kept) in message
+        names = os.listdir(old_folder)
+        assert any(f.startswith("renamed.") for f in names)
+        assert not os.path.exists(new_fp.parent / ".renamed")
+        assert series.jser_fp == str(kept) and series.hidden_dir == old_folder
+        assert os.path.isfile(series.filepath)
+        assert store_save.heldStore(series) is not None
+        for n in sorted(series.sections):
+            assert os.path.isfile(os.path.join(old_folder, series.sections[n]))
+            assert series.loadSection(n).n == n
+        assert series.loadSection(snum).getDict() == edited
+        window.saveToJser()
+        assert store_save.ahead(series)
+    finally:
+        window.close()
+    _opened_as_today(kept, snum, edited, monkeypatch)
+
+
+def test_save_as_that_cannot_write_the_new_series_file_shows_one_notice(
+    kept, tmp_path, main_window_dialogs, monkeypatch,
+):
+    _store_mode(monkeypatch)
+    window = _window(kept)
+    series = window.series
+    notices = _Notices()
+    series.setNotifier(notices)
+    was = _AsItWas(window, kept)
+    new_fp = _save_as_target(tmp_path, main_window_dialogs)
+    new_ser = str(new_fp.parent / ".renamed" / "renamed.ser")
+    write = series_module._atomicWrite
+
+    def full(fp, data):
+        if str(fp) == new_ser:
+            raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC), str(fp))
+        return write(fp, data)
+
+    try:
+        with monkeypatch.context() as m:
+            m.setattr(series_module, "_atomicWrite", full)
+            assert window.saveAsToJser() == "cancel"
+        assert len(notices.messages) == 1
+        _back_where_it_was(notices.messages[0], kept, new_fp, was.hidden_dir)
+        was.check(new_fp)
+    finally:
+        window.close()

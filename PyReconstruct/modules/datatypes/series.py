@@ -948,6 +948,46 @@ class _Moved:
         if self.store is not None:
             store_save.attach(series, self.store)
 
+    def settle(self, folder : str):
+        """Point the series at the working folder where a failed undo left it.
+
+        A move back can stop part way, with some files under the old series
+        name and some under the new one. Each file is found under whichever
+        name it has. At the old folder the series is back at its old .jser,
+        with its store; anywhere else it stays at the new path, and its store,
+        keyed by the old one, is released.
+        """
+        series = self.series
+        at_old = folder == self.old_dir
+        if at_old:
+            self.restore()
+        else:
+            if self.store is not None:
+                store_save.attach(series, self.store)
+                store_save.release(series)
+        try:
+            names = set(os.listdir(folder))
+        except OSError:
+            names = set()
+
+        def found(fp):
+            old_f = os.path.basename(fp)
+            new_f = renamedSeriesFile(old_f, self.old_name, self.new_name)
+            if old_f in names and (at_old or new_f not in names):
+                return os.path.join(folder, old_f)
+            if new_f in names or not at_old:
+                return os.path.join(folder, new_f)
+            return os.path.join(folder, old_f)
+
+        hidden_dir, filepath, sections = self._paths
+        series.hidden_dir = folder
+        series.filepath = found(filepath)
+        series.sections = {
+            snum: os.path.basename(found(fname)) for snum, fname in sections.items()
+        }
+        for section, fp in self._loaded:
+            section.filepath = found(fp)
+
 
 def _sameFolder(a : str, b : str) -> bool:
     """True if a and b are one existing folder (another case of one name, a link)."""
@@ -2072,8 +2112,9 @@ class Series():
         from its old .jser, which holds the last Save, with its store and its
         working folder, which holds the changes since. A series never saved
         goes back to its working folder with no .jser. When the working folder
-        cannot be moved back, the series stays open where the folder is, and
-        the notice says where that is and where the last Save is.
+        cannot be moved back, the series uses it where it is, finding each file
+        under the old or the new name, and the notice says where the folder is
+        and where the last Save is.
 
             Params:
                 new_jser_fp (str): the new location for the series
@@ -2240,12 +2281,10 @@ class Series():
                 except OSError:
                     pass
         except (OSError, subprocess.CalledProcessError) as undo:
-            # the series stays pointed at the new path; the store is keyed by
-            # the old one, so the series does not take it back
+            # the folder is where the undo left it, possibly with files under
+            # both names; the series uses it there
             folder = undo.folder if isinstance(undo, _FolderNotRestored) else moved.new_dir
-            if moved.store is not None:
-                store_save.attach(self, moved.store)
-                store_save.release(self)
+            moved.settle(folder)
             self._surfaceSaveError(new_jser_fp, err, (
                 f"Save failed: {err}\n\n"
                 f"The working folder could not be moved back ({undo}). "
@@ -2822,7 +2861,7 @@ class Series():
             # internal hidden working file -- write compact bytes atomically
             _atomicWrite(self.filepath, fast_dumps(d))
         except OSError as e:
-            self._surfaceSaveError(self.filepath, e)
+            self._saveFailed(self.filepath, e)
             raise
 
     def getwdir(self) -> str:
