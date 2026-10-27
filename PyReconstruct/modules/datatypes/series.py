@@ -6,6 +6,7 @@ import re
 import json
 import shutil
 import secrets
+import subprocess
 import tempfile
 from datetime import datetime, timezone
 from contextlib import contextmanager
@@ -822,6 +823,112 @@ def renamedSeriesFile(filename : str, old_name : str, new_name : str) -> str:
     if sep and stem == old_name and (suffix.isdigit() or suffix == "ser"):
         return f"{new_name}.{suffix}"
     return filename
+
+
+class _FolderNotRestored(OSError):
+    """A working folder move failed, and undoing it failed too.
+
+    `__cause__` is the error that stopped the move; `folder` is where the
+    working folder is now.
+    """
+
+    def __init__(self, err : OSError, folder : str):
+        super().__init__(str(err))
+        self.folder = folder
+
+
+def _moveWorkingFolder(old_dir : str, new_dir : str, old_name : str, new_name : str) -> bool:
+    """Move a series' working folder to new_dir and rename its files for new_name.
+
+    All of it happens or none of it does: a step that fails undoes the steps
+    before it, so the folder is back at old_dir under its old names, and the
+    error is raised. A folder that cannot be renamed into place (another
+    drive) is copied there, and old_dir is left for the caller to remove once
+    the series names the copy.
+
+        Params:
+            old_dir (str): the series' working folder
+            new_dir (str): where it goes; may be old_dir itself (Save As onto
+                the current path)
+            old_name (str): the series name its files carry
+            new_name (str): the series name they get
+        Returns:
+            (bool): True if the folder was copied rather than moved
+        Raises:
+            _FolderNotRestored: a step failed, and so did undoing it
+    """
+    from PyReconstruct.modules.backend.func.atomic_io import replace_with_retry
+
+    # Save-As onto the current path: the hidden dir is already in place --
+    # moving it onto itself would fail (or nest it), so just rename files
+    same_dir = os.path.isdir(new_dir) and os.path.samefile(old_dir, new_dir)
+    moved = copied = False
+    renamed = []
+    try:
+        if not same_dir:
+            # clear any stale hidden dir at the destination: a move would
+            # otherwise nest the old dir inside it, orphaning every filepath
+            if os.path.isdir(new_dir):
+                removeSeriesFiles(new_dir)
+                shutil.rmtree(new_dir)
+            try:
+                os.rename(old_dir, new_dir)
+                moved = True
+            except OSError:
+                # another drive: copy, keeping the original until the series
+                # names the copy. Not into the folder itself.
+                if _isInside(new_dir, old_dir):
+                    raise
+                os.mkdir(new_dir)
+                copied = True
+                try:
+                    shutil.copytree(old_dir, new_dir, symlinks=True, dirs_exist_ok=True)
+                except shutil.Error as e:
+                    # copytree lists every file it could not copy; one says why
+                    errors = e.args[0] if e.args else None
+                    if isinstance(errors, list) and errors:
+                        raise OSError(errors[0][-1]) from e
+                    raise
+
+        ## Manually hide dir if Windows
+        if os.name == "nt":
+            subprocess.check_call(["attrib", "+H", new_dir])
+
+        ## Rename all files (prefix-only: see renamedSeriesFile)
+        for f in os.listdir(new_dir):
+            new_f = renamedSeriesFile(f, old_name, new_name)
+            if new_f != f:
+                src = os.path.join(new_dir, f)
+                dst = os.path.join(new_dir, new_f)
+                os.rename(src, dst)
+                renamed.append((src, dst))
+    except BaseException as e:
+        if copied:
+            # the original was never touched; the copy is only in the way
+            try:
+                removeSeriesFiles(new_dir)
+                shutil.rmtree(new_dir)
+            except OSError:
+                pass
+            raise
+        try:
+            for src, dst in reversed(renamed):
+                replace_with_retry(dst, src)
+            if moved:
+                replace_with_retry(new_dir, old_dir)
+        except OSError as undo:
+            raise _FolderNotRestored(undo, new_dir if moved else old_dir) from e
+        raise
+    return copied
+
+
+def _isInside(path : str, folder : str) -> bool:
+    """True if path is folder or anything in it."""
+    path, folder = os.path.abspath(path), os.path.abspath(folder)
+    try:
+        return os.path.commonpath([path, folder]) == folder
+    except ValueError:
+        return False  # another drive (Windows)
 
 
 class Series():
@@ -1918,20 +2025,27 @@ class Series():
                 b_section (Section): the secondary section file being used (in GUI)
             Raises:
                 SeriesSaveError: a section could not be written out of the
-                    local store, or the old .jser could not be written from
-                    it; the user was told, and nothing moved
+                    local store, the old .jser could not be written from it,
+                    or the working folder could not be moved or its files
+                    renamed; the user was told, and the series is still open
+                    at its old path, with its store and working folder
             """
         # the local store is keyed by the old path: it writes the old file if
-        # it holds a Save that file lacks, and the series lets go of it. Its
-        # stubs are filled first, since nothing backs them after that. A stub
-        # that cannot be filled (SectionUnavailable) stops the move before
-        # anything moves: the series stays open at its old path, with its
-        # store and working folder
+        # it holds a Save that file lacks, and the series lets go of it once
+        # it has moved. Its stubs are filled first, since nothing backs them
+        # after that. A stub that cannot be filled (SectionUnavailable) stops
+        # the move before anything moves: the series stays open at its old
+        # path, with its store and working folder
         try:
             self.presentAllSections()
         except OSError as e:
             self._refuseSave(self.jser_fp, f"{e}, so the series was not moved")
-        store_save.closing(self)
+        if store_save.ahead(self):
+            try:
+                store_save.writeJser(self)
+            except OSError as e:
+                # writeJser told the user; the old .jser is as it was
+                raise SeriesSaveError(str(e)) from e
 
         ## Move/Rename hidden directory
         old_name = self.name
@@ -1945,34 +2059,23 @@ class Series():
             "." + new_name
         )
 
-        # Save-As onto the current path: the hidden dir is already in place --
-        # moving it onto itself would fail (or nest it), so just refresh paths
-        same_dir = (
-            os.path.isdir(new_hidden_dir) and
-            os.path.samefile(old_hidden_dir, new_hidden_dir)
-        )
-
-        if not same_dir:
-            # clear any stale hidden dir at the destination: shutil.move would
-            # otherwise nest the old dir inside it, orphaning every filepath
-            if os.path.isdir(new_hidden_dir):
-                removeSeriesFiles(new_hidden_dir)
-                shutil.rmtree(new_hidden_dir)
-            shutil.move(old_hidden_dir, new_hidden_dir)
-
-        ## Manually hide dir if Windows
-        if os.name == "nt":
-            import subprocess
-            subprocess.check_call(["attrib", "+H", new_hidden_dir])
-
-        ## Rename all files (prefix-only: see renamedSeriesFile)
-        for f in os.listdir(new_hidden_dir):
-            new_f = renamedSeriesFile(f, old_name, new_name)
-            if new_f != f:
-                os.rename(
-                    os.path.join(new_hidden_dir, f),
-                    os.path.join(new_hidden_dir, new_f)
-                )
+        try:
+            copied = _moveWorkingFolder(old_hidden_dir, new_hidden_dir, old_name, new_name)
+        except _FolderNotRestored as e:
+            err = SeriesSaveError(str(e.__cause__))
+            self._surfaceSaveError(new_jser_fp, err, (
+                f"Save failed: {err}\n\n"
+                f"The working folder could not be moved back ({e}). "
+                f"It is at:\n{e.folder}"
+            ))
+            raise err from e
+        except (OSError, subprocess.CalledProcessError) as e:
+            err = SeriesSaveError(f"{e}, so the series was not moved")
+            self._surfaceSaveError(new_jser_fp, err, (
+                f"Save failed: {err}\n\n"
+                f"It is still open from:\n{self.jser_fp}"
+            ))
+            raise err from e
         
         ## Rename series
         self.rename(new_name)
@@ -1997,6 +2100,15 @@ class Series():
 
         if b_section:
             b_section.filepath = moved(b_section.filepath)
+
+        store_save.release(self)
+        if copied:
+            # the series names the copy now; the original is only in the way
+            try:
+                removeSeriesFiles(old_hidden_dir)
+                shutil.rmtree(old_hidden_dir)
+            except OSError:
+                pass
     
     def refuseClosedWrite(self, fp : str):
         """Raise SeriesClosedError for a write to a working file of a closed series.
