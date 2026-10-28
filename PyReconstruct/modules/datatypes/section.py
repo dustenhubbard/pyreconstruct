@@ -11,7 +11,7 @@ from zarr.util import normalize_storage_path
 
 from .contour import Contour
 from .filters import passesFilters
-from .trace import Trace, normalizeObjectName, roundedCoordinatesOfMany
+from .trace import Trace, normalizeObjectName
 from .flag import Flag, LegacyFlagIDs
 from .transform import Transform
 from .log import LogSetPair
@@ -1412,47 +1412,31 @@ class Section():
         # that rebuilt the fields itself would be a second encoder to keep in
         # step with the first.
         trace_ids = self._persistedTraceIDs() if keyed_rows else None
-        contour_names = [
-            name for name in sorted(self.contours, key=str)
-            if not self.contours[name].isEmpty()
-        ]
-        # every trace's points are rounded in one pass, in the order the rows
-        # are written below
-        coordinates = iter(roundedCoordinatesOfMany([
-            trace.points
-            for name in contour_names
-            for trace in self.contours[name]
-        ]))
         d["contours"] = {}
-        for contour_name in contour_names:
-            if keyed_rows:
-                rows = []
-                for trace in self.contours[contour_name]:
-                    row = dict(zip(
-                        KEYED_TRACE_ROW_KEYS[1:],
-                        trace.getList(
-                            include_name=False,
-                            coordinates=next(coordinates),
-                        ),
-                    ))
-                    trace_id = trace_ids.get(trace)
-                    if trace_id is not None:
-                        # `id` first, matching KEYED_TRACE_ROW_KEYS and the
-                        # flag row's index 0. Built by re-insertion rather
-                        # than by sorting, because the key order IS the
-                        # canonical order and must not depend on the
-                        # alphabet.
-                        row = {"id": trace_id, **row}
-                    rows.append(row)
-            else:
-                rows = [
-                    trace.getList(
-                        include_name=False,
-                        coordinates=next(coordinates),
-                    )
-                    for trace in self.contours[contour_name]
-                ]
-            d["contours"][contour_name] = rows
+        for contour_name in sorted(self.contours, key=str):
+            if not self.contours[contour_name].isEmpty():
+                if keyed_rows:
+                    rows = []
+                    for trace in self.contours[contour_name]:
+                        row = dict(zip(
+                            KEYED_TRACE_ROW_KEYS[1:],
+                            trace.getList(include_name=False),
+                        ))
+                        trace_id = trace_ids.get(trace)
+                        if trace_id is not None:
+                            # `id` first, matching KEYED_TRACE_ROW_KEYS and the
+                            # flag row's index 0. Built by re-insertion rather
+                            # than by sorting, because the key order IS the
+                            # canonical order and must not depend on the
+                            # alphabet.
+                            row = {"id": trace_id, **row}
+                        rows.append(row)
+                else:
+                    rows = [
+                        trace.getList(include_name=False)
+                        for trace in self.contours[contour_name]
+                    ]
+                d["contours"][contour_name] = rows
 
         d["flags"] = [f.getList() for f in self.flags]
 
