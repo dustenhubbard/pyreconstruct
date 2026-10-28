@@ -418,3 +418,38 @@ def test_one_press_fires_once(main_window, bar, qapp, attr, key):
         QTest.keyRelease(main_window, Qt.Key_Control)
         qapp.processEvents()
     assert fired == [attr]
+
+
+@pytest.fixture
+def slot_errors():
+    """Exceptions raised in slots, which PySide6 hands to sys.excepthook."""
+    errors = []
+    previous = sys.excepthook
+    sys.excepthook = lambda kind, value, tb: errors.append(value)
+    try:
+        yield errors
+    finally:
+        sys.excepthook = previous
+
+
+def test_owner_teardown_after_the_bar_is_gone(main_window, bar, slot_errors):
+    # at quit Qt can delete the parentless bar before its main window
+    shiboken6.delete(bar)
+    main_window.destroyed.emit()
+    QApplication.processEvents()
+    assert slot_errors == []
+    assert mac_menubar.globalBar() is None
+
+
+def test_rebuild_after_the_bar_is_gone_makes_a_new_bar(main_window, bar):
+    shiboken6.delete(bar)
+    assert mac_menubar.globalBar() is None
+    main_window.createMenuBar()
+    rebuilt = mac_menubar.globalBar()
+    assert rebuilt is not None and shiboken6.isValid(rebuilt)
+    assert "Window > Minimize" in _rows(rebuilt)
+
+
+def test_a_remap_after_the_bar_is_gone_skips_its_rows(main_window, bar):
+    shiboken6.delete(bar)
+    mac_menubar.claimKeys(main_window)
