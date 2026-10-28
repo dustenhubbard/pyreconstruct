@@ -597,3 +597,12 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: uv run --frozen --no-default-groups --extra test python -m pytest -ra tests/test_updater_apply.py tests/test_run_apply_dispatch.py tests/test_update_staging.py tests/test_macos_update_tree_step.py
+
+      # The registry settings backend exists only on Windows, and the suite
+      # above runs on Linux, so the per-series registry key tests run here.
+      # -rA lists every outcome, passes included.
+      - name: Registry settings tests
+        if: runner.os == 'Windows'
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run --frozen --no-default-groups --extra test python -m pytest -rA tests/test_series_code_windows_registry.py

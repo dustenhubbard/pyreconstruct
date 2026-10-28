@@ -36,6 +36,7 @@ matter.
 import hashlib
 import json
 import os
+import sys
 
 SETTINGS_ORG = "KHLab"
 
@@ -52,8 +53,8 @@ def settings_app():
 
 
 # The text between the app and the digest in the settings name of a series
-# code that holds a NUL, or a path segment the Ini format would resolve (see
-# series_app).
+# code that holds a NUL, or a path segment the Ini format or the Windows
+# registry would resolve (see series_app).
 NUL_CODE_MARKER = " NUL-"
 PATH_CODE_MARKER = " PATH-"
 
@@ -71,6 +72,24 @@ def _resolves_as_path(code):
     return any(part in ("", ".", "..") for part in code.split("/")[1:-1])
 
 
+def _native_is_registry():
+    """True where the native settings format is the Windows registry."""
+    return sys.platform == "win32"
+
+
+def _resolves_in_registry(code):
+    """True when the Windows registry would open ``<app>-<code>`` as the key
+    of another name.
+
+    The name is a registry path and "\\" separates its keys. Split on
+    "\\", the first segment follows ``<app>-``, so it names a key even when
+    empty. An empty segment after it is dropped: ``existing\\`` and
+    ``existing\\\\`` open the key of ``existing``, and ``a\\\\b`` the key of
+    ``a\\b``. A "/", "." or ".." is a plain character in a key name.
+    """
+    return "" in code.split("\\")[1:]
+
+
 def series_app(app, code):
     """The application name of one series' own settings: ``<app>-<code>``.
 
@@ -84,15 +103,20 @@ def series_app(app, code):
     the code, in 64 lowercase hex digits. A code the Ini format would
     resolve to another file (see _resolves_as_path) is named
     ``<app> PATH-<digest>`` the same way, so it no longer reads or writes
-    the settings of another series, the shared store or the other app. The
-    names have no separator or dot for the Ini format to read as a path, so
-    each stays one file of its own. Every ``<app>-<code>`` name has "-"
-    right after the app name, so none is spelled like them. Every other
-    code names the domain it always has.
+    the settings of another series, the shared store or the other app. So
+    is a code the Windows registry would resolve to another key (see
+    _resolves_in_registry), on Windows only: elsewhere a backslash is a
+    plain character and that code keeps its name. The names have no
+    separator or dot for the Ini format or the registry to read as a path,
+    so each stays one file or key of its own. Every ``<app>-<code>`` name
+    has "-" right after the app name, so none is spelled like them. Every
+    other code names the domain it always has.
     """
     if "\0" in code:
         marker = NUL_CODE_MARKER
-    elif _resolves_as_path(code):
+    elif _resolves_as_path(code) or (
+        _native_is_registry() and _resolves_in_registry(code)
+    ):
         marker = PATH_CODE_MARKER
     else:
         return f"{app}-{code}"
