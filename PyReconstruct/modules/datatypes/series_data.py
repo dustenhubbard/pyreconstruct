@@ -3,7 +3,9 @@
 from typing import Optional, Union
 
 
-from PyReconstruct.modules.calc import traceGeometry
+import numpy as np
+
+from PyReconstruct.modules.calc import traceGeometry, traceGeometries
 from PyReconstruct.modules.constants import EXPORT_ERRORS
 
 from .columnar_store import TraceView
@@ -78,6 +80,34 @@ class TraceData():
         # pointer per trace.
         self._tform = tform
         self._feret = None if self.closed else (0, 0)
+
+    @classmethod
+    def fromGeometry(cls, index : int, closed : bool, hidden : bool, negative : bool,
+                     tags : set, color, geometry : tuple, tform : Transform):
+        """The TraceData `__init__` builds, from numbers already measured.
+
+            Params:
+                color (tuple): the trace's color, or None
+                geometry (tuple): (length, area, (cx, cy), radius) from
+                    traceGeometry of the trace's mapped points
+            Other params are the trace's own fields, as `__init__` reads them.
+        """
+        self = cls.__new__(cls)
+        self.index = index
+        self.closed = closed
+        self.hidden = hidden
+        self.negative = negative
+        self.tags = tags
+        self.color = color
+        length, trace_area, self.centroid, self.radius = geometry
+        self.length = length
+        if not closed:
+            self.area = 0
+        else:
+            self.area = -trace_area if negative else trace_area
+        self._tform = tform
+        self._feret = None if closed else (0, 0)
+        return self
 
     def getTags(self):
         return self.tags
@@ -248,19 +278,8 @@ class ObjectData():
         """
         if section.n not in self.traces:
             self.traces[section.n] = []
-            
-        alignment = series.getAttr(trace.name, "alignment")
-        
-        if alignment is None:
-            
-            alignment = series.alignment
-            
-        elif alignment not in section.tforms:
-            
-            series.setAttr(trace.name, "alignment", None)
-            alignment = series.alignment
 
-        tform = section.tforms[alignment]
+        tform = ObjectData.sectionTransform(trace.name, section, series)
 
         i = len(self.traces[section.n])
         
@@ -268,6 +287,26 @@ class ObjectData():
             TraceData(trace, i, tform, points)
         )
     
+    @staticmethod
+    def sectionTransform(name : str, section : Section, series) -> Transform:
+        """The transform an object's traces on a section are measured with.
+
+        The object's own alignment, or the series alignment when it has none.
+        An alignment the section lacks is cleared from the object first.
+        """
+        alignment = series.getAttr(name, "alignment")
+
+        if alignment is None:
+
+            alignment = series.alignment
+
+        elif alignment not in section.tforms:
+
+            series.setAttr(name, "alignment", None)
+            alignment = series.alignment
+
+        return section.tforms[alignment]
+
     def clearSection(self, snum : int):
         """Clear the traces on a specific section.
         
@@ -276,6 +315,31 @@ class ObjectData():
         """
         if snum in self.traces:
             del(self.traces[snum])
+
+
+def traceDataForRows(store, rows : list, tform : Transform) -> list:
+    """One TraceData per row of a section's columnar store, built together.
+
+    Each is the TraceData `TraceData(TraceView(store, row), i, tform,
+    store.getCoordinates(row))` builds, to the bit, with `index` set to its
+    place in `rows`; the caller sets it when the rows are split.
+    """
+    coordinates = [store.getCoordinates(row) for row in rows]
+    counts = [len(c) for c in coordinates]
+    points = tform.mapPointsArray(np.concatenate(coordinates))
+    closed = store.flagColumn("closed")[rows].tolist()
+    hidden = store.flagColumn("hidden")[rows].tolist()
+    negative = store.flagColumn("negative")[rows].tolist()
+    # a list of int per row, as `getColor` gives it
+    colors = store.colorColumn[rows].tolist()
+    geometries = traceGeometries(points, counts, closed)
+    return [
+        TraceData.fromGeometry(
+            0, closed[k], hidden[k], negative[k], store.getTags(row),
+            tuple(colors[k]) if colors[k] else None, geometries[k], tform,
+        )
+        for k, row in enumerate(rows)
+    ]
 
 
 class SeriesData():
@@ -407,6 +471,10 @@ class SeriesData():
             ## Only a Section built through `Section.__new__` has no store
             store = section._columns if read_store else None
 
+            ## From the store, every trace on the section is measured in one
+            ## pass after the clearing below (traceDataForRows)
+            named_rows = self._storeRows(store, section, trace_names) if store is not None else None
+
             ## Clear existing trace data on this section
             for name in trace_names:
                 
@@ -415,7 +483,7 @@ class SeriesData():
                     self.data["objects"][name].clearSection(section.n)
                     
                 ## Add new trace data
-                if name in section.contours:
+                if named_rows is None and name in section.contours:
                     if store is not None:
                         traces = (
                             (TraceView(store, row), store.getCoordinates(row))
@@ -427,6 +495,9 @@ class SeriesData():
                         is_new_object = self.addTrace(trace, section, points)
                         if is_new_object:
                             added_objects.add(name)
+
+            if named_rows is not None:
+                self._addStoreRows(store, section, named_rows, added_objects)
             
             ## Check for removed objects
             for name in trace_names:
@@ -467,6 +538,53 @@ class SeriesData():
                     ## Remove object from object attributes dicts
                     self.series.removeObjAttrs(obj_name)
     
+    def _storeRows(self, store, section : Section, trace_names) -> Optional[list]:
+        """(name, rows) for each name with traces on the section, in order.
+
+        None if a row carries a name other than its contour's: the traces then
+        go one at a time, under the name each carries, as before.
+        """
+        named_rows = []
+        for name in trace_names:
+            if name not in section.contours:
+                continue
+            rows = store.rowsForContour(name)
+            if not rows:
+                continue
+            for row in rows:
+                if store.getName(row) != name:
+                    return None
+            named_rows.append((name, rows))
+        return named_rows
+
+    def _addStoreRows(self, store, section : Section, named_rows : list, added_objects : set):
+        """Add the TraceData of every (name, rows), measured together.
+
+        The same TraceData, in the same order, as adding the rows one at a
+        time with addTrace. Rows measured with one transform are measured in
+        one pass; an object with its own alignment can have another.
+        """
+        objects = self.data["objects"]
+        by_tform = {}
+        for name, rows in named_rows:
+            tform = ObjectData.sectionTransform(name, section, self.series)
+            by_tform.setdefault(id(tform), (tform, []))[1].append((name, rows))
+        built = {}
+        for tform, group in by_tform.values():
+            trace_data = traceDataForRows(store, [r for _, rows in group for r in rows], tform)
+            start = 0
+            for name, rows in group:
+                built[name] = trace_data[start:start + len(rows)]
+                for i, td in enumerate(built[name]):
+                    td.index = i
+                start += len(rows)
+        for name, _ in named_rows:
+            obj_data = objects.get(name)
+            if obj_data is None:
+                objects[name] = obj_data = ObjectData()
+                added_objects.add(name)
+            obj_data.traces[section.n] = built[name]
+
     def addTrace(self, trace : Trace, section : Section, points=None):
         """Add trace data to the existing object.
         

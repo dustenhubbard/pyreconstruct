@@ -15,6 +15,7 @@ from PyReconstruct.modules.backend.func.state_manager import SectionStates
 from PyReconstruct.modules.backend.settings_store import DictSettingsStore
 from PyReconstruct.modules.datatypes import Series, Trace
 from PyReconstruct.modules.datatypes.columnar_store import TraceView
+from PyReconstruct.modules.datatypes import series_data
 from PyReconstruct.modules.datatypes.series_data import SeriesData, TraceData
 
 SYNTHETIC_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "parity_series.jser"
@@ -106,12 +107,18 @@ def synthetic_series(tmp_path):
 def test_open_and_refresh_read_the_store_and_save_does_not(series_jser, monkeypatch):
     read_from_store = []
     real_init = TraceData.__init__
+    real_rows = series_data.traceDataForRows
 
     def spy(self, trace, index, tform, points=None):
         read_from_store.append(isinstance(trace, TraceView) and points is not None)
         real_init(self, trace, index, tform, points)
 
+    def spy_rows(store, rows, tform):
+        read_from_store.extend([True] * len(rows))
+        return real_rows(store, rows, tform)
+
     monkeypatch.setattr(TraceData, "__init__", spy)
+    monkeypatch.setattr(series_data, "traceDataForRows", spy_rows)
 
     series = _open(series_jser)
     try:

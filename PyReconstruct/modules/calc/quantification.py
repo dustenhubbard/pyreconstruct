@@ -217,6 +217,146 @@ def traceGeometry(points, closed=True):
     return length, a, (cx, cy), radius
 
 
+def traceGeometries(points, counts, closed) -> list:
+    """traceGeometry for many traces at once, with the same results to the bit.
+
+    The series-data build at open calls traceGeometry once per trace, and on a
+    large series most of that time is NumPy call overhead on small arrays. This
+    runs every element-wise step once over all the traces' points, and only
+    the sums are taken per trace. A sum must add the same numbers in the same
+    order as traceGeometry's, or the last bits change (`np.add.reduceat` does
+    not, so it is not used). Two ways keep the order: a 1-D slice of the
+    combined array, and, for traces with the same number of points, the rows
+    of a 2-D block (one row per trace); NumPy adds up both as it adds up the
+    trace's own array. Every other step is element-wise, or a maximum, and
+    does not depend on how the points are grouped.
+
+        Params:
+            points: an (N, 2) array, the traces' points one after another
+            counts (list): the number of points of each trace, in order
+            closed (list): whether each trace is closed
+        Returns:
+            (list): one (length, area, (cx, cy), radius) per trace, as
+                traceGeometry returns for that trace's points
+    """
+    k = len(counts)
+    if k == 0:
+        return []
+    arr = np.asarray(points, dtype=float).reshape(-1, 2)
+    counts = np.asarray(counts, dtype=np.intp)
+    ends = np.cumsum(counts)
+    starts = ends - counts
+    x = arr[:, 0]
+    y = arr[:, 1]
+
+    # Each array below holds, at a trace's positions, what traceGeometry
+    # builds from that trace alone. Positions where a step runs from one
+    # trace into the next hold junk, and no sum reads them.
+    step = np.hypot(x[1:] - x[:-1], y[1:] - y[:-1])
+    nz = np.flatnonzero(counts > 0)
+    rx = x - np.repeat(x[starts[nz]], counts[nz])
+    ry = y - np.repeat(y[starts[nz]], counts[nz])
+    cross = np.empty(len(arr))
+    cross[:-1] = rx[:-1] * ry[1:] - rx[1:] * ry[:-1]
+    sx = np.empty(len(arr))
+    sx[:-1] = rx[:-1] + rx[1:]
+    sy = np.empty(len(arr))
+    sy[:-1] = ry[:-1] + ry[1:]
+    last = ends[nz] - 1
+    cross[last] = 0.0
+    sx[last] = rx[last]
+    sy[last] = ry[last]
+    sxc = sx * cross
+    syc = sy * cross
+
+    # The per-trace sums: the step lengths, the cross products (twice the
+    # signed area), the two centroid numerators, and x and y for a mean.
+    add = np.add.reduce  # what ndarray.sum calls, without its wrapper
+    sums = np.zeros((6, k))
+    order = np.argsort(counts, kind="stable")
+    sorted_counts = counts[order]
+    cuts = np.flatnonzero(np.diff(sorted_counts)) + 1
+    for members in np.split(order, cuts):
+        n = int(counts[members[0]])
+        if n == 0:
+            continue
+        if len(members) >= 8:
+            idx = starts[members][:, None] + np.arange(n)
+            if n > 1:
+                sums[0, members] = add(step[idx[:, :-1]], axis=1)
+            if n > 2:
+                sums[1, members] = add(cross[idx], axis=1)
+                sums[2, members] = add(sxc[idx], axis=1)
+                sums[3, members] = add(syc[idx], axis=1)
+            else:
+                sums[4, members] = add(x[idx], axis=1)
+                sums[5, members] = add(y[idx], axis=1)
+            continue
+        for i in members.tolist():
+            s = int(starts[i])
+            e = s + n
+            if n > 1:
+                sums[0, i] = add(step[s:e - 1])
+            if n > 2:
+                sums[1, i] = add(cross[s:e])
+                sums[2, i] = add(sxc[s:e])
+                sums[3, i] = add(syc[s:e])
+            else:
+                sums[4, i] = add(x[s:e])
+                sums[5, i] = add(y[s:e])
+    step_sums, cross_sums, sxc_sums, syc_sums, x_sums, y_sums = sums.tolist()
+
+    x_first = x[starts[nz]].tolist()
+    y_first = y[starts[nz]].tolist()
+    x_last = x[last].tolist()
+    y_last = y[last].tolist()
+
+    results = [None] * k
+    centers_x = []
+    centers_y = []
+    j = 0  # index into the traces that have points
+    for i, (s, n, is_closed) in enumerate(zip(starts.tolist(), counts.tolist(), closed)):
+        if n == 0:
+            results[i] = (0.0, 0.0, (0.0, 0.0), 0.0)
+            continue
+        if n <= 1:
+            length = 0.0
+        else:
+            d = step_sums[i]
+            if is_closed:
+                d += math.hypot(x_first[j] - x_last[j], y_first[j] - y_last[j])
+            length = round(d, 7)
+        if n <= 2:
+            a = 0.0
+            # x.mean(): ndarray.mean divides the sum by the count
+            cx = round(x_sums[i] / n, 6)
+            cy = round(y_sums[i] / n, 6)
+        else:
+            signed2 = cross_sums[i]
+            a = abs(signed2) / 2.0
+            if a > 1e-6:
+                cx = round(x_first[j] + sxc_sums[i] / (3.0 * signed2), 6)
+                cy = round(y_first[j] + syc_sums[i] / (3.0 * signed2), 6)
+            else:
+                cx = round(float(add(x[s:s + n])) / n, 6)
+                cy = round(float(add(y[s:s + n])) / n, 6)
+        results[i] = (length, a, (cx, cy))
+        centers_x.append(cx)
+        centers_y.append(cy)
+        j += 1
+
+    # radius: the largest distance from the centroid, per trace
+    if nz.size:
+        dist = np.hypot(
+            x - np.repeat(np.asarray(centers_x), counts[nz]),
+            y - np.repeat(np.asarray(centers_y), counts[nz]),
+        )
+        radii = np.maximum.reduceat(dist, starts[nz]).tolist()
+        for j, i in enumerate(nz.tolist()):
+            results[i] = results[i] + (radii[j],)
+    return results
+
+
 def sigfigRound(n : float, sf : int) -> float:
     """Round a float to a specified number of significant figures.
     
