@@ -1,6 +1,8 @@
 import math
 import re
+import weakref
 from itertools import chain
+from operator import is_
 from typing import Union
 from xml.sax.saxutils import escape
 
@@ -129,6 +131,10 @@ def roundedCoordinates(points) -> tuple:
     for i in np.flatnonzero(~exact).tolist():
         rounded[i] = round(values[i], 7)
     return rounded[0::2], rounded[1::2]
+
+
+# trace -> (its points as they were, rounded x, rounded y), see _roundedPoints
+_ROUNDED = weakref.WeakKeyDictionary()
 
 
 class Trace():
@@ -469,7 +475,7 @@ class Trace():
             Returns:
                 (list) list containing the trace data
         """
-        x, y = roundedCoordinates(self.points)
+        x, y = self._roundedPoints()
         
         l = []
         if include_name:
@@ -490,6 +496,41 @@ class Trace():
 
         return l
     
+    def _roundedPoints(self) -> tuple:
+        """roundedCoordinates of the trace's points, reused while they are
+        the same point objects.
+
+        Once a series has an edit, every section change saves the section it
+        leaves and the B section, and the B section was saved one step
+        before as the section left; rounding the points is most of a save.
+        The rounded values are kept beside the point tuples they came from,
+        and used again only when the points list holds the very same tuple
+        objects in the same order. A tuple of floats cannot change, so the
+        same objects round to the same values. A list with any other object,
+        a moved or replaced point included, is rounded again. Only points
+        that are all tuples of two floats are kept.
+
+            Returns:
+                (tuple): new lists of the rounded x and y values
+        """
+        points = self.points
+        kept = _ROUNDED.get(self)
+        if kept is not None:
+            source, x, y = kept
+            if len(source) == len(points) and all(map(is_, source, points)):
+                return x.tolist(), y.tolist()
+        x, y = roundedCoordinates(points)
+        if (
+            points and
+            set(map(type, points)) == {tuple} and
+            set(map(type, x)) == {float} and
+            set(map(type, y)) == {float}
+        ):
+            _ROUNDED[self] = (tuple(points), np.array(x), np.array(y))
+        else:
+            _ROUNDED.pop(self, None)
+        return x, y
+
     def getXMLObj(self, xml_image_tform : XMLTransform = None, legacy_format : bool = False):
         """Returns the trace data as an XML object.
             Params:
