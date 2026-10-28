@@ -126,6 +126,9 @@ def pytest_configure(config):
         "slots, rather than stubbing the widget out. Needs a QApplication "
         "(supplied by pytest-qt's `qapp`) and the offscreen platform; runs in "
         "CI, but is the first thing to suspect if the suite ever hangs.",
+        "perf: a speed or memory limit on a large series "
+        "(tests/test_perf_gates.py). Skipped unless PERF_GATES=1; run on "
+        "khgpu, alone, never in CI.",
     ):
         config.addinivalue_line("markers", marker)
 
