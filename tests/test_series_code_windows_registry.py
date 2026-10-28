@@ -2,14 +2,20 @@
 
 On Windows the native settings backend is the registry. A series' own
 settings live under ``HKEY_CURRENT_USER\\Software\\<org>\\<app>-<code>``, so a
-backslash in the code is a registry key separator. Each pair below holds two
-distinct codes: the first series stores its backup folder, then the second
-reads, writes and rereads its own, through the production `QSettingsStore`
-with the native format.
+backslash in the code is a registry key separator, and the registry drops an
+empty key name: ``existing\\`` opens the key of ``existing``. On Windows such
+a code names the domain ``<app> PATH-<SHA-256 of the code>``. Every other
+code, and every code on macOS and Linux, names the same domain as before.
 
-The registry keys live under an organization made for one test run, never
-under ``KHLab``, and are deleted afterward.
+Each pair below holds two distinct codes: the first series stores its backup
+folder, then the second reads, writes and rereads its own, through the
+production `QSettingsStore` with the native format. The registry keys live
+under an organization made for one test run, never under ``KHLab``, and are
+deleted afterward.
 """
+import hashlib
+import itertools
+import re
 import sys
 import uuid
 
@@ -19,16 +25,20 @@ import qsettings_isolation as qi
 from PyReconstruct.modules.backend.settings_store import QSettingsStore
 from PyReconstruct.modules.constants import settings_domain as SD
 
-pytestmark = pytest.mark.skipif(
+on_windows = pytest.mark.skipif(
     sys.platform != "win32",
     reason="the registry settings backend exists only on Windows",
 )
+
+APPS = ["PyReconstruct", "PyReconstruct Dev"]
 
 # (existing code, incoming code)
 PAIRS = {
     "trailing-backslash": ("existing", "existing\\"),
     "two-trailing-backslashes": ("existing", "existing\\\\"),
     "doubled-inner-backslash": ("a\\b", "a\\\\b"),
+    "doubled-leading-backslash": ("\\existing", "\\\\existing"),
+    "lone-backslash": ("", "\\"),
     "trailing-backslash-dot": ("existing", "existing\\."),
     "trailing-backslash-dotdot": ("existing", "existing\\.."),
     "trailing-slash": ("existing", "existing/"),
@@ -100,6 +110,7 @@ def native_store(monkeypatch):
     assert not _key_exists(winreg.HKEY_CURRENT_USER, tree)
 
 
+@on_windows
 @pytest.mark.parametrize("pair", PAIRS.values(), ids=PAIRS.keys())
 def test_a_backslash_code_keeps_its_own_backups(native_store, pair):
     existing, incoming = pair
@@ -114,3 +125,70 @@ def test_a_backslash_code_keeps_its_own_backups(native_store, pair):
         native_store.value(existing, "backup_dir", str),
         native_store.value(incoming, "backup_dir", str),
     ) == ("", EXISTING_DIR, INCOMING_DIR)
+
+
+REGISTRY_CODES = [
+    "existing\\", "existing\\\\", "a\\\\b", "\\\\existing", "\\\\", "a\\b\\",
+    "a/b\\", "a\\\\.", "\\..\\\\PyReconstruct-existing", "\\",
+]
+
+PLAIN_CODES = [
+    "existing", "a\\b", "\\existing", "a\\b\\c", "existing\\.",
+    "existing\\..", "existing/", "a/b", "\\..\\PyReconstruct-existing",
+]
+
+
+def _digest(code):
+    return hashlib.sha256(code.encode("utf-8", "surrogatepass")).hexdigest()
+
+
+def _registry_key(name):
+    # the key the registry opens for a path: empty names dropped
+    head, *rest = name.split("\\")
+    return "\\".join([head] + [part for part in rest if part]).lower()
+
+
+@pytest.fixture
+def registry(monkeypatch):
+    monkeypatch.setattr(SD, "_native_is_registry", lambda: True)
+
+
+@pytest.mark.parametrize("code", REGISTRY_CODES)
+@pytest.mark.parametrize("app", APPS)
+def test_on_windows_a_registry_path_code_names_its_digest(registry, app, code):
+    assert SD.series_app(app, code) == f"{app} PATH-{_digest(code)}"
+
+
+@pytest.mark.parametrize("code", PLAIN_CODES)
+@pytest.mark.parametrize("app", APPS)
+def test_on_windows_a_plain_code_names_the_same_domain(registry, app, code):
+    assert SD.series_app(app, code) == app + "-" + code
+
+
+@pytest.mark.parametrize("code", REGISTRY_CODES)
+@pytest.mark.parametrize("app", APPS)
+def test_elsewhere_a_registry_path_code_names_the_same_domain(
+    monkeypatch, app, code
+):
+    monkeypatch.setattr(SD, "_native_is_registry", lambda: False)
+    assert SD.series_app(app, code) == app + "-" + code
+
+
+def test_on_windows_every_short_code_names_a_key_of_its_own(registry):
+    # every code up to five characters over a mix of plain, path and NUL
+    # characters; the two app-wide domains are in the set too. Registry key
+    # names are compared without case, so the alphabet has one case only.
+    keys = {_registry_key(app): (app, None) for app in APPS}
+    alphabet = ["a", "-", "/", "\\", ".", "\0"]
+    for n in range(6):
+        for chars in itertools.product(alphabet, repeat=n):
+            code = "".join(chars)
+            for app in APPS:
+                name = SD.series_app(app, code)
+                assert re.match(re.escape(app) + "(-| NUL-| PATH-)", name)
+                if "\0" in name:
+                    continue
+                key = _registry_key(name)
+                # the registry drops nothing from the name
+                assert key == name.lower(), (app, code)
+                assert keys.setdefault(key, (app, code)) == (app, code), key
