@@ -343,6 +343,7 @@ finds nothing here rather than an invented answer.
 
 import operator
 import sys
+import weakref
 from itertools import chain
 
 import numpy as np
@@ -469,6 +470,53 @@ def _asCoordinateArray(points) -> np.ndarray:
             f"coordinates must be a sequence of (x, y) pairs, got shape "
             f"{array.shape}"
         )
+    return array
+
+
+# trace -> (its points as they were, their (n, 2) array), see _traceCoordinates
+_HELD_COORDINATES : "weakref.WeakKeyDictionary[Trace, tuple]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _traceCoordinates(trace, carried=None) -> np.ndarray:
+    """A trace's points as an `(n, 2)` float64 array, reused while they are
+    the same point objects.
+
+    Every save rebuilds the section's store from its traces, and once a series
+    has an edit every section change saves two sections, most of whose traces
+    have not changed since the store was last built; converting their points
+    is most of a rebuild. The array is kept beside the point tuples it came
+    from and used again only when the trace's points list holds the very same
+    tuple objects in the same order: a tuple of numbers cannot change, so the
+    same objects give the same array. A list with any other object, a moved or
+    replaced point included, is converted again. Points are kept only when
+    every one is a tuple and every value a float or an int, and the kept array
+    is read-only. The caller must copy it, as `appendRow` does.
+
+        Params:
+            trace (Trace): the trace
+            carried (np.ndarray): a new array known to hold the trace's points
+                (`coordinatesFromRow` over the lists they were read from), or
+                None. It is kept as it is, so the caller must not use it again.
+        Returns:
+            (np.ndarray): the trace's coordinates, or its points themselves
+                when they cannot be kept (for `appendRow` to convert or refuse)
+    """
+    points = trace.points
+    kept = _HELD_COORDINATES.get(trace)
+    if kept is not None:
+        source, array = kept
+        if len(source) == len(points) and all(map(operator.is_, source, points)):
+            return array
+    if (type(points) is not list or not points
+            or set(map(type, points)) != {tuple}
+            or not set(map(type, chain.from_iterable(points))) <= {float, int}):
+        _HELD_COORDINATES.pop(trace, None)
+        return points if carried is None else carried
+    array = _asCoordinateArray(points) if carried is None else carried
+    array.flags.writeable = False
+    _HELD_COORDINATES[trace] = (tuple(points), array)
     return array
 
 
@@ -732,8 +780,10 @@ class SectionColumns():
                     whose coordinates were already read into an array, as
                     `Section.__init__` does from the file's rows
                     (`coordinatesFromRow`). The array must hold the trace's
-                    points; it is copied in, as any row's coordinates are. A
-                    trace absent from it is read from its points.
+                    points; it is copied in, as any row's coordinates are, and
+                    kept for the next build (`_traceCoordinates`), so the
+                    caller must not use it again. A trace absent from it is
+                    read from its points.
             Returns:
                 (SectionColumns): a store holding every trace of the section
         """
@@ -765,14 +815,12 @@ class SectionColumns():
                         trace_id = None
                     elif trace_id is not None:
                         spent.add(trace_id)
-                points = None
+                carried = None
                 if carried_coordinates is not None:
-                    points = carried_coordinates.get(trace)
-                if points is None:
-                    points = trace.points
+                    carried = carried_coordinates.get(trace)
                 store.appendRow(
                     name=trace.name,
-                    points=points,
+                    points=_traceCoordinates(trace, carried),
                     color=trace.color,
                     closed=trace.closed,
                     negative=trace.negative,
