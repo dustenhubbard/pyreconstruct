@@ -114,7 +114,9 @@ def series_app(app, code):
     """
     if "\0" in code:
         marker = NUL_CODE_MARKER
-    elif _resolves_as_path(code):
+    elif _resolves_as_path(code) or (
+        _native_is_registry() and _resolves_in_registry(code)
+    ):
         marker = PATH_CODE_MARKER
     else:
         return f"{app}-{code}"
