@@ -113,13 +113,16 @@ def test_objects_with_their_own_alignment_match(series_jser, monkeypatch):
 
 
 def _traces(seed):
-    """Point arrays of many sizes and scales, with the cases traceGeometry branches on."""
+    """Point arrays of many sizes and scales, with the cases traceGeometry branches on.
+
+    Steps near 1e9 make lengths whose last bits survive the rounding to 7 places.
+    """
     rng = np.random.default_rng(seed)
     traces = []
     for n in (0, 1, 2, 3, 4, 7, 8, 9, 84, 128, 129, 300):
         for _ in range(40):
             center = rng.normal(size=2) * rng.choice([1.0, 1e3, 1e5])
-            traces.append(center + rng.normal(size=(n, 2)) * rng.choice([1e-4, 1e-2, 1.0, 10.0]))
+            traces.append(center + rng.normal(size=(n, 2)) * rng.choice([1e-4, 1e-2, 1.0, 10.0, 1e9]))
     for size in rng.integers(3, 400, 300):
         traces.append(rng.normal(size=(size, 2)) * 50)
     traces.append(np.full((5, 2), 3.5))  # no area: the mean is the centroid
