@@ -9,6 +9,7 @@ from .quantification import (
     distance3D,
     lineDistance,
     traceGeometry,
+    traceGeometries,
     sigfigRound,
     getDistanceFromTrace,
     pointInPoly,
