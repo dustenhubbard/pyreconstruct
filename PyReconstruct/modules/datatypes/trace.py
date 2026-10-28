@@ -117,6 +117,41 @@ def roundedCoordinates(points) -> tuple:
     values = list(chain.from_iterable(points))
     if set(map(len, points)) != {2} or set(map(type, values)) != {float}:
         return [round(p[0], 7) for p in points], [round(p[1], 7) for p in points]
+    rounded = _roundedValues(values)
+    return rounded[0::2], rounded[1::2]
+
+
+def roundedCoordinatesOfMany(point_lists : list) -> list:
+    """roundedCoordinates for each list of points, rounded as one array.
+
+    A section save rounds every trace, and rounding one trace at a time paid
+    numpy's setup per trace, which was most of the rounding on a section of
+    thousands of small traces. Each value goes through the same arithmetic
+    as in roundedCoordinates, so the result is the same. If any point is
+    not an (x, y) pair of floats, each list goes through roundedCoordinates.
+
+        Params:
+            point_lists (list): lists of (x, y) pairs
+        Returns:
+            (list): an (x list, y list) tuple per list of points
+    """
+    points = list(chain.from_iterable(point_lists))
+    values = list(chain.from_iterable(points))
+    if set(map(len, points)) != {2} or set(map(type, values)) != {float}:
+        return [roundedCoordinates(p) for p in point_lists]
+    rounded = _roundedValues(values)
+    result = []
+    start = 0
+    for p in point_lists:
+        end = start + 2 * len(p)
+        result.append((rounded[start:end:2], rounded[start + 1:end:2]))
+        start = end
+    return result
+
+
+def _roundedValues(values : list) -> list:
+    """round(v, 7) of each float in values, as rint(v * 1e7) / 1e7 where that
+    gives the same value (see roundedCoordinates)."""
     # a huge or non-finite value overflows or is invalid here; it goes
     # through round() below, so numpy has nothing to warn about
     with np.errstate(over="ignore", invalid="ignore"):
@@ -128,7 +163,7 @@ def roundedCoordinates(points) -> tuple:
         rounded = (np.rint(scaled) / 1e7).tolist()
     for i in np.flatnonzero(~exact).tolist():
         rounded[i] = round(values[i], 7)
-    return rounded[0::2], rounded[1::2]
+    return rounded
 
 
 class Trace():
@@ -461,15 +496,19 @@ class Trace():
         """
         self.tags.add(tag)
 
-    def getList(self, include_name=True) -> list:
+    def getList(self, include_name=True, coordinates=None) -> list:
         """Return the trace data as a list.
 
             Params:
                 include_name (bool): True if name should be included in the list
+                coordinates (tuple): the x and y lists roundedCoordinates gives
+                    for this trace's points, when the caller already has them
             Returns:
                 (list) list containing the trace data
         """
-        x, y = roundedCoordinates(self.points)
+        if coordinates is None:
+            coordinates = roundedCoordinates(self.points)
+        x, y = coordinates
         
         l = []
         if include_name:
