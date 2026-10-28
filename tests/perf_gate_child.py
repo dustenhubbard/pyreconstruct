@@ -173,7 +173,15 @@ def main():
     report["load_end"] = list(os.getloadavg())
     with open(out, "w") as f:
         json.dump(report, f, indent=1)
+        f.flush()
+        os.fsync(f.fileno())
 
 
 if __name__ == "__main__":
     main()
+    # the report is written: skip the interpreter's teardown, where PySide
+    # deletes the window and an error in a destroyed slot can open the app's
+    # error dialog, which no one closes offscreen, so the child never exits
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)

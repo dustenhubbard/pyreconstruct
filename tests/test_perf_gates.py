@@ -68,9 +68,15 @@ def run(cmd, cwd, env):
 
 
 def child_env(folder):
-    env = dict(os.environ)
+    # PYRECON_* switches change the work measured (the store backend, the .jser
+    # layout, the build flavor), so none is inherited: the limits were set with
+    # none exported. The store is set off, and its folder is a scratch folder,
+    # so an open or save never writes to the user's real stores.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("PYRECON_")}
     env["QT_QPA_PLATFORM"] = "offscreen"
     env["PYRECON_UNATTENDED"] = "1"
+    env["PYRECON_HYBRID_STORE"] = "0"
+    env["PYRECON_HYBRID_STORE_DIR"] = str(folder / "stores")
     env["XDG_CONFIG_HOME"] = str(folder / "xdg")
     return env
 
