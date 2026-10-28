@@ -565,11 +565,11 @@ class SeriesData():
         one pass; an object with its own alignment can have another.
         """
         objects = self.data["objects"]
-        by_tform = {}
+        by_tform : dict = {}
         for name, rows in named_rows:
             tform = ObjectData.sectionTransform(name, section, self.series)
             by_tform.setdefault(id(tform), (tform, []))[1].append((name, rows))
-        built = {}
+        built : dict = {}
         for tform, group in by_tform.values():
             trace_data = traceDataForRows(store, [r for _, rows in group for r in rows], tform)
             start = 0

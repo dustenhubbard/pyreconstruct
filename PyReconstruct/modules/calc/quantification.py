@@ -311,7 +311,7 @@ def traceGeometries(points, counts, closed) -> list:
     x_last = x[last].tolist()
     y_last = y[last].tolist()
 
-    results = [None] * k
+    results : list = [None] * k
     centers_x = []
     centers_y = []
     j = 0  # index into the traces that have points
