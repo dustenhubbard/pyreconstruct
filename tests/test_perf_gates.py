@@ -30,13 +30,14 @@ import sys
 
 import pytest
 
-# Set 2026-10-28 on khgpu at fork main ac9670b2: 1.5 x the median of 5 runs.
-SCALE_FACTOR = 0
+# Set 2026-10-28 on khgpu at fork main ac9670b2: 1.5 x the median of 5 runs,
+# median in the comment. Factor 200 is 39,600 sections, a 90 MB .jser.
+SCALE_FACTOR = 200
 LIMITS = {
-    "open": 0.0,  # s
-    "memory": 0.0,  # MB
-    "section": 0.0,  # s
-    "save": 0.0,  # s
+    "open": 43.9,  # s, median 29.2
+    "memory": 669.0,  # MB, median 446
+    "section": 0.0289,  # s, median 0.0192
+    "save": 5.54,  # s, median 3.69
 }
 
 # khgpu has 96 threads. Above this 5-minute load a step skips rather than
