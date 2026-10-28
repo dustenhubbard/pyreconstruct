@@ -497,7 +497,7 @@ class SeriesData():
                             added_objects.add(name)
 
             if named_rows is not None:
-                self._addStoreRows(store, section, named_rows, added_objects)
+                added_objects.update(self._addStoreRows(store, section, named_rows))
             
             ## Check for removed objects
             for name in trace_names:
@@ -557,8 +557,9 @@ class SeriesData():
             named_rows.append((name, rows))
         return named_rows
 
-    def _addStoreRows(self, store, section : Section, named_rows : list, added_objects : set):
-        """Add the TraceData of every (name, rows), measured together.
+    def _addStoreRows(self, store, section : Section, named_rows : list) -> list:
+        """Add the TraceData of every (name, rows), measured together, and
+        return the names of the objects this created.
 
         The same TraceData, in the same order, as adding the rows one at a
         time with addTrace. Rows measured with one transform are measured in
@@ -578,12 +579,14 @@ class SeriesData():
                 for i, td in enumerate(built[name]):
                     td.index = i
                 start += len(rows)
+        created = []
         for name, _ in named_rows:
             obj_data = objects.get(name)
             if obj_data is None:
                 objects[name] = obj_data = ObjectData()
-                added_objects.add(name)
+                created.append(name)
             obj_data.traces[section.n] = built[name]
+        return created
 
     def addTrace(self, trace : Trace, section : Section, points=None):
         """Add trace data to the existing object.
