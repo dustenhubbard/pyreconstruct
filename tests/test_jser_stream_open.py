@@ -164,6 +164,78 @@ def test_skipping_a_value_stops_at_its_end(tmp_path, monkeypatch, value, chunk):
         assert r.tell() == len(value)
 
 
+# what ``contour_keys`` must take in a few NumPy calls, and what it must leave
+# to ``raw_keys``; every case is followed by more of the document
+CONTOURS_TAKEN = [
+    b"{}", b"{ }", b'{"a": []}', b'{"a":[[[1.5,2],[3,4],[255,0,0],true,false,false,'
+    b'["none","none"],["t"]]],"b":[]}', b'{\n "a" : [ [ ] ] ,\n\t"b":{"x":[{}]}\r}',
+    b'{"br}ac]k[s{": [["]", "[", "}", "{"]], "caf\xc3\xa9 \xe2\x98\x83": [[]]}',
+    b'{"a": [], "a": [[1]]}',
+]
+CONTOURS_LEFT = [
+    b'{"quo\\"te": []}', b'{"a": [["back\\\\slash"]]}', b'{"a": "string"}',
+    b'{"a": 1}', b'{"a": null}', b'{"a": [] "b": []}', b'{"a": [],}', b'{"a" [] }',
+    b'{"a": []]', b'{"a": [[]}', b'{"a": [], "b": [[1]',
+]
+
+
+@pytest.mark.parametrize("chunk", [1, 3, 7, None])
+@pytest.mark.parametrize("value", CONTOURS_TAKEN + CONTOURS_LEFT)
+def test_contour_keys_reads_what_raw_keys_reads(tmp_path, monkeypatch, value, chunk):
+    """Same names and end as the walk, or None with nothing consumed.
+
+    A mismatched bracket counts as a close for both, as it always has.
+    """
+    if chunk is not None:
+        monkeypatch.setattr(jser_scan, "_CHUNK", chunk)
+    fp = tmp_path / "v.json"
+    fp.write_bytes(value + b', "next": {"a": []}}')
+
+    def walk(method):
+        with open(fp, "rb") as f:
+            r = jser_scan._Reader(f)
+            r.peek()
+            try:
+                return getattr(r, method)(), r.tell()
+            except NotStreamable as e:
+                return str(e), None
+
+    fast, walked = walk("contour_keys"), walk("raw_keys")
+    assert fast in (walked, (None, 0))
+    if value in CONTOURS_TAKEN:
+        assert fast == walked
+        assert walked[1] == len(value)
+
+
+def test_contour_keys_leaves_a_long_object_to_the_walk(tmp_path, monkeypatch):
+    monkeypatch.setattr(jser_scan, "_CHUNK", 4)
+    monkeypatch.setattr(jser_scan, "_KEYS_MAX", 8)
+    fp = tmp_path / "v.json"
+    fp.write_bytes(b'{"a": [[1, 2, 3]], "b": []}')
+    with open(fp, "rb") as f:
+        r = jser_scan._Reader(f)
+        r.peek()
+        assert r.contour_keys() is None
+        assert r.tell() == 0
+        assert r.raw_keys() == [b'"a"', b'"b"']
+
+
+@pytest.mark.parametrize("form", FORMS)
+def test_a_section_the_app_writes_is_not_walked(tmp_path, monkeypatch, form):
+    """Each section's contours go through ``contour_keys``, not the walk.
+
+    The walk costs a dozen Python steps per trace, about 10 s of a 1.4 GB
+    open; the NumPy path costs a few calls per section.
+    """
+    def walked(self):
+        raise AssertionError("contours walked")
+
+    data = as_bytes(shapes1(), form)
+    monkeypatch.setattr(jser_scan._Reader, "raw_keys", walked)
+    index, decoded = scan(write(tmp_path, data))
+    assert decoded == json.loads(data)["sections"]
+
+
 def test_scan_without_a_log(tmp_path):
     doc = shapes1()
     doc.pop("log", None)
