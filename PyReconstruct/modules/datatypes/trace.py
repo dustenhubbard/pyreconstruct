@@ -114,11 +114,19 @@ def roundedCoordinates(points) -> tuple:
         Returns:
             (tuple): the list of x values and the list of y values
     """
+    rounded = _roundedFloatPairs(points)
+    if rounded is None:
+        return [round(p[0], 7) for p in points], [round(p[1], 7) for p in points]
+    return rounded
+
+
+def _roundedFloatPairs(points):
+    """roundedCoordinates of points that are all pairs of floats, else None."""
     if not points:
         return [], []
     values = list(chain.from_iterable(points))
     if set(map(len, points)) != {2} or set(map(type, values)) != {float}:
-        return [round(p[0], 7) for p in points], [round(p[1], 7) for p in points]
+        return None
     # a huge or non-finite value overflows or is invalid here; it goes
     # through round() below, so numpy has nothing to warn about
     with np.errstate(over="ignore", invalid="ignore"):
@@ -505,10 +513,10 @@ class Trace():
         before as the section left; rounding the points is most of a save.
         The rounded values are kept beside the point tuples they came from,
         and used again only when the points list holds the very same tuple
-        objects in the same order. A tuple of floats cannot change, so the
-        same objects round to the same values. A list with any other object,
-        a moved or replaced point included, is rounded again. Only points
-        that are all tuples of two floats are kept.
+        objects in the same order. A tuple of two floats cannot change, so
+        the same objects round to the same values. A list with any other
+        object, a moved or replaced point included, is rounded again. Points
+        are kept only when every one is a tuple of two floats.
 
             Returns:
                 (tuple): new lists of the rounded x and y values
@@ -518,17 +526,13 @@ class Trace():
         if kept is not None:
             source, x, y = kept
             if len(source) == len(points) and all(map(is_, source, points)):
-                return x.tolist(), y.tolist()
-        x, y = roundedCoordinates(points)
-        if (
-            points and
-            set(map(type, points)) == {tuple} and
-            set(map(type, x)) == {float} and
-            set(map(type, y)) == {float}
-        ):
-            _ROUNDED[self] = (tuple(points), np.array(x), np.array(y))
-        else:
+                return x[:], y[:]
+        rounded = _roundedFloatPairs(points)
+        if rounded is None or not points or set(map(type, points)) != {tuple}:
             _ROUNDED.pop(self, None)
+            return roundedCoordinates(points) if rounded is None else rounded
+        x, y = rounded
+        _ROUNDED[self] = (tuple(points), x[:], y[:])
         return x, y
 
     def getXMLObj(self, xml_image_tform : XMLTransform = None, legacy_format : bool = False):

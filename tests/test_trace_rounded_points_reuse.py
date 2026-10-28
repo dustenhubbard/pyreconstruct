@@ -38,13 +38,14 @@ def _written(trace):
 
 @pytest.fixture
 def rounds(monkeypatch):
+    # every rounding of a list of points starts here, whichever path it takes
     calls = []
-    real = trace_module.roundedCoordinates
+    real = trace_module._roundedFloatPairs
 
     def counted(points):
         calls.append(len(points))
         return real(points)
-    monkeypatch.setattr(trace_module, "roundedCoordinates", counted)
+    monkeypatch.setattr(trace_module, "_roundedFloatPairs", counted)
     return calls
 
 
@@ -165,3 +166,14 @@ def test_a_section_writes_what_rounding_each_trace_now_gives(section, monkeypatc
     reused = fast_dumps(section.getDict())
     monkeypatch.setattr(Trace, "_roundedPoints", lambda t: roundedCoordinates(t.points))
     assert fast_dumps(section.getDict()) == reused
+
+
+def test_points_held_in_lists_are_never_reused():
+    # a list can change in place, so a trace whose points are lists is
+    # rounded again on every save
+    trace = Trace("reuse", (0, 0, 255))
+    trace.points = [[0.5, 1.5], [2.5, 3.5], [4.5, 5.5]]
+    trace.getList()
+    trace.points[0][0] = 9.0
+    assert _written(trace) == _fresh(trace)
+    assert _written(trace).startswith(b"[[9.0")
