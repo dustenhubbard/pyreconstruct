@@ -53,7 +53,7 @@ every checkout and condition. "cold" therefore means application-cold.
 | `build_report.py` | `summary.json` → `report.md` + `report.html` |
 | `profile_interactive.py` | scripted offscreen interactive session (pan/zoom/hover/lasso/knife/merge) for cProfile or py-spy |
 | `rank_hotspots.py` | py-spy speedscope JSON → ranked self-time table |
-| `make_scaled_series.py` | build a larger `.jser` from a real one by replicating sections, for the >700 MB size class |
+| `make_scaled_series.py` | build a larger `.jser` from a real one by replicating sections, for the >700 MB size class; `tests/test_perf_gates.py` uses it to build the series its speed and memory limits run on |
 | `fork_requirements.txt` | the historical shared-venv deps (superseded by `uv.lock`) |
 | `REPORT.md` | the written results, including the correction note |
 | `artifacts/` | profile outputs (flamegraph SVG, speedscope JSON, gate evidence scripts) |
