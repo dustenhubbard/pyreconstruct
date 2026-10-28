@@ -143,7 +143,7 @@ def _roundedFloatPairs(points):
 
 
 # trace -> (its points as they were, rounded x, rounded y), see _roundedPoints
-_ROUNDED = weakref.WeakKeyDictionary()
+_ROUNDED : "weakref.WeakKeyDictionary[Trace, tuple]" = weakref.WeakKeyDictionary()
 
 
 class Trace():
