@@ -473,7 +473,8 @@ def _asCoordinateArray(points) -> np.ndarray:
     return array
 
 
-# trace -> (its points as they were, their (n, 2) array), see _traceCoordinates
+# trace -> (its points as they were, their (n, 2) array, whether the points
+# were found to be tuples of numbers), see _traceCoordinates
 _HELD_COORDINATES : "weakref.WeakKeyDictionary[Trace, tuple]" = (
     weakref.WeakKeyDictionary()
 )
@@ -486,13 +487,16 @@ def _traceCoordinates(trace, carried=None) -> np.ndarray:
     Every save rebuilds the section's store from its traces, and once a series
     has an edit every section change saves two sections, most of whose traces
     have not changed since the store was last built; converting their points
-    is most of a rebuild. The array is kept beside the point tuples it came
+    is most of a rebuild. The array is kept beside the point objects it came
     from and used again only when the trace's points list holds the very same
-    tuple objects in the same order: a tuple of numbers cannot change, so the
-    same objects give the same array. A list with any other object, a moved or
-    replaced point included, is converted again. Points are kept only when
-    every one is a tuple and every value a float or an int, and the kept array
-    is read-only. The caller must copy it, as `appendRow` does.
+    objects in the same order, and every one is a tuple whose values are
+    floats or ints: such a tuple cannot change, so the same objects give the
+    same array. A list with any other object, a moved or replaced point
+    included, is converted again. The types are checked at the first reuse
+    rather than when the array is kept, which a section load does for every
+    trace: an object's type does not change, so the check holds just the same,
+    and paging with no edit, which never saves, does not pay for it. The kept
+    array is read-only; the caller must copy it, as `appendRow` does.
 
         Params:
             trace (Trace): the trace
@@ -501,22 +505,25 @@ def _traceCoordinates(trace, carried=None) -> np.ndarray:
                 None. It is kept as it is, so the caller must not use it again.
         Returns:
             (np.ndarray): the trace's coordinates, or its points themselves
-                when they cannot be kept (for `appendRow` to convert or refuse)
+                when they are not a list (for `appendRow` to convert or refuse)
     """
     points = trace.points
     kept = _HELD_COORDINATES.get(trace)
     if kept is not None:
-        source, array = kept
+        source, array, checked = kept
         if len(source) == len(points) and all(map(operator.is_, source, points)):
-            return array
-    if (type(points) is not list or not points
-            or set(map(type, points)) != {tuple}
-            or not set(map(type, chain.from_iterable(points))) <= {float, int}):
+            if checked:
+                return array
+            if (set(map(type, source)) == {tuple}
+                    and set(map(type, chain.from_iterable(source))) <= {float, int}):
+                _HELD_COORDINATES[trace] = (source, array, True)
+                return array
+    if type(points) is not list or not points:
         _HELD_COORDINATES.pop(trace, None)
         return points if carried is None else carried
     array = _asCoordinateArray(points) if carried is None else carried
     array.flags.writeable = False
-    _HELD_COORDINATES[trace] = (tuple(points), array)
+    _HELD_COORDINATES[trace] = (tuple(points), array, False)
     return array
 
 

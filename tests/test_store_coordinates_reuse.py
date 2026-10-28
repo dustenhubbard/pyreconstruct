@@ -137,7 +137,7 @@ def test_a_row_written_in_place_leaves_the_kept_array_alone():
 def test_the_kept_array_is_read_only():
     traces = _traces(random.Random(5), count=1)
     SectionColumns.fromSection(_section(traces))
-    _, kept = columnar_store._HELD_COORDINATES[traces[0]]
+    _, kept, _ = columnar_store._HELD_COORDINATES[traces[0]]
     with pytest.raises(ValueError):
         kept[0, 0] = 1.0
 
