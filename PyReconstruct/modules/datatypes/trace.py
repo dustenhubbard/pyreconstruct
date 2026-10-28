@@ -1,6 +1,9 @@
 import math
 import re
+import weakref
+from array import array
 from itertools import chain
+from operator import is_
 from typing import Union
 from xml.sax.saxutils import escape
 
@@ -112,11 +115,19 @@ def roundedCoordinates(points) -> tuple:
         Returns:
             (tuple): the list of x values and the list of y values
     """
+    rounded = _roundedFloatPairs(points)
+    if rounded is None:
+        return [round(p[0], 7) for p in points], [round(p[1], 7) for p in points]
+    return rounded
+
+
+def _roundedFloatPairs(points):
+    """roundedCoordinates of points that are all pairs of floats, else None."""
     if not points:
         return [], []
     values = list(chain.from_iterable(points))
     if set(map(len, points)) != {2} or set(map(type, values)) != {float}:
-        return [round(p[0], 7) for p in points], [round(p[1], 7) for p in points]
+        return None
     # a huge or non-finite value overflows or is invalid here; it goes
     # through round() below, so numpy has nothing to warn about
     with np.errstate(over="ignore", invalid="ignore"):
@@ -129,6 +140,10 @@ def roundedCoordinates(points) -> tuple:
     for i in np.flatnonzero(~exact).tolist():
         rounded[i] = round(values[i], 7)
     return rounded[0::2], rounded[1::2]
+
+
+# trace -> (its points as they were, rounded x, rounded y), see _roundedPoints
+_ROUNDED : "weakref.WeakKeyDictionary[Trace, tuple]" = weakref.WeakKeyDictionary()
 
 
 class Trace():
@@ -469,7 +484,7 @@ class Trace():
             Returns:
                 (list) list containing the trace data
         """
-        x, y = roundedCoordinates(self.points)
+        x, y = self._roundedPoints()
         
         l = []
         if include_name:
@@ -490,6 +505,39 @@ class Trace():
 
         return l
     
+    def _roundedPoints(self) -> tuple:
+        """roundedCoordinates of the trace's points, reused while they are
+        the same point objects.
+
+        Once a series has an edit, every section change saves the section it
+        leaves and the B section, and the B section was saved one step
+        before as the section left; rounding the points is most of a save.
+        The rounded values are kept beside the point tuples they came from,
+        and used again only when the points list holds the very same tuple
+        objects in the same order. A tuple of two floats cannot change, so
+        the same objects round to the same values. A list with any other
+        object, a moved or replaced point included, is rounded again. Points
+        are kept only when every one is a tuple of two floats, and the values
+        as arrays of doubles, which hold the same floats in a third of the
+        memory of lists (about 15 MB for a DW09 section of 560,000 points).
+
+            Returns:
+                (tuple): new lists of the rounded x and y values
+        """
+        points = self.points
+        kept = _ROUNDED.get(self)
+        if kept is not None:
+            source, x, y = kept
+            if len(source) == len(points) and all(map(is_, source, points)):
+                return x.tolist(), y.tolist()
+        rounded = _roundedFloatPairs(points)
+        if rounded is None or not points or set(map(type, points)) != {tuple}:
+            _ROUNDED.pop(self, None)
+            return roundedCoordinates(points) if rounded is None else rounded
+        x, y = rounded
+        _ROUNDED[self] = (tuple(points), array("d", x), array("d", y))
+        return x, y
+
     def getXMLObj(self, xml_image_tform : XMLTransform = None, legacy_format : bool = False):
         """Returns the trace data as an XML object.
             Params:
