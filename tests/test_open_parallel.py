@@ -9,11 +9,13 @@ The size bar is set to 0 here, so every series opens with workers.
 import hashlib
 import multiprocessing
 import os
+import struct
 import sys
 import threading
 import time
 import types
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import process as futures_process
 from pathlib import Path
 
 import pytest
@@ -338,6 +340,70 @@ def test_a_cancel_does_not_wait_for_a_stalled_worker(stalled, series_jser, tmp_p
     finally:
         Path(f"{marker}.release").touch()
         for child in multiprocessing.active_children():
+            child.join(30)
+
+
+def _send_part(fp, n, alignment):
+    """Read section 0, then send only the start of its result: write the
+    started marker and stall (at most 30 s) before the rest."""
+    from multiprocessing.connection import Connection
+
+    result = REAL_READ(fp, n, alignment)
+    if n == 0:
+        def send_part(self, buf):
+            self._send(struct.pack("!i", len(buf)))
+            self._send(buf[:len(buf) // 2])
+            Path(os.environ["STALL_MARKER"]).write_text(str(os.getpid()))
+            time.sleep(30)
+            self._send(buf[len(buf) // 2:])
+
+        Connection._send_bytes = send_part
+    return result
+
+
+class _KeepResults(ProcessPoolExecutor):
+    """Keeps its result queue, so a test can free a stuck manager thread."""
+
+    made = []
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.results = self._result_queue
+        self.made.append(self)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a Windows pipe sends a result whole")
+def test_a_cancel_ends_a_result_a_worker_sent_partway(series_jser, tmp_path, monkeypatch):
+    """A worker stopped partway through sending its result leaves no
+    executor thread waiting for the rest, so Python can still exit."""
+    marker = tmp_path / "started"
+
+    class CancelWhenSending(NullProgressReporter):
+        def was_canceled(self):
+            return marker.exists()
+
+    monkeypatch.setenv("STALL_MARKER", str(marker))
+    _KeepResults.made.clear()
+    try:
+        with monkeypatch.context() as m:
+            _parallel(m, [])
+            m.setattr(section_rows, "readFileRows", _send_part)
+            m.setattr(section_rows, "ProcessPoolExecutor", _KeepResults)
+            result = Series.openJser(str(series_jser), progress=CancelWhenSending)
+            alive = multiprocessing.active_children()
+            managers = [
+                t for t in threading.enumerate()
+                if isinstance(t, futures_process._ExecutorManagerThread)
+            ]
+        assert result is None
+        assert marker.exists()
+        assert alive == []
+        assert managers == []
+    finally:
+        for executor in _KeepResults.made:
+            executor.results._writer.close()
+        for child in multiprocessing.active_children():
+            child.kill()
             child.join(30)
 
 

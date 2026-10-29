@@ -185,17 +185,32 @@ class OpenCanceled(Exception):
     """Raised by a `ParallelLoader` cancelled while it waits for a worker."""
 
 
+def _executorParts(executor):
+    """The worker processes, manager thread and result queue of a
+    `ProcessPoolExecutor`, read before `shutdown` drops them.
+
+    The executor has no public way to stop a running worker before Python
+    3.14 (terminate_workers), and none at all to end its manager thread
+    once a worker died partway through sending a result: that thread then
+    waits in `recv` for the rest, and this process still holds the queue's
+    writer, so no end of file comes. The same attributes in 3.11 to 3.13.
+    """
+    return (
+        list((executor._processes or {}).values()),
+        executor._executor_manager_thread,
+        executor._result_queue,
+    )
+
+
 def stopWorkers(executor, grace : float = PARALLEL_STOP_GRACE):
     """Stop a `ProcessPoolExecutor` without waiting on a stalled worker.
 
     Sections not started are dropped, and a worker still running after
     `grace` seconds is terminated. Returns once every worker process has
-    exited, so none still has a section file open.
+    exited, so none still has a section file open, and the executor's
+    manager thread has ended, so Python can exit.
     """
-    ## the executor drops these at shutdown and has no public way to stop a
-    ## running worker before Python 3.14 (terminate_workers)
-    processes = list((executor._processes or {}).values())
-    manager = executor._executor_manager_thread
+    processes, manager, results = _executorParts(executor)
     executor.shutdown(wait=False, cancel_futures=True)
     deadline = time.monotonic() + grace
     for process in processes:
@@ -208,8 +223,15 @@ def stopWorkers(executor, grace : float = PARALLEL_STOP_GRACE):
         if process.is_alive():
             process.kill()
             process.join()
+    ## no worker can write now: closing this process's writer ends a
+    ## result one stopped partway through, and the manager reads that as a
+    ## broken pool and exits (_executorParts)
+    if results is not None:
+        results._writer.close()
     if manager is not None:
         manager.join(5)
+        if manager.is_alive():
+            print("The open's worker manager did not stop", file=sys.stderr)
 
 
 def mainSafeForWorkers() -> bool:
