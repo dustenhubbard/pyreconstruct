@@ -356,16 +356,9 @@ def deriveTraceID(section_number: int, contour_name: str, row: list,
     if row_json is None:
         payload = canonicalJSON([TRACE_ID_VERSION, section_number, contour_name, row])
     else:
-        payload = "[%s,%s,%s,%s]" % (
-            canonicalJSON(TRACE_ID_VERSION), canonicalJSON(section_number),
-            canonicalJSON(contour_name), row_json,
-        )
+        payload = _derivationPayload(section_number, contour_name, row_json)
     for salt in range(DERIVATION_MAX_SALT):
-        digest = hashlib.blake2b(
-            f"{salt}\x00{payload}".encode("utf-8"),
-            digest_size=TRACE_ID_BITS // 8,
-        ).digest()
-        trace_id = encodeTraceID(int.from_bytes(digest, "big"))
+        trace_id = _saltedID(payload, salt)
         if trace_id not in taken:
             return trace_id
     raise RuntimeError(
@@ -374,6 +367,35 @@ def deriveTraceID(section_number: int, contour_name: str, row: list,
         f"to a random id here would reintroduce the failure Flag.deriveID "
         f"documents, so this raises instead."
     )
+
+
+def _derivationPayload(section_number: int, contour_name: str, row_json: str) -> str:
+    """The tid-v1 payload, from the row's canonicalJSON: the bytes
+    `canonicalJSON([TRACE_ID_VERSION, section_number, contour_name, row])`
+    gives, since a canonical JSON list is its elements' joined by commas."""
+    return "[%s,%s,%s,%s]" % (
+        canonicalJSON(TRACE_ID_VERSION), canonicalJSON(section_number),
+        canonicalJSON(contour_name), row_json,
+    )
+
+
+def _saltedID(payload: str, salt: int) -> str:
+    """The id `deriveTraceID` tries at `salt`."""
+    digest = hashlib.blake2b(
+        f"{salt}\x00{payload}".encode("utf-8"),
+        digest_size=TRACE_ID_BITS // 8,
+    ).digest()
+    return encodeTraceID(int.from_bytes(digest, "big"))
+
+
+def firstDerivedID(section_number: int, contour_name: str, row_json: str) -> str:
+    """The id `deriveTraceID` gives a row when no id is taken (salt 0).
+
+    A worker process of a series open works this out with no issuer, and
+    `TraceIDIssuer.deriveForSection` takes it when it is free in the series
+    (`first_ids`), which is the id `deriveTraceID` would have returned.
+    """
+    return _saltedID(_derivationPayload(section_number, contour_name, row_json), 0)
 
 
 class TraceIDIssuer():
@@ -502,7 +524,8 @@ class TraceIDIssuer():
         return True
 
     def adoptForSection(
-            self, section_number: int, contours: dict, stored_ids: dict
+            self, section_number: int, contours: dict, stored_ids: dict,
+            row_jsons=None,
         ) -> dict:
         """Adopt the ids a section file stored on its own rows.
 
@@ -540,6 +563,9 @@ class TraceIDIssuer():
                     the shape `Section.updateJSON` leaves behind
                 stored_ids (dict): {(contour name, index): id} lifted off the
                     file's keyed rows. Rows absent from it carried no id.
+                row_jsons (list): each row's canonicalJSON in this method's
+                    walk order (sorted contour names, then rows), worked out
+                    already (by a worker process of a series open), or None
             Returns:
                 (dict): {(contour name, index): id} for every row whose stored
                     id was accepted. A row whose id clashed or could not be
@@ -552,12 +578,15 @@ class TraceIDIssuer():
         ## Within-call occurrence count per key, so the k-th byte-identical row
         ## of a contour matches the k-th recorded adoption.
         occurrence = {}
+        position = -1
         for cname in sorted(contours, key=str):
             for i, row in enumerate(contours[cname]):
+                position += 1
                 trace_id = stored_ids.get((cname, i))
                 if trace_id is None:
                     continue
-                key = (section_number, cname, canonicalJSON(row))
+                row_json = canonicalJSON(row) if row_jsons is None else row_jsons[position]
+                key = (section_number, cname, row_json)
                 k = occurrence.get(key, 0)
                 occurrence[key] = k + 1
                 recorded = self._adoptions.setdefault(key, [])
@@ -584,7 +613,8 @@ class TraceIDIssuer():
         return out
 
     def deriveForSection(
-            self, section_number: int, contours: dict, skip=(), digest=None
+            self, section_number: int, contours: dict, skip=(), digest=None,
+            row_jsons=None, first_ids=None,
         ) -> dict:
         """Derive ids for every trace of one section, deterministically.
 
@@ -658,6 +688,14 @@ class TraceIDIssuer():
                     trace holds.
                 digest (bytes): `sectionFileDigest` of the file `contours`
                     was read from, or None. Only used when `skip` is empty.
+                row_jsons (list): each row's canonicalJSON in the walk order
+                    (sorted contour names, then rows, skipped rows included),
+                    worked out already by a worker process of a series open,
+                    or None to serialize here
+                first_ids (list): with `row_jsons`, each row's
+                    `firstDerivedID` in the same order. Taken when it is free,
+                    which is what `deriveTraceID` returns then; when it is
+                    taken, `deriveTraceID` salts past it as without it.
             Returns:
                 (dict): {(contour name, index within contour): id}
         """
@@ -678,15 +716,17 @@ class TraceIDIssuer():
         ## Within-call occurrence count per derivation key, so the k-th
         ## byte-identical row of a contour maps to the k-th recorded id.
         occurrence = {}
+        position = -1
         for cname in names:
             for i, row in enumerate(contours[cname]):
+                position += 1
                 if (cname, i) in skip:
                     continue
                 ## The same canonical serialization the derivation itself uses
                 ## (and the same refusal: a row carrying a type json cannot
                 ## encode raises TypeError here, exactly as deriveTraceID
                 ## would).
-                row_json = canonicalJSON(row)
+                row_json = canonicalJSON(row) if row_jsons is None else row_jsons[position]
                 key = (section_number, cname, row_json)
                 k = occurrence.get(key, 0)
                 occurrence[key] = k + 1
@@ -694,9 +734,12 @@ class TraceIDIssuer():
                 if k < len(recorded):
                     trace_id = recorded[k]
                 else:
-                    trace_id = deriveTraceID(
-                        section_number, cname, row, self._taken, row_json=row_json
-                    )
+                    if first_ids is not None and first_ids[position] not in self._taken:
+                        trace_id = first_ids[position]
+                    else:
+                        trace_id = deriveTraceID(
+                            section_number, cname, row, self._taken, row_json=row_json
+                        )
                     self._taken.add(trace_id)
                     recorded.append(trace_id)
                 out[(cname, i)] = trace_id

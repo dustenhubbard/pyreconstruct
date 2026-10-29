@@ -17,14 +17,23 @@ decided before the issuer is touched, so each section's ids are registered
 once, by one path.
 """
 
+import multiprocessing
+import os
+import sys
+from concurrent.futures import ProcessPoolExecutor
+from contextlib import contextmanager
 from typing import Optional, Union
 
+import numpy as np
+
+from PyReconstruct.modules.calc import traceGeometries
 from PyReconstruct.modules.constants import fast_loads
 
 from .columnar_store import coordinatesFromRow
 from .flag import Flag
 from .section import Section, TransformsDict
 from .trace import normalizeObjectName
+from .trace_id import canonicalJSON, firstDerivedID, sectionFileDigest
 from .transform import Transform
 
 
@@ -59,6 +68,23 @@ class SectionRows():
         self.coordinates = coordinates
         self.flags = [Flag.fromList(l, n) for l in section_data["flags"]]
         self.calgrid = section_data["calgrid"]
+        ## From a worker process of a large series' open (readFileRows):
+        ## (name -> each row's closed flag, alignment -> name -> each row's
+        ## geometry with that alignment's transform), or None. Its rows' x
+        ## and y and `coordinates` are then None.
+        self.measured = None
+
+
+def fileRowClosed(coordinates, row) -> bool:
+    """Whether a plain row's trace is closed: `Section.__init__` opens a
+    two-point trace."""
+    return False if len(coordinates) == 2 else bool(row[3])
+
+
+def measureGeometries(coordinates : list, closed : list, tform : Transform) -> list:
+    """traceGeometries of the traces' points mapped with `tform`."""
+    points = tform.mapPointsArray(np.concatenate(coordinates))
+    return traceGeometries(points, [len(c) for c in coordinates], closed)
 
 
 def plainCoordinates(contours : dict) -> Optional[dict]:
@@ -136,3 +162,174 @@ def loadForOpen(series, n : int) -> Union[SectionRows, Section]:
     if rows is None:
         return series.loadSection(n)
     return rows
+
+
+## A series whose section files add up to less than this is read in this
+## process: below it, starting the workers costs about what they save.
+PARALLEL_MIN_BYTES = 64 * 1024 * 1024
+## At most this many worker processes; each holds a section's decoded rows
+## (about 280 MB at peak on DW09)
+PARALLEL_MAX_WORKERS = 4
+
+
+def readFileRows(fp : str, n : int, alignments):
+    """A section file read for a series open, in a worker process.
+
+    The work `readSectionRows` does that needs no series: the decode and
+    `updateJSON`, `plainCoordinates`, each row's canonicalJSON and
+    `firstDerivedID` (in `TraceIDIssuer.deriveForSection`'s walk order), and
+    each row's geometry with each of `alignments` the section has. The rows
+    go back without their x and y, which only the measuring reads. None if a
+    row is not plain.
+    """
+    with open(fp, "rb") as f:
+        raw = f.read()
+    section_data = fast_loads(raw)
+    stored_ids : dict = {}
+    Section.updateJSON(section_data, n, stored_ids=stored_ids)
+    contours = section_data["contours"]
+    coordinates = plainCoordinates(contours)
+    if coordinates is None:
+        return None
+    row_jsons, first_ids = [], []
+    for cname in sorted(contours, key=str):
+        for row in contours[cname]:
+            row_json = canonicalJSON(row)
+            row_jsons.append(row_json)
+            first_ids.append(firstDerivedID(n, cname, row_json))
+    closed = {
+        name: [fileRowClosed(c, r) for c, r in zip(coordinates[name], rows)]
+        for name, rows in contours.items()
+    }
+    arrays = [c for name in contours for c in coordinates[name]]
+    flat_closed = [c for name in contours for c in closed[name]]
+    tforms = SectionRows(n, section_data, None).tforms
+    geometries = {}
+    for alignment in alignments:
+        if arrays and alignment in tforms:
+            flat = measureGeometries(arrays, flat_closed, tforms[alignment])
+            geometries[alignment] = by_name = {}
+            k = 0
+            for name, rows in contours.items():
+                by_name[name] = flat[k:k + len(rows)]
+                k += len(rows)
+    for rows in contours.values():
+        for row in rows:
+            row[0] = row[1] = None
+    return (sectionFileDigest(raw), section_data, stored_ids,
+            row_jsons, first_ids, (closed, geometries))
+
+
+def _rowsFromWorker(n : int, series, result) -> Optional[SectionRows]:
+    """The SectionRows of a `readFileRows` result, its ids registered as
+    `readSectionRows` registers them, or None (and the issuer untouched) if
+    an object would be measured with an alignment the worker did not use."""
+    digest, section_data, stored_ids, row_jsons, first_ids, measured = result
+    rows = SectionRows(n, section_data, None)
+    geometries = measured[1]
+    for name, contour_rows in rows.contours.items():
+        if not contour_rows:
+            continue
+        ## the alignment `ObjectData.sectionTransform` measures it with
+        alignment = series.getAttr(name, "alignment")
+        if alignment is None or alignment not in rows.tforms:
+            alignment = series.alignment
+        if alignment not in geometries:
+            return None
+    Section.issueLoadedTraceIDs(
+        n, series, None, rows.contours, stored_ids,
+        digest=digest, row_jsons=row_jsons, first_ids=first_ids,
+    )
+    rows.measured = measured
+    return rows
+
+
+class ParallelLoader():
+    """`loadForOpen` for a large series, with the files read in worker
+    processes (`readFileRows`) ahead of the pass.
+
+    The series open still takes the sections one at a time in section order,
+    and the ids are registered here, in that order, so the issuer, the ids and
+    the object list are the ones `loadForOpen` gives. A section whose worker
+    failed, for any reason, is read in this process instead, so an open never
+    fails because a worker did.
+    """
+
+    def __init__(self, series, executor, section_numbers):
+        self.executor = executor
+        ## every alignment an object can be measured with: an object's own
+        ## is only ever cleared during the open, never set
+        alignments = {series.alignment} | {
+            attrs["alignment"] for attrs in series.obj_attrs.values()
+            if attrs.get("alignment") is not None
+        }
+        self.futures = {
+            n: executor.submit(readFileRows, series.presentSection(n), n, alignments)
+            for n in section_numbers
+        }
+        self.failed = False
+
+    @classmethod
+    def start(cls, series) -> Optional["ParallelLoader"]:
+        """A loader for the series, or None to read it in this process: a
+        series under `PARALLEL_MIN_BYTES`, one with sections not yet in its
+        working folder (lazy_sections.py), a machine with one core, or
+        workers that do not start."""
+        if series._lazy:
+            return None
+        section_numbers = sorted(series.sections)
+        try:
+            size = sum(
+                os.path.getsize(os.path.join(series.getwdir(), series.sections[n]))
+                for n in section_numbers
+            )
+        except OSError:
+            return None
+        workers = min(PARALLEL_MAX_WORKERS, (os.cpu_count() or 1) - 1, len(section_numbers))
+        if size < PARALLEL_MIN_BYTES or workers < 1:
+            return None
+        executor = None
+        try:
+            executor = ProcessPoolExecutor(
+                workers, mp_context=multiprocessing.get_context("spawn"),
+            )
+            return cls(series, executor, section_numbers)
+        except Exception as e:
+            if executor is not None:
+                executor.shutdown(wait=False, cancel_futures=True)
+            print(f"Opening in one process: the workers did not start ({e!r})", file=sys.stderr)
+            return None
+
+    def __call__(self, series, n : int) -> Union[SectionRows, Section]:
+        future = self.futures.pop(n, None)
+        if future is None:
+            return loadForOpen(series, n)
+        try:
+            result = future.result()
+        except Exception as e:
+            if not self.failed:
+                self.failed = True
+                print(f"Section {n} read in this process: its worker failed ({e!r})", file=sys.stderr)
+            return loadForOpen(series, n)
+        if result is None:
+            return series.loadSection(n)
+        rows = _rowsFromWorker(n, series, result)
+        return loadForOpen(series, n) if rows is None else rows
+
+    def close(self):
+        """Stop the workers, with any sections they did not read."""
+        self.executor.shutdown(wait=False, cancel_futures=True)
+
+
+@contextmanager
+def openLoader(series):
+    """The `load` a series open passes `enumerateSections`: a
+    `ParallelLoader` for a large series, else `loadForOpen`."""
+    loader = ParallelLoader.start(series)
+    if loader is None:
+        yield loadForOpen
+        return
+    try:
+        yield loader
+    finally:
+        loader.close()

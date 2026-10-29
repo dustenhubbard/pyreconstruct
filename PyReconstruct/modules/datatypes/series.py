@@ -17,7 +17,7 @@ from typing import Optional, Union
 from .log import LogSet, LogSetPair, LOG_READ_ERRORS, LOG_WRITE_ERRORS
 from .ztrace import Ztrace
 from .section import Section
-from .section_rows import loadForOpen
+from .section_rows import openLoader
 from .trace import Trace, normalizeObjectName, copyObjDefaults
 from .trace_id import TraceIDIssuer
 from .transform import Transform
@@ -1599,12 +1599,13 @@ class Series():
             if store is not None:
                 store.fillSeriesData(series)
             else:
-                for snum, section in series.enumerateSections(show_progress=False, load=loadForOpen):
-                    series.data.addOpenedSection(section)
-                    if reporter.was_canceled():
-                        return None, None, None
-                    progress += 1
-                    reporter.set_progress(progress/final_value * 100)
+                with openLoader(series) as load:
+                    for snum, section in series.enumerateSections(show_progress=False, load=load):
+                        series.data.addOpenedSection(section)
+                        if reporter.was_canceled():
+                            return None, None, None
+                        progress += 1
+                        reporter.set_progress(progress/final_value * 100)
             # the series data is complete here, as after the refresh in
             # __init__: a displayed profile no section has is repointed now
             series._repointBCProfile()
