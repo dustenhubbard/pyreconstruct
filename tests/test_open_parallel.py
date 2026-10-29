@@ -10,7 +10,10 @@ import hashlib
 import multiprocessing
 import os
 import sys
+import time
 import types
+from concurrent.futures import ProcessPoolExecutor
+from pathlib import Path
 
 import pytest
 
@@ -277,3 +280,96 @@ def test_a_cancel_stops_the_workers_and_removes_the_folder(series_jser, monkeypa
     assert used
     assert multiprocessing.active_children() == []
     assert sorted(os.listdir(series_jser.parent)) == before
+
+
+def _stall(fp, n, alignment):
+    """Hold section STALL_SECTION's file open until the release marker
+    exists (at most 30 s), after writing the started marker."""
+    if n != int(os.environ["STALL_SECTION"]):
+        return REAL_READ(fp, n, alignment)
+    marker = Path(os.environ["STALL_MARKER"])
+    with open(fp, "rb"):
+        marker.write_text(str(os.getpid()))
+        limit = time.monotonic() + 30
+        while not Path(f"{marker}.release").exists() and time.monotonic() < limit:
+            time.sleep(0.01)
+    return REAL_READ(fp, n, alignment)
+
+
+def _wait_for(path, limit=20):
+    end = time.monotonic() + limit
+    while not path.exists() and time.monotonic() < end:
+        time.sleep(0.01)
+    return path.exists()
+
+
+@pytest.mark.parametrize("stalled", [0, 1])
+def test_a_cancel_does_not_wait_for_a_stalled_worker(stalled, series_jser, tmp_path, monkeypatch):
+    """A cancel accepted while a worker is stuck reading a section, the one
+    the open waits for (0) or a later one (1), returns at once: the worker
+    is stopped before the working folder is removed."""
+    (tmp_path / "markers").mkdir()
+    marker = tmp_path / "markers" / "started"
+    used = []
+
+    class CancelWhenStalled(NullProgressReporter):
+        def was_canceled(self):
+            if stalled == 0:
+                return marker.exists()
+            return bool(used) and _wait_for(marker)
+
+    monkeypatch.setenv("STALL_SECTION", str(stalled))
+    monkeypatch.setenv("STALL_MARKER", str(marker))
+    before = sorted(os.listdir(series_jser.parent))
+    try:
+        with monkeypatch.context() as m:
+            _parallel(m, used)
+            m.setattr(section_rows, "readFileRows", _stall)
+            start = time.monotonic()
+            result = Series.openJser(str(series_jser), progress=CancelWhenStalled)
+            elapsed = time.monotonic() - start
+            alive = multiprocessing.active_children()
+        assert result is None
+        assert marker.exists()
+        assert elapsed < 15
+        assert alive == []
+        assert sorted(os.listdir(series_jser.parent)) == before
+    finally:
+        Path(f"{marker}.release").touch()
+        for child in multiprocessing.active_children():
+            child.join(30)
+
+
+class _FailSecondSubmit(ProcessPoolExecutor):
+    """Starts one worker, which holds section 0 open, then fails."""
+
+    def submit(self, fn, *args, **kwargs):
+        if getattr(self, "submitted", False):
+            raise OSError("second submit failed")
+        self.submitted = True
+        future = super().submit(_stall, *args, **kwargs)
+        assert _wait_for(Path(os.environ["STALL_MARKER"]))
+        return future
+
+
+def test_a_failed_start_stops_its_workers_first(series_jser, tmp_path, monkeypatch, capsys):
+    """Workers that fail to start partway are all stopped before the open
+    goes on in this process."""
+    marker = tmp_path / "started"
+    monkeypatch.setenv("STALL_SECTION", "0")
+    monkeypatch.setenv("STALL_MARKER", str(marker))
+    series = None
+    try:
+        with monkeypatch.context() as m:
+            _parallel(m, [])
+            m.setattr(section_rows, "ProcessPoolExecutor", _FailSecondSubmit)
+            series = _open(series_jser)
+            alive = multiprocessing.active_children()
+        assert "the workers did not start" in capsys.readouterr().err
+        assert alive == []
+    finally:
+        if series is not None:
+            series.close()
+        Path(f"{marker}.release").touch()
+        for child in multiprocessing.active_children():
+            child.join(30)

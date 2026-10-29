@@ -20,7 +20,8 @@ once, by one path.
 import multiprocessing
 import os
 import sys
-from concurrent.futures import ProcessPoolExecutor
+import time
+from concurrent.futures import ProcessPoolExecutor, TimeoutError as FutureTimeout
 from contextlib import contextmanager
 from typing import Optional, Union
 
@@ -173,6 +174,42 @@ PARALLEL_MAX_WORKERS = 4
 ## A script that opens a series only under `if __name__ == "__main__":` may
 ## set this, so its opens can use workers (see mainSafeForWorkers)
 MAIN_GUARDED = False
+## A cancelled or failed open gives its running workers this many seconds
+## to finish, then terminates them
+PARALLEL_STOP_GRACE = 0.5
+## A wait for a worker checks for a cancel this often, in seconds
+PARALLEL_POLL = 0.1
+
+
+class OpenCanceled(Exception):
+    """Raised by a `ParallelLoader` cancelled while it waits for a worker."""
+
+
+def stopWorkers(executor, grace : float = PARALLEL_STOP_GRACE):
+    """Stop a `ProcessPoolExecutor` without waiting on a stalled worker.
+
+    Sections not started are dropped, and a worker still running after
+    `grace` seconds is terminated. Returns once every worker process has
+    exited, so none still has a section file open.
+    """
+    ## the executor drops these at shutdown and has no public way to stop a
+    ## running worker before Python 3.14 (terminate_workers)
+    processes = list((executor._processes or {}).values())
+    manager = executor._executor_manager_thread
+    executor.shutdown(wait=False, cancel_futures=True)
+    deadline = time.monotonic() + grace
+    for process in processes:
+        process.join(max(0.0, deadline - time.monotonic()))
+    for process in processes:
+        if process.is_alive():
+            process.terminate()
+    for process in processes:
+        process.join(5)
+        if process.is_alive():
+            process.kill()
+            process.join()
+    if manager is not None:
+        manager.join(5)
 
 
 def mainSafeForWorkers() -> bool:
@@ -281,8 +318,9 @@ class ParallelLoader():
     fails because a worker did.
     """
 
-    def __init__(self, series, executor, section_numbers):
+    def __init__(self, series, executor, section_numbers, canceled=None):
         self.executor = executor
+        self.canceled = canceled or (lambda: False)
         ## every alignment an object can be measured with: an object's own
         ## is only ever cleared during the open, never set
         alignments = {series.alignment} | {
@@ -293,15 +331,18 @@ class ParallelLoader():
             n: executor.submit(readFileRows, series.presentSection(n), n, alignments)
             for n in section_numbers
         }
+        self.submitted = list(self.futures.values())
         self.failed = False
 
     @classmethod
-    def start(cls, series) -> Optional["ParallelLoader"]:
+    def start(cls, series, canceled=None) -> Optional["ParallelLoader"]:
         """A loader for the series, or None to read it in this process: a
         series under `PARALLEL_MIN_BYTES`, one with sections not yet in its
         working folder (lazy_sections.py), a machine with one core, a
         program whose main script a worker would run again
-        (mainSafeForWorkers), or workers that do not start."""
+        (mainSafeForWorkers), or workers that do not start.
+
+        `canceled()` is checked while the loader waits for a worker."""
         if series._lazy or not mainSafeForWorkers():
             return None
         section_numbers = sorted(series.sections)
@@ -320,10 +361,12 @@ class ParallelLoader():
             executor = ProcessPoolExecutor(
                 workers, mp_context=multiprocessing.get_context("spawn"),
             )
-            return cls(series, executor, section_numbers)
+            return cls(series, executor, section_numbers, canceled)
         except Exception as e:
+            ## a worker started before the failure may be reading a section:
+            ## it stops before the open goes on in this process
             if executor is not None:
-                executor.shutdown(wait=False, cancel_futures=True)
+                stopWorkers(executor)
             print(f"Opening in one process: the workers did not start ({e!r})", file=sys.stderr)
             return None
 
@@ -332,7 +375,9 @@ class ParallelLoader():
         if future is None:
             return loadForOpen(series, n)
         try:
-            result = future.result()
+            result = self._wait(future)
+        except OpenCanceled:
+            raise
         except Exception as e:
             if not self.failed:
                 self.failed = True
@@ -343,21 +388,38 @@ class ParallelLoader():
         rows = _rowsFromWorker(n, series, result)
         return loadForOpen(series, n) if rows is None else rows
 
+    def _wait(self, future):
+        """`future.result()`, raising OpenCanceled on a cancel."""
+        while True:
+            try:
+                return future.result(timeout=PARALLEL_POLL)
+            except FutureTimeout:
+                if future.done():  # the worker's own TimeoutError
+                    raise
+                if self.canceled():
+                    raise OpenCanceled() from None
+
     def close(self):
         """Stop the workers, dropping any sections they did not start.
 
-        Waits for the sections they are reading: a cancelled or failed open
+        Returns once every worker has exited: a cancelled or failed open
         removes the working folder next, and on Windows a file a worker
-        still has open would stay behind.
+        still has open would stay behind. A worker still reading is given
+        `PARALLEL_STOP_GRACE`, then terminated (stopWorkers).
         """
-        self.executor.shutdown(wait=True, cancel_futures=True)
+        if all(future.done() for future in self.submitted):
+            self.executor.shutdown(wait=True)
+        else:
+            stopWorkers(self.executor)
 
 
 @contextmanager
-def openLoader(series):
+def openLoader(series, canceled=None):
     """The `load` a series open passes `enumerateSections`: a
-    `ParallelLoader` for a large series, else `loadForOpen`."""
-    loader = ParallelLoader.start(series)
+    `ParallelLoader` for a large series, else `loadForOpen`. With
+    `canceled`, a load that waits for a worker raises OpenCanceled once
+    `canceled()` is true."""
+    loader = ParallelLoader.start(series, canceled)
     if loader is None:
         yield loadForOpen
         return
