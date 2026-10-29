@@ -4,7 +4,7 @@ import json
 import math
 from collections import namedtuple
 from types import MappingProxyType
-from typing import Any, Dict, List, Mapping, Union
+from typing import Any, Dict, List, Mapping, Optional, Union
 
 import numpy as np
 from zarr.util import normalize_storage_path
@@ -1203,7 +1203,8 @@ class Section():
         return renamed
 
     @staticmethod
-    def issueLoadedTraceIDs(n : int, series, raw : bytes, contours : dict, stored_ids : dict):
+    def issueLoadedTraceIDs(n : int, series, raw : Optional[bytes], contours : dict, stored_ids : dict,
+                            digest=None, row_jsons=None, first_ids=None):
         """Register a section file's trace ids with the series' issuer.
 
         The id step of `Section.__init__`, which a series open that reads a
@@ -1214,9 +1215,12 @@ class Section():
             Params:
                 n (int): the section number
                 series (Series): the series; no issuer, no ids
-                raw (bytes): the section file's bytes, as read
+                raw (bytes): the section file's bytes, as read (None with `digest`)
                 contours (dict): the file's contours after `updateJSON`
                 stored_ids (dict): the ids `updateJSON` lifted off keyed rows
+                digest (bytes): `sectionFileDigest(raw)`, if worked out already
+                row_jsons, first_ids (list): see `TraceIDIssuer.deriveForSection`;
+                    a worker process of a series open works them out
             Returns:
                 (bool): True if every id came back from this session's save
                 (dict): (name, index) -> adopted (or restored) id
@@ -1246,7 +1250,8 @@ class Section():
         ## the adoption that followed would report every row in the file as
         ## clashing with itself.
         issuer = getattr(series, "trace_id_issuer", None)
-        digest = sectionFileDigest(raw) if issuer is not None else None
+        if digest is None and issuer is not None and raw is not None:
+            digest = sectionFileDigest(raw)
         ## Before both: a file this session wrote gets back the ids its rows
         ## were saved with (`TraceIDIssuer.recordSaved`), so a save and a load
         ## in between do not move any trace's id. Every row is in it or none.
@@ -1259,18 +1264,23 @@ class Section():
         ## nothing to an id index.
         if restored_ids is not None:
             return True, restored_ids, {}
+        ## what a worker process of a series open worked out; a load here
+        ## calls the issuer as it always has
+        jsons = {} if row_jsons is None else {"row_jsons": row_jsons}
+        firsts = {} if first_ids is None else {"first_ids": first_ids}
         adopted_ids = (
             issuer.adoptForSection(
                 n,
                 contours,
                 {key: record.trace_id for key, record in stored_ids.items()},
+                **jsons,
             )
             if issuer is not None else {}
         )
         derived_ids = (
             issuer.deriveForSection(
                 n, contours, skip=adopted_ids,
-                digest=digest,
+                digest=digest, **jsons, **firsts,
             )
             if issuer is not None else None
         )

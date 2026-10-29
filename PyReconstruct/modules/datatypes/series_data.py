@@ -1,17 +1,15 @@
 """Collect data to pass to table manager."""
 
+import contextlib
 from typing import Optional, Union
 
-
-import numpy as np
-
-from PyReconstruct.modules.calc import traceGeometry, traceGeometries
+from PyReconstruct.modules.calc import traceGeometry
 from PyReconstruct.modules.constants import EXPORT_ERRORS
 
 from .columnar_store import TraceView
 from .object_ids import ObjectIds
 from .section import Section
-from .section_rows import SectionRows, loadForOpen
+from .section_rows import SectionRows, fileRowClosed, measureGeometries, openLoader
 from .transform import Transform
 from .trace import Trace
 
@@ -347,29 +345,51 @@ def traceDataForFileRows(items : list, tform : Transform) -> list:
     rows = [r for _, r in items]
     return measureTraceData(
         coordinates,
-        # `Section.__init__` opens a two-point trace
-        [False if len(c) == 2 else bool(r[3]) for c, r in items],
+        [fileRowClosed(c, r) for c, r in items],
+        *_rowFields(rows),
+        tform,
+    )
+
+
+def traceDataForMeasuredRows(items : list, tform : Transform, measured : tuple, tforms) -> list:
+    """`traceDataForFileRows` for the (name, index, row) of rows a worker
+    process measured (`SectionRows.measured`), from its numbers."""
+    closed, geometries = measured
+    for alignment, by_name in geometries.items():
+        if tforms[alignment] is tform:
+            break
+    return measureTraceData(
+        [],
+        [closed[name][i] for name, i, _ in items],
+        *_rowFields([r for _, _, r in items]),
+        tform,
+        [by_name[name][i] for name, i, _ in items],
+    )
+
+
+def _rowFields(rows : list) -> tuple[list, list, list, list]:
+    """hidden, negative, tags and color of plain rows, as TraceData reads them."""
+    return (
         [bool(r[5]) for r in rows],
         [bool(r[4]) for r in rows],
         [set(r[7]) for r in rows],
         # a plain row's color is three ints from 0 to 255
         [tuple(r[2]) for r in rows],
-        tform,
     )
 
 
 def measureTraceData(coordinates : list, closed : list, hidden : list, negative : list,
-                     tags : list, colors : list, tform : Transform) -> list:
-    """One TraceData per trace, its points mapped and measured in one pass;
-    the lists hold one entry per trace, `index` is left at 0."""
-    counts = [len(c) for c in coordinates]
-    points = tform.mapPointsArray(np.concatenate(coordinates))
-    geometries = traceGeometries(points, counts, closed)
+                     tags : list, colors : list, tform : Transform, geometries=None) -> list:
+    """One TraceData per trace, its points mapped and measured in one pass
+    (or `geometries`, measured already, and `coordinates` is not read); the
+    lists hold one entry per trace, `index` is left at 0."""
+    if geometries is None:
+        geometries = measureGeometries(coordinates, closed, tform)
     return [
         TraceData.fromGeometry(
             0, closed[k], hidden[k], negative[k], tags[k], colors[k], geometries[k], tform,
         )
-        for k in range(len(coordinates))
+        for k in range(len(closed))
     ]
 
 
@@ -432,12 +452,13 @@ class SeriesData():
         # No time estimate here: this is the pass behind the "Opening
         # <name>..." bar when a series opens, and an opening series must not
         # carry one (decided 2026-09-14). Every other operation bar does.
-        for snum, section in self.series.enumerateSections(
-            show_progress=show_progress, message=message, eta=False,
-            load=loadForOpen if from_rows else None,
-        ):
+        with contextlib.ExitStack() as stack:
+            load = stack.enter_context(openLoader(self.series)) if from_rows else None
+            for snum, section in self.series.enumerateSections(
+                show_progress=show_progress, message=message, eta=False, load=load,
+            ):
 
-            self.addOpenedSection(section)
+                self.addOpenedSection(section)
 
         # the ids carry over: traces that are still there keep their ids
         # (a renumbering moved them already, Series.reorderSections)
@@ -589,12 +610,23 @@ class SeriesData():
         self.updateSection(section)
         objects = self.data["objects"]
         named_rows = []
+        measured = section.measured
         for name, rows in section.contours.items():
             if name in objects:
                 objects[name].clearSection(section.n)
-            if rows:
+            if not rows:
+                continue
+            if measured is None:
                 named_rows.append((name, list(zip(section.coordinates[name], rows))))
-        self._addMeasured(section, named_rows, traceDataForFileRows)
+            else:
+                named_rows.append((name, [(name, i, row) for i, row in enumerate(rows)]))
+        if measured is None:
+            self._addMeasured(section, named_rows, traceDataForFileRows)
+        else:
+            self._addMeasured(
+                section, named_rows,
+                lambda items, tform: traceDataForMeasuredRows(items, tform, measured, section.tforms),
+            )
         ## a name with rows has traces now, so no object is emptied; the
         ## object ids as updateSection keeps them with log_events off
         ids = self.object_ids
