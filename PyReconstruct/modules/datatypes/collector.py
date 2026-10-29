@@ -2,7 +2,7 @@
 
 An open leaves millions of objects that live as long as the series (about
 2.9 million for a 550,000-trace series). Python's full collection walks all of
-them each time, about 1 s on that series, and it came round every 5 to 10
+them each time, about 1 s on that series, and it came round every 4 to 10
 section changes. After the open, `settleAfterOpen` collects once and freezes
 what is left, so full collections skip the series' objects, and raises the
 young-generation threshold so the freeze does not set off a full collection
