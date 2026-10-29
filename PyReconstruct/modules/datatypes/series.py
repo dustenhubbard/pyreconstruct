@@ -1,5 +1,6 @@
 import os
 import errno
+import gc
 import hashlib
 import uuid
 import re
@@ -706,6 +707,26 @@ def _openingText(name: str) -> str:
     return f"Opening {name}..."
 
 
+@contextmanager
+def _collectorPaused():
+    """Keep the cyclic garbage collector off while a series opens.
+
+    An open makes millions of objects that live on (the series data) or die
+    by reference count (each section's decoded rows), and no cycles: an open
+    of every test series, by either section path, left none for the
+    collector to find. Left on, it walked the growing heap again and again,
+    16.8 s of an 82 s first open of a 550,000-trace series. Reference
+    counting still frees everything as before. Used as a decorator too.
+    """
+    was_on = gc.isenabled()
+    gc.disable()
+    try:
+        yield
+    finally:
+        if was_on:
+            gc.enable()
+
+
 _NOTIFIER = None
 
 
@@ -1162,7 +1183,8 @@ class Series():
                 # before the user had chosen any series, so it gets none.
                 self.data.refresh(show_progress=False)
             else:
-                self.data.refresh(message=_openingText(self.name), from_rows=True)
+                with _collectorPaused():
+                    self.data.refresh(message=_openingText(self.name), from_rows=True)
             self._repointBCProfile()
 
         # objects for non-GUI users
@@ -1372,6 +1394,7 @@ class Series():
         return Series._unpackJser(fp, progress, notifier)[0]
 
     @staticmethod
+    @_collectorPaused()
     def _unpackJser(fp : str, progress=None, notifier=None, store=None, hashed=False):
         """openJser with no working folder to resume: write one, and build the series.
 
