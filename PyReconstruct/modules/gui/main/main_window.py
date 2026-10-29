@@ -14,7 +14,7 @@ from PySide6.QtCore import QEvent
 from .main_imports import *
 
 from PyReconstruct.modules.datatypes.section import Section, zarrHasScaleLevels
-from PyReconstruct.modules.datatypes import lazy_sections, local_stores, store_open, store_recovery, store_save
+from PyReconstruct.modules.datatypes import collector, lazy_sections, local_stores, store_open, store_recovery, store_save
 from PyReconstruct.modules.datatypes.series import SeriesSaveError
 from PyReconstruct.modules.backend.image_name_match import (
     matchByNumber, zarrImageNames,
@@ -1721,6 +1721,10 @@ class MainWindow(QMainWindow):
 
         # reopen the lists this series had open last time, where they were
         self._restoreListLayout()
+
+        # the collector skips the series' long-lived objects until it closes
+        if not self.series.isWelcomeSeries():
+            collector.settleAfterOpen(self.series)
 
     # ------------------------------------------------------------------
     # openSeries steps.
