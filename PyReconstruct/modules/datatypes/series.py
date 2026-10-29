@@ -28,7 +28,7 @@ from .objects import Objects
 from .default_settings import default_settings, default_series_settings
 from .host_tree import HostTree
 from .filters import passesFilters
-from . import lazy_sections, local_stores, store_open, store_recovery, store_save
+from . import collector, lazy_sections, local_stores, store_open, store_recovery, store_save
 
 from PyReconstruct.modules.calc import traceGeometry
 
@@ -2363,6 +2363,7 @@ class Series():
         (store_save.py). If that fails it raises, and nothing is removed.
         """
         store_save.closing(self)
+        collector.restore(self)
 
         if self.isWelcomeSeries() or self.leave_open:
             # closed even so: a series left open for the one replacing it in
