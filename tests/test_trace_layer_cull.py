@@ -168,7 +168,8 @@ def test_the_boxes_are_read_from_the_store(layer, monkeypatch):
     layer._raw_bounds_key = None
     actual = _draw(layer, window)
 
-    assert sorted(rows_read) == sorted(section.traceRows().values())
+    # the draw reads the drawn traces' rows again for their screen points
+    assert set(rows_read) == set(section.traceRows().values())
     assert traces_measured == []
     assert actual == expected
 
