@@ -712,9 +712,11 @@ def _collectorPaused():
     """Keep the cyclic garbage collector off while a series opens.
 
     An open makes millions of objects that live on (the series data) or die
-    by reference count (each section's decoded rows), and no cycles: an open
-    of every test series, by either section path, left none for the
-    collector to find. Left on, it walked the growing heap again and again,
+    by reference count (each section's decoded rows). The series itself holds
+    cycles, but it stays live; the temporary section data is freed by
+    reference counting, and an open of every test series, by either section
+    path, left no unreachable cyclic garbage while the series stayed open.
+    Left on, the collector walked the growing heap again and again,
     16.8 s of an 82 s first open of a 550,000-trace series. Reference
     counting still frees everything as before. Used as a decorator too.
     """
