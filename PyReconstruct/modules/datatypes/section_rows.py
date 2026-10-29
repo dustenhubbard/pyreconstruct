@@ -120,7 +120,7 @@ def readSectionRows(n : int, series) -> Optional[SectionRows]:
     with open(series.presentSection(n), "rb") as f:
         raw = f.read()
     section_data = fast_loads(raw)
-    stored_ids = {}
+    stored_ids : dict = {}
     Section.updateJSON(section_data, n, stored_ids=stored_ids)
     coordinates = plainCoordinates(section_data["contours"])
     if coordinates is None:
