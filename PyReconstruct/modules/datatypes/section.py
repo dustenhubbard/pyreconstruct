@@ -1264,19 +1264,23 @@ class Section():
         ## nothing to an id index.
         if restored_ids is not None:
             return True, restored_ids, {}
+        ## what a worker process of a series open worked out; a load here
+        ## calls the issuer as it always has
+        jsons = {} if row_jsons is None else {"row_jsons": row_jsons}
+        firsts = {} if first_ids is None else {"first_ids": first_ids}
         adopted_ids = (
             issuer.adoptForSection(
                 n,
                 contours,
                 {key: record.trace_id for key, record in stored_ids.items()},
-                row_jsons=row_jsons,
+                **jsons,
             )
             if issuer is not None else {}
         )
         derived_ids = (
             issuer.deriveForSection(
                 n, contours, skip=adopted_ids,
-                digest=digest, row_jsons=row_jsons, first_ids=first_ids,
+                digest=digest, **jsons, **firsts,
             )
             if issuer is not None else None
         )
