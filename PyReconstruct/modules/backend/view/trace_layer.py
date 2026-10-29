@@ -783,6 +783,40 @@ class TraceLayer():
             (lo[:, 1] > window_y + window_h + margin_y)
         )
 
+    def _fieldPoints(self, trace_list : list, counts : np.ndarray) -> np.ndarray:
+        """Every point of the traces, in order, as one (count, 2) float array.
+
+        Read from the section's store where it can be: a trace's row holds its
+        points as float64, the same values flatPoints reads from the trace's
+        own tuples, and joining the rows skips reading every tuple again
+        (DW09 at the whole field: 0.06 s to under 0.01 s a draw). A row is
+        used under the rule _rawBounds uses for the cull: the trace has a live
+        row with as many points as the trace. A trace with no row, or with
+        another point count, is read from its own points.
+
+            Params:
+                trace_list (list): the traces, in draw order
+                counts (np.ndarray): each trace's point count
+            Returns:
+                (np.ndarray): (counts.sum(), 2) float array
+        """
+        columns = self.section._columns
+        if columns is None:
+            return flatPoints(trace_list, int(counts.sum()))
+        rows = self.section.traceRows()
+        arrays = []
+        for trace, count in zip(trace_list, counts.tolist()):
+            if not count:
+                continue
+            row = rows.get(trace)
+            if row is not None and columns.isLive(row):
+                coordinates = columns.getCoordinates(row)
+                if len(coordinates) == count:
+                    arrays.append(coordinates)
+                    continue
+            arrays.append(flatPoints([trace], count))
+        return np.concatenate(arrays)
+
     def _screenPolygons(self, trace_list : list, tform : Transform):
         """Convert the traces to pixmap coordinates in one pass.
 
@@ -811,7 +845,7 @@ class TraceLayer():
         if not len(nonempty):
             return result
 
-        pts = flatPoints(trace_list, int(counts.sum()))
+        pts = self._fieldPoints(trace_list, counts)
         pix = self._fieldToPixArray(tform.mapPointsArray(pts))
         int32 = np.iinfo(np.int32)
         if pix.min() < int32.min or pix.max() > int32.max:
