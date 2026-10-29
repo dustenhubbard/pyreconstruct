@@ -26,6 +26,7 @@ About slot even over an action set to AboutRole.
 """
 import sys
 
+import shiboken6
 from PySide6.QtCore import QCoreApplication, QTranslator
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QApplication, QMenu, QMenuBar, QMessageBox
@@ -68,13 +69,22 @@ def wanted() -> bool:
 
 def globalBar():
     """The bar, or None when this build has none."""
-    return _bar
+    return _bar if _alive(_bar) else None
+
+
+def _alive(obj) -> bool:
+    """False for None and for a wrapper whose Qt object is already deleted.
+
+    The bar has no parent, so at quit Qt can delete it before its owner, and
+    the owner's destroyed signal then reaches clear() with a dead bar.
+    """
+    return obj is not None and shiboken6.isValid(obj)
 
 
 def clear():
     """Drop the bar and every row in it."""
     global _bar, _owner
-    if _bar is not None:
+    if _alive(_bar):
         _clearMenus(_bar)
         _bar.deleteLater()
     _bar = None
@@ -87,7 +97,7 @@ def rebuild(mainwindow):
     global _bar, _owner
     if not wanted() or not _hasMenus(mainwindow):
         return None
-    if _bar is None:
+    if not _alive(_bar):
         _bar = QMenuBar(None)
         _installSettingsLabel()
     if _owner is not mainwindow:
@@ -132,6 +142,8 @@ def claimKeys(mainwindow):
     if _owner is not mainwindow:
         return
     for row, key in _own_keys:
+        if not _alive(row):
+            continue
         taken = any(
             _overlaps(key, seq)
             for a in mainwindow.actions() for seq in a.shortcuts()
@@ -162,7 +174,7 @@ def _clearMenus(bar):
     for action in bar.actions():
         menu = action.menu()
         bar.removeAction(action)
-        if menu is not None:
+        if _alive(menu):
             menu.deleteLater()
 
 
