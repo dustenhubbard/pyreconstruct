@@ -359,7 +359,7 @@ def traceDataForMeasuredRows(items : list, tform : Transform, measured : tuple, 
         if tforms[alignment] is tform:
             break
     return measureTraceData(
-        None,
+        [],
         [closed[name][i] for name, i, _ in items],
         *_rowFields([r for _, _, r in items]),
         tform,
@@ -367,7 +367,7 @@ def traceDataForMeasuredRows(items : list, tform : Transform, measured : tuple, 
     )
 
 
-def _rowFields(rows : list) -> tuple:
+def _rowFields(rows : list) -> tuple[list, list, list, list]:
     """hidden, negative, tags and color of plain rows, as TraceData reads them."""
     return (
         [bool(r[5]) for r in rows],
@@ -381,8 +381,8 @@ def _rowFields(rows : list) -> tuple:
 def measureTraceData(coordinates : list, closed : list, hidden : list, negative : list,
                      tags : list, colors : list, tform : Transform, geometries=None) -> list:
     """One TraceData per trace, its points mapped and measured in one pass
-    (or `geometries`, measured already); the lists hold one entry per trace,
-    `index` is left at 0."""
+    (or `geometries`, measured already, and `coordinates` is not read); the
+    lists hold one entry per trace, `index` is left at 0."""
     if geometries is None:
         geometries = measureGeometries(coordinates, closed, tform)
     return [

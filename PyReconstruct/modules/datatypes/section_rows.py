@@ -46,7 +46,7 @@ class SectionRows():
     builds them.
     """
 
-    def __init__(self, n : int, section_data : dict, coordinates : dict):
+    def __init__(self, n : int, section_data : dict, coordinates : Optional[dict]):
         """
             Params:
                 n (int): the section number
@@ -230,7 +230,7 @@ def readFileRows(fp : str, n : int, alignments):
     arrays = [c for name in contours for c in coordinates[name]]
     flat_closed = [c for name in contours for c in closed[name]]
     tforms = SectionRows(n, section_data, None).tforms
-    geometries = {}
+    geometries : dict = {}
     for alignment in alignments:
         if arrays and alignment in tforms:
             flat = measureGeometries(arrays, flat_closed, tforms[alignment])

@@ -4,7 +4,7 @@ import json
 import math
 from collections import namedtuple
 from types import MappingProxyType
-from typing import Any, Dict, List, Mapping, Union
+from typing import Any, Dict, List, Mapping, Optional, Union
 
 import numpy as np
 from zarr.util import normalize_storage_path
@@ -1203,7 +1203,7 @@ class Section():
         return renamed
 
     @staticmethod
-    def issueLoadedTraceIDs(n : int, series, raw : bytes, contours : dict, stored_ids : dict,
+    def issueLoadedTraceIDs(n : int, series, raw : Optional[bytes], contours : dict, stored_ids : dict,
                             digest=None, row_jsons=None, first_ids=None):
         """Register a section file's trace ids with the series' issuer.
 
@@ -1215,7 +1215,7 @@ class Section():
             Params:
                 n (int): the section number
                 series (Series): the series; no issuer, no ids
-                raw (bytes): the section file's bytes, as read
+                raw (bytes): the section file's bytes, as read (None with `digest`)
                 contours (dict): the file's contours after `updateJSON`
                 stored_ids (dict): the ids `updateJSON` lifted off keyed rows
                 digest (bytes): `sectionFileDigest(raw)`, if worked out already
@@ -1250,7 +1250,7 @@ class Section():
         ## the adoption that followed would report every row in the file as
         ## clashing with itself.
         issuer = getattr(series, "trace_id_issuer", None)
-        if digest is None and issuer is not None:
+        if digest is None and issuer is not None and raw is not None:
             digest = sectionFileDigest(raw)
         ## Before both: a file this session wrote gets back the ids its rows
         ## were saved with (`TraceIDIssuer.recordSaved`), so a save and a load
