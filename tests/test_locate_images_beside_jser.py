@@ -187,7 +187,7 @@ def test_openSeries_prompts_when_auto_recovery_fails(monkeypatch):
     import inspect
 
     assert "self._ensureImagesAvailable()" in inspect.getsource(
-        mw.MainWindow.openSeries
+        mw.MainWindow._openSeries
     ), "openSeries must still run the images step"
 
     src = inspect.getsource(mw.MainWindow._ensureImagesAvailable)

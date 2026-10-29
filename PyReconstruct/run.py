@@ -70,7 +70,7 @@ class FileOpenWatcher(QObject):
             return  # the next window settles them
         refused, self.refused = self.refused, []
         for path in refused:
-            window.refuseFinderOpen(path)
+            window.refuseOpen(path)
         path, self.pending = self.pending, None
         if path:
             self._admit(path)
@@ -95,7 +95,7 @@ class FileOpenWatcher(QObject):
         # refused, not queued: a queued open would run before the busy
         # command's own remaining steps
         if self.busy():
-            self._main_window.refuseFinderOpen(path)
+            self._main_window.refuseOpen(path)
         else:
             self._main_window.openSeries(jser_fp=path)
 
