@@ -8,6 +8,8 @@ The size bar is set to 0 here, so every series opens with workers.
 """
 import hashlib
 import os
+import sys
+import types
 
 import pytest
 
@@ -28,6 +30,7 @@ def _serial(m):
 def _parallel(m, used):
     """Open with 2 workers, recording each section a worker read."""
     m.setattr(section_rows, "PARALLEL_MIN_BYTES", 0)
+    m.setattr(section_rows, "MAIN_GUARDED", True)
     m.setattr(section_rows, "PARALLEL_MAX_WORKERS", 2)
     m.setattr(os, "cpu_count", lambda: 8)
     real = section_rows._rowsFromWorker
@@ -154,6 +157,45 @@ def test_a_small_series_opens_in_one_process(series_jser, monkeypatch):
         series = _open(series_jser)
     series.close()
     assert used == []
+
+
+def _main(folder, name, spec=None, text="x = 1\n"):
+    """A main module from a real file in `folder`, so that a worker can run
+    it again: without the check, its workers would read sections."""
+    main = types.ModuleType("__main__")
+    main.__spec__ = spec
+    if name is not None:
+        path = folder / name
+        path.write_text(text)
+        main.__file__ = str(path)
+        exec(text, main.__dict__)
+    return main
+
+
+MAINS = {
+    "script": (lambda f: _main(f, "script.py"), False),
+    "module": (lambda f: _main(f, "mod.py", types.SimpleNamespace(name="mod")), False),
+    "package": (lambda f: _main(f, "__main__.py", types.SimpleNamespace(name="pkg.__main__")), True),
+    "interactive": (lambda f: _main(f, None), True),
+    "run.py": (lambda f: _main(f, "run.py", text="def runPyReconstruct():\n    pass\n"), True),
+}
+
+
+@pytest.mark.parametrize("kind", MAINS)
+def test_workers_only_where_the_main_script_does_not_run_again(kind, series_jser, tmp_path, monkeypatch):
+    """A worker imports the main script again: an unguarded script that
+    opens a series would open it in every worker, so it opens in one process."""
+    make, safe = MAINS[kind]
+    used = []
+    with monkeypatch.context() as m:
+        m.syspath_prepend(str(tmp_path))
+        _parallel(m, used)
+        m.setattr(section_rows, "MAIN_GUARDED", False)
+        m.setitem(sys.modules, "__main__", make(tmp_path))
+        assert section_rows.mainSafeForWorkers() is safe
+        series = _open(series_jser)
+    series.close()
+    assert bool(used) is safe
 
 
 ROWS = {

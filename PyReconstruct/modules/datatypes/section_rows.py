@@ -170,6 +170,32 @@ PARALLEL_MIN_BYTES = 64 * 1024 * 1024
 ## At most this many worker processes; each holds a section's decoded rows
 ## (about 280 MB at peak on DW09)
 PARALLEL_MAX_WORKERS = 4
+## A script that opens a series only under `if __name__ == "__main__":` may
+## set this, so its opens can use workers (see mainSafeForWorkers)
+MAIN_GUARDED = False
+
+
+def mainSafeForWorkers() -> bool:
+    """Whether a worker process can start without running the program's
+    main script again.
+
+    A spawned worker imports the main script as `__mp_main__` before it
+    takes any work, so a script that opens a series at its top level, with
+    no `__main__` guard, would open it again, and do whatever else it does,
+    in every worker. Safe: PyReconstruct's own run.py (from source its body
+    is guarded; frozen, the worker stops in `freeze_support` first), a
+    package run with `-m`, an interactive session, or a script that set
+    `MAIN_GUARDED`.
+    """
+    main = sys.modules.get("__main__")
+    if MAIN_GUARDED or getattr(main, "__file__", None) is None:
+        return True
+    spec = getattr(main, "__spec__", None)
+    if spec is not None:
+        return spec.name == "__main__" or spec.name.endswith(".__main__")
+    ## run.py, which defines runPyReconstruct itself
+    run = getattr(main, "runPyReconstruct", None)
+    return getattr(run, "__module__", None) == "__main__"
 
 
 def readFileRows(fp : str, n : int, alignments):
@@ -273,9 +299,10 @@ class ParallelLoader():
     def start(cls, series) -> Optional["ParallelLoader"]:
         """A loader for the series, or None to read it in this process: a
         series under `PARALLEL_MIN_BYTES`, one with sections not yet in its
-        working folder (lazy_sections.py), a machine with one core, or
-        workers that do not start."""
-        if series._lazy:
+        working folder (lazy_sections.py), a machine with one core, a
+        program whose main script a worker would run again
+        (mainSafeForWorkers), or workers that do not start."""
+        if series._lazy or not mainSafeForWorkers():
             return None
         section_numbers = sorted(series.sections)
         try:
