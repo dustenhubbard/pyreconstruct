@@ -1633,12 +1633,8 @@ class MainWindow(QMainWindow):
         """
         if self._series_transition:
             if series_obj is not None:
-                # the series handed over to open is closed rather than left
-                # with its working folder, unless it is the one in the window
-                if not (self.series and _sameDir(
-                    self.series.hidden_dir, series_obj.hidden_dir
-                )):
-                    series_obj.close()
+                # a handed series stays as it is: its owner (another window,
+                # or the caller) holds its working folder and closes it
                 jser_fp = jser_fp or series_obj.jser_fp
             self.refuseOpen(jser_fp)
             return
