@@ -17,6 +17,7 @@ from typing import Optional, Union
 from .log import LogSet, LogSetPair, LOG_READ_ERRORS, LOG_WRITE_ERRORS
 from .ztrace import Ztrace
 from .section import Section
+from .section_rows import loadForOpen
 from .trace import Trace, normalizeObjectName, copyObjDefaults
 from .trace_id import TraceIDIssuer
 from .transform import Transform
@@ -1161,7 +1162,7 @@ class Series():
                 # before the user had chosen any series, so it gets none.
                 self.data.refresh(show_progress=False)
             else:
-                self.data.refresh(message=_openingText(self.name))
+                self.data.refresh(message=_openingText(self.name), from_rows=True)
             self._repointBCProfile()
 
         # objects for non-GUI users
@@ -1598,8 +1599,8 @@ class Series():
             if store is not None:
                 store.fillSeriesData(series)
             else:
-                for snum, section in series.enumerateSections(show_progress=False):
-                    series.data.updateSection(section, update_traces=True, log_events=False, read_store=True)
+                for snum, section in series.enumerateSections(show_progress=False, load=loadForOpen):
+                    series.data.addOpenedSection(section)
                     if reporter.was_canceled():
                         return None, None, None
                     progress += 1
@@ -2937,7 +2938,7 @@ class Series():
         section = Section(section_num, self)
         return section
     
-    def enumerateSections(self, show_progress : bool = True, message : str = "Loading series data...", series_states=None, breakable=True, section_numbers=None, eta=True, writes_after=False):
+    def enumerateSections(self, show_progress : bool = True, message : str = "Loading series data...", series_states=None, breakable=True, section_numbers=None, eta=True, writes_after=False, load=None):
         """Allow iteration through the sections.
 
         Proper use in a for loop: for snum, section in series.enumerateSections():
@@ -2958,12 +2959,15 @@ class Series():
                     after the last section (object attributes, the series
                     file): a series closed at the last progress update then
                     stops the pass with SeriesClosedError, as at the others
+                load (callable): `load(series, snum)` gives what is yielded
+                    for each section in place of `loadSection(snum)`. The
+                    series open passes `loadForOpen` (section_rows.py).
             Returns:
                 (generator): yielding (section number, Section) pairs
         """
         iterator = SeriesIterator(
             self, show_progress, message, series_states, breakable,
-            section_numbers, eta=eta, writes_after=writes_after,
+            section_numbers, eta=eta, writes_after=writes_after, load=load,
         )
         ## A generator around the iterator, for the finally alone. The
         ## iterator's window-modal progress dialog has no cancel button and
@@ -7402,7 +7406,7 @@ class Series():
     
 class SeriesIterator():
 
-    def __init__(self, series : Series, show_progress : bool, message : str, series_states, breakable=True, section_numbers=None, eta=True, writes_after=False):
+    def __init__(self, series : Series, show_progress : bool, message : str, series_states, breakable=True, section_numbers=None, eta=True, writes_after=False, load=None):
         """Create the series iterator object.
 
             Params:
@@ -7415,6 +7419,8 @@ class SeriesIterator():
                     these section numbers
                 writes_after (bool): stop at the last progress update too
                     if the series closed (see Series.enumerateSections)
+
+                load (callable): see Series.enumerateSections
         """
         self.series = series
         self.section = None
@@ -7426,6 +7432,7 @@ class SeriesIterator():
         self.section_subset = None if section_numbers is None else set(section_numbers)
         self.eta = eta
         self.writes_after = writes_after
+        self.load = load
         if self.series_states is not None:
             self.series_states.addState(breakable)
 
@@ -7472,7 +7479,10 @@ class SeriesIterator():
                     f"{total} sections."
                 )
             snum = self.section_numbers[self.sni]
-            self.section = self.series.loadSection(snum)
+            if self.load is None:
+                self.section = self.series.loadSection(snum)
+            else:
+                self.section = self.load(self.series, snum)
             self.sni += 1
 
             # check if states have been initialized
