@@ -64,8 +64,9 @@ def _odd_series(path):
         }, tforms={"default": [1, 0, 0.5, 0, 1, -2], "other": [2, 0, 0, 0, 2, 0]}),
         ## one section per row the store reads in its own way, so each is
         ## the only reason its section is built as a Section
-        ## colors out of range or not ints: the store keeps uint8
-        _section(2, {"wide": [_row(*SQUARE, color=(300, 0, 0))]}),
+        ## colors that are not ints: the store keeps uint8 (an int over 255
+        ## wraps on numpy 1 and is refused on numpy 2, by both opens)
+        _section(2, {"wide": [_row(*SQUARE, color=(255.9, 0, 0))]}),
         _section(3, {"float": [_row(*SQUARE, color=(1.5, True, 2))]}),
         ## a string axis, unequal lengths, one point
         _section(4, {"string axis": [_row("123", "456")]}),
