@@ -7,12 +7,14 @@ the open.
 The size bar is set to 0 here, so every series opens with workers.
 """
 import hashlib
+import multiprocessing
 import os
 import sys
 import types
 
 import pytest
 
+from PyReconstruct.modules.backend.progress import NullProgressReporter
 from PyReconstruct.modules.datatypes import Series, section_rows
 from PyReconstruct.modules.datatypes.trace_id import (
     TraceIDIssuer, canonicalJSON, deriveTraceID, firstDerivedID,
@@ -257,3 +259,21 @@ def test_an_alignment_the_worker_did_not_measure_reads_in_this_process(tmp_path)
         assert section_rows._rowsFromWorker(1, series, result) is not None
     finally:
         series.close()
+
+
+def test_a_cancel_stops_the_workers_and_removes_the_folder(series_jser, monkeypatch):
+    """A first open cancelled during the build stops its workers, and the
+    working folder it made is removed."""
+    used = []
+
+    class CancelInBuild(NullProgressReporter):
+        def was_canceled(self):
+            return bool(used)
+
+    before = sorted(os.listdir(series_jser.parent))
+    with monkeypatch.context() as m:
+        _parallel(m, used)
+        assert Series.openJser(str(series_jser), progress=CancelInBuild) is None
+    assert used
+    assert multiprocessing.active_children() == []
+    assert sorted(os.listdir(series_jser.parent)) == before

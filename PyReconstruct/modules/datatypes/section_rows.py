@@ -344,8 +344,13 @@ class ParallelLoader():
         return loadForOpen(series, n) if rows is None else rows
 
     def close(self):
-        """Stop the workers, with any sections they did not read."""
-        self.executor.shutdown(wait=False, cancel_futures=True)
+        """Stop the workers, dropping any sections they did not start.
+
+        Waits for the sections they are reading: a cancelled or failed open
+        removes the working folder next, and on Windows a file a worker
+        still has open would stay behind.
+        """
+        self.executor.shutdown(wait=True, cancel_futures=True)
 
 
 @contextmanager
