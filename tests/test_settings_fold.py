@@ -340,7 +340,7 @@ def test_open_series_folds_after_the_code_is_settled_and_before_the_first_read()
     fold must sit between them."""
     from PyReconstruct.modules.gui.main.main_window import MainWindow
 
-    source = inspect.getsource(MainWindow.openSeries)
+    source = inspect.getsource(MainWindow._openSeries)
     code = source.index("self._ensureSeriesCode()")
     fold = source.index("self._foldSeriesSettings()")
     layout = source.index("self._restoreListLayout()")

@@ -568,9 +568,8 @@ def test_it_is_wired_to_launching_the_app_not_to_opening_a_series():
     there would be re-evaluated all day; the marker would make it harmless, but
     the placement would still be wrong.
     """
-    assert "applyUpdateCheckDefaultStartup" not in inspect.getsource(
-        MW.MainWindow.openSeries
-    )
+    for method in (MW.MainWindow.openSeries, MW.MainWindow._openSeries):
+        assert "applyUpdateCheckDefaultStartup" not in inspect.getsource(method)
 
 
 @pytest.fixture

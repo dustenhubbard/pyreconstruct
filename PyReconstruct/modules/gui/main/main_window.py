@@ -1606,25 +1606,47 @@ class MainWindow(QMainWindow):
         """True while an open, new series, import, Save As or quit runs."""
         return self._series_transition
 
-    def refuseFinderOpen(self, jser_fp : str):
-        """Tell the user a .jser opened from the Finder was not opened.
+    def refuseOpen(self, jser_fp : str = None):
+        """Tell the user a series was not opened because something was running.
 
             Params:
-                jser_fp (str): the file the Finder asked to open
+                jser_fp (str): the file that was to open, if it has one
         """
-        notify(
-            "Open skipped: PyReconstruct is busy with a dialog or a task.\n\n"
-            "Open this file again once that is done:\n" + jser_fp
-        )
+        text = "Open skipped: PyReconstruct is busy with a dialog or a task."
+        if jser_fp:
+            text += "\n\nOpen this file again once that is done:\n" + jser_fp
+        notify(text)
 
-    @_seriesTransition
     def openSeries(self, series_obj=None, jser_fp=None, query_prev=True):
         """Open an existing series and create the field.
+
+        Refused with a notice while another series transition runs. An open
+        delivered from the event loop of a running open (its progress window
+        or a dialog) replaced the series that open was settling on, and a
+        cancel of the running open then left the nested series' working
+        folder behind. A transition that opens a series itself calls
+        _openSeries.
 
             Params:
                 series_obj (Series): the series object (optional)
                 query_prev (bool): True if query user about saving data
         """
+        if self._series_transition:
+            if series_obj is not None:
+                # the series handed over to open is closed rather than left
+                # with its working folder, unless it is the one in the window
+                if not (self.series and _sameDir(
+                    self.series.hidden_dir, series_obj.hidden_dir
+                )):
+                    series_obj.close()
+                jser_fp = jser_fp or series_obj.jser_fp
+            self.refuseOpen(jser_fp)
+            return
+        with self.seriesTransition():
+            self._openSeries(series_obj, jser_fp, query_prev)
+
+    def _openSeries(self, series_obj=None, jser_fp=None, query_prev=True):
+        """openSeries, inside a series transition that is already running."""
 
         if self.series:  # series open and save yes
 
@@ -1823,7 +1845,7 @@ class MainWindow(QMainWindow):
 
         # query_prev=False: there is nothing left to save, and asking would
         # run saveAllData against the dir that was just deleted
-        self.openSeries(series_obj=recovered, query_prev=False)
+        self._openSeries(series_obj=recovered, query_prev=False)
 
     def _recoverUnsavedSeries(self, jser_fp):
         """Offer the unsaved work in the hidden series dir, if there is any.
@@ -2261,7 +2283,7 @@ class MainWindow(QMainWindow):
     
         ## Open series
         ## No need to query user about saving prev (already done above)
-        self.openSeries(series, query_prev=False)
+        self._openSeries(series, query_prev=False)
 
         ## Set view to entire image
         self.field.home()
@@ -2298,7 +2320,7 @@ class MainWindow(QMainWindow):
             return
 
         # open new series
-        self.openSeries(series)
+        self._openSeries(series)
 
         # the open stops early when the save prompt for the series already
         # open is canceled, and that series stays open as it was
@@ -2352,7 +2374,7 @@ class MainWindow(QMainWindow):
             return
 
         # open new series
-        self.openSeries(series)
+        self._openSeries(series)
 
         # the open stops early when the save prompt for the series already
         # open is canceled, and that series stays open as it was
