@@ -41,6 +41,34 @@ def test_first_volume_import_keeps_no_caller_frame():
     assert r.stdout.strip().splitlines()[-1] == "freed"
 
 
+# The first attempt to find trimesh fails once; a retry would succeed.
+FAIL_ONCE = """
+import importlib.abc, sys
+
+attempts = []
+
+class FailOnce(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "trimesh":
+            attempts.append(fullname)
+            if len(attempts) == 1:
+                raise RuntimeError("first attempt failed")
+
+sys.meta_path.insert(0, FailOnce())
+try:
+    import PyReconstruct.modules.backend.volume  # noqa: F401
+    print("imported", len(attempts))
+except RuntimeError as e:
+    print("raised", e, len(attempts))
+"""
+
+
+def test_failed_first_trimesh_import_reaches_caller_once():
+    r = subprocess.run([sys.executable, "-c", FAIL_ONCE],
+                       check=True, capture_output=True, text=True)
+    assert r.stdout.strip().splitlines()[-1] == "raised first attempt failed 1"
+
+
 @pytest.mark.gui
 def test_first_series_is_freed_after_a_second_open(main_window, tmp_path):
     window = main_window

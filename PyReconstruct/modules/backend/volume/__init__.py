@@ -12,18 +12,22 @@ def _import_trimesh_on_own_thread():
     MainWindow.openSeries building the menus, so the series it opened was
     never freed after the next open.
 
-    A fresh thread's stack ends at the thread itself. A failed import is left
-    for the module imports below to raise in the caller, as before.
+    A fresh thread's stack ends at the thread itself. A failed import raises
+    its error in the caller, as before, and is not tried again.
     """
+    errors = []
+
     def run():
         try:
             import trimesh  # noqa: F401
-        except Exception:
-            pass
+        except BaseException as e:
+            errors.append(e)
 
     thread = threading.Thread(target=run, name="import-trimesh")
     thread.start()
     thread.join()
+    if errors:
+        raise errors.pop()
 
 
 _import_trimesh_on_own_thread()
