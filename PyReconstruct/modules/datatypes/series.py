@@ -1625,7 +1625,7 @@ class Series():
                 store.fillSeriesData(series)
             else:
                 try:
-                    with openLoader(series, reporter.was_canceled) as load:
+                    with openLoader(series, reporter.canceled_while_waiting) as load:
                         for snum, section in series.enumerateSections(show_progress=False, load=load):
                             series.data.addOpenedSection(section)
                             if reporter.was_canceled():

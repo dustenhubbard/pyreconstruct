@@ -95,6 +95,11 @@ class ProgressReporter(ABC):
     def was_canceled(self) -> bool:
         """Return True if the user has requested cancellation."""
 
+    def canceled_while_waiting(self) -> bool:
+        """``was_canceled`` for a caller that waits between progress updates,
+        as an open does for a worker process."""
+        return self.was_canceled()
+
     def finish(self) -> None:
         """Finalize the reporter to 100%."""
         self.set_progress(100)
@@ -145,6 +150,18 @@ class QtProgressReporter(ProgressReporter):
 
     def was_canceled(self):
         return self._progbar.wasCanceled()
+
+    def canceled_while_waiting(self):
+        # setValue handles pending events for a modal dialog; between
+        # updates nothing does, so a click on Cancel would not land and the
+        # window would not redraw. This lets through what setValue does: the
+        # dialog blocks input to the window under it, and a Finder open is
+        # refused while it is shown (run.FileOpenWatcher.busy).
+        bar = self._progbar
+        if hasattr(bar, "isModal") and bar.isModal() and bar.isVisible():
+            from PySide6.QtWidgets import QApplication
+            QApplication.processEvents()
+        return self.was_canceled()
 
 
 class NullProgressReporter(ProgressReporter):

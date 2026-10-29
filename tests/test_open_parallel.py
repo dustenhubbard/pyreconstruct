@@ -10,6 +10,7 @@ import hashlib
 import multiprocessing
 import os
 import sys
+import threading
 import time
 import types
 from concurrent.futures import ProcessPoolExecutor
@@ -336,6 +337,75 @@ def test_a_cancel_does_not_wait_for_a_stalled_worker(stalled, series_jser, tmp_p
         assert sorted(os.listdir(series_jser.parent)) == before
     finally:
         Path(f"{marker}.release").touch()
+        for child in multiprocessing.active_children():
+            child.join(30)
+
+
+@pytest.mark.gui
+def test_cancel_clicked_while_a_worker_stalls_lands(qtbot, series_jser, tmp_path, monkeypatch):
+    """A click on the progress window's Cancel while the open waits for a
+    stuck worker is seen at the next poll: the wait handles window events."""
+    from PySide6.QtCore import QObject, Qt, Signal
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QPushButton
+
+    from PyReconstruct.modules.backend.progress import QtProgressReporter
+
+    (tmp_path / "markers").mkdir()
+    marker = tmp_path / "markers" / "started"
+    seen = {}
+    reporters = []
+
+    class Recording(QtProgressReporter):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            reporters.append(self)
+
+        def canceled_while_waiting(self):
+            canceled = super().canceled_while_waiting()
+            if canceled:
+                seen.setdefault("canceled", time.monotonic())
+            return canceled
+
+    class Clicker(QObject):
+        request = Signal()
+
+        def __init__(self):
+            super().__init__()
+            self.request.connect(self.click, Qt.QueuedConnection)
+
+        def click(self):
+            button = reporters[-1]._progbar.findChild(QPushButton)
+            seen["clicked"] = time.monotonic()
+            QTest.mouseClick(button, Qt.LeftButton)
+
+    clicker = Clicker()
+
+    def control():
+        if _wait_for(marker):
+            clicker.request.emit()
+            end = time.monotonic() + 5
+            while "returned" not in seen and time.monotonic() < end:
+                time.sleep(0.01)
+        Path(f"{marker}.release").touch()
+
+    monkeypatch.setenv("STALL_SECTION", "0")
+    monkeypatch.setenv("STALL_MARKER", str(marker))
+    thread = threading.Thread(target=control)
+    try:
+        with monkeypatch.context() as m:
+            _parallel(m, [])
+            m.setattr(section_rows, "readFileRows", _stall)
+            thread.start()
+            result = Series.openJser(str(series_jser), progress=Recording)
+            seen["returned"] = time.monotonic()
+        assert result is None
+        assert not Path(f"{marker}.release").exists()
+        assert seen["canceled"] - seen["clicked"] < 1
+        assert multiprocessing.active_children() == []
+    finally:
+        Path(f"{marker}.release").touch()
+        thread.join(10)
         for child in multiprocessing.active_children():
             child.join(30)
 
