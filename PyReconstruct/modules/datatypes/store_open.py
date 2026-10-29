@@ -30,7 +30,6 @@ raises: an OSError, or an SQLite error a store's file or disk causes
 is not.
 """
 
-import gc
 import hashlib
 import json
 import os
@@ -224,8 +223,7 @@ def openJser(fp : str, progress=None, notifier=None):
             if held is None:
                 return Series._unpackJser(fp, progress, notifier)[0]
             if held.opens_save or held.holdsJser():
-                with _gcPaused():
-                    series = Series._unpackJser(fp, progress, notifier, store=held)[0]
+                series = Series._unpackJser(fp, progress, notifier, store=held)[0]
                 if series is not None:
                     store_save.attach(series, held)
                     held = None
@@ -567,24 +565,6 @@ class _transaction():
 
 class _NotMeasuredAlike(Exception):
     """The open measured an object in an alignment the stored numbers would not name."""
-
-
-@contextmanager
-def _gcPaused():
-    """Keep the cyclic collector out of a bulk read that makes no cycles.
-
-    An open from the store makes a few objects per trace; left on, the
-    collector walked the growing heap many times over (most of 3 s of a
-    10 s open on a 550,000-trace series, measured on the prototype).
-    Reference counting still frees everything as usual.
-    """
-    was_on = gc.isenabled()
-    gc.disable()
-    try:
-        yield
-    finally:
-        if was_on:
-            gc.enable()
 
 
 def _headers(store : HybridStore):
