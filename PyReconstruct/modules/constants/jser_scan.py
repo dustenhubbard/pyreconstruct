@@ -32,13 +32,17 @@ open mix two versions of the file.
 
 The scan steps between structural bytes with two regexes rather than looking at
 every byte in Python, so the coordinate digits that are nearly all of a file are
-skipped in C.
+skipped in C. A section's ``contours`` object, which is nearly all of a
+section, goes faster still: NumPy finds every bracket and quote in it at once,
+and Python sees only the contour names (``_Reader.contour_keys``).
 """
 
 import json
 import os
 import re
 import zlib
+
+import numpy as np
 
 from . import fast_json
 
@@ -63,6 +67,16 @@ _STRUCT = re.compile(rb'\[[-+0-9.eE, \t\n\r]*\]|[\[\]{}"]')
 _IN_STRING = re.compile(rb'[\\"]')
 # A bare scalar (number, true, false, null) ends at one of these.
 _SCALAR_END = re.compile(rb'[,}\]: \t\n\r]')
+
+# ``contour_keys``: 1 for a byte that can change the depth or start a string.
+_EVENT = bytes(1 if c in b'[]{}"' else 0 for c in range(256))
+# What may sit between a name, its value and the next name, exactly as the
+# walk in ``raw_keys`` reads it.
+_WS_GAP = re.compile(rb'[ \t\n\r]*')
+_COLON_GAP = re.compile(rb'[ \t\n\r]*:[ \t\n\r]*')
+_COMMA_GAP = re.compile(rb'[ \t\n\r]*,[ \t\n\r]*')
+# ``contour_keys`` reads ahead at most this far, then leaves it to the walk.
+_KEYS_MAX = 64 << 20
 
 
 class NotStreamable(Exception):
@@ -330,6 +344,73 @@ class _Reader:
                 return
             raise NotStreamable(f"expected ',' or '}}' at byte {self.tell()}")
 
+    def contour_keys(self):
+        """``raw_keys`` for the object that starts here, in a few NumPy calls.
+
+        Takes only the shape the app writes: every value an object or array
+        and no backslash anywhere in the object. Then a quote always opens or
+        closes a string, so whether a byte is inside one is the parity of the
+        quotes before it, and the depth is a running sum over the brackets
+        outside strings. Returns None, having consumed nothing, for anything
+        else (a string or number value, an escape, an object that does not end
+        within ``_KEYS_MAX`` bytes, a stray byte between members), and the
+        caller walks the object with ``raw_keys``, which also raises the error
+        a malformed object deserves.
+        """
+        parts = []      # per block: positions from the "{", bytes, depth after
+        done = 0        # bytes from the "{" already looked at
+        quotes = 0      # quotes in them
+        depth = 0       # depth after them
+        while True:
+            block = self.buf[self.pos + done:]
+            at = np.flatnonzero(np.frombuffer(block.translate(_EVENT), np.bool_))
+            ch = np.frombuffer(block, np.uint8)[at]
+            is_quote = ch == _QUOTE
+            outside = (np.cumsum(is_quote) + quotes) % 2 == 0
+            step = (outside & ((ch == _LBRACE) | (ch == _LBRACKET))).astype(np.int64)
+            step -= outside & ((ch == _RBRACE) | (ch == _RBRACKET))
+            after = np.cumsum(step) + depth
+            ends = np.flatnonzero(after == 0)
+            if len(ends):
+                k = ends[0] + 1
+                parts.append((at[:k] + done, ch[:k], after[:k], step[:k]))
+                break
+            parts.append((at + done, ch, after, step))
+            quotes += int(np.count_nonzero(is_quote))
+            depth = int(after[-1]) if len(after) else depth
+            done += len(block)
+            if done >= _KEYS_MAX or not self._fill():
+                return None
+        at, ch, after, step = (np.concatenate(a) for a in zip(*parts))
+        start = self.pos
+        end = start + int(at[-1])  # the closing byte
+        if ch[-1] != _RBRACE or self.buf.find(b"\\", start, end) != -1:
+            return None
+        # The tokens of the object itself: each member is a name's two quotes,
+        # then the value's opening and closing bytes.
+        top_quote = (ch == _QUOTE) & (after == 1)
+        top = top_quote | ((step == 1) & (after == 2)) | ((step == -1) & (after == 1))
+        kinds = np.where(top_quote[top], 0, np.where(step[top] == 1, 1, 2))
+        if len(kinds) % 4 or np.any(kinds.reshape(-1, 4) != (0, 0, 1, 2)):
+            return None
+        tokens = (at[top].reshape(-1, 4) + start).tolist()
+        buf = self.buf
+        # what lies between "{", each name, its value and "}"
+        bounds = [start + 1]
+        gaps = [_WS_GAP]
+        for name_start, name_end, value_start, value_end in tokens:
+            bounds += [name_start, name_end + 1, value_start, value_end + 1]
+            gaps += [_COLON_GAP, _COMMA_GAP]
+        if tokens:
+            gaps[-1] = _WS_GAP
+        bounds.append(end)
+        for gap, a, b in zip(gaps, bounds[::2], bounds[1::2]):
+            if gap.fullmatch(buf, a, b) is None:
+                return None
+        keys = [bytes(buf[t[0]:t[1] + 1]) for t in tokens]
+        self.pos = end + 1
+        return keys
+
     def raw_keys(self) -> list:
         """The raw keys of the object that starts here; every value is skipped.
 
@@ -364,7 +445,9 @@ def _scan_section(r : _Reader) -> list:
             continue
         c = r.peek()
         if c == _LBRACE:
-            raw = r.raw_keys()
+            raw = r.contour_keys()
+            if raw is None:
+                raw = r.raw_keys()
             if raw:
                 names = strict_loads(b"[" + b",".join(raw) + b"]")
         elif c == ord("n"):
