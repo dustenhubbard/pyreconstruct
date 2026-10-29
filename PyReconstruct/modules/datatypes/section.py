@@ -673,63 +673,12 @@ class Section():
         self.thickness = section_data["thickness"]
         self.contours : dict[str, Contour] = {}
 
-        ## Every trace loaded from a file gets an id, DERIVED from its own
-        ## stored content (`tid-v1`) so that two independent opens of one file
-        ## agree on every id with no save between -- a random id minted at
-        ## load is the failure `Flag.deriveID`'s docstring records. The
-        ## derivation reads the stored rows exactly as `updateJSON` left them
-        ## (the same dict the loop below builds `Trace` objects from, so the
-        ## (contour, index) join cannot skew: `updateJSON` already applied the
-        ## defective-row screens to the stored data). Traces created later in
-        ## the session are not here and fall through to `issue()` in
-        ## `appendRow`, as before. In memory only; nothing here writes a byte.
-        ##
-        ## One step comes in front of that: a row whose file ASSERTED an id
-        ## does not get one invented for it. `adoptForSection` runs first and
-        ## takes the file at its word, subject to the module's collision policy
-        ## -- a second claim on one id is recorded by name in
-        ## `issuer.collisions` and refused, never silently adopted -- and the
-        ## rows it accepted are then withheld from the derivation.
-        ##
-        ## ADOPT BEFORE DERIVE, AND THE ORDER IS NOT A PREFERENCE. An id written
-        ## by this build IS the id this build derives for that row, so deriving
-        ## first would register the row's own id in the issuer's `taken` set and
-        ## the adoption that followed would report every row in the file as
-        ## clashing with itself.
-        issuer = getattr(series, "trace_id_issuer", None)
-        digest = sectionFileDigest(raw) if issuer is not None else None
-        ## Before both: a file this session wrote gets back the ids its rows
-        ## were saved with (`TraceIDIssuer.recordSaved`), so a save and a load
-        ## in between do not move any trace's id. Every row is in it or none.
-        restored_ids = (
-            issuer.restoreForSection(n, digest, section_data["contours"])
-            if issuer is not None else None
+        ## Every trace loaded from a file gets an id (`issueLoadedTraceIDs`).
+        restored, adopted_ids, derived_ids = Section.issueLoadedTraceIDs(
+            n, series, raw, section_data["contours"], stored_ids
         )
         del raw
-        self.trace_ids_trusted = restored_ids is not None
-        ## The issuer is handed plain ids: the fill-mode spelling riding in the
-        ## record is the unpack path's business (`reattachTraceIDs`) and means
-        ## nothing to an id index.
-        adopted_ids : dict
-        derived_ids : Union[dict, None]
-        if restored_ids is not None:
-            adopted_ids, derived_ids = restored_ids, {}
-        else:
-            adopted_ids = (
-                issuer.adoptForSection(
-                    n,
-                    section_data["contours"],
-                    {key: record.trace_id for key, record in stored_ids.items()},
-                )
-                if issuer is not None else {}
-            )
-            derived_ids = (
-                issuer.deriveForSection(
-                    n, section_data["contours"], skip=adopted_ids,
-                    digest=digest,
-                )
-                if issuer is not None else None
-            )
+        self.trace_ids_trusted = restored
         self._loaded_trace_ids = {} if derived_ids is not None else None
         from .columnar_store import coordinatesFromRow
         self._loaded_coordinates = {}
@@ -1252,6 +1201,80 @@ class Section():
                         stored_ids[(cname, i)] = record[1]
 
         return renamed
+
+    @staticmethod
+    def issueLoadedTraceIDs(n : int, series, raw : bytes, contours : dict, stored_ids : dict):
+        """Register a section file's trace ids with the series' issuer.
+
+        The id step of `Section.__init__`, which a series open that reads a
+        section's rows without building a `Section` (section_rows.py) takes
+        as well, with the same inputs in the same order, so the issuer ends
+        in the same state either way.
+
+            Params:
+                n (int): the section number
+                series (Series): the series; no issuer, no ids
+                raw (bytes): the section file's bytes, as read
+                contours (dict): the file's contours after `updateJSON`
+                stored_ids (dict): the ids `updateJSON` lifted off keyed rows
+            Returns:
+                (bool): True if every id came back from this session's save
+                (dict): (name, index) -> adopted (or restored) id
+                (dict): (name, index) -> derived id, or None with no issuer
+        """
+        ## Every trace loaded from a file gets an id, DERIVED from its own
+        ## stored content (`tid-v1`) so that two independent opens of one file
+        ## agree on every id with no save between -- a random id minted at
+        ## load is the failure `Flag.deriveID`'s docstring records. The
+        ## derivation reads the stored rows exactly as `updateJSON` left them
+        ## (the same dict `Section.__init__` builds `Trace` objects from, so the
+        ## (contour, index) join cannot skew: `updateJSON` already applied the
+        ## defective-row screens to the stored data). Traces created later in
+        ## the session are not here and fall through to `issue()` in
+        ## `appendRow`, as before. In memory only; nothing here writes a byte.
+        ##
+        ## One step comes in front of that: a row whose file ASSERTED an id
+        ## does not get one invented for it. `adoptForSection` runs first and
+        ## takes the file at its word, subject to the module's collision policy
+        ## -- a second claim on one id is recorded by name in
+        ## `issuer.collisions` and refused, never silently adopted -- and the
+        ## rows it accepted are then withheld from the derivation.
+        ##
+        ## ADOPT BEFORE DERIVE, AND THE ORDER IS NOT A PREFERENCE. An id written
+        ## by this build IS the id this build derives for that row, so deriving
+        ## first would register the row's own id in the issuer's `taken` set and
+        ## the adoption that followed would report every row in the file as
+        ## clashing with itself.
+        issuer = getattr(series, "trace_id_issuer", None)
+        digest = sectionFileDigest(raw) if issuer is not None else None
+        ## Before both: a file this session wrote gets back the ids its rows
+        ## were saved with (`TraceIDIssuer.recordSaved`), so a save and a load
+        ## in between do not move any trace's id. Every row is in it or none.
+        restored_ids = (
+            issuer.restoreForSection(n, digest, contours)
+            if issuer is not None else None
+        )
+        ## The issuer is handed plain ids: the fill-mode spelling riding in the
+        ## record is the unpack path's business (`reattachTraceIDs`) and means
+        ## nothing to an id index.
+        if restored_ids is not None:
+            return True, restored_ids, {}
+        adopted_ids = (
+            issuer.adoptForSection(
+                n,
+                contours,
+                {key: record.trace_id for key, record in stored_ids.items()},
+            )
+            if issuer is not None else {}
+        )
+        derived_ids = (
+            issuer.deriveForSection(
+                n, contours, skip=adopted_ids,
+                digest=digest,
+            )
+            if issuer is not None else None
+        )
+        return False, adopted_ids, derived_ids
 
     @staticmethod
     def reattachTraceIDs(section_data, stored_ids):

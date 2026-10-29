@@ -11,6 +11,7 @@ from PyReconstruct.modules.constants import EXPORT_ERRORS
 from .columnar_store import TraceView
 from .object_ids import ObjectIds
 from .section import Section
+from .section_rows import SectionRows, loadForOpen
 from .transform import Transform
 from .trace import Trace
 
@@ -324,21 +325,51 @@ def traceDataForRows(store, rows : list, tform : Transform) -> list:
     store.getCoordinates(row))` builds, to the bit, with `index` set to its
     place in `rows`; the caller sets it when the rows are split.
     """
-    coordinates = [store.getCoordinates(row) for row in rows]
-    counts = [len(c) for c in coordinates]
-    points = tform.mapPointsArray(np.concatenate(coordinates))
-    closed = store.flagColumn("closed")[rows].tolist()
-    hidden = store.flagColumn("hidden")[rows].tolist()
-    negative = store.flagColumn("negative")[rows].tolist()
     # a list of int per row, as `getColor` gives it
     colors = store.colorColumn[rows].tolist()
+    return measureTraceData(
+        [store.getCoordinates(row) for row in rows],
+        store.flagColumn("closed")[rows].tolist(),
+        store.flagColumn("hidden")[rows].tolist(),
+        store.flagColumn("negative")[rows].tolist(),
+        [store.getTags(row) for row in rows],
+        [tuple(c) if c else None for c in colors],
+        tform,
+    )
+
+
+def traceDataForFileRows(items : list, tform : Transform) -> list:
+    """One TraceData per (coordinates, row) of a section file's plain rows
+    (section_rows.py), built together: the TraceData `traceDataForRows`
+    gives for the same rows after `Section.__init__` and its store read them.
+    """
+    coordinates = [c for c, _ in items]
+    rows = [r for _, r in items]
+    return measureTraceData(
+        coordinates,
+        # `Section.__init__` opens a two-point trace
+        [False if len(c) == 2 else bool(r[3]) for c, r in items],
+        [bool(r[5]) for r in rows],
+        [bool(r[4]) for r in rows],
+        [set(r[7]) for r in rows],
+        # a plain row's color is three ints from 0 to 255
+        [tuple(r[2]) for r in rows],
+        tform,
+    )
+
+
+def measureTraceData(coordinates : list, closed : list, hidden : list, negative : list,
+                     tags : list, colors : list, tform : Transform) -> list:
+    """One TraceData per trace, its points mapped and measured in one pass;
+    the lists hold one entry per trace, `index` is left at 0."""
+    counts = [len(c) for c in coordinates]
+    points = tform.mapPointsArray(np.concatenate(coordinates))
     geometries = traceGeometries(points, counts, closed)
     return [
         TraceData.fromGeometry(
-            0, closed[k], hidden[k], negative[k], store.getTags(row),
-            tuple(colors[k]) if colors[k] else None, geometries[k], tform,
+            0, closed[k], hidden[k], negative[k], tags[k], colors[k], geometries[k], tform,
         )
-        for k, row in enumerate(rows)
+        for k in range(len(coordinates))
     ]
 
 
@@ -381,7 +412,7 @@ class SeriesData():
 
         return trace_data
     
-    def refresh(self, message="Loading series data...", show_progress=True):
+    def refresh(self, message="Loading series data...", show_progress=True, from_rows=False):
         """Completely refresh the series data.
 
             Params:
@@ -389,6 +420,8 @@ class SeriesData():
                     series it opens; a refresh of the open series keeps the
                     default.
                 show_progress (bool): False to show no progress bar at all
+                from_rows (bool): True to read each section's rows without
+                    building a `Section` (`addOpenedSection`), as an open does
         """
 
         self.data = {
@@ -400,10 +433,11 @@ class SeriesData():
         # <name>..." bar when a series opens, and an opening series must not
         # carry one (decided 2026-09-14). Every other operation bar does.
         for snum, section in self.series.enumerateSections(
-            show_progress=show_progress, message=message, eta=False
+            show_progress=show_progress, message=message, eta=False,
+            load=loadForOpen if from_rows else None,
         ):
 
-            self.updateSection(section, update_traces=True, log_events=False, read_store=True)
+            self.addOpenedSection(section)
 
         # the ids carry over: traces that are still there keep their ids
         # (a renumbering moved them already, Series.reorderSections)
@@ -538,6 +572,39 @@ class SeriesData():
                     ## Remove object from object attributes dicts
                     self.series.removeObjAttrs(obj_name)
     
+    def addOpenedSection(self, section):
+        """Add a section an open loaded (`loadForOpen`): a `Section`, or the
+        `SectionRows` of a section not yet in the series data.
+
+        From `SectionRows`, the same data `updateSection(section,
+        update_traces=True, log_events=False, read_store=True)` gives for
+        the `Section` built from the same file: the same section entry, the
+        same objects created in the same order, the same TraceData, and the
+        same object-id calls.
+        """
+        if not isinstance(section, SectionRows):
+            self.updateSection(section, update_traces=True, log_events=False, read_store=True)
+            return
+        ## the section entry (updateSection reads the same attributes)
+        self.updateSection(section)
+        objects = self.data["objects"]
+        named_rows = []
+        for name, rows in section.contours.items():
+            if name in objects:
+                objects[name].clearSection(section.n)
+            if rows:
+                named_rows.append((name, list(zip(section.coordinates[name], rows))))
+        self._addMeasured(section, named_rows, traceDataForFileRows)
+        ## a name with rows has traces now, so no object is emptied; the
+        ## object ids as updateSection keeps them with log_events off
+        ids = self.object_ids
+        for name in section.contours:
+            obj_data = objects.get(name)
+            if obj_data is not None and section.n in obj_data.traces:
+                ids.ensure(section.n, name)
+            else:
+                ids.drop(section.n, name, keep=True)
+
     def _storeRows(self, store, section : Section, trace_names) -> Optional[list]:
         """(name, rows) for each name with traces on the section, in order.
 
@@ -565,6 +632,18 @@ class SeriesData():
         time with addTrace. Rows measured with one transform are measured in
         one pass; an object with its own alignment can have another.
         """
+        return self._addMeasured(
+            section, named_rows, lambda rows, tform: traceDataForRows(store, rows, tform)
+        )
+
+    def _addMeasured(self, section, named_rows : list, measure) -> list:
+        """`_addStoreRows`, with `measure(rows, tform)` giving the TraceData
+        of a list of rows.
+
+        Objects are created in the order of `named_rows`, not in the order
+        their transforms are measured in: the series data's object order
+        follows the section's contour order.
+        """
         objects = self.data["objects"]
         by_tform : dict = {}
         for name, rows in named_rows:
@@ -572,7 +651,7 @@ class SeriesData():
             by_tform.setdefault(id(tform), (tform, []))[1].append((name, rows))
         built : dict = {}
         for tform, group in by_tform.values():
-            trace_data = traceDataForRows(store, [r for _, rows in group for r in rows], tform)
+            trace_data = measure([r for _, rows in group for r in rows], tform)
             start = 0
             for name, rows in group:
                 built[name] = trace_data[start:start + len(rows)]

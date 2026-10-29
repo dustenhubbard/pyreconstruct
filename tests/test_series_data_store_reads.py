@@ -104,10 +104,12 @@ def synthetic_series(tmp_path):
     series.close()
 
 
-def test_open_and_refresh_read_the_store_and_save_does_not(series_jser, monkeypatch):
+def test_open_reads_rows_refresh_reads_the_store_and_save_neither(series_jser, monkeypatch):
     read_from_store = []
+    read_from_rows = []
     real_init = TraceData.__init__
     real_rows = series_data.traceDataForRows
+    real_file_rows = series_data.traceDataForFileRows
 
     def spy(self, trace, index, tform, points=None):
         read_from_store.append(isinstance(trace, TraceView) and points is not None)
@@ -118,11 +120,17 @@ def test_open_and_refresh_read_the_store_and_save_does_not(series_jser, monkeypa
         return real_rows(store, rows, tform)
 
     monkeypatch.setattr(TraceData, "__init__", spy)
-    monkeypatch.setattr(series_data, "traceDataForRows", spy_rows)
+    def spy_file_rows(items, tform):
+        read_from_rows.extend([True] * len(items))
+        return real_file_rows(items, tform)
 
+    monkeypatch.setattr(series_data, "traceDataForRows", spy_rows)
+    monkeypatch.setattr(series_data, "traceDataForFileRows", spy_file_rows)
+
+    ## The open reads each section file's rows (section_rows.py)
     series = _open(series_jser)
     try:
-        assert read_from_store and all(read_from_store)
+        assert read_from_rows and not read_from_store
 
         read_from_store.clear()
         series.data.refresh()
