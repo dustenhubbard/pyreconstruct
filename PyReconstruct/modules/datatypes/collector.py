@@ -11,9 +11,10 @@ that series closes. Reference counting still frees everything as before.
 
 Objects frozen at the open are never collected while the series stays open: a
 cycle among them that later becomes garbage stays in memory until the close.
-So a series that closed but is still held when the next one settles (by a
-3D scene, a plugin or a dialog) is not frozen with it: the freeze waits until
-a collection frees that series.
+So while any series that closed is still held (by a 3D scene, a plugin or a
+dialog), an open only collects: nothing is frozen and the thresholds stay as
+they are, so that series is freed once its holder lets go. The next open
+settles again.
 """
 
 import gc
@@ -24,48 +25,34 @@ YOUNG_THRESHOLD = 10000
 # (series, the thresholds before it settled), or None when nothing is settled
 _settled = None
 
-# a weak reference to the series restored last, until the next settle
-_closed = None
+# weak references to every series restored, dropped once that series is freed
+_closed = []
 
 
 def settleAfterOpen(series):
     """Collect, freeze what is left and raise the young threshold for series.
 
-    A series settled before it is restored first.
+    A series settled before it is restored first. While a closed series is
+    still alive after the collection, nothing is frozen or raised.
     """
-    global _settled, _closed
+    global _settled
     if _settled is not None:
         restore(_settled[0])
     before = gc.get_threshold()
     gc.collect()
-    if _closed is not None and _closed() is not None:
-        # frozen, the closed series could not be freed once its holder lets go
-        gc.callbacks.append(_freezeWhenClosedFreed)
-    else:
+    _closed[:] = [ref for ref in _closed if ref() is not None]
+    if not _closed:
         gc.freeze()
-        _closed = None
-    gc.set_threshold(YOUNG_THRESHOLD, before[1], before[2])
+        gc.set_threshold(YOUNG_THRESHOLD, before[1], before[2])
     _settled = (series, before)
-
-
-def _freezeWhenClosedFreed(phase, info):
-    """After the collection that frees the closed series, freeze what is left."""
-    global _closed
-    if phase != "stop" or _closed() is not None:
-        return
-    gc.callbacks.remove(_freezeWhenClosedFreed)
-    gc.freeze()
-    _closed = None
 
 
 def restore(series):
     """Unfreeze and put back the thresholds, if series is the one settled."""
-    global _settled, _closed
+    global _settled
     if _settled is None or _settled[0] is not series:
         return
-    if _freezeWhenClosedFreed in gc.callbacks:
-        gc.callbacks.remove(_freezeWhenClosedFreed)
-    _closed = weakref.ref(series)
+    _closed.append(weakref.ref(series))
     gc.unfreeze()
     gc.set_threshold(*_settled[1])
     _settled = None
