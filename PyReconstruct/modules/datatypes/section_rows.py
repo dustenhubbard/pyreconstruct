@@ -257,8 +257,9 @@ def mainSafeForWorkers() -> bool:
     return getattr(run, "__module__", None) == "__main__"
 
 
-def readFileRows(fp : str, n : int, alignments):
-    """A section file read for a series open, in a worker process.
+def readFileRows(fp : Union[str, bytes], n : int, alignments):
+    """A section file read for a series open, in a worker process. `fp` is
+    the file's path, or on a first open its bytes (UnpackFeeder).
 
     The work `readSectionRows` does that needs no series: the decode and
     `updateJSON`, `plainCoordinates`, each row's canonicalJSON and
@@ -267,8 +268,11 @@ def readFileRows(fp : str, n : int, alignments):
     go back without their x and y, which only the measuring reads. None if a
     row is not plain.
     """
-    with open(fp, "rb") as f:
-        raw = f.read()
+    if isinstance(fp, bytes):
+        raw = fp
+    else:
+        with open(fp, "rb") as f:
+            raw = f.read()
     section_data = fast_loads(raw)
     stored_ids : dict = {}
     Section.updateJSON(section_data, n, stored_ids=stored_ids)
@@ -340,21 +344,54 @@ class ParallelLoader():
     fails because a worker did.
     """
 
-    def __init__(self, series, executor, section_numbers, canceled=None):
+    def __init__(self, executor, alignments, canceled=None):
         self.executor = executor
+        self.alignments = alignments
         self.canceled = canceled or (lambda: False)
-        ## every alignment an object can be measured with: an object's own
-        ## is only ever cleared during the open, never set
-        alignments = {series.alignment} | {
-            attrs["alignment"] for attrs in series.obj_attrs.values()
+        self.futures = {}
+        self.submitted = []
+        self.failed = False
+        self.closed = False
+
+    def submit(self, n : int, fp : Union[str, bytes]):
+        """Read section n's file (its path or its bytes) in a worker."""
+        future = self.executor.submit(readFileRows, fp, n, self.alignments)
+        self.futures[n] = future
+        self.submitted.append(future)
+
+    @staticmethod
+    def workerCount(section_count : int) -> int:
+        return min(PARALLEL_MAX_WORKERS, (os.cpu_count() or 1) - 1, section_count)
+
+    @staticmethod
+    def seriesAlignments(alignment : str, obj_attrs : dict) -> set:
+        """Every alignment an object can be measured with: an object's own
+        is only ever cleared during the open, never set."""
+        return {alignment} | {
+            attrs["alignment"] for attrs in obj_attrs.values()
             if attrs.get("alignment") is not None
         }
-        self.futures = {
-            n: executor.submit(readFileRows, series.presentSection(n), n, alignments)
-            for n in section_numbers
-        }
-        self.submitted = list(self.futures.values())
-        self.failed = False
+
+    @classmethod
+    def launch(cls, workers : int, alignments : set, sections, canceled=None) -> Optional["ParallelLoader"]:
+        """A loader with `workers` processes reading `sections`, (n, path or
+        bytes) pairs, or None if the workers do not start."""
+        executor = None
+        try:
+            executor = ProcessPoolExecutor(
+                workers, mp_context=multiprocessing.get_context("spawn"),
+            )
+            loader = cls(executor, alignments, canceled)
+            for n, fp in sections:
+                loader.submit(n, fp)
+            return loader
+        except Exception as e:
+            ## a worker started before the failure may be reading a section:
+            ## it stops before the open goes on in this process
+            if executor is not None:
+                stopWorkers(executor)
+            print(f"Opening in one process: the workers failed ({e!r})", file=sys.stderr)
+            return None
 
     @classmethod
     def start(cls, series, canceled=None) -> Optional["ParallelLoader"]:
@@ -375,22 +412,13 @@ class ParallelLoader():
             )
         except OSError:
             return None
-        workers = min(PARALLEL_MAX_WORKERS, (os.cpu_count() or 1) - 1, len(section_numbers))
+        workers = cls.workerCount(len(section_numbers))
         if size < PARALLEL_MIN_BYTES or workers < 1:
             return None
-        executor = None
-        try:
-            executor = ProcessPoolExecutor(
-                workers, mp_context=multiprocessing.get_context("spawn"),
-            )
-            return cls(series, executor, section_numbers, canceled)
-        except Exception as e:
-            ## a worker started before the failure may be reading a section:
-            ## it stops before the open goes on in this process
-            if executor is not None:
-                stopWorkers(executor)
-            print(f"Opening in one process: the workers did not start ({e!r})", file=sys.stderr)
-            return None
+        return cls.launch(
+            workers, cls.seriesAlignments(series.alignment, series.obj_attrs),
+            [(n, series.presentSection(n)) for n in section_numbers], canceled,
+        )
 
     def __call__(self, series, n : int) -> Union[SectionRows, Section]:
         future = self.futures.pop(n, None)
@@ -429,19 +457,83 @@ class ParallelLoader():
         still has open would stay behind. A worker still reading is given
         `PARALLEL_STOP_GRACE`, then terminated (stopWorkers).
         """
+        if self.closed:
+            return
+        self.closed = True
         if all(future.done() for future in self.submitted):
             self.executor.shutdown(wait=True)
         else:
             stopWorkers(self.executor)
 
 
+class UnpackFeeder():
+    """A first open's section files read in worker processes as its unpack
+    writes them, so the reads overlap the unpack.
+
+    The workers get each file's bytes, not its path: the unpack moves its
+    folder into place once every file is written, and on Windows a file a
+    worker has open cannot be moved. They start once the files written add
+    up to `PARALLEL_MIN_BYTES`, so a series takes them exactly when
+    `ParallelLoader.start` would. The build pass then uses `loader`
+    (openLoader). Workers that fail to start or to take a section are
+    stopped, and the open goes on in this process. `close` must run before
+    the unpack removes its folder on a cancel or failure.
+    """
+
+    def __init__(self, section_count : int, series_data : dict, canceled=None):
+        self.workers = ParallelLoader.workerCount(section_count) if mainSafeForWorkers() else 0
+        self.series_data = series_data
+        self.canceled = canceled
+        self.loader = None
+        self.feeding = self.workers >= 1
+        self.written = []  # (n, bytes) written before the workers start
+        self.size = 0
+
+    def wrote(self, n : int, data):
+        """The unpack wrote section n's file, `data` its bytes."""
+        if not self.feeding:
+            return
+        data = bytes(data)  # a memoryview cannot go to a worker
+        if self.loader is not None:
+            try:
+                self.loader.submit(n, data)
+            except Exception as e:
+                self.feeding = False
+                loader, self.loader = self.loader, None
+                stopWorkers(loader.executor)
+                print(f"Opening in one process: the workers failed ({e!r})", file=sys.stderr)
+            return
+        self.written.append((n, data))
+        self.size += len(data)
+        if self.size < PARALLEL_MIN_BYTES:
+            return
+        ## the alignment and obj_attrs the open builds the series with:
+        ## Series.updateJSON changes neither
+        alignments = ParallelLoader.seriesAlignments(
+            self.series_data.get("alignment"), self.series_data.get("obj_attrs", {}),
+        )
+        written, self.written = self.written, None
+        self.loader = ParallelLoader.launch(self.workers, alignments, written, self.canceled)
+        self.feeding = self.loader is not None
+
+    def close(self):
+        self.feeding = False
+        self.written = None
+        if self.loader is not None:
+            self.loader.close()
+
+
 @contextmanager
-def openLoader(series, canceled=None):
+def openLoader(series, canceled=None, feeder : Optional[UnpackFeeder] = None):
     """The `load` a series open passes `enumerateSections`: a
     `ParallelLoader` for a large series, else `loadForOpen`. With
     `canceled`, a load that waits for a worker raises OpenCanceled once
-    `canceled()` is true."""
-    loader = ParallelLoader.start(series, canceled)
+    `canceled()` is true. A first open passes its `feeder`, whose workers
+    already have the sections."""
+    if feeder is not None:
+        loader = feeder.loader
+    else:
+        loader = ParallelLoader.start(series, canceled)
     if loader is None:
         yield loadForOpen
         return

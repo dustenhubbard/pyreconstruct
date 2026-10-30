@@ -6,6 +6,7 @@ the open.
 
 The size bar is set to 0 here, so every series opens with workers.
 """
+import contextlib
 import hashlib
 import multiprocessing
 import os
@@ -286,12 +287,13 @@ def test_a_cancel_stops_the_workers_and_removes_the_folder(series_jser, monkeypa
 
 
 def _stall(fp, n, alignment):
-    """Hold section STALL_SECTION's file open until the release marker
+    """Stall on section STALL_SECTION, holding its file open if given its
+    path (a first open's workers get its bytes), until the release marker
     exists (at most 30 s), after writing the started marker."""
     if n != int(os.environ["STALL_SECTION"]):
         return REAL_READ(fp, n, alignment)
     marker = Path(os.environ["STALL_MARKER"])
-    with open(fp, "rb"):
+    with open(fp, "rb") if isinstance(fp, str) else contextlib.nullcontext():
         marker.write_text(str(os.getpid()))
         limit = time.monotonic() + 30
         while not Path(f"{marker}.release").exists() and time.monotonic() < limit:
@@ -501,11 +503,148 @@ def test_a_failed_start_stops_its_workers_first(series_jser, tmp_path, monkeypat
             m.setattr(section_rows, "ProcessPoolExecutor", _FailSecondSubmit)
             series = _open(series_jser)
             alive = multiprocessing.active_children()
-        assert "the workers did not start" in capsys.readouterr().err
+        assert "the workers failed" in capsys.readouterr().err
         assert alive == []
     finally:
         if series is not None:
             series.close()
         Path(f"{marker}.release").touch()
+        for child in multiprocessing.active_children():
+            child.join(30)
+
+
+def _mark_read(fp, n, alignment):
+    """Read the section, then leave a file named n in READ_DIR."""
+    result = REAL_READ(fp, n, alignment)
+    (Path(os.environ["READ_DIR"]) / str(n)).touch()
+    return result
+
+
+def test_a_first_open_feeds_the_workers_during_the_unpack(series_jser, tmp_path, monkeypatch):
+    """The workers read sections before the unpack has written the .ser,
+    and the open matches one process."""
+    read_dir = tmp_path / "read"
+    read_dir.mkdir()
+    monkeypatch.setenv("READ_DIR", str(read_dir))
+    real_update = Series.updateJSON
+    seen = []
+
+    def update(series_data):
+        end = time.monotonic() + 20
+        while not os.listdir(read_dir) and time.monotonic() < end:
+            time.sleep(0.01)
+        seen.append(sorted(os.listdir(read_dir)))
+        return real_update(series_data)
+
+    serial_jser = tmp_path / "serial" / "series.jser"
+    serial_jser.parent.mkdir()
+    serial_jser.write_bytes(series_jser.read_bytes())
+    with monkeypatch.context() as m:
+        _serial(m)
+        serial = _open(serial_jser)
+    try:
+        with monkeypatch.context() as m:
+            _parallel(m, [])
+            m.setattr(section_rows, "readFileRows", _mark_read)
+            m.setattr(Series, "updateJSON", staticmethod(update))
+            parallel = _open(series_jser)
+        try:
+            assert seen and seen[0], "no worker read a section during the unpack"
+            assert _state(parallel) == _state(serial)
+            assert _files(parallel) == _files(serial)
+        finally:
+            parallel.close()
+    finally:
+        serial.close()
+
+
+def _unpack_stall(monkeypatch, tmp_path):
+    """Stall section 0's worker, and record each Series.updateJSON call (the
+    unpack's step after the sections)."""
+    marker = tmp_path / "markers" / "started"
+    marker.parent.mkdir(exist_ok=True)
+    monkeypatch.setenv("STALL_SECTION", "0")
+    monkeypatch.setenv("STALL_MARKER", str(marker))
+    updates = []
+    real_update = Series.updateJSON
+
+    def update(series_data):
+        updates.append(True)
+        return real_update(series_data)
+
+    monkeypatch.setattr(section_rows, "readFileRows", _stall)
+    monkeypatch.setattr(Series, "updateJSON", staticmethod(update))
+    return marker, updates
+
+
+def test_a_cancel_during_the_unpack_stops_the_workers(series_jser, tmp_path, monkeypatch):
+    """A cancel while the unpack is still writing, with a worker stuck on a
+    section, returns at once, stops the workers and removes what the open
+    made."""
+    (tmp_path / "markers").mkdir()
+    before = sorted(os.listdir(series_jser.parent))
+    try:
+        with monkeypatch.context() as m:
+            _parallel(m, [])
+            marker, updates = _unpack_stall(m, tmp_path)
+
+            waited = []
+
+            class CancelOnceStalled(NullProgressReporter):
+                def was_canceled(self):
+                    if waited:
+                        return marker.exists()
+                    waited.append(True)
+                    return _wait_for(marker, 10)
+
+            start = time.monotonic()
+            result = Series.openJser(str(series_jser), progress=CancelOnceStalled)
+            elapsed = time.monotonic() - start
+            alive = multiprocessing.active_children()
+        assert result is None
+        assert updates == [], "the cancel came after the unpack"
+        assert elapsed < 15
+        assert alive == []
+        assert sorted(os.listdir(series_jser.parent)) == before
+    finally:
+        Path(f"{tmp_path / 'markers' / 'started'}.release").touch()
+        for child in multiprocessing.active_children():
+            child.join(30)
+
+
+def test_a_failure_during_the_unpack_stops_the_workers_and_keeps_the_folder(series_jser, tmp_path, monkeypatch):
+    """A section that fails to unpack while a worker is stuck on an earlier
+    one stops the workers, and the folder at the working folder's place is
+    put back untouched."""
+    (tmp_path / "markers").mkdir()
+    hidden = series_jser.parent / ".series"
+    hidden.mkdir()
+    (hidden / "keep.txt").write_text("mine")
+    before = sorted(os.listdir(series_jser.parent))
+    real_section_update = section_rows.Section.updateJSON
+    calls = []
+    try:
+        with monkeypatch.context() as m:
+            _parallel(m, [])
+            marker, updates = _unpack_stall(m, tmp_path)
+
+            def failing(section_data, n, **kwargs):
+                calls.append(n)
+                if len(calls) == 2:
+                    calls.append(_wait_for(marker, 10))
+                    raise RuntimeError("a corrupt section")
+                return real_section_update(section_data, n, **kwargs)
+
+            m.setattr(section_rows.Section, "updateJSON", staticmethod(failing))
+            with pytest.raises(RuntimeError, match="a corrupt section"):
+                Series.openJser(str(series_jser), progress=NullProgressReporter)
+            alive = multiprocessing.active_children()
+        assert calls[2] is True, "no worker was reading when the unpack failed"
+        assert alive == []
+        assert sorted(os.listdir(series_jser.parent)) == before
+        assert os.listdir(hidden) == ["keep.txt"]
+        assert (hidden / "keep.txt").read_text() == "mine"
+    finally:
+        Path(f"{tmp_path / 'markers' / 'started'}.release").touch()
         for child in multiprocessing.active_children():
             child.join(30)
