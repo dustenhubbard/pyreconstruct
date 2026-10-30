@@ -11,28 +11,39 @@ that series closes. Reference counting still frees everything as before.
 
 Objects frozen at the open are never collected while the series stays open: a
 cycle among them that later becomes garbage stays in memory until the close.
+So while any series that closed is still held (by a 3D scene, a plugin or a
+dialog), an open only collects: nothing is frozen and the thresholds stay as
+they are, so that series is freed once its holder lets go. The next open
+settles again.
 """
 
 import gc
+import weakref
 
 YOUNG_THRESHOLD = 10000
 
 # (series, the thresholds before it settled), or None when nothing is settled
 _settled = None
 
+# weak references to every series restored, dropped once that series is freed
+_closed: list[weakref.ref] = []
+
 
 def settleAfterOpen(series):
     """Collect, freeze what is left and raise the young threshold for series.
 
-    A series settled before it is restored first.
+    A series settled before it is restored first. While a closed series is
+    still alive after the collection, nothing is frozen or raised.
     """
     global _settled
     if _settled is not None:
         restore(_settled[0])
     before = gc.get_threshold()
     gc.collect()
-    gc.freeze()
-    gc.set_threshold(YOUNG_THRESHOLD, before[1], before[2])
+    _closed[:] = [ref for ref in _closed if ref() is not None]
+    if not _closed:
+        gc.freeze()
+        gc.set_threshold(YOUNG_THRESHOLD, before[1], before[2])
     _settled = (series, before)
 
 
@@ -41,6 +52,7 @@ def restore(series):
     global _settled
     if _settled is None or _settled[0] is not series:
         return
+    _closed.append(weakref.ref(series))
     gc.unfreeze()
     gc.set_threshold(*_settled[1])
     _settled = None
