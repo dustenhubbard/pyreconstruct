@@ -348,8 +348,9 @@ class ParallelLoader():
         self.executor = executor
         self.alignments = alignments
         self.canceled = canceled or (lambda: False)
+        ## the sections not yet taken by the pass: a result is dropped once
+        ## taken, so the open never holds one it has already built
         self.futures = {}
-        self.submitted = []
         self.failed = False
         self.closed = False
 
@@ -357,7 +358,6 @@ class ParallelLoader():
         """Read section n's file (its path or its bytes) in a worker."""
         future = self.executor.submit(readFileRows, fp, n, self.alignments)
         self.futures[n] = future
-        self.submitted.append(future)
 
     @staticmethod
     def workerCount(section_count : int) -> int:
@@ -421,18 +421,20 @@ class ParallelLoader():
         )
 
     def __call__(self, series, n : int) -> Union[SectionRows, Section]:
-        future = self.futures.pop(n, None)
+        future = self.futures.get(n)
         if future is None:
             return loadForOpen(series, n)
         try:
             result = self._wait(future)
         except OpenCanceled:
-            raise
+            raise  # its future stays, so close stops the worker
         except Exception as e:
+            del self.futures[n]
             if not self.failed:
                 self.failed = True
                 print(f"Section {n} read in this process: its worker failed ({e!r})", file=sys.stderr)
             return loadForOpen(series, n)
+        del self.futures[n]
         if result is None:
             return series.loadSection(n)
         rows = _rowsFromWorker(n, series, result)
@@ -460,7 +462,7 @@ class ParallelLoader():
         if self.closed:
             return
         self.closed = True
-        if all(future.done() for future in self.submitted):
+        if all(future.done() for future in self.futures.values()):
             self.executor.shutdown(wait=True)
         else:
             stopWorkers(self.executor)
