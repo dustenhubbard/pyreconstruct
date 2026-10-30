@@ -8,6 +8,7 @@ not, the field draws the same pixels and the section holds the same data.
 import gc
 import shutil
 import sys
+import weakref
 
 import pytest
 
@@ -20,6 +21,8 @@ from PyReconstruct.modules.gui.main import main_window as MW
 def unsettled():
     """No series settled when the test starts; the thresholds it starts with."""
     collector.restore(collector.settledSeries())
+    # an earlier test's window, not yet deleted, does not hold off the freeze
+    collector._closed = None
     return gc.get_threshold()
 
 
@@ -79,9 +82,28 @@ def test_a_second_open_settles_for_it_and_keeps_the_first_settings(
 ):
     window = _window(str(series_jser))
     try:
-        first = window.series
+        first = weakref.ref(window.series)
         window.openSeries(jser_fp=_copy(series_jser, tmp_path, "second"), query_prev=False)
-        assert window.series is not first and first.closed
+        assert first() is None
+        _assert_settled(window.series, unsettled)
+    finally:
+        _close(window)
+    _assert_restored(unsettled)
+
+
+@pytest.mark.gui
+def test_a_closed_series_still_held_at_the_next_open_is_freed_once_let_go(
+    qapp, unsettled, main_window_dialogs, series_jser, tmp_path
+):
+    window = _window(str(series_jser))
+    try:
+        held = window.series
+        first = weakref.ref(held)
+        window.openSeries(jser_fp=_copy(series_jser, tmp_path, "second"), query_prev=False)
+        assert collector.settledSeries() is window.series
+        del held
+        gc.collect()
+        assert first() is None
         _assert_settled(window.series, unsettled)
     finally:
         _close(window)
