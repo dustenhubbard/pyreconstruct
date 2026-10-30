@@ -410,9 +410,12 @@ def test_a_cancel_ends_a_result_a_worker_sent_partway(series_jser, tmp_path, mon
 @pytest.mark.gui
 def test_cancel_clicked_while_a_worker_stalls_lands(qtbot, series_jser, tmp_path, monkeypatch):
     """A click on the progress window's Cancel while the open waits for a
-    stuck worker is seen at the next poll: the wait handles window events."""
-    import warnings
+    stuck worker is seen at the next poll: the wait handles window events.
 
+    The worker is released 20 s after the click is sent, if the open has
+    not returned by then (the stall ends by itself at 30 s): a busy runner
+    can be slow to deliver the click and to stop the workers, so the
+    bound on the cancel itself is the 1 s from click to cancel."""
     from PySide6.QtCore import QObject, Qt, Signal
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QPushButton
@@ -430,7 +433,6 @@ def test_cancel_clicked_while_a_worker_stalls_lands(qtbot, series_jser, tmp_path
             reporters.append(self)
 
         def canceled_while_waiting(self):
-            seen.setdefault("polled", time.monotonic())
             canceled = super().canceled_while_waiting()
             if canceled:
                 seen.setdefault("canceled", time.monotonic())
@@ -461,17 +463,16 @@ def test_cancel_clicked_while_a_worker_stalls_lands(qtbot, series_jser, tmp_path
 
     def control():
         if _wait_for(marker):
-            seen["marker"] = time.monotonic()
+            seen["sent"] = time.monotonic()
             clicker.request.emit()
-            end = time.monotonic() + 5
+            end = time.monotonic() + 20
             while "returned" not in seen and time.monotonic() < end:
                 time.sleep(0.01)
-        seen["release"] = time.monotonic()
         Path(f"{marker}.release").touch()
 
     def timings():
-        return {k: round(v - seen["start"], 3) for k, v in seen.items() if isinstance(v, float)} | {
-            "visible": seen.get("visible")}
+        """Each step's time since the test started, for a failure message."""
+        return {k: round(v - seen["start"], 3) for k, v in seen.items() if k != "visible"}
 
     monkeypatch.setenv("STALL_SECTION", "0")
     monkeypatch.setenv("STALL_MARKER", str(marker))
@@ -484,10 +485,10 @@ def test_cancel_clicked_while_a_worker_stalls_lands(qtbot, series_jser, tmp_path
             thread.start()
             result = Series.openJser(str(series_jser), progress=Recording)
             seen["returned"] = time.monotonic()
-        warnings.warn(f"DIAG cancel-click timings {timings()}")
-        assert result is None
+        assert result is None, timings()
         assert not Path(f"{marker}.release").exists(), timings()
-        assert seen["canceled"] - seen["clicked"] < 1
+        assert seen["visible"]
+        assert seen["canceled"] - seen["clicked"] < 1, timings()
         assert multiprocessing.active_children() == []
     finally:
         Path(f"{marker}.release").touch()
