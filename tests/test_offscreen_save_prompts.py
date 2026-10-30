@@ -54,6 +54,9 @@ def _interactive(monkeypatch, answer):
     `PYRECON_UNATTENDED=1` also makes it False, and it is an environment
     variable, so a developer who exported it for a scripted GUI run would
     otherwise turn every interactive test below into a silent no-op.
+
+    The predicate also needs a live `QApplication`, so every caller must
+    request `qapp`; without it a fresh xdist worker takes the unattended path.
     """
     monkeypatch.delenv(gui_utils.UNATTENDED_ENV_VAR, raising=False)
     monkeypatch.setattr(gui_utils, "qt_offscreen", False)
@@ -111,7 +114,9 @@ def test_unsaved_notify_keeps_the_recovered_series_with_nobody_to_ask(
         (QMessageBox.Cancel, "cancel"),
     ],
 )
-def test_save_notify_still_asks_a_real_user(monkeypatch, button, expected):
+def test_save_notify_still_asks_a_real_user(
+    qapp, monkeypatch, button, expected
+):
     """All three answers still reach the caller from the real dialog.
 
     Guards the shape of the guard: an early return that swallowed the interactive
@@ -136,7 +141,9 @@ def test_save_notify_still_asks_a_real_user(monkeypatch, button, expected):
 @pytest.mark.parametrize(
     "button, expected", [(QMessageBox.Yes, True), (QMessageBox.No, False)]
 )
-def test_unsaved_notify_still_asks_a_real_user(monkeypatch, button, expected):
+def test_unsaved_notify_still_asks_a_real_user(
+    qapp, monkeypatch, button, expected
+):
     """The recovery prompt still runs, and No still means discard.
 
     Deliberately asserts that a real user answering No gets False. The offscreen
