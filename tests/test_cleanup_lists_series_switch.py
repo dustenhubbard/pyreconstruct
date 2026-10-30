@@ -17,6 +17,8 @@ What is pinned here:
   * Delete all in a pixel-dust list opened in A leaves B unchanged
   * Combine all in a Duplicates list opened in A leaves B unchanged
   * every kind of clean-up list is closed once B is open
+  * a list held where its clean-up stores it does not keep A alive once B
+    is open
   * a Delete (pixel dust, smoothing list) or Combine confirmed after B opened
     from the Finder leaves B unchanged
   * a notice from a Delete or Combine that B opens under ends the action
@@ -25,7 +27,9 @@ What is pinned here:
     a middle or its last progress update, opens no list on B and shows no
     error
 """
+import gc
 import shutil
+import weakref
 
 import pytest
 from shiboken6 import isValid
@@ -251,6 +255,65 @@ def test_every_clean_up_list_closes_when_another_series_opens(
         type(d).__name__ for d in dialogs if isValid(d) and d.isVisible()
     ]
     assert still_open == []
+
+
+@pytest.mark.parametrize("attr", [
+    "malformed_contours_dialog", "pixel_dust_dialog",
+    "duplicate_traces_dialog", "repaired_crossings_dialog",
+    "skipped_crossings_dialog",
+])
+def test_a_stored_clean_up_list_does_not_keep_a_alive(
+    attr, main_window, tmp_path, qtbot
+):
+    from PyReconstruct.modules.gui.dialog.malformed_contours import (
+        DuplicateTracesDialog,
+        MalformedContoursDialog,
+        PixelDustDialog,
+        RepairedCrossingsDialog,
+        SkippedCrossingsDialog,
+    )
+    window = main_window
+    field = window.field
+    record = {
+        "name": "SWITCH_ROW", "section": field.section.n, "index": 0,
+        "points": 4, "location": (0.5, 0.5), "reason": "", "area": 0.01,
+        "area_px": 1.0,
+    }
+    group = {
+        "section": field.section.n, "members": [dict(record), dict(record)],
+        "names": ["SWITCH_ROW"], "count": 2, "ratio": 1.0,
+        "location": (0.5, 0.5),
+    }
+    nav = field.focusMalformedContour
+    delete = field.deleteMalformedContours
+    # the smoothing list is stored on the field, the rest on the window
+    holder, make = {
+        "malformed_contours_dialog": (field, lambda: MalformedContoursDialog(
+            window, [dict(record)], navigate=nav, delete=delete)),
+        "pixel_dust_dialog": (window, lambda: PixelDustDialog(
+            window, [dict(record)], navigate=nav, delete=delete)),
+        "duplicate_traces_dialog": (window, lambda: DuplicateTracesDialog(
+            window, [group], navigate=nav,
+            combine=field.combineDuplicateTraces)),
+        "repaired_crossings_dialog": (window, lambda: RepairedCrossingsDialog(
+            window, [dict(record)], navigate=nav)),
+        "skipped_crossings_dialog": (window, lambda: SkippedCrossingsDialog(
+            window, [dict(record)], navigate=nav)),
+    }[attr]
+    setattr(holder, attr, make())
+    getattr(holder, attr).show()
+    first = weakref.ref(window.series)
+    copy_fp = tmp_path / "series_b" / "series_b.jser"
+    copy_fp.parent.mkdir()
+    shutil.copyfile(window.series.jser_fp, copy_fp)
+
+    # not _open_copy: a reference held across the open keeps A alive by
+    # itself
+    window.openSeries(jser_fp=str(copy_fp), query_prev=False)
+    qtbot.wait(10)
+    gc.collect()
+
+    assert first() is None
 
 
 @pytest.mark.parametrize("kind", ["pixel dust", "smoothing"])
