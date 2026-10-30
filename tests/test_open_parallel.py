@@ -7,6 +7,7 @@ the open.
 The size bar is set to 0 here, so every series opens with workers.
 """
 import contextlib
+import gc
 import hashlib
 import multiprocessing
 import os
@@ -15,6 +16,7 @@ import sys
 import threading
 import time
 import types
+import weakref
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures import process as futures_process
 from pathlib import Path
@@ -648,3 +650,34 @@ def test_a_failure_during_the_unpack_stops_the_workers_and_keeps_the_folder(seri
         Path(f"{tmp_path / 'markers' / 'started'}.release").touch()
         for child in multiprocessing.active_children():
             child.join(30)
+
+
+def test_a_result_is_dropped_once_the_pass_takes_it(tmp_path, monkeypatch):
+    """The loader holds no worker result for a section the pass has built:
+    with every result kept to the end, a DW09 open held 0.6 GB more."""
+    first = _open(_copy(_odd_series(tmp_path / "odd.jser"), tmp_path))
+    fp, sections = first.filepath, dict(first.sections)
+    loader_class = section_rows.ParallelLoader
+    real_submit, real_call = loader_class.submit, loader_class.__call__
+    refs, kept, used = {}, [], []
+
+    def submit(self, n, fp):
+        real_submit(self, n, fp)
+        refs[n] = weakref.ref(self.futures[n])
+
+    def call(self, series, n):
+        rows = real_call(self, series, n)
+        gc.collect()
+        kept.extend(m for m, ref in refs.items() if m <= n and ref() is not None)
+        return rows
+
+    try:
+        with monkeypatch.context() as m:
+            _parallel(m, used)
+            m.setattr(loader_class, "submit", submit)
+            m.setattr(loader_class, "__call__", call)
+            Series(fp, sections)
+        assert used and len(refs) == len(sections)
+        assert kept == []
+    finally:
+        first.close()
