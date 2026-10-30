@@ -1827,6 +1827,9 @@ class MainWindow(QMainWindow):
         welcome_series = Series(w_ser, w_secs)
         welcome_series.src_dir = w_src
         self._openSeries(series_obj=welcome_series, query_prev=False)
+        # the menus were just built; set them as a fresh welcome window has
+        # them (Save and Backup off), which they stay if the load fails
+        self.checkActions()
         gc.collect()
         return True
 

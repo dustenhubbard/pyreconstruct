@@ -9,6 +9,7 @@ canceled from there leaves the welcome series, the app's no-series state.
 
 import gc
 import shutil
+import sys
 import weakref
 
 import pytest
@@ -16,6 +17,40 @@ import pytest
 from PyReconstruct.modules.datatypes.series import Series, SeriesOpenError
 
 pytestmark = pytest.mark.gui
+
+
+def _action_states(window):
+    """Every menubar action's enabled state, keyed by its menu path."""
+    states = {}
+
+    def walk(actions, path):
+        for act in actions:
+            if act.isSeparator():
+                continue
+            key = path + (act.text(),)
+            states[key] = act.isEnabled()
+            if act.menu():
+                walk(act.menu().actions(), key)
+
+    walk(window.menuBar().actions(), ())
+    return states
+
+
+def _fresh_welcome_states():
+    from PySide6.QtWidgets import QApplication
+
+    from PyReconstruct.modules.gui.main import MainWindow
+
+    previous_excepthook = sys.excepthook
+    fresh = MainWindow(None)
+    try:
+        assert fresh.series.isWelcomeSeries()
+        return _action_states(fresh)
+    finally:
+        sys.excepthook = previous_excepthook
+        fresh.close()
+        fresh.deleteLater()
+        QApplication.processEvents()
 
 
 def _other_copy(window, tmp_path):
@@ -75,3 +110,6 @@ def test_a_second_open_that_does_not_load_leaves_no_series(
     assert first() is None
     expected = ["unreadable"] if outcome == "fails" else []
     assert main_window_dialogs.notices == expected
+    # the menus read as on a fresh welcome window: Backup and Save are off
+    assert not window.backupmenu.menuAction().isEnabled()
+    assert _action_states(window) == _fresh_welcome_states()
