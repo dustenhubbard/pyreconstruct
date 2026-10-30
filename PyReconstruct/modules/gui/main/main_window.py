@@ -1645,6 +1645,14 @@ class MainWindow(QMainWindow):
     def _openSeries(self, series_obj=None, jser_fp=None, query_prev=True):
         """openSeries, inside a series transition that is already running."""
 
+        # The picker comes before the save prompt. Asked after it, a picker
+        # Cancel found the outgoing series already closed, and its unsaved
+        # edits were gone even when the user only backed out.
+        if not series_obj and not jser_fp:
+            jser_fp = FileDialog.get("file", self, "Open Series", filter="*.jser")
+            if not jser_fp:
+                return
+
         if self.series:  # series open and save yes
 
             # the outgoing series remembers its list layout before anything
@@ -1673,18 +1681,6 @@ class MainWindow(QMainWindow):
             prev_jser_fp = None
 
         if not series_obj:  # if series is not provided
-            if not jser_fp:
-                jser_fp = FileDialog.get("file", self, "Open Series", filter="*.jser")
-                if not jser_fp:
-                    # The outgoing series was closed above, so its hidden dir
-                    # is gone. Returning here left the window holding a series
-                    # whose files no longer exist: every later save raised
-                    # FileNotFoundError and no edit could ever be persisted
-                    # (found 2026-08-27). Put a live series back instead.
-                    if not first_open:
-                        self._releaseClosedSeries()
-                        self._restoreAfterAbortedOpen(prev_jser_fp)
-                    return
             # the closed series is freed before the new one loads, so the two
             # are never in memory at once (fork #1105); an open that fails or
             # is canceled from here on leaves the welcome series in the window

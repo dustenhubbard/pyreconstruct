@@ -10,9 +10,10 @@ tracing without a prompt:
    None whether it wrote the file or the user dismissed the dialog. Control
    fell through to `seriesModified(False)`, the asterisk went away, and the
    next close deleted the only copy.
-2. `openSeries` closes the outgoing series before it has the new one. Cancel
+2. `openSeries` closed the outgoing series before it had the new one. Cancel
    the Open dialog and the window kept a series whose files were gone: every
-   later save raised `FileNotFoundError`.
+   later save raised `FileNotFoundError`. The picker now comes first, so a
+   Cancel there touches nothing.
 3. `newSeries` discarded the answer to its save prompt, so Cancel carried on
    through the wizard to `openSeries(query_prev=False)`, which closes the
    series unconditionally.
@@ -92,11 +93,10 @@ def test_canceling_the_open_dialog_leaves_a_series_that_still_saves(
 ):
     """Cancel the file picker and the window keeps working.
 
-    `openSeries` closes the outgoing series before asking which series to
-    open. Returning on the cancel left `self.series` pointing at deleted
-    files, so the next `Section.save()` raised `FileNotFoundError` and no
-    edit could be persisted again for the life of the window. The saved copy
-    is reopened instead.
+    `openSeries` used to close the outgoing series before asking which
+    series to open. Returning on the cancel left `self.series` pointing at
+    deleted files, so the next `Section.save()` raised `FileNotFoundError`
+    and no edit could be persisted again for the life of the window.
     """
     main_window_dialogs.save_response = "yes"
 
@@ -112,22 +112,44 @@ def test_canceling_the_open_dialog_leaves_a_series_that_still_saves(
     assert main_window.series.modified is False
 
 
-def test_an_abandoned_open_with_nothing_to_go_back_to_lands_on_welcome(
+def test_canceling_the_open_dialog_keeps_unsaved_edits(
     main_window, main_window_dialogs
 ):
-    """A never-saved series discarded at the prompt has no `.jser` to reopen.
+    """A picker Cancel leaves the open series exactly as it was.
 
-    The window must still end up on something live rather than on deleted
-    files, so it falls back to the welcome series -- the app's own empty
-    state, and the one series `Series.close()` refuses to delete.
+    The save prompt used to come first: answer No, then cancel the picker,
+    and the outgoing series was already closed, so the saved copy came back
+    without the edits.
     """
-    _never_saved(main_window)
-    main_window_dialogs.save_response = "no"  # discard the unsaved series
+    window = main_window
+    series = window.series
+    section = window.field.section
+    trace = next(iter(section.contours.values()))[0].copy()
+    trace.name = "unsaved-edit"
+    section.addTrace(trace, log_event=False)
+    window.seriesModified(True)
+    main_window_dialogs.save_response = "no"
+
+    window.openSeries()  # file_responses empty: the picker is dismissed
+
+    assert window.series is series
+    assert not series.closed
+    assert window.series.modified
+    assert "unsaved-edit" in window.field.section.contours
+
+
+def test_canceling_the_open_dialog_keeps_a_never_saved_series(
+    main_window, main_window_dialogs
+):
+    """A never-saved series has no `.jser` to reopen, so it must stay put."""
+    hidden_dir = _never_saved(main_window)
+    series = main_window.series
+    main_window_dialogs.save_response = "no"
 
     main_window.openSeries()
 
-    assert main_window.series is not None
-    assert main_window.series.isWelcomeSeries()
+    assert main_window.series is series
+    assert os.path.isdir(hidden_dir)
 
 
 # --- 3. cancel at the New Series prompt ---------------------------------------
