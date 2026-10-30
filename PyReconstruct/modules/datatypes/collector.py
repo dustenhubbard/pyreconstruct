@@ -26,7 +26,7 @@ YOUNG_THRESHOLD = 10000
 _settled = None
 
 # weak references to every series restored, dropped once that series is freed
-_closed = []
+_closed: list[weakref.ref] = []
 
 
 def settleAfterOpen(series):
