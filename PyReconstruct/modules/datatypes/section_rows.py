@@ -19,6 +19,7 @@ once, by one path.
 
 import multiprocessing
 import os
+import pickle
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, TimeoutError as FutureTimeout
@@ -305,15 +306,18 @@ def readFileRows(fp : Union[str, bytes], n : int, alignments):
     for rows in contours.values():
         for row in rows:
             row[0] = row[1] = None
-    return (sectionFileDigest(raw), section_data, stored_ids,
-            row_jsons, first_ids, (closed, geometries))
+    ## pickled here, so this process receives one block of bytes while a
+    ## first open is still unpacking, and decodes it when the pass takes it
+    return pickle.dumps((sectionFileDigest(raw), section_data, stored_ids,
+                         row_jsons, first_ids, (closed, geometries)),
+                        protocol=pickle.HIGHEST_PROTOCOL)
 
 
 def _rowsFromWorker(n : int, series, result) -> Optional[SectionRows]:
     """The SectionRows of a `readFileRows` result, its ids registered as
     `readSectionRows` registers them, or None (and the issuer untouched) if
     an object would be measured with an alignment the worker did not use."""
-    digest, section_data, stored_ids, row_jsons, first_ids, measured = result
+    digest, section_data, stored_ids, row_jsons, first_ids, measured = pickle.loads(result)
     rows = SectionRows(n, section_data, None)
     geometries = measured[1]
     for name, contour_rows in rows.contours.items():
