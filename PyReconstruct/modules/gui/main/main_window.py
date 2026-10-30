@@ -2,6 +2,7 @@
 
 
 import functools
+import gc
 import math
 import shutil
 import struct
@@ -1672,22 +1673,33 @@ class MainWindow(QMainWindow):
             prev_jser_fp = None
 
         if not series_obj:  # if series is not provided
+            if not jser_fp:
+                jser_fp = FileDialog.get("file", self, "Open Series", filter="*.jser")
+                if not jser_fp:
+                    # The outgoing series was closed above, so its hidden dir
+                    # is gone. Returning here left the window holding a series
+                    # whose files no longer exist: every later save raised
+                    # FileNotFoundError and no edit could ever be persisted
+                    # (found 2026-08-27). Put a live series back instead.
+                    if not first_open:
+                        self._releaseClosedSeries()
+                        self._restoreAfterAbortedOpen(prev_jser_fp)
+                    return
+            # the closed series is freed before the new one loads, so the two
+            # are never in memory at once (fork #1105); an open that fails or
+            # is canceled from here on leaves the welcome series in the window
+            released = not first_open and self._releaseClosedSeries()
             try:
                 new_series = self._acquireSeries(jser_fp)
             except Exception:
                 # The same holds for an open that fails (a working file held
                 # open): the closed series must not stay in the window, where
                 # its edits would go to a folder no open offers back.
-                if not first_open and self.series.closed:
+                if not first_open and not released and self.series.closed:
                     self._restoreAfterAbortedOpen(prev_jser_fp)
                 raise
             if new_series is _OPEN_ABORTED:
-                # The outgoing series was closed above, so its hidden dir is
-                # gone. Returning here left the window holding a series whose
-                # files no longer exist: every later save raised
-                # FileNotFoundError and no edit could ever be persisted
-                # (found 2026-08-27). Put a live series back instead.
-                if not first_open:
+                if not first_open and not released:
                     self._restoreAfterAbortedOpen(prev_jser_fp)
                 return
         # else series already provided
@@ -1763,16 +1775,11 @@ class MainWindow(QMainWindow):
         """Get the Series to open, from crash recovery or from the .jser.
 
             Params:
-                jser_fp (str): the .jser filepath, or None to ask the user
+                jser_fp (str): the .jser filepath
             Returns:
                 (Series): the series to open, or _OPEN_ABORTED if the open
                     should be abandoned (the caller must return)
         """
-        if not jser_fp:
-            jser_fp = FileDialog.get("file", self, "Open Series", filter="*.jser")
-            if not jser_fp:
-                return _OPEN_ABORTED  # exit function if user does not provide series
-
         new_series = self._recoverUnsavedSeries(jser_fp)
         if new_series is _OPEN_ABORTED:
             return _OPEN_ABORTED
@@ -1799,6 +1806,29 @@ class MainWindow(QMainWindow):
                     return _OPEN_ABORTED
 
         return new_series
+
+    def _releaseClosedSeries(self):
+        """Put the welcome series in the window in place of the closed one.
+
+        The closed series is still held by the window (the field, the
+        palette, the menus and the 3D scene) until the next series takes its
+        place. Loaded while it was held, a second open of a large series
+        needed memory for both: about 890 MB on DW14, twice one series.
+        Opening the welcome series drops every reference the window holds,
+        and the collection frees the series' cycles before the load starts.
+
+            Returns:
+                (bool): True if a series was released; False if the window
+                    held the welcome series, which costs nothing to keep
+        """
+        if self.series.isWelcomeSeries():
+            return False
+        w_ser, w_secs, w_src = get_welcome_setup()
+        welcome_series = Series(w_ser, w_secs)
+        welcome_series.src_dir = w_src
+        self._openSeries(series_obj=welcome_series, query_prev=False)
+        gc.collect()
+        return True
 
     def _restoreAfterAbortedOpen(self, prev_jser_fp):
         """Put a working series back after an open was abandoned.

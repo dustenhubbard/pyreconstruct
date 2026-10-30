@@ -10,7 +10,8 @@ progress window:
   * the nested open is refused with a notice and opens nothing
   * a series object handed to the refused open is left as it is: its owner,
     the caller or another live window, still holds its working folder
-  * the canceled outer open leaves the first series open, as before
+  * the canceled outer open leaves the welcome series, since the first series
+    is freed before the outer open loads (fork #1105)
 """
 import os
 import shutil
@@ -90,8 +91,7 @@ def test_an_open_queued_during_an_open_leaves_nothing_behind(
     window.openSeries(jser_fp=incoming_fp, query_prev=False)
 
     assert seen.get("transition") is True
-    assert window.series.jser_fp == first.jser_fp
-    assert not window.series.closed
+    assert window.series.isWelcomeSeries()
     assert not window.seriesTransitionRunning()
     assert not os.path.exists(os.path.join(str(tmp_path), ".incoming"))
     if handed == "series":
