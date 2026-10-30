@@ -19,7 +19,10 @@ pytestmark = pytest.mark.gui
 def test_an_open_the_move_refuses_keeps_the_series_and_says_so(
     main_window, monkeypatch, tmp_path
 ):
+    import shutil
+
     from PyReconstruct.modules.backend.func import logging_setup
+    from PyReconstruct.modules.gui.dialog import FileDialog
     from PyReconstruct.modules.gui.utils import errors
     window = main_window
     first = window.series
@@ -45,9 +48,15 @@ def test_an_open_the_move_refuses_keeps_the_series_and_says_so(
     monkeypatch.setattr(sys, "__excepthook__", lambda *a: None)
     # set in the test body: pytest-qt puts its own hook in for the call
     monkeypatch.setattr(sys, "excepthook", errors.customExcepthook)
+    # the picker comes first, so a file must be chosen to reach the close
+    other = tmp_path / "other.jser"
+    shutil.copyfile(first.jser_fp, other)
+    monkeypatch.setattr(
+        FileDialog, "get", staticmethod(lambda *a, **k: str(other))
+    )
     monkeypatch.setattr(os, "rename", held)
     try:
-        # File > Open closes the series before it asks for the next one
+        # File > Open closes the series before it loads the next one
         window.open_act.trigger()
     finally:
         monkeypatch.setattr(os, "rename", rename)
