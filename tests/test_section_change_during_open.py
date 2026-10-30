@@ -7,7 +7,8 @@ that was gone and raised FileNotFoundError. What is pinned here, on a real
 window and the real progress window:
 
   * the section change is dropped and raises nothing
-  * the canceled outer open leaves the first series open on its section
+  * the canceled outer open leaves the welcome series, since the first series
+    is freed before the outer open loads (fork #1105)
   * outside a transition the same change still runs
 """
 import shutil
@@ -78,12 +79,12 @@ def test_a_section_change_queued_during_an_open_is_dropped(
 
     assert seen.get("transition") is True
     assert "error" not in seen
-    assert window.series.jser_fp == first.jser_fp
-    assert not window.series.closed
-    assert window.series.current_section == start
-    assert window.field.section.n == start
+    assert window.series.isWelcomeSeries()
+    assert window.field.series is window.series
 
     # outside a transition the same change runs
+    window.openSeries(jser_fp=first.jser_fp)
+    assert window.series.current_section == start
     window.field.changeSection(target)
     assert window.series.current_section == target
     assert window.field.section.n == target
