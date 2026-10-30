@@ -432,6 +432,7 @@ def test_cancel_clicked_while_a_worker_stalls_lands(qtbot, series_jser, tmp_path
             reporters.append(self)
 
         def canceled_while_waiting(self):
+            seen.setdefault("waiting", time.monotonic())
             canceled = super().canceled_while_waiting()
             if canceled:
                 seen.setdefault("canceled", time.monotonic())
@@ -452,11 +453,17 @@ def test_cancel_clicked_while_a_worker_stalls_lands(qtbot, series_jser, tmp_path
     clicker = Clicker()
 
     def control():
-        if _wait_for(marker):
+        ## a first open's worker stalls during the unpack: click once the
+        ## open waits for it
+        end = time.monotonic() + 20
+        while "waiting" not in seen and time.monotonic() < end:
+            time.sleep(0.01)
+        if _wait_for(marker) and "waiting" in seen:
             clicker.request.emit()
             end = time.monotonic() + 5
             while "returned" not in seen and time.monotonic() < end:
                 time.sleep(0.01)
+        seen["released"] = time.monotonic()
         Path(f"{marker}.release").touch()
 
     monkeypatch.setenv("STALL_SECTION", "0")
@@ -470,7 +477,7 @@ def test_cancel_clicked_while_a_worker_stalls_lands(qtbot, series_jser, tmp_path
             result = Series.openJser(str(series_jser), progress=Recording)
             seen["returned"] = time.monotonic()
         assert result is None
-        assert not Path(f"{marker}.release").exists()
+        assert seen.get("released", float("inf")) >= seen["returned"]
         assert seen["canceled"] - seen["clicked"] < 1
         assert multiprocessing.active_children() == []
     finally:
