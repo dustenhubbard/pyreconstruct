@@ -471,8 +471,9 @@ def test_cancel_clicked_while_a_worker_stalls_lands(qtbot, series_jser, tmp_path
         Path(f"{marker}.release").touch()
 
     def timings():
-        """Each step's time since the test started, for a failure message."""
-        return {k: round(v - seen["start"], 3) for k, v in seen.items() if k != "visible"}
+        """Each step's time since the test started, for a failure message
+        (a string: pytest shortens a dict)."""
+        return str({k: round(v - seen["start"], 3) for k, v in seen.items() if k != "visible"})
 
     monkeypatch.setenv("STALL_SECTION", "0")
     monkeypatch.setenv("STALL_MARKER", str(marker))
