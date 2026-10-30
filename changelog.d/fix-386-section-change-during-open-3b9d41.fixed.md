@@ -1,0 +1,1 @@
+- **Changing sections while a series opens no longer shows a file error.**
