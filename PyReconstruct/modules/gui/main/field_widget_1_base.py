@@ -598,6 +598,13 @@ class FieldWidgetBase:
             Params:
                 new_section_num (int): the new section number to display
         """
+        ## Dropped while a series transition runs. A section change delivered
+        ## from the event loop of an open (its progress window) read the
+        ## section from the outgoing series after that series was closed, and
+        ## raised FileNotFoundError. No transition changes the section itself.
+        if self.mainwindow.seriesTransitionRunning():
+            return
+
         ## Check if requested section exists
         if new_section_num not in self.series.sections:
             return
