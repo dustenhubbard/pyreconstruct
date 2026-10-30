@@ -18,7 +18,7 @@ from typing import Optional, Union
 from .log import LogSet, LogSetPair, LOG_READ_ERRORS, LOG_WRITE_ERRORS
 from .ztrace import Ztrace
 from .section import Section
-from .section_rows import OpenCanceled, UnpackFeeder, openLoader
+from .section_rows import OpenCanceled, ParallelLoader, UnpackFeeder, openLoader
 from .trace import Trace, normalizeObjectName, copyObjDefaults
 from .trace_id import TraceIDIssuer
 from .transform import Transform
@@ -1495,8 +1495,14 @@ class Series():
                 lazy_sections.writeMarker(work_dir, next(iter(stubs.values()))["store"])
                 source.skip = set(stubs)
             if store is None:
+                # the workers start before updateJSON runs, so they take the
+                # alignment it gives a series without one; it adds no
+                # object alignment
+                alignment = source.series.get("alignment", Series.getEmptyDict()["alignment"])
                 feeder = UnpackFeeder(
-                    source.sectionCount(), source.series, reporter.canceled_while_waiting
+                    source.sectionCount(),
+                    ParallelLoader.seriesAlignments(alignment, source.series.get("obj_attrs", {})),
+                    reporter.canceled_while_waiting,
                 )
             for snum, section_data, found in source.sections():
                 filename = sname + "." + str(snum)

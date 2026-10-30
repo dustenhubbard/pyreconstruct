@@ -9,6 +9,7 @@ The size bar is set to 0 here, so every series opens with workers.
 import contextlib
 import gc
 import hashlib
+import json
 import multiprocessing
 import os
 import struct
@@ -30,7 +31,7 @@ from PyReconstruct.modules.datatypes.trace_id import (
 )
 
 from test_open_reads_rows import (  # noqa: F401  (source is a fixture)
-    _copy, _later_loads, _odd_series, _open, _state, source,
+    FIXTURES, _copy, _later_loads, _odd_series, _open, _state, source,
 )
 
 
@@ -39,7 +40,8 @@ def _serial(m):
 
 
 def _parallel(m, used):
-    """Open with 2 workers, recording each section a worker read."""
+    """Open with 2 workers, recording each section built from a worker's
+    read (a result _rowsFromWorker rejects is read again here)."""
     m.setattr(section_rows, "PARALLEL_MIN_BYTES", 0)
     m.setattr(section_rows, "MAIN_GUARDED", True)
     m.setattr(section_rows, "PARALLEL_MAX_WORKERS", 2)
@@ -47,8 +49,10 @@ def _parallel(m, used):
     real = section_rows._rowsFromWorker
 
     def recording(n, series, result):
-        used.append(n)
-        return real(n, series, result)
+        rows = real(n, series, result)
+        if rows is not None:
+            used.append(n)
+        return rows
 
     m.setattr(section_rows, "_rowsFromWorker", recording)
 
@@ -266,6 +270,24 @@ def test_an_alignment_the_worker_did_not_measure_reads_in_this_process(tmp_path)
         assert {k: repr(v) for k, v in vars(series.trace_id_issuer).items()} == before
         series.setAttr("plain", "alignment", None)
         assert section_rows._rowsFromWorker(1, series, result) is not None
+    finally:
+        series.close()
+
+
+def test_a_series_without_an_alignment_builds_from_the_workers(tmp_path, monkeypatch):
+    """The workers of a first open start before updateJSON gives a series
+    without an alignment "default", and still measure with it, so the open
+    builds every section from their reads."""
+    path = tmp_path / "series.jser"
+    path.write_bytes(FIXTURES["parity"].read_bytes())
+    assert "alignment" not in json.loads(path.read_bytes())["series"]
+    used = []
+    with monkeypatch.context() as m:
+        _parallel(m, used)
+        series = _open(path)
+    try:
+        assert series.alignment == "default"
+        assert used == sorted(series.sections)
     finally:
         series.close()
 

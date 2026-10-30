@@ -486,9 +486,10 @@ class UnpackFeeder():
     the unpack removes its folder on a cancel or failure.
     """
 
-    def __init__(self, section_count : int, series_data : dict, canceled=None):
+    def __init__(self, section_count : int, alignments : set, canceled=None):
         self.workers = ParallelLoader.workerCount(section_count) if mainSafeForWorkers() else 0
-        self.series_data = series_data
+        ## the alignments the built series measures with (seriesAlignments)
+        self.alignments = alignments
         self.canceled = canceled
         self.loader : Optional[ParallelLoader] = None
         self.feeding = self.workers >= 1
@@ -517,13 +518,8 @@ class UnpackFeeder():
         self.size += len(data)
         if self.size < PARALLEL_MIN_BYTES:
             return
-        ## the alignment and obj_attrs the open builds the series with:
-        ## Series.updateJSON changes neither
-        alignments = ParallelLoader.seriesAlignments(
-            self.series_data.get("alignment"), self.series_data.get("obj_attrs", {}),
-        )
         self.written = None
-        self.loader = ParallelLoader.launch(self.workers, alignments, written, self.canceled)
+        self.loader = ParallelLoader.launch(self.workers, self.alignments, written, self.canceled)
         self.feeding = self.loader is not None
 
     def close(self):
