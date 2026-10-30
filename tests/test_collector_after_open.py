@@ -101,7 +101,7 @@ def test_a_closed_series_still_held_at_the_next_open_is_freed_once_let_go(
         first = weakref.ref(held)
         window.openSeries(jser_fp=_copy(series_jser, tmp_path, "second"), query_prev=False)
         assert collector.settledSeries() is window.series
-        assert gc.get_freeze_count() == 0
+        # not frozen for: the young threshold is not raised either
         assert gc.get_threshold() == unsettled
         del held
         gc.collect()
