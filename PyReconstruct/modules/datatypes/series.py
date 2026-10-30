@@ -18,7 +18,7 @@ from typing import Optional, Union
 from .log import LogSet, LogSetPair, LOG_READ_ERRORS, LOG_WRITE_ERRORS
 from .ztrace import Ztrace
 from .section import Section
-from .section_rows import OpenCanceled, openLoader
+from .section_rows import OpenCanceled, ParallelLoader, UnpackFeeder, openLoader
 from .trace import Trace, normalizeObjectName, copyObjDefaults
 from .trace_id import TraceIDIssuer
 from .transform import Transform
@@ -1464,6 +1464,9 @@ class Series():
         aside = None  # the folder that was at hidden_dir, kept until the open is done
         opened = False  # True once the series is built
         failure = None  # the exception that stopped the open, if one did
+        # a large series' sections go to worker processes as they are
+        # written, so the build's reads overlap the unpack (section_rows.py)
+        feeder = None
 
         # The .ser file is written LAST as the completion sentinel: both
         # recovery scans (the fast path above and the GUI's unsaved-work
@@ -1491,6 +1494,16 @@ class Series():
             if stubs:
                 lazy_sections.writeMarker(work_dir, next(iter(stubs.values()))["store"])
                 source.skip = set(stubs)
+            if store is None:
+                # the workers start before updateJSON runs, so they take the
+                # alignment it gives a series without one; it adds no
+                # object alignment
+                alignment = source.series.get("alignment", Series.getEmptyDict()["alignment"])
+                feeder = UnpackFeeder(
+                    source.sectionCount(),
+                    ParallelLoader.seriesAlignments(alignment, source.series.get("obj_attrs", {})),
+                    reporter.canceled_while_waiting,
+                )
             for snum, section_data, found in source.sections():
                 filename = sname + "." + str(snum)
                 section_fp = os.path.join(work_dir, filename)
@@ -1536,11 +1549,14 @@ class Series():
                 # gather the section numbers and section filenames
                 sections[snum] = filename
 
+                data = opened_index.working(section_data, found)
                 with open(section_fp, "wb") as f:
-                    f.write(opened_index.working(section_data, found))
+                    f.write(data)
+                if feeder is not None:
+                    feeder.wrote(snum, data)
                 # drop it now, not when the loop rebinds the name: that is
                 # after the next section is decoded, so two would be alive
-                section_data = found = None
+                section_data = found = data = None
 
                 if reporter.was_canceled():
                     return None, None, None
@@ -1625,7 +1641,7 @@ class Series():
                 store.fillSeriesData(series)
             else:
                 try:
-                    with openLoader(series, reporter.canceled_while_waiting) as load:
+                    with openLoader(series, reporter.canceled_while_waiting, feeder) as load:
                         for snum, section in series.enumerateSections(show_progress=False, load=load):
                             series.data.addOpenedSection(section)
                             if reporter.was_canceled():
@@ -1644,6 +1660,9 @@ class Series():
             raise
 
         finally:
+            # every worker has exited before anything is removed
+            if feeder is not None:
+                feeder.close()
             # gone already on success; on a cancel or failure, what was unpacked
             shutil.rmtree(work_dir, ignore_errors=True)
             kept = None  # a set-aside folder that could not be put back

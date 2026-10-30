@@ -6,7 +6,10 @@ the open.
 
 The size bar is set to 0 here, so every series opens with workers.
 """
+import contextlib
+import gc
 import hashlib
+import json
 import multiprocessing
 import os
 import struct
@@ -14,6 +17,7 @@ import sys
 import threading
 import time
 import types
+import weakref
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures import process as futures_process
 from pathlib import Path
@@ -27,7 +31,7 @@ from PyReconstruct.modules.datatypes.trace_id import (
 )
 
 from test_open_reads_rows import (  # noqa: F401  (source is a fixture)
-    _copy, _later_loads, _odd_series, _open, _state, source,
+    FIXTURES, _copy, _later_loads, _odd_series, _open, _state, source,
 )
 
 
@@ -36,7 +40,8 @@ def _serial(m):
 
 
 def _parallel(m, used):
-    """Open with 2 workers, recording each section a worker read."""
+    """Open with 2 workers, recording each section built from a worker's
+    read (a result _rowsFromWorker rejects is read again here)."""
     m.setattr(section_rows, "PARALLEL_MIN_BYTES", 0)
     m.setattr(section_rows, "MAIN_GUARDED", True)
     m.setattr(section_rows, "PARALLEL_MAX_WORKERS", 2)
@@ -44,8 +49,10 @@ def _parallel(m, used):
     real = section_rows._rowsFromWorker
 
     def recording(n, series, result):
-        used.append(n)
-        return real(n, series, result)
+        rows = real(n, series, result)
+        if rows is not None:
+            used.append(n)
+        return rows
 
     m.setattr(section_rows, "_rowsFromWorker", recording)
 
@@ -267,6 +274,24 @@ def test_an_alignment_the_worker_did_not_measure_reads_in_this_process(tmp_path)
         series.close()
 
 
+def test_a_series_without_an_alignment_builds_from_the_workers(tmp_path, monkeypatch):
+    """The workers of a first open start before updateJSON gives a series
+    without an alignment "default", and still measure with it, so the open
+    builds every section from their reads."""
+    path = tmp_path / "series.jser"
+    path.write_bytes(FIXTURES["parity"].read_bytes())
+    assert "alignment" not in json.loads(path.read_bytes())["series"]
+    used = []
+    with monkeypatch.context() as m:
+        _parallel(m, used)
+        series = _open(path)
+    try:
+        assert series.alignment == "default"
+        assert used == sorted(series.sections)
+    finally:
+        series.close()
+
+
 def test_a_cancel_stops_the_workers_and_removes_the_folder(series_jser, monkeypatch):
     """A first open cancelled during the build stops its workers, and the
     working folder it made is removed."""
@@ -286,12 +311,13 @@ def test_a_cancel_stops_the_workers_and_removes_the_folder(series_jser, monkeypa
 
 
 def _stall(fp, n, alignment):
-    """Hold section STALL_SECTION's file open until the release marker
+    """Stall on section STALL_SECTION, holding its file open if given its
+    path (a first open's workers get its bytes), until the release marker
     exists (at most 30 s), after writing the started marker."""
     if n != int(os.environ["STALL_SECTION"]):
         return REAL_READ(fp, n, alignment)
     marker = Path(os.environ["STALL_MARKER"])
-    with open(fp, "rb"):
+    with open(fp, "rb") if isinstance(fp, str) else contextlib.nullcontext():
         marker.write_text(str(os.getpid()))
         limit = time.monotonic() + 30
         while not Path(f"{marker}.release").exists() and time.monotonic() < limit:
@@ -428,6 +454,7 @@ def test_cancel_clicked_while_a_worker_stalls_lands(qtbot, series_jser, tmp_path
             reporters.append(self)
 
         def canceled_while_waiting(self):
+            seen.setdefault("waiting", time.monotonic())
             canceled = super().canceled_while_waiting()
             if canceled:
                 seen.setdefault("canceled", time.monotonic())
@@ -448,11 +475,17 @@ def test_cancel_clicked_while_a_worker_stalls_lands(qtbot, series_jser, tmp_path
     clicker = Clicker()
 
     def control():
-        if _wait_for(marker):
+        ## a first open's worker stalls during the unpack: click once the
+        ## open waits for it
+        end = time.monotonic() + 20
+        while "waiting" not in seen and time.monotonic() < end:
+            time.sleep(0.01)
+        if _wait_for(marker) and "waiting" in seen:
             clicker.request.emit()
             end = time.monotonic() + 5
             while "returned" not in seen and time.monotonic() < end:
                 time.sleep(0.01)
+        seen["released"] = time.monotonic()
         Path(f"{marker}.release").touch()
 
     monkeypatch.setenv("STALL_SECTION", "0")
@@ -466,7 +499,7 @@ def test_cancel_clicked_while_a_worker_stalls_lands(qtbot, series_jser, tmp_path
             result = Series.openJser(str(series_jser), progress=Recording)
             seen["returned"] = time.monotonic()
         assert result is None
-        assert not Path(f"{marker}.release").exists()
+        assert seen.get("released", float("inf")) >= seen["returned"]
         assert seen["canceled"] - seen["clicked"] < 1
         assert multiprocessing.active_children() == []
     finally:
@@ -501,7 +534,7 @@ def test_a_failed_start_stops_its_workers_first(series_jser, tmp_path, monkeypat
             m.setattr(section_rows, "ProcessPoolExecutor", _FailSecondSubmit)
             series = _open(series_jser)
             alive = multiprocessing.active_children()
-        assert "the workers did not start" in capsys.readouterr().err
+        assert "the workers failed" in capsys.readouterr().err
         assert alive == []
     finally:
         if series is not None:
@@ -509,3 +542,171 @@ def test_a_failed_start_stops_its_workers_first(series_jser, tmp_path, monkeypat
         Path(f"{marker}.release").touch()
         for child in multiprocessing.active_children():
             child.join(30)
+
+
+def _mark_read(fp, n, alignment):
+    """Read the section, then leave a file named n in READ_DIR."""
+    result = REAL_READ(fp, n, alignment)
+    (Path(os.environ["READ_DIR"]) / str(n)).touch()
+    return result
+
+
+def test_a_first_open_feeds_the_workers_during_the_unpack(series_jser, tmp_path, monkeypatch):
+    """The workers read sections before the unpack has written the .ser,
+    and the open matches one process."""
+    read_dir = tmp_path / "read"
+    read_dir.mkdir()
+    monkeypatch.setenv("READ_DIR", str(read_dir))
+    real_update = Series.updateJSON
+    seen = []
+
+    def update(series_data):
+        end = time.monotonic() + 20
+        while not os.listdir(read_dir) and time.monotonic() < end:
+            time.sleep(0.01)
+        seen.append(sorted(os.listdir(read_dir)))
+        return real_update(series_data)
+
+    serial_jser = tmp_path / "serial" / "series.jser"
+    serial_jser.parent.mkdir()
+    serial_jser.write_bytes(series_jser.read_bytes())
+    with monkeypatch.context() as m:
+        _serial(m)
+        serial = _open(serial_jser)
+    try:
+        with monkeypatch.context() as m:
+            _parallel(m, [])
+            m.setattr(section_rows, "readFileRows", _mark_read)
+            m.setattr(Series, "updateJSON", staticmethod(update))
+            parallel = _open(series_jser)
+        try:
+            assert seen and seen[0], "no worker read a section during the unpack"
+            assert _state(parallel) == _state(serial)
+            assert _files(parallel) == _files(serial)
+        finally:
+            parallel.close()
+    finally:
+        serial.close()
+
+
+def _unpack_stall(monkeypatch, tmp_path):
+    """Stall section 0's worker, and record each Series.updateJSON call (the
+    unpack's step after the sections)."""
+    marker = tmp_path / "markers" / "started"
+    marker.parent.mkdir(exist_ok=True)
+    monkeypatch.setenv("STALL_SECTION", "0")
+    monkeypatch.setenv("STALL_MARKER", str(marker))
+    updates = []
+    real_update = Series.updateJSON
+
+    def update(series_data):
+        updates.append(True)
+        return real_update(series_data)
+
+    monkeypatch.setattr(section_rows, "readFileRows", _stall)
+    monkeypatch.setattr(Series, "updateJSON", staticmethod(update))
+    return marker, updates
+
+
+def test_a_cancel_during_the_unpack_stops_the_workers(series_jser, tmp_path, monkeypatch):
+    """A cancel while the unpack is still writing, with a worker stuck on a
+    section, returns at once, stops the workers and removes what the open
+    made."""
+    (tmp_path / "markers").mkdir()
+    before = sorted(os.listdir(series_jser.parent))
+    try:
+        with monkeypatch.context() as m:
+            _parallel(m, [])
+            marker, updates = _unpack_stall(m, tmp_path)
+
+            waited = []
+
+            class CancelOnceStalled(NullProgressReporter):
+                def was_canceled(self):
+                    if waited:
+                        return marker.exists()
+                    waited.append(True)
+                    return _wait_for(marker, 10)
+
+            start = time.monotonic()
+            result = Series.openJser(str(series_jser), progress=CancelOnceStalled)
+            elapsed = time.monotonic() - start
+            alive = multiprocessing.active_children()
+        assert result is None
+        assert updates == [], "the cancel came after the unpack"
+        assert elapsed < 15
+        assert alive == []
+        assert sorted(os.listdir(series_jser.parent)) == before
+    finally:
+        Path(f"{tmp_path / 'markers' / 'started'}.release").touch()
+        for child in multiprocessing.active_children():
+            child.join(30)
+
+
+def test_a_failure_during_the_unpack_stops_the_workers_and_keeps_the_folder(series_jser, tmp_path, monkeypatch):
+    """A section that fails to unpack while a worker is stuck on an earlier
+    one stops the workers, and the folder at the working folder's place is
+    put back untouched."""
+    (tmp_path / "markers").mkdir()
+    hidden = series_jser.parent / ".series"
+    hidden.mkdir()
+    (hidden / "keep.txt").write_text("mine")
+    before = sorted(os.listdir(series_jser.parent))
+    real_section_update = section_rows.Section.updateJSON
+    calls = []
+    try:
+        with monkeypatch.context() as m:
+            _parallel(m, [])
+            marker, updates = _unpack_stall(m, tmp_path)
+
+            def failing(section_data, n, **kwargs):
+                calls.append(n)
+                if len(calls) == 2:
+                    calls.append(_wait_for(marker, 10))
+                    raise RuntimeError("a corrupt section")
+                return real_section_update(section_data, n, **kwargs)
+
+            m.setattr(section_rows.Section, "updateJSON", staticmethod(failing))
+            with pytest.raises(RuntimeError, match="a corrupt section"):
+                Series.openJser(str(series_jser), progress=NullProgressReporter)
+            alive = multiprocessing.active_children()
+        assert calls[2] is True, "no worker was reading when the unpack failed"
+        assert alive == []
+        assert sorted(os.listdir(series_jser.parent)) == before
+        assert os.listdir(hidden) == ["keep.txt"]
+        assert (hidden / "keep.txt").read_text() == "mine"
+    finally:
+        Path(f"{tmp_path / 'markers' / 'started'}.release").touch()
+        for child in multiprocessing.active_children():
+            child.join(30)
+
+
+def test_a_result_is_dropped_once_the_pass_takes_it(tmp_path, monkeypatch):
+    """The loader holds no worker result for a section the pass has built:
+    with every result kept to the end, a DW09 open held 0.6 GB more."""
+    first = _open(_copy(_odd_series(tmp_path / "odd.jser"), tmp_path))
+    fp, sections = first.filepath, dict(first.sections)
+    loader_class = section_rows.ParallelLoader
+    real_submit, real_call = loader_class.submit, loader_class.__call__
+    refs, kept, used = {}, [], []
+
+    def submit(self, n, fp):
+        real_submit(self, n, fp)
+        refs[n] = weakref.ref(self.futures[n])
+
+    def call(self, series, n):
+        rows = real_call(self, series, n)
+        gc.collect()
+        kept.extend(m for m, ref in refs.items() if m <= n and ref() is not None)
+        return rows
+
+    try:
+        with monkeypatch.context() as m:
+            _parallel(m, used)
+            m.setattr(loader_class, "submit", submit)
+            m.setattr(loader_class, "__call__", call)
+            Series(fp, sections)
+        assert used and len(refs) == len(sections)
+        assert kept == []
+    finally:
+        first.close()
