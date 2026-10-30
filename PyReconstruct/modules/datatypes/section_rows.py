@@ -368,7 +368,7 @@ class ParallelLoader():
         return min(PARALLEL_MAX_WORKERS, (os.cpu_count() or 1) - 1, section_count)
 
     @staticmethod
-    def seriesAlignments(alignment : str, obj_attrs : dict) -> set:
+    def seriesAlignments(alignment : Optional[str], obj_attrs : dict) -> set:
         """Every alignment an object can be measured with: an object's own
         is only ever cleared during the open, never set."""
         return {alignment} | {
@@ -490,9 +490,10 @@ class UnpackFeeder():
         self.workers = ParallelLoader.workerCount(section_count) if mainSafeForWorkers() else 0
         self.series_data = series_data
         self.canceled = canceled
-        self.loader = None
+        self.loader : Optional[ParallelLoader] = None
         self.feeding = self.workers >= 1
-        self.written = []  # (n, bytes) written before the workers start
+        ## (n, bytes) written before the workers start
+        self.written : Optional[list] = []
         self.size = 0
 
     def wrote(self, n : int, data):
@@ -509,7 +510,10 @@ class UnpackFeeder():
                 stopWorkers(loader.executor)
                 print(f"Opening in one process: the workers failed ({e!r})", file=sys.stderr)
             return
-        self.written.append((n, data))
+        written = self.written
+        if written is None:
+            return
+        written.append((n, data))
         self.size += len(data)
         if self.size < PARALLEL_MIN_BYTES:
             return
@@ -518,7 +522,7 @@ class UnpackFeeder():
         alignments = ParallelLoader.seriesAlignments(
             self.series_data.get("alignment"), self.series_data.get("obj_attrs", {}),
         )
-        written, self.written = self.written, None
+        self.written = None
         self.loader = ParallelLoader.launch(self.workers, alignments, written, self.canceled)
         self.feeding = self.loader is not None
 
