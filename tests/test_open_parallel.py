@@ -411,6 +411,8 @@ def test_a_cancel_ends_a_result_a_worker_sent_partway(series_jser, tmp_path, mon
 def test_cancel_clicked_while_a_worker_stalls_lands(qtbot, series_jser, tmp_path, monkeypatch):
     """A click on the progress window's Cancel while the open waits for a
     stuck worker is seen at the next poll: the wait handles window events."""
+    import warnings
+
     from PySide6.QtCore import QObject, Qt, Signal
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QPushButton
@@ -419,7 +421,7 @@ def test_cancel_clicked_while_a_worker_stalls_lands(qtbot, series_jser, tmp_path
 
     (tmp_path / "markers").mkdir()
     marker = tmp_path / "markers" / "started"
-    seen = {}
+    seen = {"start": time.monotonic()}
     reporters = []
 
     class Recording(QtProgressReporter):
@@ -428,6 +430,7 @@ def test_cancel_clicked_while_a_worker_stalls_lands(qtbot, series_jser, tmp_path
             reporters.append(self)
 
         def canceled_while_waiting(self):
+            seen.setdefault("polled", time.monotonic())
             canceled = super().canceled_while_waiting()
             if canceled:
                 seen.setdefault("canceled", time.monotonic())
@@ -441,19 +444,34 @@ def test_cancel_clicked_while_a_worker_stalls_lands(qtbot, series_jser, tmp_path
             self.request.connect(self.click, Qt.QueuedConnection)
 
         def click(self):
-            button = reporters[-1]._progbar.findChild(QPushButton)
+            bar = reporters[-1]._progbar
+            seen["visible"] = bar.isVisible()
             seen["clicked"] = time.monotonic()
-            QTest.mouseClick(button, Qt.LeftButton)
+            QTest.mouseClick(bar.findChild(QPushButton), Qt.LeftButton)
 
     clicker = Clicker()
+    real_stop = section_rows.stopWorkers
+
+    def timed_stop(*args, **kwargs):
+        seen["stopping"] = time.monotonic()
+        try:
+            return real_stop(*args, **kwargs)
+        finally:
+            seen["stopped"] = time.monotonic()
 
     def control():
         if _wait_for(marker):
+            seen["marker"] = time.monotonic()
             clicker.request.emit()
             end = time.monotonic() + 5
             while "returned" not in seen and time.monotonic() < end:
                 time.sleep(0.01)
+        seen["release"] = time.monotonic()
         Path(f"{marker}.release").touch()
+
+    def timings():
+        return {k: round(v - seen["start"], 3) for k, v in seen.items() if isinstance(v, float)} | {
+            "visible": seen.get("visible")}
 
     monkeypatch.setenv("STALL_SECTION", "0")
     monkeypatch.setenv("STALL_MARKER", str(marker))
@@ -462,11 +480,13 @@ def test_cancel_clicked_while_a_worker_stalls_lands(qtbot, series_jser, tmp_path
         with monkeypatch.context() as m:
             _parallel(m, [])
             m.setattr(section_rows, "readFileRows", _stall)
+            m.setattr(section_rows, "stopWorkers", timed_stop)
             thread.start()
             result = Series.openJser(str(series_jser), progress=Recording)
             seen["returned"] = time.monotonic()
+        warnings.warn(f"DIAG cancel-click timings {timings()}")
         assert result is None
-        assert not Path(f"{marker}.release").exists()
+        assert not Path(f"{marker}.release").exists(), timings()
         assert seen["canceled"] - seen["clicked"] < 1
         assert multiprocessing.active_children() == []
     finally:
