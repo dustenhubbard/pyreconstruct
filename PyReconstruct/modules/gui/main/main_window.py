@@ -2146,9 +2146,17 @@ class MainWindow(QMainWindow):
         closes too. A Delete or Combine already waiting on its confirmation
         stops itself (MalformedContoursDialog._forOpenSeries), and a pixel-dust
         or Duplicates scan that a new series opened under opens no list.
+        Each list keeps the series it names, so the attributes that held
+        the last ones are cleared too: a closed list kept there kept the
+        old series alive after the new one opened.
         """
         for dialog in self.findChildren(MalformedContoursDialog):
             dialog.close()
+        self.duplicate_traces_dialog = None
+        self.pixel_dust_dialog = None
+        self.repaired_crossings_dialog = None
+        self.skipped_crossings_dialog = None
+        self.field.malformed_contours_dialog = None
 
     def _ensureImagesAvailable(self):
         """Locate the section images, and offer to scale unscaled zarrs."""
