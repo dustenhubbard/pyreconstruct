@@ -1,0 +1,75 @@
+gc_seconds_by_generation {0: 0.20436457099276595, 1: 0.1537977639818564, 2: 0}
+         13784633 function calls (13344510 primitive calls) in 6.345 seconds
+
+   Ordered by: cumulative time
+   List reduced from 428 to 35 due to restriction <35>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+       20    0.188    0.009    6.126    0.306 field_widget_1_base.py:601(changeSection)
+       20    0.000    0.000    3.804    0.190 bench_section_paging.py:221(timed_load)
+       20    0.020    0.001    3.653    0.183 series.py:2979(loadSection)
+       20    0.165    0.008    3.633    0.182 section.py:624(__init__)
+   100/60    0.018    0.000    2.134    0.036 bench_section_paging.py:186(timed)
+       10    0.151    0.015    1.915    0.192 contextlib.py:78(inner)
+       20    0.001    0.000    1.871    0.094 field_widget_1_base.py:326(generateView)
+       20    0.001    0.000    1.870    0.094 section_layer.py:27(generateView)
+       20    0.079    0.004    1.779    0.089 trace_layer.py:895(generateTraceLayer)
+       20    0.000    0.000    1.576    0.079 section.py:1848(resyncColumnarStore)
+       20    0.064    0.003    1.576    0.079 section.py:1889(_rebuildColumnarStore)
+       20    0.112    0.006    1.377    0.069 columnar_store.py:727(fromSection)
+    88000    0.301    0.000    0.920    0.000 columnar_store.py:1095(appendRow)
+    88000    0.328    0.000    0.796    0.000 trace_layer.py:338(_drawTrace)
+       20    0.302    0.015    0.552    0.028 trace_layer.py:820(_screenPolygons)
+       20    0.086    0.004    0.511    0.026 fast_json.py:83(fast_loads)
+    88000    0.454    0.000    0.502    0.000 columnar_store.py:543(coordinatesFromRow)
+       20    0.425    0.021    0.425    0.021 {orjson.loads}
+    88020    0.364    0.000    0.364    0.000 {method 'drawPolygon' of 'PySide6.QtGui.QPainter' objects}
+   440000    0.194    0.000    0.358    0.000 trace.py:58(normalizeObjectName)
+       40    0.003    0.000    0.293    0.007 trace_layer.py:704(_rawBounds)
+3169664/2729664    0.209    0.000    0.278    0.000 {built-in method builtins.len}
+       20    0.000    0.000    0.259    0.013 state_manager.py:685(initialize)
+       20    0.000    0.000    0.257    0.013 section.py:1212(issueLoadedTraceIDs)
+       20    0.002    0.000    0.223    0.011 trace_layer.py:738(_cullMask)
+    88000    0.074    0.000    0.215    0.000 trace.py:620(fromList)
+       20    0.206    0.010    0.206    0.010 trace_id.py:822(sectionFileDigest)
+      120    0.038    0.000    0.202    0.002 {built-in method numpy.fromiter}
+    88000    0.036    0.000    0.189    0.000 columnar_store.py:488(_traceCoordinates)
+       20    0.094    0.005    0.186    0.009 section.py:951(updateJSON)
+    88000    0.038    0.000    0.172    0.000 columnar_store.py:405(append)
+   440000    0.128    0.000    0.155    0.000 columnar_store.py:599(append)
+    88000    0.142    0.000    0.147    0.000 weakref.py:503(pop)
+       20    0.000    0.000    0.145    0.007 state_manager.py:34(__init__)
+       20    0.000    0.000    0.144    0.007 shutil.py:230(copyfile)
+
+
+         13784633 function calls (13344510 primitive calls) in 6.345 seconds
+
+   Ordered by: internal time
+   List reduced from 428 to 25 due to restriction <25>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+    88000    0.454    0.000    0.502    0.000 columnar_store.py:543(coordinatesFromRow)
+       20    0.425    0.021    0.425    0.021 {orjson.loads}
+    88020    0.364    0.000    0.364    0.000 {method 'drawPolygon' of 'PySide6.QtGui.QPainter' objects}
+    88000    0.328    0.000    0.796    0.000 trace_layer.py:338(_drawTrace)
+       20    0.302    0.015    0.552    0.028 trace_layer.py:820(_screenPolygons)
+    88000    0.301    0.000    0.920    0.000 columnar_store.py:1095(appendRow)
+3169664/2729664    0.209    0.000    0.278    0.000 {built-in method builtins.len}
+       20    0.206    0.010    0.206    0.010 trace_id.py:822(sectionFileDigest)
+   440000    0.194    0.000    0.358    0.000 trace.py:58(normalizeObjectName)
+       20    0.188    0.009    6.126    0.306 field_widget_1_base.py:601(changeSection)
+       20    0.165    0.008    3.633    0.182 section.py:624(__init__)
+       10    0.151    0.015    1.915    0.192 contextlib.py:78(inner)
+    88000    0.142    0.000    0.147    0.000 weakref.py:503(pop)
+   440000    0.128    0.000    0.155    0.000 columnar_store.py:599(append)
+       20    0.112    0.006    1.377    0.069 columnar_store.py:727(fromSection)
+  1144710    0.099    0.000    0.099    0.000 {method 'append' of 'list' objects}
+   707942    0.099    0.000    0.099    0.000 {method 'get' of 'dict' objects}
+       20    0.094    0.005    0.186    0.009 section.py:951(updateJSON)
+       60    0.086    0.001    0.086    0.001 {method '__exit__' of '_io._IOBase' objects}
+       20    0.086    0.004    0.511    0.026 fast_json.py:83(fast_loads)
+       20    0.079    0.004    1.779    0.089 trace_layer.py:895(generateTraceLayer)
+    88000    0.074    0.000    0.215    0.000 trace.py:620(fromList)
+    88000    0.067    0.000    0.075    0.000 lazy_points.py:38(__init__)
+    88280    0.065    0.000    0.065    0.000 {built-in method numpy.array}
+       20    0.064    0.003    0.125    0.006 trace_layer.py:786(_fieldPoints)
