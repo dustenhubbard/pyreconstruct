@@ -185,6 +185,36 @@ def test_star_frame_renders_at_1x_and_3x(shapes1):
     assert shapes1.window is window
 
 
+def test_frame_bar_uses_the_shared_painter_without_constructing_a_widget(shapes1, monkeypatch):
+    from PyReconstruct.modules.gui.palette.scale_bar import ScaleBar
+
+    created = []
+    original_init = ScaleBar.__init__
+
+    def record_widget(self, *args, **kwargs):
+        created.append(True)
+        original_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(ScaleBar, "__init__", record_widget)
+    frame = renderFrame(shapes1, shapes1.loadSection(0), MOCK_WINDOW, MOCK_FRAME, MOCK_FRAME)
+    assert frame.size().toTuple() == MOCK_FRAME
+    assert lit(frame).any()
+    assert not created, "A frame must paint its scale bar without constructing a widget"
+
+
+def test_capture_label_size_changes_the_rendered_label(shapes1):
+    section = shapes1.loadSection(0)
+    bar_only = FrameLayers(image=False, traces=False)
+    default = lit(renderFrame(shapes1, section, MOCK_WINDOW, MOCK_FRAME, MOCK_FRAME,
+                              bar_only, bar_pos=(20, 50)))
+    larger = lit(renderFrame(shapes1, section, MOCK_WINDOW, MOCK_FRAME, MOCK_FRAME,
+                             bar_only, bar_pos=(20, 50), label_size=24, tick_label_size=20))
+    # The band above the bar holds only its label, whose height should double.
+    default_rows = np.flatnonzero(default[50:72].any(axis=1))
+    larger_rows = np.flatnonzero(larger[50:94].any(axis=1))
+    assert larger_rows[-1] - larger_rows[0] > 1.6 * (default_rows[-1] - default_rows[0])
+
+
 def square(section, fill_mode):
     """Leave the section one red square, from (2, 2) to (8, 8)."""
     for trace in list(section.tracesAsList()):

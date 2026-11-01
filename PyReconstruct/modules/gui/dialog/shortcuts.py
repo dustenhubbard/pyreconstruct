@@ -400,6 +400,7 @@ help_shortcuts = [
     ("open_act", "Open a series file"),
     ("save_act", "Save"),
     ("manualbackup_act", "Backup series"),
+    ("figurecapture_act", "Capture a framed figure"),
     ("newfromimages_act", "New series"),
     ("restart_act", "Restart"),
     ("quit_act", "Quit"),

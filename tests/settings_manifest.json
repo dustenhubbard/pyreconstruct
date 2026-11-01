@@ -42,6 +42,7 @@
     "deselect_act": "str",
     "display_closest": "bool",
     "edittrace_act": "str",
+    "figurecapture_act": "str",
     "fill_opacity": "float",
     "find_zoom": "float",
     "findcontour_act": "str",

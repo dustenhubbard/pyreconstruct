@@ -7,14 +7,12 @@ in screen pixels (trace pens, the selection highlight, z-traces, flags and the
 scale bar) is multiplied by the output factor, so a 3x render looks like the
 screen, only sharper.
 """
-import types
 from dataclasses import dataclass
 
-from PySide6.QtCore import QPoint
-from PySide6.QtGui import QImage, QPainter
+from PySide6.QtGui import QFontMetrics, QImage, QPainter
 
 from PyReconstruct.modules.datatypes import Series, Section
-from PyReconstruct.modules.datatypes.default_settings import pinnedLengthFor
+from PyReconstruct.modules.datatypes.default_settings import clampScaleBarThickness, pinnedLengthFor
 
 from .section_layer import SectionLayer
 
@@ -45,6 +43,12 @@ def renderFrame(
     layers : FrameLayers = None,
     bar_pos : tuple = None,
     bar_length : float = None,
+    label_size : int = 12,
+    tick_label_size : int = 10,
+    *,
+    show_all_traces=False,
+    focus_on=False,
+    roi_box=None,
 ) -> QImage:
     """Render the part of a section in `window` as an image `out_dim` in size.
 
@@ -62,6 +66,8 @@ def renderFrame(
                 the frame's top-left; bottom-left by default
             bar_length (float): the bar's length in µm, as set from its
                 right-click menu, or None for the stored sizing
+            label_size, tick_label_size (int): capture-only bar font sizes
+            show_all_traces, focus_on, roi_box: the field's trace visibility
         Returns:
             (QImage): the frame
     """
@@ -85,6 +91,9 @@ def renderFrame(
             out_dim,
             list(window),
             hide_image=not layers.image,
+            show_all_traces=show_all_traces,
+            focus_on=focus_on,
+            roi_box=roi_box,
         )
     finally:
         series.window = saved_window
@@ -103,17 +112,49 @@ def renderFrame(
             factor,
             bar_pos,
             bar_length,
+            label_size,
+            tick_label_size,
         )
         painter.end()
     return image
 
 
-def paintScaleBar(painter, series, scale, frame_dim, factor, pos=None, length=None):
+def scaleBarGeometry(series, scale, frame_dim, length=None, label_size=12,
+                     tick_label_size=10):
+    """The bar's real length, subdivisions and screen size, without a widget."""
+    from PyReconstruct.modules.gui.palette.scale_bar import (
+        barLayout, labelText, niceLength, outlinedFont, pinnedLength,
+        pinnedSubdivisions,
+    )
+
+    room = int(series.getOption("scale_bar_width") / 100 * frame_dim[0])
+    pinned = pinnedLengthFor(
+        series.getOption("scale_bar_mode"),
+        series.getOption("scale_bar_length_um"),
+    )
+    if length or pinned:
+        real_len, pix_len = pinnedLength(length or pinned, scale,
+                                        frame_dim[0] if length else room)
+        subdivs = pinnedSubdivisions(real_len)
+    else:
+        real_len, subdivs = niceLength(room * scale)
+        pix_len = int(real_len / scale)
+    text = series.getOption("show_scale_bar_text")
+    label_w = (QFontMetrics(outlinedFont(label_size)).horizontalAdvance(labelText(real_len))
+               if text else 0)
+    height = barLayout(
+        clampScaleBarThickness(series.getOption("scale_bar_thickness")), text,
+        series.getOption("show_scale_bar_ticks"), label_size, tick_label_size,
+    )[2]
+    return real_len, subdivs, (max(pix_len, label_w + 2 if text else 0), height)
+
+
+def paintScaleBar(painter, series, scale, frame_dim, factor, pos=None, length=None,
+                  label_size=12, tick_label_size=10):
     """Draw the field's scale bar into a frame, `factor` times its screen size.
 
-    For now this renders the real `ScaleBar` widget through the painter,
-    scaled, so the bar, its ticks and its outlined labels are drawn as
-    vectors at the output size. Its label sizes are the on-screen ones.
+    Uses the same painter function as the field's bar, with capture-only
+    label sizes. No widget is constructed or changed.
 
         Params:
             painter (QPainter): a painter on the output image
@@ -125,30 +166,20 @@ def paintScaleBar(painter, series, scale, frame_dim, factor, pos=None, length=No
                 bottom-left corner
             length (float): a length in µm to draw whatever the mode, or None
     """
-    from PyReconstruct.modules.gui.palette.scale_bar import ScaleBar
+    from PyReconstruct.modules.gui.palette.scale_bar import paintScaleBar as paintBar
 
-    room = int(series.getOption("scale_bar_width") / 100 * frame_dim[0])
-    pinned = pinnedLengthFor(
-        series.getOption("scale_bar_mode"),
-        series.getOption("scale_bar_length_um"),
+    real_len, subdivs, size = scaleBarGeometry(
+        series, scale, frame_dim, length, label_size, tick_label_size,
     )
-    manager = types.SimpleNamespace(series=series)
-    bar = ScaleBar(
-        None, manager, room, series.getOption("scale_bar_thickness"), scale,
-        micron_length=pinned, max_pixel_length=room,
+    if pos is None:
+        pos = (BAR_MARGIN[0], frame_dim[1] - size[1] - BAR_MARGIN[1])
+    painter.save()
+    painter.translate(pos[0] * factor, pos[1] * factor)
+    paintBar(
+        painter, real_len, subdivs, scale,
+        clampScaleBarThickness(series.getOption("scale_bar_thickness")),
+        series.getOption("show_scale_bar_text"),
+        series.getOption("show_scale_bar_ticks"),
+        factor, label_size, tick_label_size,
     )
-    try:
-        if length:
-            bar.setOverride(length, frame_dim[0])
-        if pos is None:
-            pos = (BAR_MARGIN[0], frame_dim[1] - bar.height() - BAR_MARGIN[1])
-        painter.save()
-        painter.scale(factor, factor)
-        bar.render(
-            painter,
-            QPoint(int(pos[0]), int(pos[1])),
-            renderFlags=bar.RenderFlag.DrawChildren,
-        )
-        painter.restore()
-    finally:
-        bar.deleteLater()
+    painter.restore()

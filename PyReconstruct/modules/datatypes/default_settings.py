@@ -211,6 +211,14 @@ default_settings = {
     "togglelists_act": "Ctrl+Alt+S",
     "save_act": "Ctrl+S",
     "manualbackup_act": "Ctrl+Shift+B",
+    # Figure capture is a feature action. Ctrl+Shift+L is unused throughout
+    # this dict and the static bindings. macOS maps it to Cmd+Shift+L, which
+    # is not a system shortcut; Windows and Linux reserve neither sequence.
+    # Checked by reasoning against OS reservations on all three platforms.
+    # Rejected Ctrl+Shift+E (Linux IBus emoji entry), Ctrl+Shift+F (flag
+    # list), Ctrl+Shift+C (curation) and
+    # Ctrl+Shift+3/4/5 (macOS screenshots). Bare letters select field tools.
+    "figurecapture_act": "Ctrl+Shift+L",
     "newfromimages_act": "Ctrl+N",
     "restart_act": "Ctrl+Alt+R",
     "quit_act": "Ctrl+Q",

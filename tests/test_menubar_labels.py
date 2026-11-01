@@ -384,6 +384,9 @@ _REQUEST_FEATURE_ROW = (1, "act", "requestfeature_act")
 # shows only the objects with a selected trace, directly under "Object list".
 _SELECTED_OBJECT_LIST_ROW = (1, "act", "selectedobjectlist_act")
 MENUBAR_EXPECTED = list(MENUBAR_BASELINE)
+# Figure capture precedes the whole-section exports; both legacy commands stay.
+_export_at = MENUBAR_EXPECTED.index((2, "act", "exportsvg_act"))
+MENUBAR_EXPECTED[_export_at:_export_at] = [(2, "act", "figurecapture_act"), (2, "sep", None)]
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "act", "objectlist_act")) + 1,
     _SELECTED_OBJECT_LIST_ROW,
@@ -581,10 +584,11 @@ def test_menubar_action_and_submenu_counts():
     Duplicates... replaced its two duplicate finders, 126 to 125. The Dev
     build's Series > Images > Crop scaled images around an object... took it
     to 126 (counted with the gate on, see dev_build). Help > Online
-    resources > Class documents took it to 127.
+    resources > Class documents took it to 127; Section > Export > Figure...
+    took it to 128.
     """
     rows = _rows()
-    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 127
+    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 128
     assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 30
 
 
