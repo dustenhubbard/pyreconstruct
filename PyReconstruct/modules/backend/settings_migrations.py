@@ -141,44 +141,49 @@ def apply_update_check_on_startup_default(
 #: with B, and `Series.getOption` stored that B on every machine that ran one.
 ROI_TOGGLE_KEY = "roibox_act"
 
-#: The ROI mode tool on the mouse palette, which now owns B by default.
+#: The ROI mode tool on the mouse palette. Dev builds from 2026-10-19 shipped
+#: it with B, stored the same way.
 ROI_TOOL_KEY = "useroi_act"
 
+#: Marker recording that B has been taken off ROI mode on this machine. Not an
+#: entry in `default_settings`, like the update-check marker above.
+ROI_B_KEY_CLEARED_KEY = "roi_b_key_cleared"
 
-def settle_legacy_roi_shortcut(store: Optional[SettingsStore] = None) -> bool:
-    """Take B off Toggle ROI mode when an older Dev build stored it there.
 
-    B moved from ``roibox_act`` to the new ``useroi_act``. A machine that ran
-    one of those Dev builds keeps ``roibox_act = "B"``, and the new default
-    then puts B on two actions: Qt calls that ambiguous and fires neither. No
-    stable release stored B there.
+def clear_roi_b_key(store: Optional[SettingsStore] = None) -> bool:
+    """Take B off ROI mode, once per machine.
 
-    No marker is needed. ``useroi_act`` is stored the first time this build
-    builds its shortcuts, so once it is present this does nothing, and a B
-    the user later sets on the toggle is theirs to keep:
+    ROI mode has no default key now. Its two actions each had B as a default
+    in some Dev builds, and `Series.getOption` stored it, so a stored B on
+    either one is a copy of an old default rather than a choice. This clears
+    it once and records that it ran, so a B the user sets afterwards is kept:
 
-    * **``useroi_act`` stored** -- return; this build has run here already.
-    * **``roibox_act`` stored as B** -- write ``""``. The only case that
-      changes anything.
-    * **anything else** (empty, another key, nothing stored) -- write nothing.
+    * **marker present** -- return; this ran here already.
+    * **``roibox_act`` or ``useroi_act`` stored as B** -- write ``""`` to it,
+      set the marker.
+    * **anything else** (empty, another key, nothing stored) -- write nothing,
+      set the marker.
 
     Call before the shortcuts are built. Never raises, for the same reason as
-    the migration above.
+    the migration above; a failed write leaves no marker and is retried.
 
         Returns:
-            (bool) True if ``roibox_act`` was written, False otherwise.
+            (bool) True if a key was written, False otherwise.
     """
     try:
         if store is None:
             store = default_settings_store()
-        if store.contains(None, ROI_TOOL_KEY):
+        if store.contains(None, ROI_B_KEY_CLEARED_KEY):
             return False
-        if not store.contains(None, ROI_TOGGLE_KEY):
-            return False
-        stored = store.value(None, ROI_TOGGLE_KEY, str)
-        if not isinstance(stored, str) or stored.strip().upper() != "B":
-            return False
-        store.set_value(None, ROI_TOGGLE_KEY, "")
-        return True
+        wrote = False
+        for key in (ROI_TOGGLE_KEY, ROI_TOOL_KEY):
+            if not store.contains(None, key):
+                continue
+            stored = store.value(None, key, str)
+            if isinstance(stored, str) and stored.strip().upper() == "B":
+                store.set_value(None, key, "")
+                wrote = True
+        store.set_value(None, ROI_B_KEY_CLEARED_KEY, True)
+        return wrote
     except Exception:
         return False

@@ -66,22 +66,47 @@ class FieldWidgetView(FieldWidgetPaint):
             self.mainwindow.mouse_palette.activateModeButton("Pointer")
         self.generateView()
 
-    def setRoiBoxSize(self) -> bool:
-        """Ask for the ROI mode box's width and height (kept for the session).
-        Opened by a right-click on the ROI mode tool.
+    def setRoiBoxOptions(self) -> bool:
+        """Ask for the ROI mode tool's options, kept for the session: drag to
+        draw the box or click to place one of the set size, the box's width
+        and height, and the point a click places, the center or the
+        upper-left corner. Opened by a right-click on the ROI mode tool.
+
+        A placed box takes a new size at once and keeps the point its anchor
+        names: its center, or its upper-left corner.
 
             Returns:
-                (bool): True if the user confirmed a size
+                (bool): True if the user confirmed the options
         """
         w, h = self.roi_box_size
+        drag = self.roi_box_drag_draws
+        center = self.roi_box_anchor != "corner"
         structure = [
+            ["Place the box:"],
+            [("radio",
+                ("Drag to draw it, click to move it", drag),
+                ("Click to place it at the set size", not drag),
+            )],
             ["Width (μm):", (True, "float", w, (1e-6, 1e6))],
             ["Height (μm):", (True, "float", h, (1e-6, 1e6))],
+            ["A click places the box's:"],
+            [("radio",
+                ("Center", center),
+                ("Upper-left corner", not center),
+            )],
         ]
         response, confirmed = QuickDialog.get(self, structure, "ROI mode")
         if not confirmed:
             return False
-        self.roi_box_size = (float(response[0]), float(response[1]))
+        new_size = (float(response[1]), float(response[2]))
+        self.roi_box_drag_draws = response[0][0][1]
+        self.roi_box_anchor = "center" if response[3][0][1] else "corner"
+        if self.roi_box_center is not None and self.roi_box_anchor == "corner":
+            # the upper-left corner stays where it is
+            (cx, cy), (ow, oh) = self.roi_box_center, self.roi_box_size
+            nw, nh = new_size
+            self.roi_box_center = (cx - ow / 2 + nw / 2, cy + oh / 2 - nh / 2)
+        self.roi_box_size = new_size
         if self.roiBox() is not None:
             self.generateView()
         else:
@@ -96,7 +121,12 @@ class FieldWidgetView(FieldWidgetPaint):
         if self.roi_box_on:
             return f"ROI mode {size}"
         if self.mouse_mode == ROI_BOX:
-            return f"ROI mode {size}: click or drag to place"
+            point = "upper-left corner" if self.roi_box_anchor == "corner" else "center"
+            if not self.roi_box_drag_draws:
+                return f"ROI mode {size}: click to place its {point}"
+            if point == "center":
+                return f"ROI mode {size}: click or drag to place"
+            return f"ROI mode {size}: drag, or click to place its {point}"
         return None
 
     def setViewMagnification(self, new_mag : float = None):

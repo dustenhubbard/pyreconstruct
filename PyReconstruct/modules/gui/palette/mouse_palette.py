@@ -300,8 +300,9 @@ class MousePalette():
             b.setFont(f)
             b.setText("⎋")
         elif name == "ROI mode":
-            # right-click sets the box's width and height
-            b.setRightClickEvent(lambda: self.mainwindow.field.setRoiBoxSize())
+            # right-click sets the tool's options: drag or set size, the
+            # width and height, and the point a click places
+            b.setRightClickEvent(lambda: self.mainwindow.field.setRoiBoxOptions())
             f = b.font()
             f.setBold(True)
             b.setFont(f)

@@ -76,6 +76,12 @@ class FieldWidgetBase:
         self.roi_box_on : bool              = False
         self.roi_box_center : tuple         = None
         self.roi_box_size : tuple           = (5.0, 5.0)
+        # The ROI mode tool's options, set by a right-click on its button and
+        # kept for the session: whether a drag draws the box (else every press
+        # is a click that places a box of the set size), and which point of
+        # the box a click places, "center" or "corner" (the upper-left).
+        self.roi_box_drag_draws : bool      = True
+        self.roi_box_anchor : str           = "center"
         # A drag in the ROI box mode, in field coordinates: where the press
         # was, and where the pointer is once the press has become a drag
         # (None until then, and no preview is drawn).
