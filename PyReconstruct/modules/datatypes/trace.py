@@ -618,7 +618,7 @@ class Trace():
             return xml_contour
     
     @staticmethod
-    def fromList(l : list, name : str = None):
+    def fromList(l : list, name : str = None, points=None):
         """Create a trace object from a list.
 
         Two row shapes are accepted, told apart by length, because the two
@@ -641,6 +641,8 @@ class Trace():
                 l (list): the list trace data, 8 or 9 fields as above
                 name (str): the name of the trace; required for an 8-field row,
                             ignored for a 9-field one
+                points: the trace's points, already built over the row's x
+                        and y lists (`LazyPoints`), or None to build them here
             Returns:
                 (Trace) a Trace object constructed from the list data
         """
@@ -672,7 +674,7 @@ class Trace():
 
         new_trace = Trace(name.strip(), color, closed)  # strip trace name
         new_trace.negative = negative
-        new_trace.points = list(zip(x, y))
+        new_trace.points = list(zip(x, y)) if points is None else points
         new_trace.hidden = hidden
         new_trace.fill_mode = fill_mode
         new_trace.tags = set(tags)
