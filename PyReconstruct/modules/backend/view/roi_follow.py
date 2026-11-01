@@ -1,4 +1,5 @@
-"""Where the ROI mode box sits while it follows an object.
+"""Where the ROI mode box sits while it follows an object, and which objects
+it keeps whole.
 
 The box keeps its size and is centered on the object, section by section. The
 object's place on a section comes from the series data, not the section: each
@@ -98,3 +99,43 @@ def followCenter(centers : dict, snum : int):
     if near is None:
         return None
     return centers[near], near
+
+
+def objectsTouching(series, boxes : dict) -> frozenset:
+    """The objects with a trace that touches the ROI box on its section, for
+    keeping whole every object that crosses the box's edge.
+
+    A trace counts by its square from the series data (centroid plus and
+    minus radius), so a trace near the box may count when its outline does
+    not reach it; it never misses one that does.
+
+        Params:
+            series (Series): the series
+            boxes (dict): section number -> the box there as (xmin, ymin,
+                xmax, ymax); a section not in it has no box
+        Returns:
+            (frozenset): the object names
+    """
+    if not boxes:
+        return frozenset()
+    snum_list = sorted(boxes)
+    box_snums = np.asarray(snum_list, dtype=int)
+    bx = np.asarray([boxes[s] for s in snum_list], dtype=float)
+    names = set()
+    for name in series.data["objects"]:
+        extents = objectExtents(series, name)
+        if extents is None:
+            continue
+        snums, xmin, ymin, xmax, ymax = extents
+        at = np.searchsorted(box_snums, snums)
+        boxed = (at < len(box_snums)) & (box_snums[np.minimum(at, len(box_snums) - 1)] == snums)
+        if not boxed.any():
+            continue
+        b = bx[at[boxed]]
+        touch = (
+            (xmin[boxed] <= b[:, 2]) & (xmax[boxed] >= b[:, 0])
+            & (ymin[boxed] <= b[:, 3]) & (ymax[boxed] >= b[:, 1])
+        )
+        if touch.any():
+            names.add(name)
+    return frozenset(names)

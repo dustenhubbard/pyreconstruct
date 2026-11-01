@@ -30,7 +30,7 @@ def roi_mode_shown(monkeypatch):
 SIZE = (0.4, 0.4)
 
 
-def _options(follow="", drag=True, size=SIZE, corner=False):
+def _options(follow="", drag=True, size=SIZE, corner=False, whole=False):
     """A response to the ROI mode options dialog."""
     return [
         [("Drag to draw it, click to move it", drag),
@@ -38,6 +38,7 @@ def _options(follow="", drag=True, size=SIZE, corner=False):
         size[0], size[1],
         [("Center", not corner), ("Upper-left corner", corner)],
         follow,
+        [("Show all of any object that touches the box, on every section", whole)],
     ]
 
 
@@ -143,7 +144,9 @@ def test_the_selected_trace_is_offered_to_follow(mw, qapp, monkeypatch):
     field.setRoiBoxOptions()
 
     (structure,) = seen
-    combo = [i for row in structure for i in row if isinstance(i, tuple)][-1]
+    (combo,) = [
+        i for row in structure for i in row if isinstance(i, tuple) and i[0] == "combo"
+    ]
     assert combo[0] == "combo" and combo[2] == "d03p14"
     assert "d03p14" in combo[1] and "d03" in combo[1]
 

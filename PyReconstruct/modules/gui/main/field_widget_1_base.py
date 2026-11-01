@@ -20,8 +20,12 @@ from PySide6.QtCore import (
 from PyReconstruct.modules.datatypes import Series, Section, Trace, Transform
 from PyReconstruct.modules.backend.view import SectionLayer, ZarrLayer
 from PyReconstruct.modules.backend.view.image_layer import dropReadAhead
-from PyReconstruct.modules.backend.view.trace_layer import traceInRoiBox
-from PyReconstruct.modules.backend.view.roi_follow import followCenter, objectCenters
+from PyReconstruct.modules.backend.view.trace_layer import roiBoxBounds, traceInRoiBox
+from PyReconstruct.modules.backend.view.roi_follow import (
+    followCenter,
+    objectCenters,
+    objectsTouching,
+)
 from PyReconstruct.modules.backend.func import SeriesStates
 from PyReconstruct.modules.backend.table import TableManager
 from PyReconstruct.modules.gui.utils import notify
@@ -89,6 +93,11 @@ class FieldWidgetBase:
         # roi_follow_from names (the shown section when it has the object).
         self.roi_follow_name : str          = None
         self.roi_follow_from : int          = None
+        # Keep whole every object with a trace touching the box on any
+        # section: all its traces are shown on every section. The names are
+        # found once per box placement (roiKeep).
+        self.roi_keep_whole : bool          = False
+        self._roi_keep_cache : tuple        = None
         # A drag in the ROI box mode, in field coordinates: where the press
         # was, and where the pointer is once the press has become a drag
         # (None until then, and no preview is drawn).
@@ -215,6 +224,7 @@ class FieldWidgetBase:
         self.roi_box_center = None
         self.roi_follow_name = None
         self.roi_follow_from = None
+        self._roi_keep_cache = None
         self.roi_box_drag_start = None
         self.roi_box_drag_end = None
 
@@ -374,7 +384,8 @@ class FieldWidgetBase:
             show_all_traces=self.show_all_traces,
             hide_image=self.hide_image,
             focus_on=self.focus_mode,
-            roi_box=self.roiBox()
+            roi_box=self.roiBox(),
+            roi_keep=self.roiKeep(),
         )
 
         # blend b section if requested
@@ -389,7 +400,8 @@ class FieldWidgetBase:
                 show_all_traces=self.show_all_traces,
                 hide_image=self.hide_image,
                 focus_on=self.focus_mode,
-                roi_box=self.roiBox()
+                roi_box=self.roiBox(),
+                roi_keep=self.roiKeep(),
             )
             # overlay a and b sections
             painter = QPainter(view)
@@ -455,10 +467,41 @@ class FieldWidgetBase:
             return
         self.roi_box_center, self.roi_follow_from = placed
 
+    def roiKeep(self) -> frozenset:
+        """The objects the ROI box keeps whole, or None while that option or
+        the box is off. Each has a trace touching the box on some section, the
+        box placed there as it is drawn there (a followed box moves). Found
+        again only when the box, its size or the followed object changes."""
+        box = self.roiBox()
+        if box is None or not self.roi_keep_whole:
+            return None
+        w, h = self.roi_box_size
+        if self.roi_follow_name is not None:
+            key = ("follow", self.roi_follow_name, w, h)
+        else:
+            key = ("box", box)
+        if self._roi_keep_cache is not None and self._roi_keep_cache[0] == key:
+            return self._roi_keep_cache[1]
+        if self.roi_follow_name is not None:
+            centers = objectCenters(self.series, self.roi_follow_name)
+            places = {
+                snum: followCenter(centers, snum) for snum in self.series.sections
+            }
+            boxes = {
+                snum: roiBoxBounds((*placed[0], w, h))
+                for snum, placed in places.items() if placed is not None
+            }
+        else:
+            bounds = roiBoxBounds(box)
+            boxes = {snum: bounds for snum in self.series.sections}
+        names = objectsTouching(self.series, boxes)
+        self._roi_keep_cache = (key, names)
+        return names
+
     def inRoiBox(self, trace : Trace) -> bool:
         """Whether a trace on the current section is inside the ROI box
         (always True while the box is off)."""
-        return traceInRoiBox(trace, self.section.tform, self.roiBox())
+        return traceInRoiBox(trace, self.section.tform, self.roiBox(), self.roiKeep())
 
     def dropSelectedOutsideRoiBox(self) -> list:
         """Deselect the traces outside the ROI box, which are not drawn.
