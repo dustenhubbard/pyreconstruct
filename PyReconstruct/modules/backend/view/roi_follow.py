@@ -162,18 +162,20 @@ def followCenter(centers : dict, snum : int):
     return centers[near], near
 
 
-def objectsTouching(series, boxes : dict) -> frozenset:
+def objectsTouching(series, boxes : dict, display_tform) -> frozenset:
     """The objects with a trace that touches the ROI box on its section, for
     keeping whole every object that crosses the box's edge.
 
-    A trace counts by its square from the series data (centroid plus and
-    minus radius), so a trace near the box may count when its outline does
-    not reach it; it never misses one that does.
+    A trace counts by its square in displayed coordinates (objectExtents:
+    its centroid moved to where the field draws it, plus and minus its
+    radius grown by that move's stretch), so a trace near the box may count
+    when its outline does not reach it; it never misses one that does.
 
         Params:
             series (Series): the series
             boxes (dict): section number -> the box there as (xmin, ymin,
                 xmax, ymax); a section not in it has no box
+            display_tform (callable): as in objectExtents
         Returns:
             (frozenset): the object names
     """
@@ -182,9 +184,10 @@ def objectsTouching(series, boxes : dict) -> frozenset:
     snum_list = sorted(boxes)
     box_snums = np.asarray(snum_list, dtype=int)
     bx = np.asarray([boxes[s] for s in snum_list], dtype=float)
+    moves = {}
     names = set()
     for name in series.data["objects"]:
-        extents = objectExtents(series, name)
+        extents = objectExtents(series, name, display_tform, moves)
         if extents is None:
             continue
         snums, xmin, ymin, xmax, ymax = extents

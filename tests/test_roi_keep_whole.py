@@ -13,7 +13,10 @@ section 52 (d03, d03p14, d03sp14).
 import pytest
 from PySide6.QtCore import QSettings
 
+from PyReconstruct.modules.backend.view.trace_layer import roiBoxBounds
+
 from PyReconstruct.modules.backend.view import roi_follow as RF
+from PyReconstruct.modules.datatypes import Trace, Transform
 from PyReconstruct.modules.datatypes.series_data import ObjectData, TraceColumns
 
 pytestmark = pytest.mark.gui
@@ -31,6 +34,12 @@ class _TD:
     def __init__(self, cx, cy, r):
         self.centroid = (cx, cy)
         self.radius = r
+        self._tform = Transform.identity()
+
+
+def _plain(snum):
+    """Every section drawn with no transform."""
+    return Transform.identity()
 
 
 class _Series:
@@ -54,16 +63,16 @@ def test_an_object_touching_the_box_on_any_section_is_kept():
         "inside": _built({1: [(0.5, 0.5, 0.1)]}),
     })
     boxes = {1: BOX, 2: BOX}
-    assert RF.objectsTouching(series, boxes) == {"near", "inside"}
+    assert RF.objectsTouching(series, boxes, _plain) == {"near", "inside"}
     # a section with no box keeps nothing
-    assert RF.objectsTouching(series, {1: BOX}) == {"inside"}
-    assert RF.objectsTouching(series, {}) == frozenset()
+    assert RF.objectsTouching(series, {1: BOX}, _plain) == {"inside"}
+    assert RF.objectsTouching(series, {}, _plain) == frozenset()
 
 
 def test_the_box_can_differ_by_section():
     series = _Series({"a": _built({1: [(5.0, 5.0, 0.1)]})})
-    assert RF.objectsTouching(series, {1: BOX}) == frozenset()
-    assert RF.objectsTouching(series, {1: (4.5, 4.5, 5.5, 5.5)}) == {"a"}
+    assert RF.objectsTouching(series, {1: BOX}, _plain) == frozenset()
+    assert RF.objectsTouching(series, {1: (4.5, 4.5, 5.5, 5.5)}, _plain) == {"a"}
 
 
 def test_store_columns_count_the_same_as_built_traces():
@@ -73,13 +82,14 @@ def test_store_columns_count_the_same_as_built_traces():
         "cx": np.array([5.0, 1.2, 0.5]),
         "cy": np.array([5.0, 0.5, 0.5]),
         "radius": np.array([0.5, 0.3, 0.1]),
+        "tform": np.array([0, 0, 0]),
     }
-    columns = TraceColumns(arrays, [], [], [])
+    columns = TraceColumns(arrays, [], [], [Transform.identity()])
     series = _Series({
         "near": ObjectData(columns, 0, 2),
         "inside": ObjectData(columns, 2, 3),
     })
-    assert RF.objectsTouching(series, {1: BOX, 2: BOX}) == {"near", "inside"}
+    assert RF.objectsTouching(series, {1: BOX, 2: BOX}, _plain) == {"near", "inside"}
     assert series.data["objects"]["near"].columnRows() is not None
 
 
@@ -175,14 +185,14 @@ def test_a_followed_box_keeps_whole_what_it_touches_where_it_is(mw, qapp):
     keep = field.roiKeep()
     assert "d03" in keep
     # every kept object touches the followed box on some section
-    centers = RF.objectCenters(mw.series, "d03")
+    centers = RF.objectCenters(mw.series, "d03", field.displayTform)
     for name in keep:
         boxes = {
             snum: (c[0] - 0.2, c[1] - 0.2, c[0] + 0.2, c[1] + 0.2)
             for snum in mw.series.sections
             for c in [RF.followCenter(centers, snum)[0]]
         }
-        assert RF.objectsTouching(mw.series, boxes) >= {name}
+        assert RF.objectsTouching(mw.series, boxes, field.displayTform) >= {name}
 
 
 def test_the_names_are_found_once_per_box(mw, qapp, monkeypatch):
@@ -200,6 +210,82 @@ def test_the_names_are_found_once_per_box(mw, qapp, monkeypatch):
     from test_roi_box import _click
     _click(field, qapp, 13.6, 23.8)  # moved: found again
     assert len(calls) == 1
+
+
+def _go(mw, qapp, snum):
+    mw.changeSection(snum)
+    qapp.processEvents()
+
+
+def _fresh(mw):
+    """The kept objects found from scratch for the box as it is now."""
+    field = mw.field
+    bounds = roiBoxBounds(field.roiBox())
+    boxes = {snum: bounds for snum in mw.series.sections}
+    return RF.objectsTouching(mw.series, boxes, field.displayTform)
+
+
+def test_deleting_the_only_contact_lets_the_object_go(mw, qapp):
+    field = mw.field
+    _place(mw, qapp)
+    _set(mw, whole=True)
+    assert "x1" in field.roiKeep()
+
+    _go(mw, qapp, 52)
+    (contact,) = [t for t in field.section.tracesAsList() if t.name == "x1"]
+    field.section.selected_traces = [contact]
+    field.deleteTraces()
+    _go(mw, qapp, 53)
+
+    assert "x1" not in _fresh(mw)
+    assert "x1" not in field.roiKeep()
+    assert "x1" not in _shown(field)
+
+
+def test_a_new_contact_shows_the_object_elsewhere(mw, qapp):
+    field = mw.field
+    _copy_as(mw, "d03", "x2", 3.0)  # far from the box on 53
+    _place(mw, qapp)
+    _set(mw, whole=True)
+    assert "x2" not in field.roiKeep()
+
+    _go(mw, qapp, 52)
+    assert field.newTrace(
+        [(13.45, 23.65), (13.55, 23.65), (13.5, 23.75)],
+        Trace("x2", (255, 0, 0)),
+        points_as_pix=False, reduce_points=False,
+    )
+    _go(mw, qapp, 53)
+
+    assert "x2" in _fresh(mw)
+    assert "x2" in _shown(field)
+
+    # an undo of the new trace lets the object go again
+    _go(mw, qapp, 52)
+    field.undoState()
+    _go(mw, qapp, 53)
+    assert "x2" not in _fresh(mw)
+    assert "x2" not in _shown(field)
+
+
+def test_a_pinned_alignment_counts_where_the_trace_is_drawn(mw, qapp):
+    """x1 is measured under its own alignment and drawn under the series
+    alignment, moved 10 μm east: a box on the drawn trace keeps it whole."""
+    field = mw.field
+    _go(mw, qapp, 52)
+    (trace,) = [t for t in field.section.tracesAsList() if t.name == "x1"]
+    field.section.tforms["pinned"] = field.section.tform.copy()
+    mw.series.setAttr("x1", "alignment", "pinned")
+    field.section.align_locked = False
+    field.section.selected_traces = []
+    field.translateTform(10.0, 0.0)
+    field.roi_box_on = True
+    field.roi_box_center = trace.getCentroid(field.section.tform)
+    field.roi_box_size = (0.4, 0.4)
+    _set(mw, whole=True)
+
+    assert field.inRoiBox(trace)
+    assert "x1" in field.roiKeep()
 
 
 def test_keeping_whole_writes_nothing_and_saves_no_undo_state(mw, qapp):
