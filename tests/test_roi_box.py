@@ -479,13 +479,14 @@ def test_a_click_with_the_tool_places_the_box_at_the_kept_size(mw, qapp):
     assert abs(field.roi_box_center[0] - CENTER[0]) <= _one_pixel(field)
 
 
-def _options(drag=True, size=SIZE, corner=False):
+def _options(drag=True, size=SIZE, corner=False, follow=""):
     """A response to the ROI mode options dialog."""
     return [
         [("Drag to draw it, click to move it", drag),
          ("Click to place it at the set size", not drag)],
         size[0], size[1],
         [("Center", not corner), ("Upper-left corner", corner)],
+        follow,
     ]
 
 
@@ -531,6 +532,7 @@ def test_the_options_dialog_shows_the_current_options(mw, qapp, monkeypatch):
 
     (structure,) = seen
     inputs = [item for row in structure for item in row if isinstance(item, tuple)]
+    assert inputs[4][0] == "combo" and inputs[4][2] == ""
     assert inputs[0] == ("radio",
         ("Drag to draw it, click to move it", False),
         ("Click to place it at the set size", True))
