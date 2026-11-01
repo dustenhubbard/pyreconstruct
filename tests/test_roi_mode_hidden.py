@@ -4,7 +4,7 @@ picks nothing. Its two settings keys stay in the defaults, so a stored binding
 is kept, and the startup migration writes nothing while it is hidden.
 
 The tests that drive ROI mode set the switch (test_roi_box.py,
-test_roi_legacy_shortcut.py).
+test_roi_b_key.py).
 """
 import pytest
 from PySide6.QtCore import Qt
@@ -72,7 +72,7 @@ def test_shortcuts_dialog_has_no_roi_rows(main_window):
 
 def test_settings_keys_stay_in_the_defaults():
     assert "roibox_act" in default_settings
-    assert default_settings["useroi_act"] == "B"
+    assert "useroi_act" in default_settings
 
 
 def _launch(series_jser):
@@ -97,38 +97,42 @@ def _close(window, excepthook):
     QApplication.processEvents()
 
 
-def test_a_hidden_launch_then_a_shown_one_leaves_b_on_the_tool(
+def test_a_hidden_launch_writes_nothing_and_a_shown_one_clears_b(
     qapp, series_jser, main_window_dialogs, monkeypatch
 ):
-    """Settings an older Dev build left (B on Toggle ROI mode, no tool key):
-    a hidden launch writes neither ROI key, and the next launch with the
-    switch set settles B onto the tool, so a real B press picks it."""
+    """Settings older Dev builds left (B on both ROI actions): a hidden launch
+    writes neither ROI key, and the next launch with the switch set clears B
+    from both, so a real B press picks nothing."""
     from PySide6.QtCore import QSettings
 
+    from PyReconstruct.modules.backend.settings_migrations import (
+        ROI_B_KEY_CLEARED_KEY,
+    )
     from PyReconstruct.modules.gui.dialog.whats_new import current_version_str
     from PyReconstruct.modules.gui.main.first_launch import WHATSNEW_KEY
-    from PyReconstruct.modules.gui.main.field_widget_5_mouse import ROI_BOX
 
     QSettings("KHLab", "PyReconstruct").setValue(WHATSNEW_KEY, current_version_str())
     store = DictSettingsStore()
     store.set_value(None, "roibox_act", "B")
+    store.set_value(None, "useroi_act", "B")
     set_default_settings_store(store)
     try:
         window, hook = _launch(series_jser)
         _close(window, hook)
         assert store.value(None, "roibox_act", str) == "B"
-        assert not store.contains(None, "useroi_act")
+        assert store.value(None, "useroi_act", str) == "B"
+        assert not store.contains(None, ROI_B_KEY_CLEARED_KEY)
 
         monkeypatch.setenv(ENV_SWITCH, "1")
         window, hook = _launch(series_jser)
         try:
             assert store.value(None, "roibox_act", str) == ""
-            assert store.value(None, "useroi_act", str) == "B"
+            assert store.value(None, "useroi_act", str) == ""
             window.activateWindow()
             QApplication.processEvents()
             QTest.keyClick(window.field, Qt.Key_B)
             qapp.processEvents()
-            assert window.field.mouse_mode == ROI_BOX
+            assert window.field.mouse_mode == POINTER
         finally:
             _close(window, hook)
     finally:

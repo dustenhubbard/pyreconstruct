@@ -1,8 +1,10 @@
 """ROI mode: a view-only box in field coordinates.
 
-ROI mode is a tool on the mouse palette (B). With it, a click sets the box's
-center and a drag sets the center and the size together; a right-click on the
-tool's button sets the width and height in a dialog. Only
+ROI mode is a tool on the mouse palette, with no default key. With it, a
+click sets the box's center and a drag sets the center and the size together;
+a right-click on the tool's button sets its options in a dialog: drag or a set
+size, the width and height, and whether a click places the center or the
+upper-left corner. Only
 the traces whose bounds in field coordinates touch the box are drawn and can be
 picked; turning the box off brings every trace back. Nothing is written to the
 traces, the sections or the series, and no undo state is made.
@@ -29,6 +31,7 @@ from PyReconstruct.modules.datatypes.default_settings import default_settings
 from PyReconstruct.modules.backend.view.trace_layer import TraceLayer
 from PyReconstruct.modules.gui.main import field_widget_2_trace as fwt
 from PyReconstruct.modules.gui.main import field_widget_3_object as fwo
+from PyReconstruct.modules.gui.main import field_widget_7_view as fwv
 from PyReconstruct.modules.gui.main.field_widget_5_mouse import (
     HOST,
     POINTER,
@@ -108,8 +111,8 @@ def test_box_writes_nothing_and_saves_no_undo_state(mw, qapp):
 
     _turn_on(mw, qapp)
     _click(field, qapp, 13.6, 23.8)  # move it
-    mw.main_window_dialogs.responses.append(([0.5, 0.3], True))
-    mw.field.setRoiBoxSize()
+    mw.main_window_dialogs.responses.append((_options(size=(0.5, 0.3)), True))
+    mw.field.setRoiBoxOptions()
     mw.field.toggleRoiBox()  # off
     qapp.processEvents()
 
@@ -430,18 +433,14 @@ def test_roi_mode_is_a_tool_on_the_mouse_palette(mw, qapp):
     assert others == []
 
 
-def test_b_picks_the_roi_mode_tool_and_is_used_nowhere_else(mw, qapp):
-    assert default_settings["useroi_act"] == "B"
-    others = [
-        k for k, v in default_settings.items()
-        if k.endswith("_act") and k != "useroi_act" and v == "B"
-    ]
-    assert others == []
+def test_the_tool_has_no_key_and_its_action_picks_it(mw, qapp):
+    assert default_settings["useroi_act"] == ""
+    assert mw.useroi_act.shortcut().toString() == ""
     with_b = [
         a for a in mw.findChildren(QAction)
         if "B" in [s.toString() for s in a.shortcuts()]
     ]
-    assert with_b == [mw.useroi_act]
+    assert with_b == []
 
     mw.useroi_act.trigger()
     qapp.processEvents()
@@ -480,10 +479,20 @@ def test_a_click_with_the_tool_places_the_box_at_the_kept_size(mw, qapp):
     assert abs(field.roi_box_center[0] - CENTER[0]) <= _one_pixel(field)
 
 
+def _options(drag=True, size=SIZE, corner=False):
+    """A response to the ROI mode options dialog."""
+    return [
+        [("Drag to draw it, click to move it", drag),
+         ("Click to place it at the set size", not drag)],
+        size[0], size[1],
+        [("Center", not corner), ("Upper-left corner", corner)],
+    ]
+
+
 def test_right_click_on_the_tool_sets_width_and_height(mw, qapp):
     field = mw.field
     button, _ = _roi_button(mw)
-    mw.main_window_dialogs.responses.append(([2.5, 1.0], True))
+    mw.main_window_dialogs.responses.append((_options(size=(2.5, 1.0)), True))
 
     _right_click(button, qapp)
 
@@ -493,15 +502,120 @@ def test_right_click_on_the_tool_sets_width_and_height(mw, qapp):
     assert not field.roi_box_on
     assert field.mouse_mode == POINTER
 
-    # with the box placed, a new size applies at once
+    # with the box placed, a new size applies at once around its center
     _turn_on(mw, qapp, size=SIZE)
-    mw.main_window_dialogs.responses.append(([0.2, 0.3], True))
+    center = field.roi_box_center
+    mw.main_window_dialogs.responses.append((_options(size=(0.2, 0.3)), True))
     _right_click(button, qapp)
-    assert field.roiBox() == (*field.roi_box_center, 0.2, 0.3)
+    assert field.roiBox() == (*center, 0.2, 0.3)
 
-    # a cancelled dialog keeps the size
+    # a cancelled dialog keeps every option
     _right_click(button, qapp)
     assert field.roi_box_size == (0.2, 0.3)
+    assert field.roi_box_drag_draws and field.roi_box_anchor == "center"
+
+
+def test_the_options_dialog_shows_the_current_options(mw, qapp, monkeypatch):
+    field = mw.field
+    field.roi_box_size = (2.0, 3.0)
+    field.roi_box_drag_draws = False
+    field.roi_box_anchor = "corner"
+    seen = []
+
+    def get(parent, structure, title, *args, **kwargs):
+        seen.append(structure)
+        return None, False
+
+    monkeypatch.setattr(fwv.QuickDialog, "get", staticmethod(get))
+    field.setRoiBoxOptions()
+
+    (structure,) = seen
+    inputs = [item for row in structure for item in row if isinstance(item, tuple)]
+    assert inputs[0] == ("radio",
+        ("Drag to draw it, click to move it", False),
+        ("Click to place it at the set size", True))
+    assert inputs[1][2] == 2.0 and inputs[2][2] == 3.0
+    assert inputs[3] == ("radio", ("Center", False), ("Upper-left corner", True))
+
+
+def test_set_size_mode_places_the_box_at_the_press_even_on_a_drag(mw, qapp):
+    field = mw.field
+    mw.main_window_dialogs.responses.append((_options(drag=False), True))
+    field.setRoiBoxOptions()
+    _turn_on(mw, qapp, center=None)
+
+    start, end = _pix(field, *CENTER), _pix(field, 14.4, 24.4)
+    _press_and_drag(field, qapp, start, end)
+    # no preview of a dragged rectangle
+    assert field.roi_box_drag_end is None
+    _release(field, qapp, end)
+
+    assert field.roi_box_size == SIZE
+    cx, cy = field.roi_box_center
+    assert abs(cx - CENTER[0]) <= _one_pixel(field)
+    assert abs(cy - CENTER[1]) <= _one_pixel(field)
+    assert [t.name for t in field.section_layer.traces_in_view] == ["d03"]
+
+
+@pytest.mark.parametrize("drag", [True, False])
+def test_corner_anchor_puts_the_upper_left_corner_on_the_click(mw, qapp, drag):
+    field = mw.field
+    mw.main_window_dialogs.responses.append((_options(drag=drag, corner=True), True))
+    field.setRoiBoxOptions()
+    _turn_on(mw, qapp, center=None)
+
+    _click(field, qapp, 13.3, 23.9)
+
+    xmin, ymin, xmax, ymax = roiBoxBounds(field.roiBox())
+    one_pixel = _one_pixel(field)
+    assert abs(xmin - 13.3) <= one_pixel and abs(ymax - 23.9) <= one_pixel
+    assert abs((xmax - xmin) - SIZE[0]) < 1e-9 and abs((ymax - ymin) - SIZE[1]) < 1e-9
+
+
+def test_a_drag_still_draws_the_box_with_the_corner_anchor(mw, qapp):
+    field = mw.field
+    mw.main_window_dialogs.responses.append((_options(corner=True), True))
+    field.setRoiBoxOptions()
+    _turn_on(mw, qapp, center=None)
+
+    _drag(field, qapp, _pix(field, 13.2, 23.9), _pix(field, 13.8, 23.5))
+
+    one_pixel = _one_pixel(field)
+    cx, cy = field.roi_box_center
+    assert abs(cx - 13.5) <= one_pixel and abs(cy - 23.7) <= one_pixel
+
+
+def test_a_new_size_keeps_the_upper_left_corner_with_the_corner_anchor(mw, qapp):
+    field = mw.field
+    mw.main_window_dialogs.responses.append((_options(corner=True), True))
+    field.setRoiBoxOptions()
+    _turn_on(mw, qapp, center=None)
+    _click(field, qapp, 13.3, 23.9)
+    xmin, _, _, ymax = roiBoxBounds(field.roiBox())
+
+    mw.main_window_dialogs.responses.append(
+        (_options(corner=True, size=(1.0, 0.6)), True)
+    )
+    field.setRoiBoxOptions()
+
+    nxmin, nymin, nxmax, nymax = roiBoxBounds(field.roiBox())
+    assert abs(nxmin - xmin) < 1e-9 and abs(nymax - ymax) < 1e-9
+    assert abs((nxmax - nxmin) - 1.0) < 1e-9 and abs((nymax - nymin) - 0.6) < 1e-9
+
+
+@pytest.mark.parametrize("drag, corner, text", [
+    (True, False, "click or drag to place"),
+    (True, True, "drag, or click to place its upper-left corner"),
+    (False, False, "click to place its center"),
+    (False, True, "click to place its upper-left corner"),
+])
+def test_status_bar_names_how_a_click_places_the_box(mw, qapp, drag, corner, text):
+    field = mw.field
+    mw.main_window_dialogs.responses.append((_options(drag, (5, 5), corner), True))
+    field.setRoiBoxOptions()
+    _turn_on(mw, qapp, size=(5, 5), center=None)
+    field.updateStatusBar()
+    assert f"ROI mode 5 x 5 μm: {text}" in mw.status_readout.text()
 
 
 def test_view_menu_toggle_picks_the_tool_then_turns_roi_mode_off(mw, qapp):

@@ -1251,7 +1251,7 @@ class FieldWidgetMouse(FieldWidgetData):
         does not change until the release."""
         if not self.lclick or self.roi_box_drag_start is None:
             return
-        if self.isSingleClicking():
+        if self.isSingleClicking() or not self.roi_box_drag_draws:
             return
         self.roi_box_drag_end = self.roiBoxPoint(event)
         self.update()
@@ -1259,10 +1259,12 @@ class FieldWidgetMouse(FieldWidgetData):
     def roiBoxRelease(self, event):
         """Called when mouse is released in ROI box mode.
 
-        A click is the box's new center. A drag is the box: its center is the
-        middle of the dragged rectangle and its size, kept for later clicks,
-        is the rectangle's. Either one turns ROI mode on if it was off.
-        View-only, so no undo state is saved.
+        A click places a box of the kept size at the press: its center there,
+        or its upper-left corner with the corner anchor. A drag is the box:
+        its center is the middle of the dragged rectangle and its size, kept
+        for later clicks, is the rectangle's. With drags off in the tool's
+        options, a drag is a click at the press. Either one turns ROI mode on
+        if it was off. View-only, so no undo state is saved.
         """
         start = self.roi_box_drag_start
         self.roi_box_drag_start = None
@@ -1271,8 +1273,8 @@ class FieldWidgetMouse(FieldWidgetData):
             self.update()
             return
 
-        center = start
-        if not self.isSingleClicking():
+        center = self.roiBoxCenterAt(start)
+        if self.roi_box_drag_draws and not self.isSingleClicking():
             (x1, y1), (x2, y2) = start, self.roiBoxPoint(event)
             # a rectangle with no width or height is a click
             if x1 != x2 and y1 != y2:
@@ -1282,6 +1284,16 @@ class FieldWidgetMouse(FieldWidgetData):
         self.roi_box_on = True
         self.roi_box_center = center
         self.generateView()
+
+    def roiBoxCenterAt(self, point : tuple) -> tuple:
+        """The center of a box of the kept size placed by a click at a field
+        point: the point itself, or with the corner anchor, the point as the
+        box's upper-left corner (field y grows upward)."""
+        x, y = point
+        if self.roi_box_anchor == "corner":
+            w, h = self.roi_box_size
+            return (x + w / 2, y - h / 2)
+        return (x, y)
 
     def cancelRoiBoxDrag(self) -> bool:
         """Drop an ROI box click or drag in progress, leaving the box as it
