@@ -18,6 +18,7 @@ from PySide6.QtCore import (
 )
 
 from PyReconstruct.modules.datatypes import Series, Section, Trace, Transform
+from PyReconstruct.modules.datatypes.transform import alignment_tform
 from PyReconstruct.modules.backend.view import SectionLayer, ZarrLayer
 from PyReconstruct.modules.backend.view.image_layer import dropReadAhead
 from PyReconstruct.modules.backend.view.trace_layer import traceInRoiBox
@@ -444,7 +445,9 @@ class FieldWidgetBase:
         name = self.roi_follow_name
         if not self.roi_box_on or name is None:
             return
-        placed = followCenter(objectCenters(self.series, name), self.section.n)
+        placed = followCenter(
+            objectCenters(self.series, name, self.displayTform), self.section.n
+        )
         if placed is None:
             self.roi_follow_name = None
             self.roi_follow_from = None
@@ -454,6 +457,16 @@ class FieldWidgetBase:
             ))
             return
         self.roi_box_center, self.roi_follow_from = placed
+
+    def displayTform(self, snum : int):
+        """The transform the field draws a section with: the shown section's
+        own, else the series alignment's from the series data (None for a
+        section the series data does not have)."""
+        if snum == self.section.n:
+            return self.section.tform
+        if snum not in self.series.data["sections"]:
+            return None
+        return alignment_tform(self.series, snum)
 
     def inRoiBox(self, trace : Trace) -> bool:
         """Whether a trace on the current section is inside the ROI box

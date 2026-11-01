@@ -6,23 +6,58 @@ trace's centroid and radius (its farthest point from the centroid), so paging
 loads nothing extra. The center is the middle of the square that holds every
 trace of the object on that section; for one trace that is its centroid.
 
+The series data measures an object under its own alignment when it has one
+(ObjectData.sectionTransform), and the field draws every trace under the
+series alignment. So each centroid is moved into the displayed coordinates,
+and each radius grows by the most that move can stretch a length.
+
 On a section without the object, the box takes its place on the nearest
 section with it, ties going to the earlier section. The zarr crop uses the
 same rule for a section without its object (backend/crop_zarr.py, planCrop).
 """
 import numpy as np
 
+## The move from measured to displayed coordinates when they are the same
+_SAME = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0)
 
-def objectExtents(series, name : str):
-    """The square around each trace of an object, from the series data.
+
+def measuredToDisplay(measured, display) -> tuple:
+    """The affine that takes a point measured under one transform to where
+    the field draws it under another, and the most it stretches a length.
+
+        Params:
+            measured (Transform): the transform the numbers were measured with
+            display (Transform): the transform the field draws with
+        Returns:
+            (tuple): a, b, c, d, e, f (x' = a x + b y + c, y' = d x + e y + f)
+                and the stretch; no move when either transform is missing
+                or the measured one cannot be inverted
+    """
+    if measured is None or display is None or measured is display:
+        return _SAME
+    if measured.equals(display):
+        return _SAME
+    try:
+        a, b, c, d, e, f = (measured.inverted() * display).getList()
+    except Exception:
+        return _SAME
+    stretch = float(np.linalg.norm(np.array([[a, b], [d, e]], dtype=float), 2))
+    return (a, b, c, d, e, f, stretch)
+
+
+def objectExtents(series, name : str, display_tform, moves : dict = None):
+    """The square around each trace of an object, in displayed coordinates.
 
         Params:
             series (Series): the series
             name (str): the object's name
+            display_tform (callable): section number -> the Transform the
+                field draws that section with, or None
+            moves (dict): a cache of measuredToDisplay results to share
+                across calls
         Returns:
             (tuple): numpy arrays (section numbers, xmin, ymin, xmax, ymax),
-                one entry per trace, in field coordinates; None when no
-                section has the object
+                one entry per trace; None when no section has the object
     """
     obj_data = series.data["objects"].get(name)
     if obj_data is None or obj_data.isEmpty():
@@ -36,28 +71,54 @@ def objectExtents(series, name : str):
         cx = np.asarray(arrays["cx"][start:stop], dtype=float)
         cy = np.asarray(arrays["cy"][start:stop], dtype=float)
         r = np.asarray(arrays["radius"][start:stop], dtype=float)
+        tkeys = np.asarray(arrays["tform"][start:stop], dtype=int)
+        measured = columns.tforms
     else:
-        items = [
-            (snum, *td.centroid, td.radius)
-            for snum, tds in obj_data.traces.items()
-            for td in tds
-        ]
+        items, measured, index = [], [], {}
+        for snum, tds in obj_data.traces.items():
+            for td in tds:
+                tform = getattr(td, "_tform", None)
+                key = index.get(id(tform))
+                if key is None:
+                    key = index[id(tform)] = len(measured)
+                    measured.append(tform)
+                items.append((snum, *td.centroid, td.radius, key))
         if not items:
             return None
         arr = np.asarray(items, dtype=float)
         snums = arr[:, 0].astype(int)
         cx, cy, r = arr[:, 1], arr[:, 2], arr[:, 3]
-    return snums, cx - r, cy - r, cx + r, cy + r
+        tkeys = arr[:, 4].astype(int)
+
+    # one move per (section, measured transform) pair
+    if moves is None:
+        moves = {}
+    pairs, which = np.unique(np.stack([snums, tkeys], axis=1), axis=0, return_inverse=True)
+    which = np.asarray(which).reshape(-1)
+    table = np.empty((len(pairs), 7), dtype=float)
+    for i, (snum, key) in enumerate(pairs):
+        tform, shown = measured[int(key)], display_tform(int(snum))
+        cache_key = (id(tform), id(shown))
+        move = moves.get(cache_key)
+        if move is None:
+            move = moves[cache_key] = measuredToDisplay(tform, shown)
+        table[i] = move
+    a, b, c, d, e, f, stretch = table[which].T
+    x = a * cx + b * cy + c
+    y = d * cx + e * cy + f
+    r = r * stretch
+    return snums, x - r, y - r, x + r, y + r
 
 
-def objectCenters(series, name : str) -> dict:
-    """The object's center on each section that has it.
+def objectCenters(series, name : str, display_tform) -> dict:
+    """The object's center on each section that has it, in displayed
+    coordinates (display_tform as in objectExtents).
 
         Returns:
             (dict): section number -> (x, y) in field coordinates; empty when
                 no section has the object
     """
-    extents = objectExtents(series, name)
+    extents = objectExtents(series, name, display_tform)
     if extents is None:
         return {}
     snums, xmin, ymin, xmax, ymax = extents
