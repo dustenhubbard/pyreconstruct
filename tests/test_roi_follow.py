@@ -15,6 +15,7 @@ from PySide6.QtCore import QSettings
 from PySide6.QtGui import QColor
 
 from PyReconstruct.modules.backend.view import roi_follow as RF
+from PyReconstruct.modules.datatypes import Transform
 from PyReconstruct.modules.datatypes.series_data import ObjectData, TraceColumns
 from PyReconstruct.modules.gui.main import field_widget_1_base as fwb
 
@@ -54,7 +55,7 @@ def _go(mw, qapp, snum):
 
 
 def _center_on(mw, name, snum):
-    return RF.objectCenters(mw.series, name)[snum]
+    return RF.objectCenters(mw.series, name, mw.field.displayTform)[snum]
 
 
 @pytest.fixture
@@ -74,14 +75,20 @@ def notices(monkeypatch):
 # --- the rule, on its own -------------------------------------------------------
 
 class _TD:
-    def __init__(self, cx, cy, r):
+    def __init__(self, cx, cy, r, tform=None):
         self.centroid = (cx, cy)
         self.radius = r
+        self._tform = tform or Transform.identity()
 
 
 class _Series:
     def __init__(self, objects):
         self.data = {"objects": objects}
+
+
+def _shown(snum):
+    """Every section drawn with no transform."""
+    return Transform.identity()
 
 
 def _built(traces):
@@ -95,8 +102,8 @@ def test_the_center_holds_every_trace_of_the_object_on_a_section():
         4: [(1.0, 1.0, 0.5)],
         5: [(0.0, 0.0, 1.0), (4.0, 2.0, 1.0)],  # a branch: two traces
     })})
-    assert RF.objectCenters(series, "a") == {4: (1.0, 1.0), 5: (2.0, 1.0)}
-    assert RF.objectCenters(series, "missing") == {}
+    assert RF.objectCenters(series, "a", _shown) == {4: (1.0, 1.0), 5: (2.0, 1.0)}
+    assert RF.objectCenters(series, "missing", _shown) == {}
 
 
 def test_store_columns_give_the_same_centers_as_built_traces():
@@ -106,13 +113,59 @@ def test_store_columns_give_the_same_centers_as_built_traces():
         "cx": np.array([7.0, 1.0, 0.0, 4.0]),
         "cy": np.array([7.0, 1.0, 0.0, 2.0]),
         "radius": np.array([1.0, 0.5, 1.0, 1.0]),
+        "tform": np.array([0, 0, 0, 0]),
     }
-    columns = TraceColumns(arrays, [], [], [])
+    columns = TraceColumns(arrays, [], [], [Transform.identity()])
     # rows 1 to 4 are this object's; row 0 belongs to another
     series = _Series({"a": ObjectData(columns, 1, 4)})
-    assert RF.objectCenters(series, "a") == {4: (1.0, 1.0), 5: (2.0, 1.0)}
+    assert RF.objectCenters(series, "a", _shown) == {4: (1.0, 1.0), 5: (2.0, 1.0)}
     # read from the columns: no TraceData were built
     assert series.data["objects"]["a"].columnRows() is not None
+
+
+# a trace measured under its own alignment: raw points p, measured M(p)
+MEASURED = Transform([2.0, 0.0, 1.0, 0.0, 2.0, -3.0])
+# the series alignment the field draws with: D(p), sheared and moved
+SHOWN = Transform([1.0, 0.5, 4.0, 0.0, 1.5, 2.0])
+RAW = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+
+
+def _measured(tform):
+    """centroid and radius of RAW under a transform, as the series data
+    stores them."""
+    import numpy as np
+    pts = tform.mapPointsArray(RAW)
+    c = pts.mean(axis=0)
+    return float(c[0]), float(c[1]), float(np.max(np.hypot(*(pts - c).T)))
+
+
+def test_a_trace_measured_under_its_own_alignment_is_placed_where_it_is_drawn():
+    series = _Series({"a": _built({7: [(*_measured(MEASURED), MEASURED)]})})
+    snums, xmin, ymin, xmax, ymax = RF.objectExtents(series, "a", lambda s: SHOWN)
+
+    drawn = SHOWN.mapPointsArray(RAW)
+    # the square holds every drawn point, around the drawn centroid
+    assert (xmin[0], ymin[0]) <= tuple(drawn.min(axis=0))
+    assert (xmax[0], ymax[0]) >= tuple(drawn.max(axis=0))
+    center = ((xmin[0] + xmax[0]) / 2, (ymin[0] + ymax[0]) / 2)
+    assert center == pytest.approx(tuple(drawn.mean(axis=0)))
+    assert RF.objectCenters(series, "a", lambda s: SHOWN)[7] == pytest.approx(center)
+
+
+def test_columns_and_built_traces_move_the_same_way():
+    import numpy as np
+    cx, cy, r = _measured(MEASURED)
+    arrays = {
+        "snum": np.array([7]), "cx": np.array([cx]), "cy": np.array([cy]),
+        "radius": np.array([r]), "tform": np.array([0]),
+    }
+    columns = TraceColumns(arrays, [], [], [MEASURED])
+    stored = _Series({"a": ObjectData(columns, 0, 1)})
+    built = _Series({"a": _built({7: [(cx, cy, r, MEASURED)]})})
+    a = RF.objectExtents(stored, "a", lambda s: SHOWN)
+    b = RF.objectExtents(built, "a", lambda s: SHOWN)
+    for x, y in zip(a[1:], b[1:]):
+        assert x == pytest.approx(y)
 
 
 @pytest.mark.parametrize("snum, expected", [
@@ -128,6 +181,27 @@ def test_a_missing_section_takes_the_nearest_ties_to_the_earlier(snum, expected)
 
 
 # --- in the window --------------------------------------------------------------
+
+def test_a_pinned_alignment_follows_the_trace_as_drawn(mw, qapp):
+    """The object is measured under its own alignment and the field draws it
+    under the series alignment, moved 4 μm east here: the box goes where the
+    trace is drawn."""
+    field = mw.field
+    (trace,) = [t for t in field.section.tracesAsList() if t.name == "d03p14"]
+    field.section.tforms["pinned"] = field.section.tform.copy()
+    mw.series.setAttr("d03p14", "alignment", "pinned")
+    field.section.align_locked = False
+    field.section.selected_traces = []
+    field.translateTform(4.0, 0.0)
+
+    _follow(mw, "d03p14")
+
+    assert field.roi_box_center == pytest.approx(trace.getCentroid(field.section.tform))
+    # in a view around the box, the trace is drawn inside it
+    field.series.window = [*(c - 1.0 for c in field.roi_box_center), 2.0, 2.0]
+    field.generateView()
+    assert "d03p14" in [t.name for t in field.section_layer.traces_in_view]
+
 
 def test_the_selected_trace_is_offered_to_follow(mw, qapp, monkeypatch):
     from PyReconstruct.modules.gui.main import field_widget_7_view as fwv
