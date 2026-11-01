@@ -6,10 +6,9 @@ guide covers installing the app, opening and building a series, the tracing
 tools, the data lists, alignment, 3D reconstruction, and backups.
 
 This guide describes the application as it currently behaves in this
-distribution. It complements the in-app help (**Help ▸ Online resources ▸
-PyReconstruct user guide**, which opens the
-[lab wiki](https://wikis.utexas.edu/display/khlab/PyReconstruct+user+guide) at
-The University of Texas at Austin) and the in-app **Help ▸ Shortcuts list**.
+distribution. **Help ▸ Online resources ▸ PyReconstruct user guide** opens
+this guide. **Help ▸ Online resources** also links to the Harris lab wiki,
+and **Help ▸ Shortcuts list** lists the keyboard shortcuts.
 
 > **About screenshots.** The screenshots and clips show PyReconstruct on macOS
 > with a small test series. They are shot from PyReconstruct itself, and shot
@@ -1260,10 +1259,12 @@ on Windows and Linux it is `Ctrl` or `Alt`, shown after it.
 
 ## 14. Getting help
 
-In the app, **Help ▸ Online resources** links to:
+**Help ▸ Online resources** links to:
 
-- the [PyReconstruct user guide](https://wikis.utexas.edu/display/khlab/PyReconstruct+user+guide)
-  on the UT Austin lab wiki,
+- the [PyReconstruct user guide](https://pyreconstruct.org/USER_GUIDE/),
+- [class documents](https://pyreconstruct.org/class/),
+- the [Harris lab wiki](https://pyreconstruct.org/harrislabwiki/) and its
+  [PyReconstruct guide](https://cloud.wikis.utexas.edu/wiki/spaces/khlab/pages/53543200/PyReconstruct+user+guide),
 - this distribution's [source code](https://github.com/dustenhubbard/PyReconstruct),
 - the [Kristen Harris Lab website](https://synapseweb.clm.utexas.edu/harrislab) and
   the [Atlas of Ultrastructural Neurocytology](https://synapseweb.clm.utexas.edu/atlas).
@@ -1271,11 +1272,11 @@ In the app, **Help ▸ Online resources** links to:
 Found a bug, have a feature idea, or want to improve the docs? Please open an issue
 on this distribution's
 **[GitHub Issues](https://github.com/dustenhubbard/PyReconstruct/issues)**. The
-in-app **Help ▸ Report a bug...** and **Help ▸ Request a feature...** items open the
+in-app **Help ▸ Diagnostics ▸ Report a bug...** and **Help ▸ Diagnostics ▸ Request a feature...** items open the
 same place with your version and OS already filled in. If you file another way,
-**Help ▸ Copy diagnostic report** gathers that in one paste, or click the
+**Help ▸ Diagnostics ▸ Copy diagnostic report** gathers that in one paste, or click the
 version/commit shown at the top of the **Help** menu to copy the commit to your
-clipboard. **Help ▸ Email developers** writes to the same team.
+clipboard. **Help ▸ Diagnostics ▸ Email developers** writes to the same team.
 
 ---
 
