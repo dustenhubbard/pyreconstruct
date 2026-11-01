@@ -349,6 +349,7 @@ from itertools import chain
 import numpy as np
 
 from .contour import Contour
+from .lazy_points import LazyPoints
 from .trace import Trace, normalizeObjectName
 
 
@@ -450,7 +451,11 @@ def _asCoordinateArray(points) -> np.ndarray:
     `np.array` over the pairs as before, and so does any failure, so a bad
     point is refused exactly as it was.
     """
-    if type(points) is list and points:
+    if type(points) is LazyPoints:
+        array = points.loadedArray()
+        if array is not None:
+            return array.copy()
+    if isinstance(points, list) and points:
         try:
             if (set(map(type, points)) <= {tuple, list}
                     and set(map(len, points)) == {2}):
@@ -480,7 +485,7 @@ _HELD_COORDINATES : "weakref.WeakKeyDictionary[Trace, tuple]" = (
 )
 
 
-def _traceCoordinates(trace, carried=None) -> np.ndarray:
+def _traceCoordinates(trace, carried=None) -> "np.ndarray | list":
     """A trace's points as an `(n, 2)` float64 array, reused while they are
     the same point objects.
 
@@ -508,6 +513,14 @@ def _traceCoordinates(trace, carried=None) -> np.ndarray:
                 when they are not a list (for `appendRow` to convert or refuse)
     """
     points = trace.points
+    if type(points) is LazyPoints:
+        ## Points as loaded hold the array the load read from the file's own
+        ## lists; it is theirs until their first change (`lazy_points.py`),
+        ## so nothing is kept here for them.
+        array = points.loadedArray()
+        if array is not None:
+            _HELD_COORDINATES.pop(trace, None)
+            return array
     kept = _HELD_COORDINATES.get(trace)
     if kept is not None:
         source, array, checked = kept
@@ -518,7 +531,7 @@ def _traceCoordinates(trace, carried=None) -> np.ndarray:
                     and set(map(type, chain.from_iterable(source))) <= {float, int}):
                 _HELD_COORDINATES[trace] = (source, array, True)
                 return array
-    if type(points) is not list or not points:
+    if not isinstance(points, list) or not points:
         _HELD_COORDINATES.pop(trace, None)
         return points if carried is None else carried
     array = _asCoordinateArray(points) if carried is None else carried

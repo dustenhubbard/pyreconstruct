@@ -681,6 +681,7 @@ class Section():
         self.trace_ids_trusted = restored
         self._loaded_trace_ids = {} if derived_ids is not None else None
         from .columnar_store import coordinatesFromRow
+        from .lazy_points import LazyPoints
         self._loaded_coordinates = {}
 
         for name in section_data["contours"]:
@@ -688,7 +689,17 @@ class Section():
             trace_list = []
 
             for i, trace_data in enumerate(section_data["contours"][name]):
-                trace = Trace.fromList(trace_data, name)
+                ## the row as `Trace.fromList` reads it: a 9-field row
+                ## carries its name first
+                fields = trace_data[1:] if len(trace_data) == 9 else trace_data
+                ## The row's x and y lists, read once into an (n, 2) array
+                ## for the store, and kept as the trace's points, which are
+                ## built from the same lists only when something reads them
+                ## (`lazy_points.py`). Paging draws from the store, so most
+                ## sections never build a point tuple.
+                coordinates = coordinatesFromRow(fields[0], fields[1])
+                points = LazyPoints.fromRow(fields[0], fields[1], coordinates)
+                trace = Trace.fromList(trace_data, name, points=points)
                 # screen for defective traces. `updateJSON` above now applies
                 # both screens to the stored data as well, so on this path the
                 # two lines below are a no-op; they are kept because callers
@@ -700,10 +711,6 @@ class Section():
                     trace.closed = False
                 if l > 1:
                     trace_list.append(trace)
-                    ## the row as `Trace.fromList` reads it: a 9-field row
-                    ## carries its name first
-                    fields = trace_data[1:] if len(trace_data) == 9 else trace_data
-                    coordinates = coordinatesFromRow(fields[0], fields[1])
                     if coordinates is not None:
                         self._loaded_coordinates[trace] = coordinates
                     if derived_ids is not None:
