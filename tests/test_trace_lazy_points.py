@@ -269,6 +269,18 @@ def test_a_read_gives_what_the_list_gives(read):
     assert lazy.loadedArray() is not None
 
 
+def test_adding_the_points_in_place_keeps_the_destination_list():
+    x, y = _random_rows(random.Random(14))
+    lazy, plain = _plain(x, y)
+    target = [(0.0, 0.0)]
+    alias = target
+    target += lazy
+    assert alias is target
+    assert alias == [(0.0, 0.0)] + plain
+    with pytest.raises(TypeError):
+        ((0.0, 0.0),) + LazyPoints(x, y)
+
+
 def test_len_and_truth_build_nothing():
     x, y = _random_rows(random.Random(11))
     lazy, _ = _plain(x, y)

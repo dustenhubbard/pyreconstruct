@@ -168,7 +168,12 @@ class LazyPoints(list):
         return list.__add__(self, self._filled(other))
 
     def __radd__(self, other):
-        return other + self.copy()
+        # Python asks a list subclass on the right before the left list's own
+        # `+` and `+=`. Fill, then decline, so `list + points` builds a new
+        # list and `target += points` extends `target` itself, as a plain
+        # list on the right does.
+        self._fill()
+        return NotImplemented
 
     def __mul__(self, n):
         self._fill()
