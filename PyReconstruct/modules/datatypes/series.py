@@ -775,25 +775,29 @@ def _atomicWrite(fp : str, data):
             data (bytes or callable): the bytes to write, or a function taking
                 the open binary file and writing the contents into it
     """
+    try:
+        mode = stat.S_IMODE(os.stat(fp).st_mode)
+    except FileNotFoundError:
+        mode = None
+
+    def opener(path, flags):
+        return os.open(path, flags, 0o666 if mode is None else mode)
+
     folder = os.path.dirname(fp)
     while True:
         tmp_fp = os.path.join(folder, f".save-{secrets.token_hex(3)}.tmp")
         try:
-            # "x" is O_EXCL; new files keep the usual 0o666-less-umask mode.
-            f = open(tmp_fp, "xb")
+            # "x" is O_EXCL; replacements are restricted from creation.
+            f = open(tmp_fp, "xb", opener=opener)
             break
         except FileExistsError:
             continue  # another write's temp file, or a crashed one; not ours
     try:
         with f:
-            try:
-                mode = stat.S_IMODE(os.stat(fp).st_mode)
-            except FileNotFoundError:
-                pass  # a new destination keeps the mode open() gave it
-            else:
-                # Set this before writing so private data stays private in
-                # the temp file too. A failure leaves the destination intact.
-                os.chmod(tmp_fp, mode)
+            if mode is not None and os.name == "posix":
+                # Restore bits masked by umask without resolving the path again.
+                # On Windows, os.open already applies the read-only mode bit.
+                os.fchmod(f.fileno(), mode)
             if callable(data):
                 data(f)
             else:

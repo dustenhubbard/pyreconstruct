@@ -1,5 +1,6 @@
 """Saving a series preserves existing POSIX permissions and honors umask."""
 
+import builtins
 import os
 import stat
 from pathlib import Path
@@ -37,14 +38,15 @@ def series(shapes1_jser):
 
 @pytest.mark.parametrize("mode", [0o600, 0o660], ids=["private", "group-writable"])
 @pytest.mark.parametrize("backup", [False, True], ids=["own-file", "backup"])
-def test_saving_an_existing_jser_preserves_permissions(series, tmp_path, mode, backup):
+@pytest.mark.parametrize("mask", [0o022, 0o077])
+def test_saving_an_existing_jser_preserves_permissions(series, tmp_path, mode, backup, mask):
     target = tmp_path / "backup.jser" if backup else Path(series.jser_fp)
     if backup:
         target.write_bytes(b"previous backup")
     target.chmod(mode)
     series.current_section = max(series.sections)
 
-    with umask(0o022):
+    with umask(mask):
         series.saveJser(str(target) if backup else None)
 
     assert stat.S_IMODE(target.stat().st_mode) == mode
@@ -90,7 +92,7 @@ def test_permission_copy_failure_keeps_the_old_file(tmp_path, monkeypatch, strea
     def denied(path, mode):
         raise PermissionError("Cannot preserve permissions")
 
-    monkeypatch.setattr(os, "chmod", denied)
+    monkeypatch.setattr(os, "fchmod", denied)
     data = (lambda f: f.write(b"new")) if streaming else b"new"
     with pytest.raises(PermissionError, match="Cannot preserve permissions"):
         _atomicWrite(str(target), data)
@@ -98,3 +100,67 @@ def test_permission_copy_failure_keeps_the_old_file(tmp_path, monkeypatch, strea
     assert target.read_bytes() == b"old"
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
     assert sorted(p.name for p in tmp_path.iterdir()) == ["private.jser"]
+
+
+@pytest.mark.parametrize("mode", [0o600, 0o640, 0o660])
+@pytest.mark.parametrize("streaming", [False, True], ids=["bytes", "stream"])
+def test_private_temp_permissions_apply_at_creation(tmp_path, monkeypatch, mode, streaming):
+    target = tmp_path / "private.jser"
+    target.write_bytes(b"old private data")
+    target.chmod(mode)
+    original_open = builtins.open
+    initial_modes = []
+    retained = []
+
+    def capture_open(path, file_mode="r", *args, **kwargs):
+        result = original_open(path, file_mode, *args, **kwargs)
+        if file_mode == "xb":
+            initial = stat.S_IMODE(os.fstat(result.fileno()).st_mode)
+            initial_modes.append(initial)
+            # Model an observer allowed by the temporary mode but not the destination.
+            if initial & ~mode & 0o777:
+                retained.append(os.open(path, os.O_RDONLY))
+        return result
+
+    monkeypatch.setattr(builtins, "open", capture_open)
+    data = (lambda f: f.write(b"new private data")) if streaming else b"new private data"
+    try:
+        with umask(0o022):
+            _atomicWrite(str(target), data)
+        observed = [os.read(fd, 100) for fd in retained]
+    finally:
+        for fd in retained:
+            os.close(fd)
+
+    assert observed == []
+    assert initial_modes and all(initial & ~mode & 0o777 == 0 for initial in initial_modes)
+    assert stat.S_IMODE(target.stat().st_mode) == mode
+    assert target.read_bytes() == b"new private data"
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["bytes", "stream"])
+def test_permission_copy_does_not_chmod_a_replacement_symlink(tmp_path, monkeypatch, streaming):
+    target = tmp_path / "group-writable.jser"
+    target.write_bytes(b"old")
+    target.chmod(0o666)
+    unrelated = tmp_path / "unrelated-private.txt"
+    unrelated.write_bytes(b"private")
+    unrelated.chmod(0o600)
+    original_open = builtins.open
+    substituted = []
+
+    def swap_after_open(path, file_mode="r", *args, **kwargs):
+        result = original_open(path, file_mode, *args, **kwargs)
+        if file_mode == "xb":
+            os.unlink(path)
+            os.symlink(unrelated, path)
+            substituted.append(path)
+        return result
+
+    monkeypatch.setattr(builtins, "open", swap_after_open)
+    data = (lambda f: f.write(b"new")) if streaming else b"new"
+    _atomicWrite(str(target), data)
+
+    assert len(substituted) == 1
+    assert stat.S_IMODE(unrelated.stat().st_mode) == 0o600
+    assert unrelated.read_bytes() == b"private"
