@@ -133,7 +133,9 @@ def sectionSquares(section, name : str):
         pts = tform.mapPointsArray(trace.points)
         _, _, (cx, cy), r = traceGeometry(pts, trace.closed)
         rows.append((cx - r, cy - r, cx + r, cy + r))
-    arr = np.asarray(rows, dtype=float).reshape(-1, 4)
+    if not rows:
+        return (np.empty(0),) * 4
+    arr = np.asarray(rows, dtype=float)
     return arr[:, 0], arr[:, 1], arr[:, 2], arr[:, 3]
 
 
