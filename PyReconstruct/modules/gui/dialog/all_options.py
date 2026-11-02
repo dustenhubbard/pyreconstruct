@@ -172,6 +172,7 @@ class AllOptionsDialog(QDialog):
                 ["2D_step"],
                 ["3D_step"],
                 ["left_handed"],
+                ["trackpad_scroll"],
                 ["time"],
                 ["computation"]
 
@@ -518,6 +519,14 @@ class AllOptionsDialog(QDialog):
         def setOption(response):
             self.series.setOption("left_handed", response[0][0][1])
         self.addOptionWidget("left_handed", structure, setOption)
+
+        structure = [
+            [("check", ("Reverse trackpad section scrolling",
+                        self.series.getOption("reverse_trackpad_scroll", use_defaults)))],
+        ]
+        def setOption(response):
+            self.series.setOption("reverse_trackpad_scroll", response[0][0][1])
+        self.addOptionWidget("trackpad_scroll", structure, setOption)
 
         # utc
         structure = [

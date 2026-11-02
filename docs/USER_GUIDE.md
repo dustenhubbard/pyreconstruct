@@ -432,6 +432,11 @@ sliders, and a scale bar. Each overlay group can be dragged to reposition it, an
 - **Page Up** / **Page Down**: next / previous section.
 - **Mouse wheel** over the field: scroll up for the next section, down for the
   previous (works in any tool mode).
+- **Trackpad** over the field: swipe with two fingers to change sections.
+  macOS reverses the section direction by default. Change **Reverse trackpad
+  section scrolling** under **Series ▸ Options ▸ User/Series** to use the other
+  direction. The choice is saved on this computer and does not affect mouse
+  wheels or zoom.
 - **Go to section** (`Ctrl+G`): jump to a section number.
 - The section-increment buttons (▲/▼) in the corner do the same as PgUp/PgDown
   (handy on tablets).

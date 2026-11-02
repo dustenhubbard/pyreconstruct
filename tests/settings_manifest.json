@@ -68,6 +68,7 @@
     "knife_del_threshold": "float",
     "knife_ignore_secondary_click": "bool",
     "left_handed": "bool",
+    "reverse_trackpad_scroll": "bool",
     "manualbackup_act": "str",
     "mergeobjects_act": "str",
     "mergetraces_act": "str",
