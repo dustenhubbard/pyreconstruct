@@ -11,11 +11,17 @@ The series data measures an object under its own alignment when it has one
 series alignment. So each centroid is moved into the displayed coordinates,
 and each radius grows by the most that move can stretch a length.
 
+The shown section is the exception: its traces are read live, as drawn
+(sectionSquares), since an edit there reaches the series data only when it
+is saved, after the view that shows it is drawn.
+
 On a section without the object, the box takes its place on the nearest
 section with it, ties going to the earlier section. The zarr crop uses the
 same rule for a section without its object (backend/crop_zarr.py, planCrop).
 """
 import numpy as np
+
+from PyReconstruct.modules.calc import traceGeometry
 
 ## The move from measured to displayed coordinates when they are the same
 _SAME = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0)
@@ -110,18 +116,49 @@ def objectExtents(series, name : str, display_tform, moves : dict = None):
     return snums, x - r, y - r, x + r, y + r
 
 
-def objectCenters(series, name : str, display_tform) -> dict:
+def sectionSquares(section, name : str):
+    """The square around each trace of an object on a loaded section, as the
+    field draws it: the same centroid and radius the series data keeps
+    (traceGeometry), under the section's own transform.
+
+        Returns:
+            (tuple): numpy arrays (xmin, ymin, xmax, ymax), one entry per
+                trace with points; empty when the section has none
+    """
+    tform = section.tform
+    rows = []
+    for trace in section.contours.get(name, ()):
+        if not trace.points:
+            continue
+        pts = tform.mapPointsArray(trace.points)
+        _, _, (cx, cy), r = traceGeometry(pts, trace.closed)
+        rows.append((cx - r, cy - r, cx + r, cy + r))
+    arr = np.asarray(rows, dtype=float).reshape(-1, 4)
+    return arr[:, 0], arr[:, 1], arr[:, 2], arr[:, 3]
+
+
+def objectCenters(series, name : str, display_tform, shown=None) -> dict:
     """The object's center on each section that has it, in displayed
     coordinates (display_tform as in objectExtents).
 
+        Params:
+            shown (Section): the loaded section the field shows, whose own
+                traces are read in place of its series data
         Returns:
             (dict): section number -> (x, y) in field coordinates; empty when
                 no section has the object
     """
     extents = objectExtents(series, name, display_tform)
     if extents is None:
-        return {}
+        extents = (np.empty(0, dtype=int),) + (np.empty(0),) * 4
     snums, xmin, ymin, xmax, ymax = extents
+    if shown is not None:
+        keep = snums != shown.n
+        live = sectionSquares(shown, name)
+        snums = np.concatenate([snums[keep], np.full(len(live[0]), shown.n, dtype=int)])
+        xmin, ymin, xmax, ymax = (
+            np.concatenate([a[keep], b]) for a, b in zip((xmin, ymin, xmax, ymax), live)
+        )
     centers = {}
     for snum in np.unique(snums):
         on = snums == snum

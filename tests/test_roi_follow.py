@@ -202,10 +202,17 @@ def test_a_pinned_alignment_follows_the_trace_as_drawn(mw, qapp):
     assert "d03p14" in [t.name for t in field.section_layer.traces_in_view]
 
 
-def test_dragging_the_followed_object_moves_the_box_with_it(mw, qapp):
+@pytest.mark.parametrize("size, dx, dy", [
+    ((1.0, 1.0), 100, 20),
+    # a small box, and a drag that takes the trace well past it
+    ((0.4, 0.4), 220, 35),
+])
+def test_dragging_the_followed_object_moves_the_box_and_keeps_it_selected(
+    mw, qapp, size, dx, dy
+):
     from test_roi_box import _pix, _press_and_drag, _release
     field = mw.field
-    _follow(mw, "d03p14", size=(1.0, 1.0))
+    _follow(mw, "d03p14", size=size)
     field.series.window = [*(c - 1.0 for c in field.roi_box_center), 2.0, 2.0]
     field.generateView()
     (trace,) = [t for t in field.section.tracesAsList() if t.name == "d03p14"]
@@ -214,13 +221,39 @@ def test_dragging_the_followed_object_moves_the_box_with_it(mw, qapp):
     start = _pix(field, *field.section.tform.map(*trace.points[0]))
     before = trace.getCentroid(field.section.tform)
 
-    _press_and_drag(field, qapp, start, start + QPoint(100, 20))
-    _release(field, qapp, start + QPoint(100, 20))
+    _press_and_drag(field, qapp, start, start + QPoint(dx, dy))
+    _release(field, qapp, start + QPoint(dx, dy))
 
     (moved,) = [t for t in field.section.tracesAsList() if t.name == "d03p14"]
-    assert moved.getCentroid(field.section.tform)[0] > before[0] + 0.1
-    assert field.roi_box_center == pytest.approx(moved.getCentroid(field.section.tform))
+    after = moved.getCentroid(field.section.tform)
+    assert after[0] > before[0] + 0.1
+    assert field.roi_box_center == pytest.approx(after)
+    assert field.section.selected_traces == [moved]
     assert "d03p14" in [t.name for t in field.section_layer.traces_in_view]
+
+    # undo puts the trace and the box back; redo moves both again
+    field.undoState()
+    (back,) = [t for t in field.section.tracesAsList() if t.name == "d03p14"]
+    assert back.getCentroid(field.section.tform) == pytest.approx(before)
+    assert field.roi_box_center == pytest.approx(before)
+    field.undoState(redo=True)
+    assert field.roi_box_center == pytest.approx(after)
+
+
+def test_the_shown_section_is_read_as_drawn_before_it_is_saved(mw, qapp):
+    """An edit on the shown section moves the box at once, before the
+    series data has it."""
+    field = mw.field
+    _follow(mw, "d03p14")
+    (trace,) = [t for t in field.section.tracesAsList() if t.name == "d03p14"]
+    before = trace.getCentroid(field.section.tform)
+    field.section.selected_traces = [trace]
+    field.section.translateTraces(0.5, 0.0)
+    field.generateView()
+    assert field.roi_box_center == pytest.approx((before[0] + 0.5, before[1]))
+    # the series data still has the old place until the save
+    stored = RF.objectCenters(mw.series, "d03p14", field.displayTform)[52]
+    assert stored == pytest.approx(before, abs=1e-5)
 
 
 def test_the_selected_trace_is_offered_to_follow(mw, qapp, monkeypatch):
@@ -322,12 +355,15 @@ def test_an_object_no_section_has_stops_following_with_a_message(mw, qapp, notic
     field = mw.field
     _follow(mw, "d03p14")
     center = field.roi_box_center
+    # gone from the series data and from the shown section
     data = mw.series.data["objects"].pop("d03p14")
+    contour = field.section.contours.pop("d03p14")
     try:
         field.generateView()
         qapp.processEvents()
     finally:
         mw.series.data["objects"]["d03p14"] = data
+        field.section.contours["d03p14"] = contour
     assert field.roi_follow_name is None and field.roi_box_on
     assert field.roi_box_center == center
     assert notices == ["No section has d03p14 now, so the ROI mode box stopped following it."]

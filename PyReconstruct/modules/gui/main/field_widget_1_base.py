@@ -446,7 +446,8 @@ class FieldWidgetBase:
         if not self.roi_box_on or name is None:
             return
         placed = followCenter(
-            objectCenters(self.series, name, self.displayTform), self.section.n
+            objectCenters(self.series, name, self.displayTform, self.section),
+            self.section.n,
         )
         if placed is None:
             self.roi_follow_name = None
@@ -555,17 +556,6 @@ class FieldWidgetBase:
         # notify that the series has been edited
         self.mainwindow.seriesModified(True)
         self.mainwindow.checkActions()
-
-        # the series data now holds the edit; a view drawn from it before the
-        # commit (a dragged trace is drawn, then saved) is drawn again
-        if self.roiReadsSeriesData():
-            self.generateView()
-
-    def roiReadsSeriesData(self) -> bool:
-        """Whether the ROI box's place depends on the series data, so a view
-        drawn before an edit is committed can be out of date: while it
-        follows an object."""
-        return self.roi_box_on and self.roi_follow_name is not None
 
     def undoState(self, redo=False) -> None:
         """Undo last action (switch to last state)."""
