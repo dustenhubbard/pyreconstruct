@@ -11,7 +11,7 @@ Driven through the live `MainWindow` on the fixture series, where d03p14 is
 on sections 52 to 56 and d03 on 3 to 184.
 """
 import pytest
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QPoint, QSettings
 from PySide6.QtGui import QColor
 
 from PyReconstruct.modules.backend.view import roi_follow as RF
@@ -199,6 +199,27 @@ def test_a_pinned_alignment_follows_the_trace_as_drawn(mw, qapp):
     # in a view around the box, the trace is drawn inside it
     field.series.window = [*(c - 1.0 for c in field.roi_box_center), 2.0, 2.0]
     field.generateView()
+    assert "d03p14" in [t.name for t in field.section_layer.traces_in_view]
+
+
+def test_dragging_the_followed_object_moves_the_box_with_it(mw, qapp):
+    from test_roi_box import _pix, _press_and_drag, _release
+    field = mw.field
+    _follow(mw, "d03p14", size=(1.0, 1.0))
+    field.series.window = [*(c - 1.0 for c in field.roi_box_center), 2.0, 2.0]
+    field.generateView()
+    (trace,) = [t for t in field.section.tracesAsList() if t.name == "d03p14"]
+    field.section.selected_traces = [trace]
+    mw.mouse_palette.activateModeButton("Pointer")
+    start = _pix(field, *field.section.tform.map(*trace.points[0]))
+    before = trace.getCentroid(field.section.tform)
+
+    _press_and_drag(field, qapp, start, start + QPoint(100, 20))
+    _release(field, qapp, start + QPoint(100, 20))
+
+    (moved,) = [t for t in field.section.tracesAsList() if t.name == "d03p14"]
+    assert moved.getCentroid(field.section.tform)[0] > before[0] + 0.1
+    assert field.roi_box_center == pytest.approx(moved.getCentroid(field.section.tform))
     assert "d03p14" in [t.name for t in field.section_layer.traces_in_view]
 
 
