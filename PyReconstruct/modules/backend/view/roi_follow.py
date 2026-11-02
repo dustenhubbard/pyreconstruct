@@ -116,18 +116,23 @@ def objectExtents(series, name : str, display_tform, moves : dict = None):
     return snums, x - r, y - r, x + r, y + r
 
 
-def sectionSquares(section, name : str):
+def sectionSquares(section, name : str, held=()):
     """The square around each trace of an object on a loaded section, as the
     field draws it: the same centroid and radius the series data keeps
     (traceGeometry), under the section's own transform.
 
+        Params:
+            held (list): traces a tool holds out of the section while it
+                edits them (Scissors), counted as the section's own
         Returns:
             (tuple): numpy arrays (xmin, ymin, xmax, ymax), one entry per
                 trace with points; empty when the section has none
     """
     tform = section.tform
     rows = []
-    for trace in section.contours.get(name, ()):
+    traces = list(section.contours.get(name, ()))
+    traces += [t for t in held if t.name == name]
+    for trace in traces:
         if not trace.points:
             continue
         pts = tform.mapPointsArray(trace.points)
@@ -139,13 +144,15 @@ def sectionSquares(section, name : str):
     return arr[:, 0], arr[:, 1], arr[:, 2], arr[:, 3]
 
 
-def objectCenters(series, name : str, display_tform, shown=None) -> dict:
+def objectCenters(series, name : str, display_tform, shown=None, held=()) -> dict:
     """The object's center on each section that has it, in displayed
     coordinates (display_tform as in objectExtents).
 
         Params:
             shown (Section): the loaded section the field shows, whose own
                 traces are read in place of its series data
+            held (list): traces a tool holds out of the shown section
+                (sectionSquares)
         Returns:
             (dict): section number -> (x, y) in field coordinates; empty when
                 no section has the object
@@ -156,7 +163,7 @@ def objectCenters(series, name : str, display_tform, shown=None) -> dict:
     snums, xmin, ymin, xmax, ymax = extents
     if shown is not None:
         keep = snums != shown.n
-        live = sectionSquares(shown, name)
+        live = sectionSquares(shown, name, held)
         snums = np.concatenate([snums[keep], np.full(len(live[0]), shown.n, dtype=int)])
         xmin, ymin, xmax, ymax = (
             np.concatenate([a[keep], b]) for a, b in zip((xmin, ymin, xmax, ymax), live)

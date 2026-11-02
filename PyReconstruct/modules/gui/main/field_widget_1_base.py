@@ -446,7 +446,10 @@ class FieldWidgetBase:
         if not self.roi_box_on or name is None:
             return
         placed = followCenter(
-            objectCenters(self.series, name, self.displayTform, self.section),
+            objectCenters(
+                self.series, name, self.displayTform, self.section,
+                self.heldTraces(),
+            ),
             self.section.n,
         )
         if placed is None:
@@ -458,6 +461,19 @@ class FieldWidgetBase:
             ))
             return
         self.roi_box_center, self.roi_follow_from = placed
+
+    def heldTraces(self) -> list:
+        """The traces a tool holds out of the shown section while it edits
+        them: the one Scissors picked up, until the cut ends or is
+        canceled. Still the section's for the ROI box."""
+        if not self.is_scissoring:
+            return []
+        # selected_trace from the pickup on; tracing_trace once it is set
+        held = []
+        for trace in (self.selected_trace, self.tracing_trace):
+            if isinstance(trace, Trace) and trace not in held:
+                held.append(trace)
+        return held
 
     def displayTform(self, snum : int):
         """The transform the field draws a section with: the shown section's

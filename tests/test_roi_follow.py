@@ -256,6 +256,54 @@ def test_the_shown_section_is_read_as_drawn_before_it_is_saved(mw, qapp):
     assert stored == pytest.approx(before, abs=1e-5)
 
 
+@pytest.mark.parametrize("end", ["pointer", "save"])
+def test_a_scissors_pickup_keeps_following_an_object_on_one_section(
+    mw, qapp, notices, end
+):
+    """Scissors holds the picked-up trace out of the section until the cut
+    ends; the box keeps following it and no message says it is gone."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from test_roi_box import _pix
+    from PyReconstruct.modules.datatypes import Trace
+    field = mw.field
+    square = [(13.3, 23.5), (13.7, 23.5), (13.7, 23.9), (13.3, 23.9)]
+    assert field.newTrace(
+        square, Trace("solo", (0, 255, 0)), points_as_pix=False, reduce_points=False,
+    )
+    assert mw.series.getObjectSections(["solo"]) == {52}
+    _follow(mw, "solo", size=(1.0, 1.0))
+    center = field.roi_box_center
+    field.series.window = [12.5, 22.7, 2.0, 2.0]
+    field.generateView()
+
+    mw.mouse_palette.activateModeButton("Scissors")
+    p = _pix(field, 13.3, 23.7)
+    QTest.mousePress(field, Qt.LeftButton, Qt.NoModifier, p)
+    QTest.mouseRelease(field, Qt.LeftButton, Qt.NoModifier, p)
+    qapp.processEvents()
+    assert field.is_scissoring
+    assert not list(field.section.contours.get("solo", []))
+    field.generateView()
+    qapp.processEvents()
+    assert field.roi_follow_name == "solo"
+    assert field.roi_box_center == pytest.approx(center)
+
+    if end == "pointer":
+        mw.mouse_palette.activateModeButton("Pointer")
+    else:
+        mw.saveToJser()
+    qapp.processEvents()
+    field.generateView()
+    qapp.processEvents()
+
+    assert not field.is_scissoring
+    assert list(field.section.contours.get("solo", []))
+    assert field.roi_follow_name == "solo"
+    assert field.roi_box_center == pytest.approx(center)
+    assert notices == []
+
+
 def test_the_selected_trace_is_offered_to_follow(mw, qapp, monkeypatch):
     from PyReconstruct.modules.gui.main import field_widget_7_view as fwv
     field = mw.field
