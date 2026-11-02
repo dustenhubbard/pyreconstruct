@@ -111,19 +111,24 @@ def test_path_without_entry_removes_only_that_entry():
 
 
 class FakeWinreg:
-    """winreg's names over one HKCU\\Environment dictionary of (value, type)."""
+    """winreg's names over user and system dictionaries of (value, type)."""
     HKEY_CURRENT_USER = "HKCU"
+    HKEY_LOCAL_MACHINE = "HKLM"
     KEY_READ = 1
     KEY_SET_VALUE = 2
     REG_SZ = 1
     REG_EXPAND_SZ = 2
     REG_DWORD = 4
 
-    def __init__(self, path=None, kind=REG_EXPAND_SZ):
+    def __init__(self, path=None, kind=REG_EXPAND_SZ, system_path=None):
         self.env = {} if path is None else {"Path": (path, kind)}
+        self.system = {} if system_path is None else {"Path": (system_path, self.REG_EXPAND_SZ)}
         self.writes = 0
 
     class _Key:
+        def __init__(self, values):
+            self.values = values
+
         def __enter__(self):
             return self
 
@@ -131,16 +136,21 @@ class FakeWinreg:
             return False
 
     def OpenKey(self, root, sub, reserved=0, access=0):
+        if root == "HKLM":
+            assert sub == r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+            assert access == self.KEY_READ
+            return self._Key(self.system)
         assert (root, sub) == ("HKCU", "Environment")
-        return self._Key()
+        return self._Key(self.env)
 
     def QueryValueEx(self, key, name):
-        if name not in self.env:
+        if name not in key.values:
             raise FileNotFoundError(name)
-        return self.env[name]
+        return key.values[name]
 
     def SetValueEx(self, key, name, reserved, kind, value):
-        self.env[name] = (value, kind)
+        assert key.values is self.env
+        key.values[name] = (value, kind)
         self.writes += 1
 
 
@@ -163,6 +173,22 @@ def test_windows_add_leaves_a_value_that_is_not_a_string():
     reg = FakeWinreg(7, FakeWinreg.REG_DWORD)
     assert not C.windows_add_to_path(BIN, winreg=reg, broadcast=lambda: None)
     assert reg.writes == 0
+
+
+def test_windows_launch_keeps_an_all_users_command_on_the_system_path(stable, tmp_path):
+    folder = windows_install(tmp_path)
+    bin_dir = str((folder / "bin").resolve())
+    system_path = rf'C:\Windows;"{bin_dir.upper()}\\";D:\tools'
+    reg = FakeWinreg(r"%USERPROFILE%\bin", system_path=system_path)
+    settings, broadcasts = FakeSettings(), []
+
+    assert not C.windows_ensure(settings, executable=str(folder / "PyReconstruct.exe"),
+                                winreg=reg, broadcast=lambda: broadcasts.append(1))
+
+    assert reg.env == {"Path": (r"%USERPROFILE%\bin", reg.REG_EXPAND_SZ)}
+    assert reg.system == {"Path": (system_path, reg.REG_EXPAND_SZ)}
+    assert reg.writes == 0 and broadcasts == []
+    assert settings.values[C.ADDED_KEY] is True
 
 
 def windows_install(tmp_path, name="PyReconstruct", long_="pyreconstruct"):
