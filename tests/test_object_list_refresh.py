@@ -20,28 +20,30 @@ def object_list(main_window):
 
 def test_refresh_menu_preserves_unmatched_data_and_open_tables(object_list):
     widget = object_list
+    target = "d03sp12"  # Shares section 44 with two unmatched objects.
     series = widget.series
-    widget.re_filters = {TARGET}
+    widget.re_filters = {target}
     widget.createTable()
-    assert widget.model.names == [TARGET]
+    assert widget.model.names == [target]
     model = widget.model
     untouched = {
-        name: data for name, data in series.data.objects.items() if name != TARGET
+        name: data for name, data in series.data.objects.items() if name != target
     }
     untouched_traces = {
         name: {snum: tuple(traces) for snum, traces in data.traces.items()}
         for name, data in untouched.items()
     }
-    before = series.data.getFlatArea(TARGET)
+    before = series.data.getFlatArea(target)
     # Corrupt only the cached measurement; Refresh must read the saved traces.
-    for traces in series.data.objects[TARGET].traces.values():
+    for traces in series.data.objects[target].traces.values():
         for trace in traces:
             trace.area = 0
-    assert series.data.getFlatArea(TARGET) == 0
+            trace.length = 0
+    assert series.data.getFlatArea(target) == 0
 
     widget.refresh_act.trigger()
 
-    assert series.data.getFlatArea(TARGET) == pytest.approx(before)
+    assert series.data.getFlatArea(target) == pytest.approx(before)
     assert widget.model is model
     assert all(series.data.objects[name] is data for name, data in untouched.items())
     for name, sections in untouched_traces.items():
