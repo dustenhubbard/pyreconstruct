@@ -21,8 +21,12 @@ from PyReconstruct.modules.datatypes import Series, Section, Trace, Transform
 from PyReconstruct.modules.datatypes.transform import alignment_tform
 from PyReconstruct.modules.backend.view import SectionLayer, ZarrLayer
 from PyReconstruct.modules.backend.view.image_layer import dropReadAhead
-from PyReconstruct.modules.backend.view.trace_layer import traceInRoiBox
-from PyReconstruct.modules.backend.view.roi_follow import followCenter, objectCenters
+from PyReconstruct.modules.backend.view.trace_layer import roiBoxBounds, traceInRoiBox
+from PyReconstruct.modules.backend.view.roi_follow import (
+    followCenter,
+    objectCenters,
+    objectsTouching,
+)
 from PyReconstruct.modules.backend.func import SeriesStates
 from PyReconstruct.modules.backend.table import TableManager
 from PyReconstruct.modules.gui.utils import notify
@@ -90,6 +94,13 @@ class FieldWidgetBase:
         # roi_follow_from names (the shown section when it has the object).
         self.roi_follow_name : str          = None
         self.roi_follow_from : int          = None
+        # Keep whole every object with a trace touching the box on any
+        # section: all its traces are shown on every section. The names are
+        # found again when the box or the series' traces change (roiKeep);
+        # roi_data_rev counts the trace changes: an edit, undo or reload.
+        self.roi_keep_whole : bool          = False
+        self._roi_keep_cache : tuple        = None
+        self.roi_data_rev : int             = 0
         # A drag in the ROI box mode, in field coordinates: where the press
         # was, and where the pointer is once the press has become a drag
         # (None until then, and no preview is drawn).
@@ -216,6 +227,7 @@ class FieldWidgetBase:
         self.roi_box_center = None
         self.roi_follow_name = None
         self.roi_follow_from = None
+        self._roi_keep_cache = None
         self.roi_box_drag_start = None
         self.roi_box_drag_end = None
 
@@ -375,7 +387,8 @@ class FieldWidgetBase:
             show_all_traces=self.show_all_traces,
             hide_image=self.hide_image,
             focus_on=self.focus_mode,
-            roi_box=self.roiBox()
+            roi_box=self.roiBox(),
+            roi_keep=self.roiKeep(),
         )
 
         # blend b section if requested
@@ -390,7 +403,8 @@ class FieldWidgetBase:
                 show_all_traces=self.show_all_traces,
                 hide_image=self.hide_image,
                 focus_on=self.focus_mode,
-                roi_box=self.roiBox()
+                roi_box=self.roiBox(),
+                roi_keep=self.roiKeep(),
             )
             # overlay a and b sections
             painter = QPainter(view)
@@ -458,6 +472,43 @@ class FieldWidgetBase:
             return
         self.roi_box_center, self.roi_follow_from = placed
 
+    def roiKeep(self) -> frozenset:
+        """The objects the ROI box keeps whole, or None while that option or
+        the box is off. Each has a trace touching the box on some section, the
+        box placed there as it is drawn there (a followed box moves), in the
+        coordinates the field draws. Found again when the box, its size, the
+        followed object, the series alignment, the shown section's transform
+        or the series' traces (roi_data_rev) change."""
+        box = self.roiBox()
+        if box is None or not self.roi_keep_whole:
+            return None
+        w, h = self.roi_box_size
+        data = (
+            self.roi_data_rev, len(self.series.data["objects"]), self.series.alignment,
+            self.section.n, tuple(self.section.tform.getList()),
+        )
+        if self.roi_follow_name is not None:
+            key = ("follow", self.roi_follow_name, w, h, data)
+        else:
+            key = ("box", box, data)
+        if self._roi_keep_cache is not None and self._roi_keep_cache[0] == key:
+            return self._roi_keep_cache[1]
+        if self.roi_follow_name is not None:
+            centers = objectCenters(self.series, self.roi_follow_name, self.displayTform)
+            places = {
+                snum: followCenter(centers, snum) for snum in self.series.sections
+            }
+            boxes = {
+                snum: roiBoxBounds((*placed[0], w, h))
+                for snum, placed in places.items() if placed is not None
+            }
+        else:
+            bounds = roiBoxBounds(box)
+            boxes = {snum: bounds for snum in self.series.sections}
+        names = objectsTouching(self.series, boxes, self.displayTform)
+        self._roi_keep_cache = (key, names)
+        return names
+
     def displayTform(self, snum : int):
         """The transform the field draws a section with: the shown section's
         own, else the series alignment's from the series data (None for a
@@ -471,7 +522,7 @@ class FieldWidgetBase:
     def inRoiBox(self, trace : Trace) -> bool:
         """Whether a trace on the current section is inside the ROI box
         (always True while the box is off)."""
-        return traceInRoiBox(trace, self.section.tform, self.roiBox())
+        return traceInRoiBox(trace, self.section.tform, self.roiBox(), self.roiKeep())
 
     def dropSelectedOutsideRoiBox(self) -> list:
         """Deselect the traces outside the ROI box, which are not drawn.
@@ -562,10 +613,12 @@ class FieldWidgetBase:
             self.generateView()
 
     def roiReadsSeriesData(self) -> bool:
-        """Whether the ROI box's place depends on the series data, so a view
-        drawn before an edit is committed can be out of date: while it
-        follows an object."""
-        return self.roi_box_on and self.roi_follow_name is not None
+        """Whether the ROI box's place or the objects it keeps whole depend
+        on the series data, so a view drawn before an edit is committed can
+        be out of date: while it follows an object or keeps objects whole."""
+        return self.roi_box_on and (
+            self.roi_follow_name is not None or self.roi_keep_whole
+        )
 
     def undoState(self, redo=False) -> None:
         """Undo last action (switch to last state)."""
@@ -599,6 +652,7 @@ class FieldWidgetBase:
                 step (SectionStep): what the step changed
         """
         self.table_manager.updateAll(step.objects, step.ztraces)
+        self.roi_data_rev += 1
         # the Groups menu lists groups from createMenuBar
         if step.groups_changed and hasattr(self.mainwindow, "createMenuBar"):
             self.mainwindow.createMenuBar()
@@ -777,6 +831,9 @@ class FieldWidgetBase:
         # read back from the file
         self.cancelOpenScissorsCut()
 
+        # the series' traces may have changed under the ROI box's kept objects
+        self.roi_data_rev += 1
+
         # reload the actual sections
         self.section = self.series.loadSection(self.series.current_section)
         self.section_layer.section = self.section
@@ -816,6 +873,7 @@ class FieldWidgetBase:
         # the field's own copy, saved during the pass (the save prompt)
         if written is self.section or written is self.b_section:
             return
+        self.roi_data_rev += 1
         if self.section is not None and self.section.n == written.n:
             self.section = self.series.loadSection(written.n)
             self.section_layer.section = self.section
@@ -852,6 +910,7 @@ class FieldWidgetBase:
         )
 
         self.table_manager.updateAll()
+        self.roi_data_rev += 1
         self.section.clearTracking()
         self.series.clearTracking()
         
