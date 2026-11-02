@@ -18,11 +18,14 @@ from PySide6.QtCore import (
 )
 
 from PyReconstruct.modules.datatypes import Series, Section, Trace, Transform
+from PyReconstruct.modules.datatypes.transform import alignment_tform
 from PyReconstruct.modules.backend.view import SectionLayer, ZarrLayer
 from PyReconstruct.modules.backend.view.image_layer import dropReadAhead
 from PyReconstruct.modules.backend.view.trace_layer import traceInRoiBox
+from PyReconstruct.modules.backend.view.roi_follow import followCenter, objectCenters
 from PyReconstruct.modules.backend.func import SeriesStates
 from PyReconstruct.modules.backend.table import TableManager
+from PyReconstruct.modules.gui.utils import notify
 
 
 class FieldWidgetBase:
@@ -82,6 +85,18 @@ class FieldWidgetBase:
         # the box a click places, "center" or "corner" (the upper-left).
         self.roi_box_drag_draws : bool      = True
         self.roi_box_anchor : str           = "center"
+        # The object the box follows, or None: on each section the box is
+        # centered on it, or placed as on the nearest section with it, which
+        # roi_follow_from names (the shown section when it has the object).
+        self.roi_follow_name : str          = None
+        self.roi_follow_from : int          = None
+        # The traces the selection rule last dropped (dropSelectedOutsideRoiBox),
+        # the traces made by the operation under way, and how deep the field
+        # interactions are nested (field_widget_2_trace.field_interaction)
+        self.roi_dropped : list             = []
+        self.new_traces : list              = []
+        self.interaction_depth : int        = 0
+        self.inner_modified : bool          = False
         # A drag in the ROI box mode, in field coordinates: where the press
         # was, and where the pointer is once the press has become a drag
         # (None until then, and no preview is drawn).
@@ -206,6 +221,8 @@ class FieldWidgetBase:
         self.hide_image = False
         self.roi_box_on = False
         self.roi_box_center = None
+        self.roi_follow_name = None
+        self.roi_follow_from = None
         self.roi_box_drag_start = None
         self.roi_box_drag_end = None
 
@@ -337,7 +354,8 @@ class FieldWidgetBase:
         self.resizeWindow(self.pixmap_dim)
 
         ## A redraw follows every selection change, so the ROI box's one
-        ## selection rule is kept here
+        ## selection rule is kept here; a box that follows an object is
+        ## placed first, section by section
         self.dropSelectedOutsideRoiBox()
 
         ## Calculate scaling
@@ -424,6 +442,63 @@ class FieldWidgetBase:
             return None
         return (*self.roi_box_center, *self.roi_box_size)
 
+    def placeFollowedRoiBox(self):
+        """Center a box that follows an object on it on this section, or as
+        on the nearest section with it (backend/view/roi_follow.py). When no
+        section has the object (deleted or renamed), the box stays where it
+        was, stops following, and a message says so.
+
+        Nothing is decided while the series data is being built again (a
+        refresh lets events run, a redraw among them): the box stays where it
+        is until the data has every section."""
+        name = self.roi_follow_name
+        if not self.roi_box_on or name is None:
+            return
+        if not self.seriesDataComplete():
+            return
+        placed = followCenter(
+            objectCenters(
+                self.series, name, self.displayTform, self.section,
+                self.heldTraces(),
+            ),
+            self.section.n,
+        )
+        if placed is None:
+            self.roi_follow_name = None
+            self.roi_follow_from = None
+            # after the redraw, never in the middle of it
+            QTimer.singleShot(0, lambda: notify(
+                f"No section has {name} now, so the ROI mode box stopped following it."
+            ))
+            return
+        self.roi_box_center, self.roi_follow_from = placed
+
+    def seriesDataComplete(self) -> bool:
+        """Whether the series data has every section of the series. A
+        refresh (SeriesData.refresh) empties it, then adds the sections back
+        one by one."""
+        return len(self.series.data["sections"]) >= len(self.series.sections)
+
+    def heldTraces(self) -> list:
+        """The traces a tool holds out of the shown section while it edits
+        them: the one Scissors took out of its contour (selected_trace, set
+        before the pickup's first redraw), until the cut ends or is canceled.
+        Still the section's for the ROI box. tracing_trace is not one: it is
+        the palette's template until the pickup has drawn once."""
+        if self.is_scissoring and self.selected_type == "trace" and isinstance(self.selected_trace, Trace):
+            return [self.selected_trace]
+        return []
+
+    def displayTform(self, snum : int):
+        """The transform the field draws a section with: the shown section's
+        own, else the series alignment's from the series data (None for a
+        section the series data does not have)."""
+        if snum == self.section.n:
+            return self.section.tform
+        if snum not in self.series.data["sections"]:
+            return None
+        return alignment_tform(self.series, snum)
+
     def inRoiBox(self, trace : Trace) -> bool:
         """Whether a trace on the current section is inside the ROI box
         (always True while the box is off)."""
@@ -437,9 +512,21 @@ class FieldWidgetBase:
         lasso, Select all, Invert, focus mode, Find, a new trace) ends in a
         redraw, and generateView calls this first.
 
+        A box that follows an object is placed first, from the shown
+        section's traces as they are now, so a trace just drawn, pasted or
+        moved inside the box's new place stays selected. While a field
+        interaction is under way (a paste, a grid, a cut), nothing is placed
+        or dropped: the interaction applies the rule once, when it is done.
+
             Returns:
                 (list): the traces that were deselected
         """
+        self.roi_dropped = []
+        if self.interaction_depth:
+            # a field interaction is under way; it applies the rule once it
+            # is done (field_widget_2_trace.field_interaction)
+            return []
+        self.placeFollowedRoiBox()
         if self.roiBox() is None:
             return []
         selected = self.section.selected_traces
@@ -448,6 +535,7 @@ class FieldWidgetBase:
             return []
         dropped = [t for t in selected if t not in inside]
         self.section.selected_traces = inside
+        self.roi_dropped = dropped
         return dropped
 
     def focusHintText(self) -> str:

@@ -257,6 +257,9 @@ def _trace_field_stub(section):
         section=section,
         hide_trace_layer=False,
         refuseWhileRoiBox=lambda: False,  # the ROI box is off
+        # what a field interaction keeps for the ROI box's selection rule
+        interaction_depth=0, inner_modified=False, new_traces=[], roi_dropped=[],
+        dropSelectedOutsideRoiBox=lambda: [],
         saveState=lambda: events.append("saveState"),
         generateView=lambda *a_, **k: events.append("generateView"),
     )
