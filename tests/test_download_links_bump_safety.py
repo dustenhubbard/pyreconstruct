@@ -14,7 +14,8 @@ from test_pruning_preserves_release_tags import workflow_script
 
 
 pytestmark = pytest.mark.skipif(
-    os.name == "nt" or shutil.which("jq") is None, reason="Linux workflow shell with jq"
+    sys.platform != "linux" or shutil.which("jq") is None,
+    reason="Linux workflow shell with GNU tools and jq",
 )
 FILES = ("README.md", "docs/USER_GUIDE.md", "docs/index.md")
 WORKFLOW = "download-links-bump.yml"
