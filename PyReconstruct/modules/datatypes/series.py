@@ -2412,6 +2412,8 @@ class Series():
         """
         store_save.closing(self)
         collector.restore(self)
+        from .section_read_ahead import READ_AHEAD
+        READ_AHEAD.drop()
 
         if self.isWelcomeSeries() or self.leave_open:
             # closed even so: a series left open for the one replacing it in
