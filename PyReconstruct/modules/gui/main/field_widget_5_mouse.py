@@ -858,14 +858,14 @@ class FieldWidgetMouse(FieldWidgetData):
             if len(self.current_trace) < 2:
                 return
 
-            self.newTrace(
+            created = self.newTrace(
                 self.current_trace,
                 self.tracing_trace,
                 closed=closed,
                 simplify=self.series.getOption("roll_average")
             )
             
-            if closed and len(self.current_trace) > 2:
+            if created and closed and len(self.current_trace) > 2:
                 self.autoMerge()
                 
             self.current_trace = []
