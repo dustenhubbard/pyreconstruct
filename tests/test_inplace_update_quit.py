@@ -326,7 +326,6 @@ def _quit_with_the_install_held(dev):  # noqa: F811
 def launch(main_window, dev, monkeypatch):  # noqa: F811
     """The startup update check of a new session on this Windows Dev install, the day's check already done."""
     import time
-    from PySide6.QtCore import QSettings
     from PyReconstruct.modules.gui.main import main_window as MW
     monkeypatch.setattr(MW, "install_kind", lambda: "frozen")
     monkeypatch.setattr(MW, "ThreadPool", InlinePool)
@@ -334,7 +333,7 @@ def launch(main_window, dev, monkeypatch):  # noqa: F811
     real = I.stage_for_quit
     monkeypatch.setattr(I, "stage_for_quit", lambda release, offered, **kw: real(
         release, offered, **{"platform": dev.registry, "trusted_keys": dev_keys(), **kw}))
-    stamp = QSettings(*MW.domain_for("last_update_check_epoch"))
+    stamp = MW.settings_for("last_update_check_epoch")
     checks = []
 
     def run(feed=None, error=None, window=None, last_check=None):

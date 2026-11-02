@@ -26,7 +26,7 @@ def domains(monkeypatch, tmp_path):
 @pytest.mark.parametrize("flavor", ["stable", "dev"])
 @pytest.mark.parametrize("route", ["global", "per-app", "series"])
 def test_first_use_preserves_settings(domains, monkeypatch, flavor, route):
-    from PySide6.QtCore import QByteArray, QSettings
+    from PySide6.QtCore import QByteArray
 
     app, make = domains
     if flavor == "dev":
@@ -55,7 +55,7 @@ def test_first_use_preserves_settings(domains, monkeypatch, flavor, route):
         actual = QSettingsStore()._settings("SER1")
     else:
         route_key = "window/geometry" if route == "per-app" else "username"
-        actual = QSettings(*SD.domain_for(route_key))
+        actual = SD.settings_for(route_key)
 
     assert actual.organizationName() == "PyReconstruct"
     assert actual.value("username") == "current-user"
@@ -71,7 +71,7 @@ def test_first_use_preserves_settings(domains, monkeypatch, flavor, route):
     if route == "series":
         again = QSettingsStore()._settings("SER1")
     else:
-        again = QSettings(*SD.domain_for(route_key))
+        again = SD.settings_for(route_key)
     assert not again.contains("backup_dir")
     assert not again.contains("added_later")
 

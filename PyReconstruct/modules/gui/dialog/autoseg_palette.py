@@ -26,6 +26,7 @@ so changing the *number* of colors reshuffles every id -> color assignment (not
 just the colors that changed). The status line under the preview says so the
 moment the count differs from what was loaded.
 """
+from PyReconstruct.modules.constants.settings_domain import user_action
 
 import re
 
@@ -547,8 +548,9 @@ class AutosegColorsWidget(QWidget):
 
     def set(self):
         """Commit the seed and palette to the series options."""
-        self.series.setOption("autoseg_color_seed", self._seed)
-        self.series.setOption("autoseg_color_palette", normalize_palette(self.colors))
+        with user_action():
+            self.series.setOption("autoseg_color_seed", self._seed)
+            self.series.setOption("autoseg_color_palette", normalize_palette(self.colors))
 
     # --- cosmetic border, matching the sibling OptionWidgets -----------------
 

@@ -12,7 +12,7 @@ The classification test enumerates keys from the places that define them
 (`default_settings`, `default_series_settings`, the raw-site literals, and the
 main-window inventory in `conftest.py`) rather than by grepping, and a source
 scan checks that no raw ``QSettings`` construction in the application bypasses
-`domain_for`. Together those are what stop a new key from landing in the wrong
+`settings_for`. Together those are what stop a new key from landing in the wrong
 store without anybody deciding it should.
 """
 
@@ -242,26 +242,16 @@ def test_conftest_inventory_carries_no_key_the_design_does_not_know():
 
 APP_ROOT = Path(__file__).resolve().parents[1] / "PyReconstruct"
 
-# The two modules allowed to construct QSettings from a domain of their own:
-# the store seam addresses the shared domain by name, and the router module
-# is where the domains come from.
+# Only the domain router may construct unguarded Qt handles, for migration.
 ROUTER_MODULES = {
-    APP_ROOT / "modules" / "backend" / "settings_store.py",
     APP_ROOT / "modules" / "constants" / "settings_domain.py",
 }
 
 _CONSTRUCTION = re.compile(r"\bQSettings\(")
-_ROUTED = re.compile(r"\bQSettings\(\*domain_for\(")
 
 
-def test_every_raw_qsettings_construction_in_the_app_goes_through_domain_for():
-    """Scan the application sources for ``QSettings(``.
-
-    Outside the two router modules, every construction must read
-    ``QSettings(*domain_for(<key>...))``. A construction that names the domain
-    itself (``QSettings(ORG, APP)``, ``QSettings(*settings_domain())``) is how
-    a key ends up in the wrong store with nothing failing.
-    """
+def test_every_raw_qsettings_construction_stays_in_the_guarded_router():
+    """Production callers must use the factory that holds pending writes."""
     offenders = []
     for path in sorted(APP_ROOT.rglob("*.py")):
         if path in ROUTER_MODULES:
@@ -270,7 +260,7 @@ def test_every_raw_qsettings_construction_in_the_app_goes_through_domain_for():
             code = line.split("#", 1)[0]
             if "`" in code:
                 continue  # a docstring mention, not a construction
-            if _CONSTRUCTION.search(code) and not _ROUTED.search(code):
+            if _CONSTRUCTION.search(code):
                 offenders.append(f"{path.relative_to(APP_ROOT.parent)}:{number}: {line.strip()}")
     assert not offenders, "\n".join(offenders)
 

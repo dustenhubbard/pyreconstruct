@@ -482,9 +482,8 @@ def linux_ensure(settings, env=None, dev=None):
 # ------------------------------------------------------------------- dispatch
 
 def open_settings():
-    from PySide6.QtCore import QSettings
-    from PyReconstruct.modules.constants.settings_domain import domain_for
-    return QSettings(*domain_for(ADDED_KEY))
+    from PyReconstruct.modules.constants.settings_domain import settings_for
+    return settings_for(ADDED_KEY)
 
 
 def ensure_silent(settings=None):

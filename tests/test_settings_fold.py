@@ -14,7 +14,6 @@ suite are never read or written.
 """
 
 import inspect
-import os
 
 import pytest
 
@@ -206,6 +205,8 @@ def test_a_stable_app_with_no_dev_present_is_byte_identical(monkeypatch, qapp):
     shared.setValue("fold_probe_global", "kept")
     per_series.setValue("fold_probe_series", "kept")
     shared.sync(); per_series.sync()
+    dev = QSettings("PyReconstruct", DEV)
+    dev_before = {key: dev.value(key) for key in dev.allKeys()}
     try:
         before = (open(shared.fileName(), "rb").read(),
                   open(per_series.fileName(), "rb").read())
@@ -216,8 +217,7 @@ def test_a_stable_app_with_no_dev_present_is_byte_identical(monkeypatch, qapp):
         after = (open(shared.fileName(), "rb").read(),
                  open(per_series.fileName(), "rb").read())
         assert after == before
-        assert not os.path.exists(QSettings("PyReconstruct", DEV).fileName()) or \
-            not QSettings("PyReconstruct", DEV).contains(FOLD_MARKER)
+        assert {key: dev.value(key) for key in dev.allKeys()} == dev_before
     finally:
         for s in (QSettings("PyReconstruct", "PyReconstruct"),
                   QSettings("PyReconstruct", "PyReconstruct-FOLDPROBE")):

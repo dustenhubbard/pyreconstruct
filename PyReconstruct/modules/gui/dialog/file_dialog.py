@@ -1,8 +1,9 @@
+from PyReconstruct.modules.constants.settings_domain import user_action
 import os
 
-from PySide6.QtCore import QSettings, QDir
+from PySide6.QtCore import QDir
 from PySide6.QtWidgets import QFileDialog
-from PyReconstruct.modules.constants.settings_domain import domain_for
+from PyReconstruct.modules.constants.settings_domain import settings_for
 
 class FileDialog(QFileDialog):
 
@@ -10,7 +11,7 @@ class FileDialog(QFileDialog):
         super().__init__(parent)
 
         # Retrieve the last opened folder path from QSettings
-        settings = QSettings(*domain_for("last_folder"))
+        settings = settings_for("last_folder")
         last_folder = settings.value("last_folder", QDir.homePath())
 
         # Set the current directory to the last opened folder
@@ -36,8 +37,9 @@ class FileDialog(QFileDialog):
             new_dir = os.path.dirname(response)
                 
         if new_dir:
-            settings = QSettings(*domain_for("last_folder"))
-            settings.setValue("last_folder", new_dir)
+            settings = settings_for("last_folder")
+            with user_action():
+                settings.setValue("last_folder", new_dir)
 
     @staticmethod
     def get(file_mode: str, parent=None, caption="", filter=None, file_name=""):
@@ -51,7 +53,7 @@ class FileDialog(QFileDialog):
         silently dead for the open modes (found 2026-08-28). The remembered
         folder now rides the dir argument, which the statics honor.
         """
-        settings = QSettings(*domain_for("last_folder"))
+        settings = settings_for("last_folder")
         last_folder = settings.value("last_folder", QDir.homePath())
 
         if file_mode == "dir":

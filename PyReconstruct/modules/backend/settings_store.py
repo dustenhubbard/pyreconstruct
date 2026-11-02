@@ -3,7 +3,7 @@
 `Series` reads and writes user options through a `SettingsStore` rather than
 touching `QSettings` directly, so the data model no longer depends on Qt/GUI
 for settings access. GUI callers get the `QSettingsStore` default, whose
-behavior is identical to the previous direct `QSettings` usage; headless
+behavior follows `QSettings` after migration completes; headless
 callers and tests can inject `DictSettingsStore` (pure Python, no Qt).
 
 Two scopes are preserved exactly, matching the prior `QSettings` usage:
@@ -14,7 +14,7 @@ Two scopes are preserved exactly, matching the prior `QSettings` usage:
 Both scopes are the SHARED domain (`constants/settings_domain.py`): the
 stable app and the Dev app read and write the same store, so a preference
 set in one is what the other sees. The few keys that stay per app never
-pass through here; they are raw `QSettings` sites routed by `domain_for`.
+pass through here; they use the guarded `settings_for` factory.
 
 Pass ``code=None`` to address the global scope; pass a series ``code`` to
 address that series' per-series scope.
@@ -43,9 +43,13 @@ class SettingsStore(ABC):
     def set_value(self, code: Optional[str], key: str, value) -> None:
         """Store ``value`` under ``key`` in the given scope."""
 
+    def may_save_defaults(self, code: Optional[str]) -> bool:
+        """Whether an implicit read may persist its fallback."""
+        return True
+
 
 class QSettingsStore(SettingsStore):
-    """Default store backed by ``QSettings`` (identical to prior behavior).
+    """Default store backed by guarded ``QSettings`` handles.
 
     This is the Qt adapter layer, so it imports ``QSettings`` -- lazily, so
     that importing this module and using ``DictSettingsStore`` require no Qt.
@@ -65,14 +69,17 @@ class QSettingsStore(SettingsStore):
         from PyReconstruct.modules.constants.settings_domain import SHARED_APP
         return SHARED_APP
 
-    def _settings(self, code: Optional[str]):
-        from PySide6.QtCore import QSettings
+    def _app(self, code):
+        from PyReconstruct.modules.constants.settings_domain import series_app
+        return self.APP if code is None else series_app(self.APP, code)
+
+    def _settings(self, code: Optional[str], migrate=True):
         from PyReconstruct.modules.constants.settings_domain import (
-            migrate_settings_once, series_app,
+            fold_series_settings_once, guarded_settings,
         )
-        app = self.APP if code is None else series_app(self.APP, code)
-        migrate_settings_once(app)
-        return QSettings(self.ORG, app)
+        if migrate and code is not None:
+            fold_series_settings_once(code)
+        return guarded_settings(self._app(code), migrate=migrate)
 
     def contains(self, code, key):
         return self._settings(code).contains(key)
@@ -81,7 +88,13 @@ class QSettingsStore(SettingsStore):
         return self._settings(code).value(key, type=value_type)
 
     def set_value(self, code, key, value):
-        self._settings(code).setValue(key, value)
+        # A save can follow a failed read. Retry on the next read, so a stale
+        # default cannot overwrite a preference recovered during this save.
+        self._settings(code, migrate=False).setValue(key, value)
+
+    def may_save_defaults(self, code):
+        from PyReconstruct.modules.constants.settings_domain import store_copy_pending
+        return not store_copy_pending(self._app(code))
 
 
 class DictSettingsStore(SettingsStore):

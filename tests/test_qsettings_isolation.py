@@ -332,27 +332,19 @@ def test_no_imported_module_still_holds_the_real_qsettings_class():
 
 
 def test_the_production_call_sites_resolve_to_the_isolated_class():
-    """Import every module that constructs a `QSettings` and check what it holds.
-
-    Enumerated from `git grep QSettings(` rather than discovered, so a new call
-    site in a new module does not quietly get left out of the check: the sweep
-    above is what covers that case, and this is what pins the known ones.
-    """
+    """Open each routed production store and verify its isolated path."""
     import importlib
 
     modules = (
         "PyReconstruct.modules.gui.dialog.file_dialog",
         "PyReconstruct.modules.gui.dialog.whats_new",
         "PyReconstruct.modules.gui.palette.mouse_palette",
-        "PyReconstruct.modules.gui.main.main_imports",
         "PyReconstruct.modules.gui.main.main_window",
     )
     for name in modules:
         module = importlib.import_module(name)
-        bound = getattr(module, "QSettings", None)
-        assert bound is not None, f"{name} no longer binds QSettings"
-        assert bound is not qi._real_qsettings, name
-        assert _under_root(bound("PyReconstruct", "PyReconstruct").fileName()), name
+        bound = module.settings_for("username")
+        assert _under_root(bound.fileName()), name
 
 
 def test_whats_new_module_constants_still_name_the_real_domain():
@@ -732,7 +724,8 @@ def test_isolation_needs_the_suite_conftest_to_be_active():
         import os
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         from PyReconstruct.modules.gui.dialog import file_dialog
-        print("CLASSNAME", file_dialog.QSettings.__name__)
+        from PySide6.QtCore import QSettings
+        print("CLASSNAME", QSettings.__name__)
         """
     )
     result = subprocess.run(

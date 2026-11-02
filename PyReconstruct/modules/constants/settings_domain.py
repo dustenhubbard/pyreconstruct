@@ -20,8 +20,7 @@ Each store copies its old KHLab values on first use. Existing destination
 values win, and the old store stays intact for older builds. The organization
 migration runs before the older Dev-to-shared fold.
 
-Every raw ``QSettings`` construction in the app goes through
-``domain_for(key)``; ``QSettingsStore`` (backend/settings_store.py), which
+Every settings handle in the app comes from ``settings_for(key)``; ``QSettingsStore`` (backend/settings_store.py), which
 carries ``Series.getOption``, addresses the shared domain directly. A test
 scans the sources for any construction that bypasses this module.
 
@@ -40,6 +39,8 @@ import hashlib
 import json
 import os
 import sys
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 SETTINGS_ORG = "PyReconstruct"
 LEGACY_SETTINGS_ORG = "KHLab"
@@ -129,36 +130,183 @@ def series_app(app, code):
     return f"{app}{marker}{digest}"
 
 
-def migrate_settings_once(app, legacy=None, destination=None):
-    """Copy one legacy store on first use, leaving both existing values intact.
+# Qt keeps parsed settings beyond a module reload during Restart.
+_unreadable_settings = globals().get("_unreadable_settings", set())
+_REMOVED_KEYS = "meta/removed_during_migration"
+_user_actions = globals().get("_user_actions", ContextVar("settings_user_actions", default=0))
 
-    Disable fallbacks while copying so organization-wide or system defaults
-    are not materialized as user preferences. Mark only a successful sync,
-    allowing a later call to retry an unreadable source or unwritable target.
-    Explicit stores let tests exercise failures without native preferences.
+
+def _read_keys(settings):
+    from PySide6.QtCore import QSettings
+
+    path = settings.fileName()
+    if path in _unreadable_settings:
+        return None
+    settings.setFallbacksEnabled(False)
+    settings.sync()
+    keys = settings.allKeys()
+    status = settings.status()
+    if status == QSettings.FormatError:
+        _unreadable_settings.add(path)
+    return keys if status == QSettings.NoError else None
+
+
+def _removed(settings, key):
+    prefixes = json.loads(settings.value(_REMOVED_KEYS, "[]"))
+    return any(not prefix or key == prefix or key.startswith(prefix + "/")
+               for prefix in prefixes)
+
+
+def migrate_settings_once(app, legacy=None, destination=None):
+    """Copy a store without replacing destination values or changing the source.
+
+    Return True after copying, False when already complete, or None while
+    pending. A parse failure stays pending until the next process, including
+    an in-process Restart. Access failures can retry in the same process.
     """
     from PySide6.QtCore import QSettings
 
     if destination is None:
         destination = QSettings(SETTINGS_ORG, app)
-    destination.setFallbacksEnabled(False)
+    if _read_keys(destination) is None:
+        return None
     if destination.contains(ORG_MIGRATION_MARKER):
         return False
     if legacy is None:
         legacy = QSettings(LEGACY_SETTINGS_ORG, app)
-    legacy.setFallbacksEnabled(False)
-    legacy.sync()
-    if legacy.status() != QSettings.NoError:
-        return False
-    for key in legacy.allKeys():
-        if key != ORG_MIGRATION_MARKER and not destination.contains(key):
+    keys = _read_keys(legacy)
+    if keys is None:
+        return None
+    for key in keys:
+        if (key not in (ORG_MIGRATION_MARKER, _REMOVED_KEYS)
+                and not destination.contains(key) and not _removed(destination, key)):
             destination.setValue(key, legacy.value(key))
     destination.sync()
     if destination.status() != QSettings.NoError:
-        return False
+        return None
     destination.setValue(ORG_MIGRATION_MARKER, True)
     destination.sync()
-    return destination.status() == QSettings.NoError
+    return True if destination.status() == QSettings.NoError else None
+
+
+def _copy_pending(app):
+    from PySide6.QtCore import QSettings
+
+    destination = QSettings(SETTINGS_ORG, app)
+    if _read_keys(destination) is None:
+        return True
+    if destination.contains(ORG_MIGRATION_MARKER):
+        return False
+    keys = _read_keys(QSettings(LEGACY_SETTINGS_ORG, app))
+    return keys is None or bool(keys)
+
+
+def _flavored_app(app):
+    flavor = settings_app()
+    if flavor == SHARED_APP or app.startswith(flavor):
+        return None
+    suffix = app[len(SHARED_APP):]
+    if app == SHARED_APP or app.startswith((SHARED_APP + "-", SHARED_APP + " NUL-",
+                                            SHARED_APP + " PATH-")):
+        return flavor + suffix
+    return None
+
+
+def store_copy_pending(app):
+    """Hold automatic writes until this store and its Dev input are ready."""
+    from PySide6.QtCore import QSettings
+
+    if _copy_pending(app):
+        return True
+    flavored = _flavored_app(app)
+    if flavored is None:
+        return False
+    if _copy_pending(flavored):
+        return True
+    dev = QSettings(SETTINGS_ORG, flavored)
+    keys = _read_keys(dev)
+    if keys is None:
+        return True
+    return (not dev.contains(FOLD_MARKER)
+            and any(not is_per_app_key(key) for key in keys))
+
+
+@contextmanager
+def user_action():
+    """Allow the settings writes that save an explicit user choice."""
+    token = _user_actions.set(_user_actions.get() + 1)
+    try:
+        yield
+    finally:
+        _user_actions.reset(token)
+
+
+class GuardedSettings:
+    """Keep automatic writes out of a store awaiting migration.
+
+    Remember a pending read on this handle even if another handle completes
+    migration later. A fallback computed from that read is still stale.
+    Only known read and configuration methods pass through to Qt.
+    """
+
+    _READS = frozenset({
+        "allKeys", "applicationName", "beginGroup", "childGroups", "childKeys",
+        "contains", "endGroup", "fallbacksEnabled", "fileName", "format",
+        "group", "isAtomicSyncRequired", "isWritable", "organizationName",
+        "scope", "setFallbacksEnabled", "status", "sync", "value",
+    })
+
+    def __init__(self, settings):
+        self._settings = settings
+        self._pending_read = store_copy_pending(settings.applicationName())
+
+    def __getattr__(self, name):
+        if name not in self._READS:
+            raise AttributeError(f"GuardedSettings does not offer {name!r}")
+        return getattr(self._settings, name)
+
+    def _may_write(self):
+        return bool(_user_actions.get()) or (
+            not self._pending_read
+            and not store_copy_pending(self._settings.applicationName())
+        )
+
+    def setValue(self, key, value):
+        if self._may_write():
+            self._settings.setValue(key, value)
+
+    def _remember_removal(self, key):
+        if not store_copy_pending(self._settings.applicationName()):
+            return
+        from PySide6.QtCore import QSettings
+
+        group = self._settings.group()
+        absolute = "/".join(part for part in (group, key) if part)
+        root = QSettings(SETTINGS_ORG, self._settings.applicationName())
+        removed = json.loads(root.value(_REMOVED_KEYS, "[]"))
+        if absolute not in removed:
+            removed.append(absolute)
+            root.setValue(_REMOVED_KEYS, json.dumps(removed))
+
+    def remove(self, key):
+        if self._may_write():
+            self._settings.remove(key)
+            self._remember_removal(key)
+
+
+def guarded_settings(app, migrate=True):
+    from PySide6.QtCore import QSettings
+
+    if migrate:
+        migrate_settings_once(app)
+        if app == SHARED_APP:
+            fold_flavor_settings_once()
+    return GuardedSettings(QSettings(SETTINGS_ORG, app))
+
+
+def settings_for(*keys):
+    """Open the routed store with the pending-copy write guard."""
+    return guarded_settings(domain_for(*keys)[1])
 
 
 def shared_domain():
@@ -223,9 +371,9 @@ def is_per_app_key(key):
 
 
 def domain_for(*keys):
-    """(org, app) for a raw ``QSettings`` that reads or writes ``keys``.
+    """(org, app) for ``keys``; ``settings_for`` opens the guarded store.
 
-    Unpack into ``QSettings(*domain_for(key))``. Several keys can be named
+    Several keys can be named
     when one settings object serves them all; they must all land in the same
     domain, and a mix raises rather than silently routing half of them to the
     wrong store.
@@ -238,9 +386,7 @@ def domain_for(*keys):
             "keys split across the shared and per-app domains: "
             + ", ".join(sorted(keys))
         )
-    domain = per_app_domain() if per_app.pop() else shared_domain()
-    migrate_settings_once(domain[1])
-    return domain
+    return per_app_domain() if per_app.pop() else shared_domain()
 
 
 # Marker the retired one-shot seed wrote into a Dev domain (2026-08-25 to
@@ -275,7 +421,7 @@ def _fold(flavored, shared, mark_always, validate_list_layout=False):
     """
     copied = []
     for key in flavored.allKeys():
-        if is_per_app_key(key) or shared.contains(key):
+        if is_per_app_key(key) or shared.contains(key) or _removed(shared, key):
             continue
         value = flavored.value(key)
         if validate_list_layout and key == "list_layout":
@@ -322,8 +468,10 @@ def fold_flavor_settings_once(flavored=None, shared=None):
         if settings_app() == SHARED_APP:
             return False
         from PySide6.QtCore import QSettings
-        migrate_settings_once(SHARED_APP)
-        migrate_settings_once(settings_app())
+        stable_copy = migrate_settings_once(SHARED_APP)
+        dev_copy = migrate_settings_once(settings_app())
+        if stable_copy is None or dev_copy is None:
+            return False
         flavored = QSettings(*per_app_domain())
     if flavored.contains(FOLD_MARKER):
         return False
@@ -355,8 +503,10 @@ def fold_series_settings_once(code, flavored=None, shared=None):
         if settings_app() == SHARED_APP:
             return False
         from PySide6.QtCore import QSettings
-        migrate_settings_once(series_app(SHARED_APP, code))
-        migrate_settings_once(series_app(settings_app(), code))
+        stable_copy = migrate_settings_once(series_app(SHARED_APP, code))
+        dev_copy = migrate_settings_once(series_app(settings_app(), code))
+        if stable_copy is None or dev_copy is None:
+            return False
         flavored = QSettings(SETTINGS_ORG, series_app(settings_app(), code))
     if flavored.contains(FOLD_MARKER):
         return False
