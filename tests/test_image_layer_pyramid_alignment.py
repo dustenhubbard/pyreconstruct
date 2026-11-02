@@ -96,3 +96,14 @@ def test_nonpositive_window_returns_blank_image(checker_layer, window):
     gray = layer.generateImageArray((64, 64), window, bc=False)
 
     np.testing.assert_array_equal(gray, np.zeros((64, 64), dtype="u1"))
+
+
+def test_crop_uses_field_window_when_output_height_is_zero(checker_layer):
+    layer, source = checker_layer
+    layer.section.tform = Transform([4, 0, 0, 0, 4, 0])
+
+    gray = layer.generateImageArray(
+        (64, 0), [0, 0, 64, 0.25], get_crop_only=True, bc=False
+    )
+
+    np.testing.assert_array_equal(gray, source[-1:, :16])
