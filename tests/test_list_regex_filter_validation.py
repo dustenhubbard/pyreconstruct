@@ -24,13 +24,23 @@ def regex_list(request, main_window, gui_dialogs, qapp):
     return widget
 
 
-@pytest.mark.parametrize("filters", [["["], ["d03", "("]])
+@pytest.mark.parametrize(
+    "filters",
+    [
+        pytest.param(["["], id="unclosed-class"),
+        pytest.param(["d03", "("], id="invalid-alternative"),
+        pytest.param(["a{4294967295}"], id="overflow"),
+        pytest.param(["(" * 600 + "a" + ")" * 600], id="nesting"),
+    ],
+)
 def test_invalid_regex_preserves_filter_and_rows(
     regex_list, gui_dialogs, filters, qapp
 ):
     widget = regex_list
     table = widget.table
     rows = _names(widget)
+    table.selectRow(0)
+    assert [index.data() for index in table.selectionModel().selectedRows()] == ["d03"]
     gui_dialogs.responses.append(([filters], True))
 
     widget.setREFilter()
@@ -39,6 +49,7 @@ def test_invalid_regex_preserves_filter_and_rows(
     assert widget.table is table
     assert not table.isHidden()
     assert _names(widget) == rows
+    assert [index.data() for index in table.selectionModel().selectedRows()] == ["d03"]
     assert len(gui_dialogs.notices) == 1
     assert "Invalid regex filter" in gui_dialogs.notices[0]
     assert filters[-1] in gui_dialogs.notices[0]

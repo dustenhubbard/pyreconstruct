@@ -1021,7 +1021,7 @@ class ObjectTableWidget(DataTable):
         try:
             for pattern in re_filters:
                 re.compile(pattern)
-        except re.error as error:
+        except (re.error, OverflowError, RecursionError) as error:
             notify(f"Invalid regex filter {pattern!r}: {error}")
             return
         self.re_filters = re_filters
