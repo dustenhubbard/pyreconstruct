@@ -131,6 +131,54 @@ def test_saved_positions_keep_both_palettes_reachable(
     assert {key: getattr(palette, key) for key in positions} == positions
 
 
+@pytest.mark.parametrize("group", ["inc", "bc", "sb"])
+def test_saved_controls_stay_reachable_after_columns_change(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path, group):
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    local_series_settings(main_window)
+    settings = QSettings(str(tmp_path / "positions.ini"), QSettings.IniFormat)
+    monkeypatch.setattr(mouse_palette, "_position_settings", lambda: settings)
+    positions = {f"{group}_x": 0.7, f"{group}_y": 0.01}
+    mouse_palette.save_palette_positions(settings, positions)
+    main_window.resize(1280, 800)
+    main_window.show()
+    qapp.processEvents()
+    palette = main_window.mouse_palette
+    palette.reset()
+
+    def assert_reachable():
+        widgets = [
+            *palette.palette_buttons, *palette.palette_side_buttons,
+            *(b for b, _, _ in palette.mode_buttons.values()),
+            *palette.inc_buttons, *(w for pair in palette.bc_widgets for w in pair),
+            palette.label, palette.sb,
+        ]
+        for widget in widgets:
+            assert not widget.isHidden()
+            assert main_window.field.geometry().contains(widget.geometry())
+            assert main_window.childAt(widget.geometry().center()) is widget
+
+    assert_reachable()
+    series = main_window.series
+    series.setOption("tool_palette_cols", 12)
+    series.setOption("trace_palette_per_row", 20)
+    palette.reset()
+    for window in [(1280, 800), (800, 600), (1280, 800)]:
+        main_window.resize(*window)
+        qapp.processEvents()
+        palette.resize()
+        assert_reachable()
+
+    for button, mode, _ in palette.mode_buttons.values():
+        QTest.mouseClick(main_window.childAt(button.geometry().center()), Qt.LeftButton)
+        assert main_window.field.mouse_mode == mode
+    assert series.getOption("tool_palette_cols") == 12
+    assert series.getOption("trace_palette_per_row") == 20
+    assert mouse_palette.load_palette_positions(settings) == positions
+    assert {key: getattr(palette, key) for key in positions} == positions
+
+
 @pytest.mark.parametrize("tool_cols", [1, 5, 12])
 @pytest.mark.parametrize("copies", [1, 3, 5, 10])
 def test_resizing_fits_large_palettes_without_changing_the_preferences(main_window, palette, qapp, tool_cols, copies):

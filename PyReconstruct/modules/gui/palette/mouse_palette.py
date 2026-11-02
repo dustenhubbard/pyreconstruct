@@ -122,7 +122,7 @@ from PyReconstruct.modules.constants import build_flavor
 from PyReconstruct.modules.constants.roi_mode import roi_mode_enabled
 from PyReconstruct.modules.datatypes import Series, Trace
 from PyReconstruct.modules.datatypes.trace import copyObjDefaults
-from PyReconstruct.modules.datatypes.default_settings import pinnedLengthFor
+from PyReconstruct.modules.datatypes.default_settings import default_settings, pinnedLengthFor
 from PyReconstruct.modules.constants import (
     locations as loc
 )
@@ -736,7 +736,10 @@ class MousePalette():
         y = (y * (y2 - y1)) + y1
         if group == "trace":
             x, y = self.clearOfTools(x, y, (x1, x2, y1, y2))
-        elif group in ("inc", "bc", "sb") and self.atDefaultPosition(group):
+        elif group in ("inc", "bc", "sb") and (
+                self.atDefaultPosition(group) or
+                self.trace_palette_per_row != default_settings["trace_palette_per_row"] or
+                self.tool_palette_cols != default_settings["tool_palette_cols"]):
             x, y = self.clearOfPalettes(group, x, y)
         return x, y
 
@@ -770,7 +773,7 @@ class MousePalette():
         return (x, y) == DEFAULT_POSITIONS[group]
 
     def clearOfPalettes(self, group, x, y):
-        """Keep default section buttons, sliders and scale bar clear of the grids."""
+        """Keep controls clear of resized grids without changing saved spots."""
         w, h = {
             "inc": (self.ibw, self.ibh*2 + 15),
             "bc": (self.bcsize*6 + 5, self.bcsize*2 + 20),
