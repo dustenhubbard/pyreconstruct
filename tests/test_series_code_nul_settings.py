@@ -1,6 +1,6 @@
 """A NUL in the series code no longer hangs a per-series settings read.
 
-A series' own settings live in the domain ``KHLab / PyReconstruct-<code>``. In
+A series' own settings live in the domain ``PyReconstruct / PyReconstruct-<code>``. In
 the Ini format (Linux, and this suite) that name becomes a file name, and
 given a NUL, `QLockFile` retried the lock forever, so a per-series `getOption`
 never returned. A code typed in Series code is refused a NUL, but a code read
@@ -62,7 +62,7 @@ def series(code):
 
 def where(name):
     # the file Qt resolves a domain to: (its folder, its base name)
-    path = QSettings("KHLab", name).fileName()
+    path = QSettings("PyReconstruct", name).fileName()
     return os.path.dirname(path), os.path.basename(path)
 """
 
@@ -78,13 +78,13 @@ def _apart(existing_app, existing_code, incoming_code):
     own."""
     existing_name = f"{existing_app}-{existing_code}"
     return PRELUDE + f"""
-existing = QSettings("KHLab", {existing_name!r})
+existing = QSettings("PyReconstruct", {existing_name!r})
 existing.setValue("backup_dir", "/existing-series-backups")
 existing.sync()
 incoming = series({incoming_code!r})
 before = incoming.getOption("backup_dir")
 incoming.setOption("backup_dir", "/incoming-series-backups")
-existing = QSettings("KHLab", {existing_name!r})
+existing = QSettings("PyReconstruct", {existing_name!r})
 print(repr([
     before,
     existing.value("backup_dir", "", str),
@@ -101,10 +101,10 @@ from PyReconstruct.modules.constants.settings_domain import fold_series_settings
 
 # the Dev domains, written out rather than built from the code: the NUL
 # series' own, and the U+FFFD series' one, which the NUL fold must not take
-nul_dev = QSettings("KHLab", "PyReconstruct Dev NUL-{_digest(CODE)}")
+nul_dev = QSettings("PyReconstruct", "PyReconstruct Dev NUL-{_digest(CODE)}")
 nul_dev.setValue("autobackup", True)
 nul_dev.sync()
-fffd_dev = QSettings("KHLab", "PyReconstruct Dev-ab�c")
+fffd_dev = QSettings("PyReconstruct", "PyReconstruct Dev-ab�c")
 fffd_dev.setValue("backup_dir", "/existing-series-backups")
 fffd_dev.sync()
 folded = fold_series_settings_once({CODE!r})

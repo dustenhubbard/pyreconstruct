@@ -1,24 +1,17 @@
-"""Regression: the Options-dialog theme setter must not crash when the stored
-theme is neither "default" nor "qdark" (both radios unselected).
+"""Options preserves an unknown theme when neither radio matches.
 
-``theme`` is a global QSettings-backed option shared across series, so a value
-written by some other build (e.g. a named theme the 1.20.x dialog doesn't know)
-leaves both radios unchecked. The setter bound ``theme`` only inside if/elif,
-so ``accept()`` -> ``set()`` raised ``UnboundLocalError`` and took down the
-whole dialog. The fix seeds ``theme`` with the current value first.
-
-The real setter is a closure created in ``createWidgets``; the only handle on it
-is the constructed dialog's theme widget, so the dialog is built against a real
-fixture series, then its ``series`` is swapped for a stub to keep the assertion
-hermetic (no QSettings writes to disk).
+Use a real Series and its isolated settings store so the dialog reads and
+writes the same model throughout the accept/set path.
 """
 import os
 import shutil
 
 import pytest
 
+from PyReconstruct.modules.backend.settings_store import DictSettingsStore
 from PyReconstruct.modules.datatypes.series import Series
 from PyReconstruct.modules.gui.dialog.all_options import AllOptionsDialog
+from PyReconstruct.modules.gui.utils import appearance
 
 FIXTURE = os.path.join(
     os.path.dirname(__file__), "..", "dev",
@@ -32,58 +25,46 @@ def qapp():
     return QApplication.instance() or QApplication(["test"])
 
 
-class _ThemeStub:
-    """A minimal series exposing just the theme get/set the closure calls."""
-
-    def __init__(self, current):
-        self._theme = current
-        self.writes = []
-
-    def getOption(self, name, *a, **k):
-        assert name == "theme"
-        return self._theme
-
-    def setOption(self, name, value):
-        assert name == "theme"
-        self.writes.append(value)
-        self._theme = value
-
-
-def _radios(picked):
-    """The radio row with only ``picked`` (a stored value) on: two radios, or
-    three in the macOS Dev app (gui/utils/appearance.py)."""
-    from PyReconstruct.modules.gui.utils import appearance
-    return [(label, value == picked) for label, value in appearance.choices()]
-
-
-def _theme_widget(qapp, tmp_path):
+def _theme_widget(qapp, tmp_path, theme):
     if not os.path.exists(FIXTURE):
         pytest.skip("fixture shapes1.jser not found")
     fp = str(tmp_path / "s.jser")
     shutil.copyfile(FIXTURE, fp)
     series = Series.openJser(fp)
-    dlg = AllOptionsDialog(None, series)
-    return dlg, dlg.all_widgets["theme"]
+    store = DictSettingsStore()
+    series.setSettingsStore(store)
+    series.setOption("theme", theme)
+    dialog = AllOptionsDialog(None, series)
+    return dialog, dialog.all_widgets["theme"], store
 
 
 def test_neither_radio_selected_preserves_current_theme(qapp, tmp_path):
-    dlg, w = _theme_widget(qapp, tmp_path)
+    dialog, page, store = _theme_widget(qapp, tmp_path, "studio")
     try:
-        dlg.series = _ThemeStub("studio")     # a theme the dialog doesn't know
-        w.responses = (_radios(None),)         # neither radio on
-        w.set()                                # must not raise UnboundLocalError
-        assert dlg.series.writes == ["studio"]  # current theme kept, not clobbered
+        layout = page.inputs[0].widget.layout()
+        for index in range(layout.count()):
+            button = layout.itemAt(index).widget()
+            button.setAutoExclusive(False)
+            button.setChecked(False)
+        assert page.accept(close=False)
+        assert all(not checked for _, checked in page.responses[0])
+        page.set()
+        assert store.value(None, "theme", str) == "studio"
     finally:
-        dlg.deleteLater()
+        dialog.series.close()
+        dialog.deleteLater()
 
 
 def test_selecting_a_radio_still_sets_that_theme(qapp, tmp_path):
-    """Guard the fix didn't shadow the normal path."""
-    dlg, w = _theme_widget(qapp, tmp_path)
+    dialog, page, store = _theme_widget(qapp, tmp_path, "default")
     try:
-        dlg.series = _ThemeStub("default")
-        w.responses = (_radios("qdark"),)      # dark selected
-        w.set()
-        assert dlg.series.writes == ["qdark"]
+        layout = page.inputs[0].widget.layout()
+        for index, (_, value) in enumerate(appearance.choices()):
+            if value == "qdark":
+                layout.itemAt(index).widget().setChecked(True)
+        assert page.accept(close=False)
+        page.set()
+        assert store.value(None, "theme", str) == "qdark"
     finally:
-        dlg.deleteLater()
+        dialog.series.close()
+        dialog.deleteLater()

@@ -112,7 +112,8 @@ import pytest
 # The real domain this whole module exists to protect. Both scopes that
 # `QSettingsStore` addresses live under it: the global one is exactly `APP`, and
 # a per-series one is `f"{APP}-{code}"`.
-ORG = "KHLab"
+ORG = "PyReconstruct"
+ORGANIZATIONS = (ORG, "KHLab")
 APP = "PyReconstruct"
 
 #: Set this to make an unattributed change to the real store fail the session
@@ -124,6 +125,7 @@ STRICT_ENV = "PYRECON_TEST_STRICT_SETTINGS"
 # nothing to isolate (see the ImportError branch).
 isolation_root = None
 guard = None
+guards = ()
 
 _real_qsettings = None
 _isolated_qsettings = None
@@ -591,7 +593,7 @@ def _install():
     `PySide6` there is no `QSettings` route to isolate, and the Qt-free core
     tests still run.
     """
-    global isolation_root, guard, _real_qsettings, _isolated_qsettings
+    global isolation_root, guard, guards, _real_qsettings, _isolated_qsettings
     global _rebound_modules
 
     try:
@@ -603,11 +605,15 @@ def _install():
 
     # Resolve the real locations *before* patching, so the guard watches where
     # the app actually stores things on this platform rather than a guess.
-    real_file = _real_qsettings(ORG, APP).fileName()
-    directory = os.path.dirname(real_file)
-    prefix = os.path.splitext(os.path.basename(real_file))[0]
-    guard = RealSettingsGuard(directory, prefix)
-    guard.snapshot()
+    guards = []
+    for organization in ORGANIZATIONS:
+        real_file = _real_qsettings(organization, APP).fileName()
+        directory = os.path.dirname(real_file)
+        prefix = os.path.splitext(os.path.basename(real_file))[0]
+        watched = RealSettingsGuard(directory, prefix)
+        watched.snapshot()
+        guards.append(watched)
+    guard = guards[0]
 
     isolation_root = tempfile.mkdtemp(prefix="pyrecon-qsettings-")
     # One directory per session would otherwise accumulate forever, and the
@@ -660,14 +666,17 @@ def verify_isolated():
             "the suite can reach the real user settings. Something rebound it "
             f"(now {qtcore.QSettings!r})."
         )
-    for application in (APP, f"{APP}-isolationselfcheck"):
-        path = os.path.abspath(resolved_path(ORG, application))
-        if not path.startswith(os.path.abspath(isolation_root)):
-            raise RuntimeError(
-                f"QSettings({ORG!r}, {application!r}) resolves to {path}, which "
-                f"is outside the isolation root {isolation_root}. Refusing to "
-                "run: the suite would write the real user settings."
-            )
+    for organization in ORGANIZATIONS:
+        for application in (APP, f"{APP} Dev", f"{APP}-isolationselfcheck",
+                            f"{APP} Dev-isolationselfcheck"):
+            path = os.path.abspath(resolved_path(organization, application))
+            if not path.startswith(os.path.abspath(isolation_root)):
+                raise RuntimeError(
+                    f"QSettings({organization!r}, {application!r}) resolves to "
+                    f"{path}, which is outside the isolation root "
+                    f"{isolation_root}. Refusing to run: the suite would "
+                    "write the real user settings."
+                )
 
 
 # Import-time, deliberately. See the module docstring.
@@ -706,7 +715,7 @@ def isolated_qsettings():
     verify_isolated()
 
     level, message = session_report(
-        guard.diff(),
+        [problem for watched in guards for problem in watched.diff()],
         recorded_bypasses(),
         root=isolation_root,
         strict=strict_requested(),

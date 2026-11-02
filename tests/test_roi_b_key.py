@@ -24,7 +24,7 @@ from PyReconstruct.modules.backend.settings_store import (
 from PyReconstruct.modules.datatypes.default_settings import default_settings
 from PyReconstruct.modules.gui.main.field_widget_5_mouse import POINTER
 
-ORG = "KHLab"
+ORG = "PyReconstruct"
 APP = "PyReconstruct"
 TOGGLE = M.ROI_TOGGLE_KEY
 TOOL = M.ROI_TOOL_KEY

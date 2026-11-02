@@ -111,7 +111,7 @@ def test_a_hidden_launch_writes_nothing_and_a_shown_one_clears_b(
     from PyReconstruct.modules.gui.dialog.whats_new import current_version_str
     from PyReconstruct.modules.gui.main.first_launch import WHATSNEW_KEY
 
-    QSettings("KHLab", "PyReconstruct").setValue(WHATSNEW_KEY, current_version_str())
+    QSettings("PyReconstruct", "PyReconstruct").setValue(WHATSNEW_KEY, current_version_str())
     store = DictSettingsStore()
     store.set_value(None, "roibox_act", "B")
     store.set_value(None, "useroi_act", "B")

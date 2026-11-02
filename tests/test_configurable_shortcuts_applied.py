@@ -38,7 +38,7 @@ reach rather than a gap in it.
 
 Settings scoping, and why it is not optional. ``Series.getOption`` writes the
 default back into the settings store on a miss, and the production store is
-``QSettings("KHLab", "PyReconstruct")``, which is machine-wide and holds the real
+``QSettings("PyReconstruct", "PyReconstruct")``, which is machine-wide and holds the real
 user's real preferences. Every test here injects a ``DictSettingsStore`` before
 touching an option, so nothing in this file can reach that domain.
 """

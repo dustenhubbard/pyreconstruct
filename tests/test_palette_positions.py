@@ -133,9 +133,11 @@ def test_drag_end_persists_once_but_a_plain_click_does_not(qapp):
         def __init__(self):
             self.is_dragging = False
             self.saves = 0
+            self.groups = []
 
-        def savePositionState(self):
+        def savePositionState(self, group):
             self.saves += 1
+            self.groups.append(group)
 
     mgr = FakeManager()
     btn = MoveableButton(None, mgr, "bc")
@@ -152,11 +154,13 @@ def test_drag_end_persists_once_but_a_plain_click_does_not(qapp):
         mgr.is_dragging = True
         release()
         assert mgr.saves == 1
+        assert mgr.groups == ["bc"]
         assert mgr.is_dragging is False
 
         # a plain click that never moved the group -> no persist
         release()
         assert mgr.saves == 1
+        assert mgr.groups == ["bc"]
         assert mgr.is_dragging is False
     finally:
         btn.deleteLater()

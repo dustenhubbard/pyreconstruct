@@ -70,7 +70,7 @@ class MoveableButton(QPushButton):
         # persist the new spot once per drag (not on every mouse-move, and not on
         # a plain click that never moved the group)
         if was_dragging:
-            self.manager.savePositionState()
+            self.manager.savePositionState(self.group_name)
 
         if self.rc_act and self.right_clicked:
             self.rc_act.trigger()

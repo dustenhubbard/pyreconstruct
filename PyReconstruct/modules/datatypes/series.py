@@ -6538,7 +6538,7 @@ class Series():
                 option = json.loads(option)
         else:
             option = Series._fromDefaults(defaults, option_name)
-            if write_default:
+            if write_default and store.may_save_defaults(scope_code):
                 self.setOption(option_name, option)
 
         ## CHECKS FOR UPDATES
