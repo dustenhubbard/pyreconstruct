@@ -883,6 +883,9 @@ def _moveWorkingFolder(old_dir : str, new_dir : str, old_name : str, new_name : 
             _FolderNotRestored: a step failed, and so did undoing it
     """
     from PyReconstruct.modules.backend.func.atomic_io import replace_with_retry
+    from .section_read_ahead import READ_AHEAD
+
+    READ_AHEAD.stop()
 
     # Save-As onto the current path: the hidden dir is already in place --
     # moving it onto itself would fail (or nest it), so just rename files
@@ -2413,7 +2416,7 @@ class Series():
         store_save.closing(self)
         collector.restore(self)
         from .section_read_ahead import READ_AHEAD
-        READ_AHEAD.drop()
+        READ_AHEAD.stop()
 
         if self.isWelcomeSeries() or self.leave_open:
             # closed even so: a series left open for the one replacing it in
@@ -6071,6 +6074,9 @@ class Series():
             if old_snum != new_snum:
                 self.presentSection(old_snum)
 
+        from .section_read_ahead import READ_AHEAD
+        READ_AHEAD.stop()
+
         # rename the section files, each from the name the series has for it
         # (after a Save As that could not move its folder all the way back,
         # some files still carry the other series name)
@@ -7227,6 +7233,9 @@ class Series():
         # are gone once the loop below runs, so refuse before touching any.
         if snums and len(snums) == len(self.sections):
             raise ValueError("cannot delete every section in the series")
+
+        from .section_read_ahead import READ_AHEAD
+        READ_AHEAD.stop()
 
         for snum in snums:
             # delete the file

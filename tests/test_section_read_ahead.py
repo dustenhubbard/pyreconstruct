@@ -1,4 +1,6 @@
 """Bounded section preparation and paging through real widgets."""
+import builtins
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -382,3 +384,149 @@ def test_replaced_ready_payload_is_not_held_by_a_returning_worker(slot, files, m
     finally:
         release.set()
         first_worker[0].join(10)
+
+
+@pytest.fixture
+def active_read(slot, monkeypatch):
+    @contextmanager
+    def hold(series, number=2, *, dropped=False):
+        path = series.presentSection(number)
+        entered, release = threading.Event(), threading.Event()
+        streams, attempts = [], []
+        original_open = builtins.open
+        original_rename, original_remove = os.rename, os.remove
+
+        class HeldRead:
+            def __enter__(self):
+                self.stream = original_open(path, "rb")
+                streams.append(self.stream)
+                return self
+
+            def read(self):
+                entered.set()
+                assert release.wait(10)
+                return self.stream.read()
+
+            def __exit__(self, *args):
+                self.stream.close()
+
+        def open_section(filepath, mode):
+            if threading.current_thread() is threading.main_thread():
+                return original_open(filepath, mode)
+            assert filepath == path and mode == "rb"
+            return HeldRead()
+
+        def guard(operation, src, *args, **kwargs):
+            if any(not stream.closed for stream in streams):
+                attempts.append(os.fspath(src))
+                # Windows exercises its actual open-file rules. Other hosts
+                # model the refusal at the same filesystem boundary.
+                if os.name != "nt":
+                    raise PermissionError(13, "Section read is still open", src)
+            return operation(src, *args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(ahead, "open", open_section, raising=False)
+            patch.setattr(os, "rename",
+                          lambda src, *a, **kw: guard(original_rename, src, *a, **kw))
+            patch.setattr(os, "remove",
+                          lambda src, *a, **kw: guard(original_remove, src, *a, **kw))
+            slot.start(series, number, path)
+            assert entered.wait(10)
+            worker = slot._worker
+            canceled = slot._request[3]
+
+            def finish_read():
+                canceled.wait(5)
+                # Keep the handle open beyond cancellation, as a slow read
+                # does. File mutations must wait for the context to close.
+                release.wait(0.1)
+                release.set()
+
+            finisher = threading.Thread(target=finish_read)
+            finisher.start()
+            try:
+                if dropped:
+                    slot.drop()
+                    assert not streams[0].closed
+                yield
+                assert streams[0].closed
+                assert attempts == []
+                assert slot._request is None
+                assert slot._result is None
+                assert not worker.is_alive()
+            finally:
+                release.set()
+                canceled.set()
+                finisher.join(10)
+                worker.join(10)
+                assert not finisher.is_alive()
+                assert not worker.is_alive()
+
+    return hold
+
+
+@pytest.mark.parametrize("dropped", [False, True])
+@pytest.mark.parametrize("operation", ["close", "reorder", "save_as", "delete"])
+def test_file_mutations_release_active_read(real_series, active_read, tmp_path,
+                                           operation, dropped):
+    with active_read(real_series, dropped=dropped):
+        if operation == "close":
+            real_series.close()
+            assert real_series.closed
+            assert not Path(real_series.hidden_dir).exists()
+        elif operation == "reorder":
+            numbers = sorted(real_series.sections)
+            real_series.reorderSections({n: n + 1000 for n in numbers}, log_event=False)
+            assert sorted(real_series.sections) == [n + 1000 for n in numbers]
+        elif operation == "save_as":
+            destination = tmp_path / "renamed.jser"
+            real_series.saveAs(str(destination))
+            assert destination.exists()
+            assert real_series.jser_fp == str(destination)
+        else:
+            real_series.deleteSections([2], log_event=False)
+            assert 2 not in real_series.sections
+
+    if not real_series.closed:
+        for filename in real_series.sections.values():
+            assert (Path(real_series.hidden_dir) / filename).is_file()
+        assert not list(Path(real_series.hidden_dir).glob("*.temp"))
+
+
+@pytest.mark.gui
+def test_series_transition_releases_active_read(paging_window, active_read):
+    before = paging_window.series
+    with active_read(before):
+        paging_window.openSeries(jser_fp=str(before.jser_fp), query_prev=False)
+    assert paging_window.series is not before
+    assert before.closed
+    assert not paging_window.series.closed
+    assert paging_window.field.section.n in paging_window.series.sections
+
+
+def test_stop_after_dropped_read_allows_another_neighbor(slot, files, monkeypatch):
+    entered, release = threading.Event(), threading.Event()
+    original = ahead.readSection
+
+    def held(*args):
+        entered.set()
+        assert release.wait(10)
+        return original(*args)
+
+    monkeypatch.setattr(ahead, "readSection", held)
+    owner = object()
+    slot.start(owner, 0, files[0])
+    assert entered.wait(10)
+    worker = slot._worker
+    try:
+        assert slot.take(owner, 0, files[0]) is None
+        slot.drop()
+        assert worker.is_alive()
+    finally:
+        release.set()
+        slot.stop()
+    assert not worker.is_alive()
+    slot.start(owner, 1, files[1])
+    wait(slot)
+    assert slot.take(owner, 1, files[1]) is not None

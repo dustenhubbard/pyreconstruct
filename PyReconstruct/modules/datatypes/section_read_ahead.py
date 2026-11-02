@@ -97,6 +97,18 @@ class SectionReadAhead:
         with self._lock:
             self._drop()
 
+    def stop(self):
+        """Cancel and release the worker before moving or deleting working files.
+
+        Called on the foreground thread, like start, drop and take. Paging
+        uses drop or take instead, so it never waits for speculative work.
+        """
+        with self._lock:
+            self._drop()
+            worker = self._worker
+        if worker is not None:
+            worker.join()
+
     def take(self, owner, number, path):
         with self._lock:
             result = self._result

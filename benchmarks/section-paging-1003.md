@@ -81,28 +81,25 @@ existing live section objects.
 
 ## Workload and measurement
 
-The fixture and geometry come from the earlier harness. There are 125 sections,
+The dataset and geometry come from the earlier benchmark script. There are 125 sections,
 each with 4,400 closed, unfilled traces of 80 points. Section JSON totals
 1,620,229,515 bytes. Each section has a separate deterministic 2048 by 2048
 grayscale TIFF. A 1600 by 1000 viewport displays every trace.
 
 The baseline is commit `d3c47373c791a88d5cede2141a4eef3385511bed`. The candidate
 is the implementation in this PR. Each side runs in a fresh process against
-the same fixture, warms up on section 1, and times sections 2 through 11.
+the same dataset, warms up on section 1, and times sections 2 through 11.
 Five pairs alternate baseline then candidate. The filesystem cache is warm.
 
 A sample includes `FieldWidget.changeSection` and synchronous widget painting.
-Startup, fixture generation, the pause between steps, and verification are
+Startup, dataset generation, the pause between steps, and verification are
 outside the timed region. Every step checks section identity, trace count,
 image presence, undo initialization, visible traces, and the painted pixel hash.
-The main-window callbacks are stubs and no lists are open. Saves and undo are
-covered by widget tests, not by the timing workload.
+The main-window callbacks are stubs and no lists are open. The timing workload
+does not include saves or undo.
 
 The normal comparison leaves 350 ms between steps. A second comparison has no
-pause. A real Qt event loop runs during the pause. An earlier probe used
-`QTest.qWait`, which delayed the Python worker: five isolated reads took about
-219 to 275 ms there, compared with 81 to 111 ms in a Qt event loop. Those paging
-samples were discarded before the reported comparison.
+pause. A real Qt event loop runs during the pause.
 
 Memory includes current resident size sampled every 5 ms during paging and
 the kernel's process-wide peak resident size. The latter includes startup.
@@ -128,51 +125,14 @@ after each run. Fixed pair order and changing host load limit small comparisons.
 - These synthetic timings do not reproduce the original series' reported
   1.3-second step or measure desktop compositing, unsaved edits, or open lists.
 
-## Validation
-
-The final focused run passed **440 tests**, with 2 platform skips. It covers
-section read-ahead, section deletion, pointer state across series changes,
-atomic navigation, image read-ahead, lazy points, ID derivation, undo/redo,
-columnar parity, and store opening. All 18 new read-ahead tests passed.
-
-The full run collected 14,549 tests: 14,365 passed, 169 skipped, 5 expected
-failures, and 10 failures. It ran before the final fixes and is not a clean
-full-suite result. Two failures exposed a deleted-current-section navigation
-bug and a headless test fixture that needed a timer stub; both are fixed and
-pass in the final focused run. Seven failures reproduce on the unchanged
-baseline: three backup-path cases, three bash startup-file cases, and one
-filesystem-detection case. The remaining save-parity failure differs only in
-a log timestamp crossing from 18:31 to 18:32; all saved data otherwise matches,
-and that test passes in the final focused run.
-
-Two isolated revert checks each collected one test and failed as intended.
-Restoring the original navigation method prevents the neighbor from being
-prepared. Retaining a worker's local payload while it returns violates the
-single-neighbor lifetime assertion. The existing deletion test also failed
-before its fix and passes afterward.
-
-Ruff 0.15.20 and whitespace checks pass. Mypy reports 260 errors versus 264
-on the baseline; neither run is clean. Tests and the benchmark redirect
-settings to temporary INI files before importing the application.
-
-The focused command was:
-
-```sh
-uv run --frozen --no-default-groups --extra test python -m pytest tests/test_section_read_ahead.py tests/test_object_ids_field.py tests/test_pointer_move_without_press.py tests/test_change_section_atomic.py tests/test_image_read_ahead.py tests/test_trace_lazy_points.py tests/test_trace_id_load_derivation.py tests/test_section_undo_redo_characterization.py tests/test_columnar_store_parity.py tests/test_store_open.py
-```
-
-The full run used the same environment with `python -m pytest -n 2` and a
-disk-backed temporary directory.
-
-
 ## Reproduce
 
 Use a baseline worktree at `d3c47373` and a worktree containing this change.
-Run these commands from the changed checkout with its frozen test environment.
-The fixture needs about 2.2 GB on disk. Avoid a RAM-backed temporary directory
+Run these commands from the changed checkout with its locked dependencies.
+The dataset needs about 2.2 GB on disk. Avoid a RAM-backed temporary directory
 when measuring memory.
 
-1. Create the fixture. The command refuses to overwrite an existing directory.
+1. Create the dataset. The command refuses to overwrite an existing directory.
 
    ```sh
    PYTHONPATH=. uv run --frozen --no-default-groups --extra test python benchmarks/bench_section_paging.py --fixture /path/to/paging-fixture --prepare
@@ -202,5 +162,5 @@ when measuring memory.
    PYTHONPATH=. uv run --frozen --no-default-groups --extra test python benchmarks/bench_section_paging.py --fixture /path/to/paging-fixture --steps 3 --profile
    ```
 
-Remove the synthetic fixture after the run. Settings use temporary INI files
+Remove the synthetic dataset after the run. Settings use temporary INI files
 created before importing PyReconstruct.

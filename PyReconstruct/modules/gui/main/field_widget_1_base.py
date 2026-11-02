@@ -173,7 +173,7 @@ class FieldWidgetBase:
         ## An image read ahead for the series before this one is of no use
         ## to it, and must not outlive it
         dropReadAhead()
-        READ_AHEAD.drop()
+        READ_AHEAD.stop()
         if hasattr(self, "section_read_timer"):
             self.section_read_timer.stop()
         else:
