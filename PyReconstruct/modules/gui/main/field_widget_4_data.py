@@ -6,6 +6,7 @@ import cv2
 
 from PySide6.QtWidgets import (
     QInputDialog,
+    QMessageBox,
 )
 
 from PyReconstruct.modules.calc import (
@@ -125,9 +126,81 @@ class FieldWidgetData(FieldWidgetObject):
         self.table_manager.updateObjects([trace.name])
         self.reload()
     
+    def prepareProfileAdjustment(self, kind):
+        """Preserve a profile before its first adjustment in this open series."""
+        alignment = kind == "alignment"
+        series = self.series
+        current = series.alignment if alignment else series.bc_profile
+        profiles = self.section.tforms if alignment else self.section.bc_profiles
+        saved = self.profile_adjustments.get((kind, current))
+        if saved in profiles:
+            return True
+
+        label = "alignment" if alignment else "brightness/contrast"
+        answer = QMessageBox.question(
+            self, "Preserve Profile",
+            f'Create a new {label} profile before adjusting "{current}"?\n\n'
+            "If you continue with the current profile, PyReconstruct saves a backup first.",
+            QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+            QMessageBox.Yes,
+        )
+        if answer == QMessageBox.Cancel:
+            return False
+        # A modal can process a request to open another series.
+        if self.series is not series:
+            return False
+
+        suffix = "copy" if answer == QMessageBox.Yes else "backup"
+        name = f"{current} ({suffix})"
+        index = 2
+        while name in profiles:
+            name = f"{current} ({suffix} {index})"
+            index += 1
+        if answer == QMessageBox.Yes:
+            name, confirmed = QInputDialog.getText(
+                self, "New Profile", "New profile name:", text=name,
+            )
+            if not confirmed or self.series is not series:
+                return False
+            name = name.strip()
+            if not name or name in profiles:
+                QMessageBox.information(self, "New Profile", "Enter a new, nonempty profile name.")
+                return False
+
+        self.mainwindow.saveAllData()
+        mapping = {profile: profile for profile in profiles}
+        mapping[name] = current
+        if alignment:
+            series.modifyAlignments(mapping, self.series_states)
+        else:
+            series.modifyBCProfiles(mapping, self.series_states)
+
+        if answer == QMessageBox.Yes:
+            if alignment:
+                series.alignment = name
+            else:
+                series.bc_profile = name
+            self.profile_adjustments[kind, name] = current
+        else:
+            self.profile_adjustments[kind, current] = name
+
+        # Reload both held sections after the copy, preserving propagation's
+        # starting transform when the first adjustment is a bulk propagation.
+        before_change = self.tform_before_change
+        self.reload()
+        self.tform_before_change = before_change
+        if alignment:
+            self.mainwindow.createContextMenus()
+        self.table_manager.updateSections(self.series.sections.keys())
+        return True
+
     def changeTform(self, new_tform):
         # check for section locked status
         if self.section.align_locked:
+            return
+        if new_tform.equals(self.section.tform):
+            return
+        if not self.prepareProfileAdjustment("alignment"):
             return
 
         # check if propagating
@@ -151,11 +224,13 @@ class FieldWidgetData(FieldWidgetObject):
     
     def setBrightness(self, b : int, log_event=True):
         """Set the brightness of the section."""
+        b = max(-100, min(100, b))
+        if b == self.section.brightness:
+            return
+        if not self.prepareProfileAdjustment("bc"):
+            self.mainwindow.mouse_palette.updateBC()
+            return
         self.section.brightness = b
-        if self.section.brightness > 100:
-            self.section.brightness = 100
-        elif self.section.brightness < -100:
-            self.section.brightness = -100
 
         # update the table
         self.series.data.updateSection(self.section)
@@ -169,11 +244,13 @@ class FieldWidgetData(FieldWidgetObject):
     
     def setContrast(self, c : int, log_event=True):
         """Set the contrast of the section."""
+        c = max(-100, min(100, c))
+        if c == self.section.contrast:
+            return
+        if not self.prepareProfileAdjustment("bc"):
+            self.mainwindow.mouse_palette.updateBC()
+            return
         self.section.contrast = c
-        if self.section.contrast > 100:
-            self.section.contrast = 100
-        elif self.section.contrast < -100:
-            self.section.contrast = -100
 
         # update the table
         self.series.data.updateSection(self.section)
@@ -268,6 +345,8 @@ class FieldWidgetData(FieldWidgetObject):
 
         # create the progress bar
         if included_sections:
+            if not self.prepareProfileAdjustment("alignment"):
+                return
             progbar = getProgbar(
                 text="Propagating transform...",
                 cancel=False

@@ -1,0 +1,1 @@
+PyReconstruct offers to create a new brightness/contrast or alignment profile before the first adjustment after opening a series. Continuing with the current profile saves a separate backup across all sections.
