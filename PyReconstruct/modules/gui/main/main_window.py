@@ -32,7 +32,8 @@ from PyReconstruct.modules.backend.func.window_geometry import (
     default_window_rect,
     window_geometry_is_usable,
 )
-from .status_readout import FieldStatusReadout, StatusSegment
+from .status_readout import FieldStatusReadout
+from .update_notice import UpdateNotice
 from . import mac_menubar
 from PyReconstruct.modules.gui.utils import appearance
 from PyReconstruct.modules.gui.table.history import setAsideText
@@ -462,9 +463,7 @@ class MainWindow(QMainWindow):
         ## a newer build, then it stays until clicked. A permanent widget, so a
         ## showMessage notice never hides it; clicking runs the same check as
         ## Help > Check for updates.
-        self.update_notice = StatusSegment(
-            "Opens the update, like Help ▸ Check for updates..."
-        )
+        self.update_notice = UpdateNotice()
         self.update_notice.setObjectName("update_notice")
         self.update_notice.clicked.connect(self.openUpdateNotice)
         self.update_notice.hide()
@@ -5564,7 +5563,9 @@ class MainWindow(QMainWindow):
         if notice is None or not isValid(notice):
             return
         if version:
-            notice.setText(f"Update available: {version}")
+            text = f"Update available: {version}"
+            notice.setToolTip(text)
+            notice.setAccessibleName(text)
             notice.show()
         else:
             notice.hide()
