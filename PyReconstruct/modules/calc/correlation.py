@@ -9,7 +9,7 @@ def correlate(
     dark_cutoff: int = 5,
     bright_cutoff: int = 250,
 ) -> tuple[int, int] | None:
-    """Return the pixel shift of image1 onto image2, or None for a weak match.
+    """Return the pixel shift of image1 onto image2, or None for an unreliable match.
 
     Intensities at or outside the cutoffs are excluded. Each candidate shift
     uses the mean and variance of its shared valid pixels, so a fold, tear or
@@ -62,7 +62,16 @@ def correlate(
               where=enough_overlap & (denominator > tolerance))
     peak_y, peak_x = np.unravel_index(np.argmax(scores), scores.shape)
     # A normalized coefficient below 0.3 does not support an automatic shift.
-    if scores[peak_y, peak_x] < 0.3:
+    peak_score = scores[peak_y, peak_x]
+    if peak_score < 0.3:
+        return None
+
+    # Adjacent samples can belong to the same peak. Outside its 3x3
+    # neighborhood, require a 0.05 coefficient margin so a plateau or a
+    # competing repeat cannot select a shift through FFT roundoff alone.
+    scores[max(0, peak_y - 1):peak_y + 2,
+           max(0, peak_x - 1):peak_x + 2] = -np.inf
+    if peak_score - scores.max() < 0.05:
         return None
 
     return int(b.shape[1] - 1 - peak_x), int(b.shape[0] - 1 - peak_y)

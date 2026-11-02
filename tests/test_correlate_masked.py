@@ -87,3 +87,36 @@ def test_noisy_tissue_still_aligns():
     noise = np.random.default_rng(10).normal(0, 4, previous.shape)
     current = shift(previous + noise, (4, -7), order=0, mode="constant", cval=0)
     assert correlate(current, previous) == (7, -4)
+
+
+@pytest.mark.parametrize("shape", [(80, 96), (128, 128), (512, 512)])
+@pytest.mark.parametrize("pattern", ["gradient", "stripes", "tiles"])
+def test_ambiguous_patterns_have_no_match(shape, pattern):
+    image = ambiguous_pattern(pattern, shape)
+    assert correlate(image, image) is None
+
+
+def ambiguous_pattern(pattern, shape=(80, 96)):
+    y, x = np.indices(shape)
+    if pattern == "gradient":
+        return (60 + x * 100 / shape[1]).astype(np.uint8)
+    if pattern == "stripes":
+        return (100 + 20 * np.sin(x * 2 * np.pi / 16)).astype(np.uint8)
+    tile = np.random.default_rng(1132).integers(60, 160, size=(8, 8), dtype=np.uint8)
+    return tile[y % 8, x % 8]
+
+
+def test_nearly_repeating_pattern_with_flaws_has_no_match():
+    previous = ambiguous_pattern("tiles").astype(float)
+    previous += np.random.default_rng(1132).normal(0, 1, previous.shape)
+    current = shift(previous, (4, -7), order=0, mode="constant", cval=0)
+    previous[:, 20:35] = 0
+    current[:, 44:59] = 255
+    assert correlate(current, previous) is None
+
+
+def test_smooth_unique_tissue_still_aligns():
+    image = gaussian_filter(np.random.default_rng(1132).normal(size=(80, 96)), 2)
+    previous = 100 + image * 20
+    current = shift(previous, (4, -7), order=0, mode="constant", cval=0)
+    assert correlate(current, previous) == (7, -4)

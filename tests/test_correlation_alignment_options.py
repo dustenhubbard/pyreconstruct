@@ -1,4 +1,5 @@
 """Alignment refusal and cutoff options through real Qt widgets."""
+import numpy as np
 import pytest
 from scipy.ndimage import shift
 from PIL import Image
@@ -7,7 +8,7 @@ from PyReconstruct.modules.datatypes import Transform
 from PyReconstruct.modules.gui.dialog import all_options
 from PyReconstruct.modules.gui.main import field_widget_4_data as fw
 
-from test_correlate_masked import tissue
+from test_correlate_masked import ambiguous_pattern, tissue
 
 pytestmark = pytest.mark.gui
 
@@ -152,3 +153,23 @@ def test_alignment_ignores_display_brightness_and_contrast(
     field.corrAlign()
     assert not messages
     assert field.section.tform.equals(Transform([1, 0, 7, 0, 1, 4]))
+
+
+@pytest.mark.parametrize("pattern", ["gradient", "stripes", "tiles"])
+def test_ambiguous_match_leaves_transform_history_and_propagation_unchanged(
+    main_window, monkeypatch, pattern,
+):
+    image = np.repeat(ambiguous_pattern(pattern)[:, :, None], 3, axis=2)
+    field, messages = prepare_field(main_window, monkeypatch, image, image)
+    # Preserve an existing recorded translation as well as the section state.
+    field.stored_tform = Transform([1, 0, 2, 0, 1, -3])
+    before = field.section.tform.copy()
+    states = field.series_states[field.section.n]
+    undo_count = len(states.undo_states)
+    propagated = field.propagated_sections.copy()
+    field.corrAlign()
+    assert field.section.tform.equals(before)
+    assert field.stored_tform.equals(Transform([1, 0, 2, 0, 1, -3]))
+    assert len(states.undo_states) == undo_count
+    assert field.propagated_sections == propagated
+    assert messages == ["No reliable correlation match. The section was not moved."]
