@@ -1163,6 +1163,7 @@ class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
                             }
                         ]
                     },
+                    ("settings_act", "3D settings...", "", lambda: self.mainwindow.allOptions(show_3d=True)),
                     ("settrinc_act", "Set translate/rotate step...", "", self.setStep),
                     ("organize_act", "Organize scene...", "Ctrl+Shift+H", self.organizeScene),
                     ("refreshstale_act", "Refresh edited objects", "Ctrl+R", self.refreshStale),
@@ -1502,18 +1503,12 @@ class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
         self.undo_states.append(self.saveScene(return_dict=True))
         self.redo_states = []
         
-    def loadState(self, save_state : dict, reload=False):
+    def loadState(self, save_state : dict):
         """Load a previous scene state.
         
             Params:
                 save_state (dict): the state to load--exactly what is exported by saveScene
-                reload (bool): True if objects should be replaced from their series (will only act on selected objects)
         """
-        ## Reload (i.e., remove) selected objects if requested
-        if reload:
-            for obj in self.plt.selected.copy():
-                self.plt.removeSceneObj(obj)
-
         ## Track IDs found in file
         checked_ids = set()
 
@@ -1681,10 +1676,23 @@ class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
         print(f"Scene exported at {dpi} dpi to: {filename}")
         
     def reload(self):
-        """Reload all the objects in the scene."""
+        """Rebuild only the selected objects and ztraces."""
+        self.rebuildObjects(self.plt.selected.copy())
+
+    def rebuildObjects(self, scene_objects):
+        """Rebuild meshes by source series, preserving their scene attributes."""
+        by_series = {}
+        for obj in scene_objects:
+            if obj.type not in ("object", "ztrace"):
+                continue
+            objects, ztraces = by_series.setdefault(obj.series_fp, ([], []))
+            (objects if obj.type == "object" else ztraces).append(obj.name)
+        if not by_series:
+            return
         self.mainwindow.saveAllData()
-        scene_state = self.plt.objs.getExportDict()
-        self.loadState(scene_state, reload=True)
+        for path, (objects, ztraces) in by_series.items():
+            series = self.series if path == self.series.jser_fp else path
+            self.plt.addToScene(objects, ztraces, series=series, save_state=False)
 
     def markStale(self, obj_names=None, ztrace_names=None):
         """Mark scene objects as stale after their 2D data was edited.

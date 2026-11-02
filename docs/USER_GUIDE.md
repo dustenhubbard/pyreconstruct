@@ -1009,11 +1009,16 @@ Each object has a **3D type** (set in **Edit 3D settings…** from the object li
 
 Z-traces render as tubes. **Edit 3D settings…** also sets per-object **opacity**.
 
-Series-wide 3D quality is controlled in **Series ▸ Options** (the 3D section): an
+3D quality is controlled in **Scene ▸ 3D settings** in the scene window or
+**Series ▸ Options ▸ View** in the main window. Both open the same controls: an
 **XY Resolution** slider (less detail/faster ↔ more detail/slower), the **3D
 smoothing** method (Humphrey is recommended; the others are Mutable Diffusion
-Laplacian, Taubin, and None), the **smoothing iterations**, and the **screenshot
-resolution (dpi)**.
+Laplacian, Taubin, and None), the **smoothing iterations**, the **screenshot
+resolution (dpi)**, and **Auto-refresh edited objects**. Changing XY resolution,
+smoothing, or smoothing iterations rebuilds the open scene meshes, including
+meshes from other series, while keeping their colors, opacity, and positions.
+Screenshot resolution affects the next screenshot. Auto-refresh controls whether
+returning to the scene rebuilds meshes after trace edits.
 
 ### Navigating the 3D scene
 
@@ -1036,6 +1041,9 @@ The 3D window has its own menu bar:
   (X/Y) and `Ctrl`+Up/Down (Z). Edit its **edge length (µm)**, color, opacity, and
   outline width via **Edit ▸ Edit attributes…** (`Ctrl+E`). It's a physical
   measuring reference.
+- **Scene ▸ Reload selected** rebuilds only selected objects and z-traces.
+  Press **Cmd+Shift+R** (**Ctrl+Shift+R** on Windows/Linux) with the scene window
+  focused. Unselected meshes and scale cubes are unchanged.
 - **Scene ▸ Change background** sets the background color.
 - **Scene ▸ Organize scene…** (`Ctrl+Shift+H`) lines objects up side by side, by
   host group or individually.

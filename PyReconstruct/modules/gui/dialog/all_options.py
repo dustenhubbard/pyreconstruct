@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QApplication
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import (
     QPainter,
     QPalette
@@ -205,6 +205,17 @@ class AllOptionsDialog(QDialog):
             qsa.setWidget(widget)
             self.tabs.addTab(qsa, tab_name)
     
+    def showOption(self, name):
+        """Open the tab containing an option and scroll it into view."""
+        option = self.all_widgets[name]
+        for index in range(self.tabs.count()):
+            area = self.tabs.widget(index)
+            if area.isAncestorOf(option):
+                self.tabs.setCurrentIndex(index)
+                # Scroll after the dialog is shown and its layouts have sizes.
+                QTimer.singleShot(0, lambda: area.ensureWidgetVisible(option))
+                break
+
     def createWidgets(self, use_defaults=False):
         """Create the widgets for each of the options
         
