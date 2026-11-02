@@ -7,9 +7,9 @@ behavior is identical to the previous direct `QSettings` usage; headless
 callers and tests can inject `DictSettingsStore` (pure Python, no Qt).
 
 Two scopes are preserved exactly, matching the prior `QSettings` usage:
-  - per-series settings, keyed by the series ``code`` (org ``"KHLab"``, app
+  - per-series settings, keyed by the series ``code`` (org ``"PyReconstruct"``, app
     ``"PyReconstruct-{code}"``)
-  - global settings (org ``"KHLab"``, app ``"PyReconstruct"``)
+  - global settings (org ``"PyReconstruct"``, app ``"PyReconstruct"``)
 
 Both scopes are the SHARED domain (`constants/settings_domain.py`): the
 stable app and the Dev app read and write the same store, so a preference
@@ -67,8 +67,11 @@ class QSettingsStore(SettingsStore):
 
     def _settings(self, code: Optional[str]):
         from PySide6.QtCore import QSettings
-        from PyReconstruct.modules.constants.settings_domain import series_app
+        from PyReconstruct.modules.constants.settings_domain import (
+            migrate_settings_once, series_app,
+        )
         app = self.APP if code is None else series_app(self.APP, code)
+        migrate_settings_once(app)
         return QSettings(self.ORG, app)
 
     def contains(self, code, key):

@@ -10,7 +10,7 @@ code, and every code on macOS and Linux, names the same domain as before.
 Each pair below holds two distinct codes: the first series stores its backup
 folder, then the second reads, writes and rereads its own, through the
 production `QSettingsStore` with the native format. The registry keys live
-under an organization made for one test run, never under ``KHLab``, and are
+under an organization made for one test run, never under ``PyReconstruct``, and are
 deleted afterward.
 """
 import hashlib
@@ -91,13 +91,14 @@ def native_store(monkeypatch):
 
     class NativeQSettings(real):
         def __init__(self, organization, application):
-            if organization != org:
+            if organization not in (org, org + "-legacy"):
                 raise AssertionError(
                     f"settings opened for {organization!r}, not {org!r}"
                 )
             super().__init__(native, user_scope, organization, application)
 
     monkeypatch.setattr(SD, "SETTINGS_ORG", org)
+    monkeypatch.setattr(SD, "LEGACY_SETTINGS_ORG", org + "-legacy")
     monkeypatch.setattr(qtcore, "QSettings", NativeQSettings)
     assert not _key_exists(winreg.HKEY_CURRENT_USER, tree)
     try:
@@ -107,6 +108,7 @@ def native_store(monkeypatch):
         assert all(org in bypass.path for bypass in recorded)
     finally:
         _delete_tree(winreg.HKEY_CURRENT_USER, tree)
+        _delete_tree(winreg.HKEY_CURRENT_USER, tree + "-legacy")
     assert not _key_exists(winreg.HKEY_CURRENT_USER, tree)
 
 

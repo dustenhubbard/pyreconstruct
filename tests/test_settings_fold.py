@@ -201,8 +201,8 @@ def test_a_stable_app_with_no_dev_present_is_byte_identical(monkeypatch, qapp):
     from PySide6.QtCore import QSettings
 
     monkeypatch.delenv("PYRECON_APP_NAME", raising=False)
-    shared = QSettings("KHLab", "PyReconstruct")
-    per_series = QSettings("KHLab", "PyReconstruct-FOLDPROBE")
+    shared = QSettings("PyReconstruct", "PyReconstruct")
+    per_series = QSettings("PyReconstruct", "PyReconstruct-FOLDPROBE")
     shared.setValue("fold_probe_global", "kept")
     per_series.setValue("fold_probe_series", "kept")
     shared.sync(); per_series.sync()
@@ -211,16 +211,16 @@ def test_a_stable_app_with_no_dev_present_is_byte_identical(monkeypatch, qapp):
                   open(per_series.fileName(), "rb").read())
         assert fold_flavor_settings_once() is False
         assert fold_series_settings_once("FOLDPROBE") is False
-        QSettings("KHLab", "PyReconstruct").sync()
-        QSettings("KHLab", "PyReconstruct-FOLDPROBE").sync()
+        QSettings("PyReconstruct", "PyReconstruct").sync()
+        QSettings("PyReconstruct", "PyReconstruct-FOLDPROBE").sync()
         after = (open(shared.fileName(), "rb").read(),
                  open(per_series.fileName(), "rb").read())
         assert after == before
-        assert not os.path.exists(QSettings("KHLab", DEV).fileName()) or \
-            not QSettings("KHLab", DEV).contains(FOLD_MARKER)
+        assert not os.path.exists(QSettings("PyReconstruct", DEV).fileName()) or \
+            not QSettings("PyReconstruct", DEV).contains(FOLD_MARKER)
     finally:
-        for s in (QSettings("KHLab", "PyReconstruct"),
-                  QSettings("KHLab", "PyReconstruct-FOLDPROBE")):
+        for s in (QSettings("PyReconstruct", "PyReconstruct"),
+                  QSettings("PyReconstruct", "PyReconstruct-FOLDPROBE")):
             s.remove("fold_probe_global")
             s.remove("fold_probe_series")
             s.sync()
@@ -241,29 +241,29 @@ def _clean(*domains):
 
 def test_the_dev_app_resolves_both_domains_from_the_environment(monkeypatch, qapp):
     """No injection: under the Dev variable the fold reads
-    ``KHLab / PyReconstruct Dev`` and writes ``KHLab / PyReconstruct``."""
+    ``PyReconstruct / PyReconstruct Dev`` and writes ``PyReconstruct / PyReconstruct``."""
     from PySide6.QtCore import QSettings
 
     monkeypatch.setenv("PYRECON_APP_NAME", DEV)
-    _clean(("KHLab", DEV), ("KHLab", "PyReconstruct"))
+    _clean(("PyReconstruct", DEV), ("PyReconstruct", "PyReconstruct"))
     try:
-        dev = QSettings("KHLab", DEV)
+        dev = QSettings("PyReconstruct", DEV)
         dev.setValue("fold_probe_a", "from-dev")
         dev.setValue("fold_probe_b", "from-dev")
         dev.sync()
-        shared = QSettings("KHLab", "PyReconstruct")
+        shared = QSettings("PyReconstruct", "PyReconstruct")
         shared.setValue("fold_probe_b", "from-stable")
         shared.sync()
 
         assert fold_flavor_settings_once() is True
-        shared = QSettings("KHLab", "PyReconstruct")
+        shared = QSettings("PyReconstruct", "PyReconstruct")
         assert shared.value("fold_probe_a") == "from-dev"
         assert shared.value("fold_probe_b") == "from-stable"
-        assert QSettings("KHLab", DEV).value(FOLD_MARKER, type=bool) is True
+        assert QSettings("PyReconstruct", DEV).value(FOLD_MARKER, type=bool) is True
         assert not shared.contains(FOLD_MARKER)
         assert fold_flavor_settings_once() is False
     finally:
-        _clean(("KHLab", DEV), ("KHLab", "PyReconstruct"))
+        _clean(("PyReconstruct", DEV), ("PyReconstruct", "PyReconstruct"))
 
 
 # --- per-series ----------------------------------------------------------------------
@@ -319,14 +319,14 @@ def test_per_series_fold_resolves_the_flavored_domains(monkeypatch, qapp):
     from PySide6.QtCore import QSettings
 
     monkeypatch.setenv("PYRECON_APP_NAME", DEV)
-    domains = (("KHLab", f"{DEV}-FOLDSER"), ("KHLab", "PyReconstruct-FOLDSER"))
+    domains = (("PyReconstruct", f"{DEV}-FOLDSER"), ("PyReconstruct", "PyReconstruct-FOLDSER"))
     _clean(*domains)
     try:
-        QSettings("KHLab", f"{DEV}-FOLDSER").setValue("fold_probe_layout", "dev")
-        QSettings("KHLab", f"{DEV}-FOLDSER").sync()
+        QSettings("PyReconstruct", f"{DEV}-FOLDSER").setValue("fold_probe_layout", "dev")
+        QSettings("PyReconstruct", f"{DEV}-FOLDSER").sync()
         assert fold_series_settings_once("FOLDSER") is True
-        assert QSettings("KHLab", "PyReconstruct-FOLDSER").value("fold_probe_layout") == "dev"
-        assert QSettings("KHLab", f"{DEV}-FOLDSER").value(FOLD_MARKER, type=bool) is True
+        assert QSettings("PyReconstruct", "PyReconstruct-FOLDSER").value("fold_probe_layout") == "dev"
+        assert QSettings("PyReconstruct", f"{DEV}-FOLDSER").value(FOLD_MARKER, type=bool) is True
     finally:
         _clean(*domains)
 
@@ -355,13 +355,13 @@ def test_the_window_folds_the_open_series_under_the_dev_flavor(main_window, monk
     code = main_window.series.code
     assert code, "the fixture series carries a code"
     monkeypatch.setenv("PYRECON_APP_NAME", DEV)
-    domains = (("KHLab", f"{DEV}-{code}"), ("KHLab", f"PyReconstruct-{code}"))
+    domains = (("PyReconstruct", f"{DEV}-{code}"), ("PyReconstruct", f"PyReconstruct-{code}"))
     _clean(*domains)
     try:
-        QSettings("KHLab", f"{DEV}-{code}").setValue("fold_probe_window", "dev")
-        QSettings("KHLab", f"{DEV}-{code}").sync()
+        QSettings("PyReconstruct", f"{DEV}-{code}").setValue("fold_probe_window", "dev")
+        QSettings("PyReconstruct", f"{DEV}-{code}").sync()
         main_window._foldSeriesSettings()
-        assert QSettings("KHLab", f"PyReconstruct-{code}").value("fold_probe_window") == "dev"
+        assert QSettings("PyReconstruct", f"PyReconstruct-{code}").value("fold_probe_window") == "dev"
     finally:
         _clean(*domains)
 

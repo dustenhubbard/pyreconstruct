@@ -5,17 +5,20 @@ Dev packaging stamps PYRECON_APP_NAME (packaging/rthook_flavor.py), and that
 variable still decides everything that has to differ between the two apps:
 the window title, the update channel, the series ownership marker. Stored
 settings are the exception. Since 2026-09-27 both apps read and write ONE
-shared domain, ``KHLab / PyReconstruct``, for global preferences and
-``KHLab / PyReconstruct-<code>`` for per-series ones, so a preference changed
+shared domain, ``PyReconstruct / PyReconstruct``, for global preferences and
+``PyReconstruct / PyReconstruct-<code>`` for per-series ones, so a preference changed
 in either app is what the other app sees at its next read. A user who runs
 both no longer sets everything twice.
 
 A short list of keys must stay per app (PER_APP_KEYS, PER_APP_PREFIXES):
 the What's new popup state, the update-check throttle, the window position,
 and the store's own bookkeeping under ``meta/``. Those route to the flavored
-domain ``KHLab / <settings_app()>``. For the stable app the two domains are
-the same name, so its behavior is unchanged: same file, same keys, same
-values as before the Dev app started sharing.
+domain ``PyReconstruct / <settings_app()>``. For the stable app the two domains are
+the same application name.
+
+Each store copies its old KHLab values on first use. Existing destination
+values win, and the old store stays intact for older builds. The organization
+migration runs before the older Dev-to-shared fold.
 
 Every raw ``QSettings`` construction in the app goes through
 ``domain_for(key)``; ``QSettingsStore`` (backend/settings_store.py), which
@@ -38,7 +41,9 @@ import json
 import os
 import sys
 
-SETTINGS_ORG = "KHLab"
+SETTINGS_ORG = "PyReconstruct"
+LEGACY_SETTINGS_ORG = "KHLab"
+ORG_MIGRATION_MARKER = "meta/migrated_from_khlab"
 
 # The application name of the shared store. Also the stable app's own name,
 # which is what makes sharing free for the stable app: it reads and writes
@@ -124,6 +129,38 @@ def series_app(app, code):
     return f"{app}{marker}{digest}"
 
 
+def migrate_settings_once(app, legacy=None, destination=None):
+    """Copy one legacy store on first use, leaving both existing values intact.
+
+    Disable fallbacks while copying so organization-wide or system defaults
+    are not materialized as user preferences. Mark only a successful sync,
+    allowing a later call to retry an unreadable source or unwritable target.
+    Explicit stores let tests exercise failures without native preferences.
+    """
+    from PySide6.QtCore import QSettings
+
+    if destination is None:
+        destination = QSettings(SETTINGS_ORG, app)
+    destination.setFallbacksEnabled(False)
+    if destination.contains(ORG_MIGRATION_MARKER):
+        return False
+    if legacy is None:
+        legacy = QSettings(LEGACY_SETTINGS_ORG, app)
+    legacy.setFallbacksEnabled(False)
+    legacy.sync()
+    if legacy.status() != QSettings.NoError:
+        return False
+    for key in legacy.allKeys():
+        if key != ORG_MIGRATION_MARKER and not destination.contains(key):
+            destination.setValue(key, legacy.value(key))
+    destination.sync()
+    if destination.status() != QSettings.NoError:
+        return False
+    destination.setValue(ORG_MIGRATION_MARKER, True)
+    destination.sync()
+    return destination.status() == QSettings.NoError
+
+
 def shared_domain():
     """(org, app) of the store both apps share. Never flavored."""
     return SETTINGS_ORG, SHARED_APP
@@ -201,7 +238,9 @@ def domain_for(*keys):
             "keys split across the shared and per-app domains: "
             + ", ".join(sorted(keys))
         )
-    return per_app_domain() if per_app.pop() else shared_domain()
+    domain = per_app_domain() if per_app.pop() else shared_domain()
+    migrate_settings_once(domain[1])
+    return domain
 
 
 # Marker the retired one-shot seed wrote into a Dev domain (2026-08-25 to
@@ -283,6 +322,8 @@ def fold_flavor_settings_once(flavored=None, shared=None):
         if settings_app() == SHARED_APP:
             return False
         from PySide6.QtCore import QSettings
+        migrate_settings_once(SHARED_APP)
+        migrate_settings_once(settings_app())
         flavored = QSettings(*per_app_domain())
     if flavored.contains(FOLD_MARKER):
         return False
@@ -297,7 +338,7 @@ def fold_series_settings_once(code, flavored=None, shared=None):
     """Fold one series' old Dev per-series domain into the shared one, once.
 
     Per-series settings (``autobackup``, ``backup_dir``, ``list_layout``)
-    live in ``KHLab / <app>-<code>``. The old split gave the Dev app its own
+    live in ``PyReconstruct / <app>-<code>``. The old split gave the Dev app its own
     ``PyReconstruct Dev-<code>`` domain, which the seed never touched, so it
     holds whatever the Dev app wrote there. Runs lazily when a series opens,
     because the per-series domains cannot be enumerated portably. Same rule
@@ -314,6 +355,8 @@ def fold_series_settings_once(code, flavored=None, shared=None):
         if settings_app() == SHARED_APP:
             return False
         from PySide6.QtCore import QSettings
+        migrate_settings_once(series_app(SHARED_APP, code))
+        migrate_settings_once(series_app(settings_app(), code))
         flavored = QSettings(SETTINGS_ORG, series_app(settings_app(), code))
     if flavored.contains(FOLD_MARKER):
         return False
