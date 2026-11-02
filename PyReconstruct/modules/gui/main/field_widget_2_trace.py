@@ -1,4 +1,5 @@
 import math
+from contextlib import contextmanager
 from typing import List, Union
 
 from .context_menu_list import get_context_menu_list_trace
@@ -33,6 +34,24 @@ from PyReconstruct.modules.gui.table import (
 )
 
 from .field_widget_1_base import FieldWidgetBase
+
+
+def endOperation(field, modified : bool):
+    """Finish the outermost field operation: apply the ROI box's selection
+    rule once to the finished geometry, and say if a trace it made is
+    outside the box.
+
+        Params:
+            modified (bool): True if the operation itself saved and drew
+    """
+    inner, field.inner_modified = field.inner_modified, False
+    if not modified and inner:
+        # an inner interaction that saved (each stamp, pasted or imported
+        # trace) drew before the rule applied: draw once more
+        field.generateView()
+    elif not modified:
+        field.dropSelectedOutsideRoiBox()
+    settleNewTraces(field)
 
 
 def settleNewTraces(field):
@@ -595,23 +614,31 @@ class FieldWidgetTrace(FieldWidgetBase):
                 self.saveState()
                 self.generateView()
 
-            inner = self.inner_modified
             if depth:
-                self.inner_modified = inner or bool(modified)
+                self.inner_modified = self.inner_modified or bool(modified)
             else:
-                # an inner interaction that saved (each stamp or pasted
-                # trace) drew before the rule applied: draw once more
-                self.inner_modified = False
-                if not modified and inner:
-                    self.generateView()
-                elif not modified:
-                    self.dropSelectedOutsideRoiBox()
-                settleNewTraces(self)
+                endOperation(self, modified)
             
             return modified
 
         return wrapper
     
+    @contextmanager
+    def fieldOperation(self):
+        """Make the field interactions in this block one user operation, for
+        a caller that is not one itself (a .roi import, a draw and its
+        auto-merge): the ROI box's selection rule waits, then applies once to
+        the finished geometry. Each inner interaction still saves its own
+        undo state."""
+        depth = self.interaction_depth
+        self.interaction_depth = depth + 1
+        try:
+            yield
+        finally:
+            self.interaction_depth = depth
+        if not depth:
+            endOperation(self, False)
+
     @field_interaction
     def newTrace(
             self,

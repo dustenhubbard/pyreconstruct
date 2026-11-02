@@ -16,6 +16,7 @@ from PySide6.QtGui import QColor
 
 from PyReconstruct.modules.backend.view import roi_follow as RF
 from PyReconstruct.modules.datatypes import Transform
+from test_roi_import_geometry import section_with_image  # noqa: F401  (fixture)
 from PyReconstruct.modules.datatypes.series_data import ObjectData, TraceColumns
 from PyReconstruct.modules.gui.main import field_widget_1_base as fwb
 
@@ -478,6 +479,107 @@ def test_a_grid_places_the_followed_box_once(mw, qapp, monkeypatch):
     traces = list(field.section.contours["d03p14"])
     assert len(traces) == 401
     assert all(t in field.section_layer.traces_in_view for t in traces)
+
+
+@pytest.mark.parametrize("order", [(0.0, 1.0, -1.0), (1.0, -1.0, 0.0)])
+def test_a_composite_roi_import_keeps_each_shape_inside_selected(
+    mw, qapp, notices, section_with_image, tmp_path, monkeypatch, order  # noqa: F811  (fixture)
+):
+    """Three square outlines in one ImageJ .roi file, in any order: the
+    import is one operation, so the box is placed once, from the imported
+    shapes, and the one inside it stays selected. Each shape keeps its own
+    undo step."""
+    from PyReconstruct.modules.datatypes import Trace
+    from PyReconstruct.modules.gui.main import field_widget_1_base as fwb
+    from test_roi_import_geometry import _write_composite
+    field = mw.field
+    mw.series.setOption("auto_merge", False)
+    field.section.tform = Transform.identity()
+    mag = field.section.mag
+    fp = _write_composite(
+        tmp_path / "imported.roi", *[(100 + dx / mag, 100, 0.2 / mag) for dx in order]
+    )
+    # a seed of the same object where the middle square lands
+    x, y = 100 * mag, 300 * mag
+    field.newTrace(
+        [(x, y), (x + 0.2, y), (x + 0.2, y - 0.2), (x, y - 0.2)],
+        Trace("imported", (255, 0, 0)), points_as_pix=False, reduce_points=False,
+    )
+    (seed,) = field.section.contours["imported"]
+    center = seed.getCentroid(field.section.tform)
+    _follow(mw, "imported")
+    field.series.window = [center[0] - 2, center[1] - 2, 4.0, 4.0]
+    field.generateView()
+    field.section.selected_traces = []
+    calls = []
+    real = fwb.objectCenters
+    monkeypatch.setattr(fwb, "objectCenters", lambda *a, **k: calls.append(1) or real(*a, **k))
+    mw.main_window_dialogs.file_responses.append([fp])
+
+    mw.importROIFiles()
+
+    assert len(calls) == 1
+    traces = list(field.section.contours["imported"])
+    assert len(traces) == 4
+    assert field.roi_box_center == pytest.approx(center, abs=1e-5)
+    middle = min(traces[1:], key=lambda t: abs(t.getCentroid(field.section.tform)[0] - center[0]))
+    assert middle in field.section_layer.traces_in_view
+    assert middle in field.section.selected_traces
+    for _ in range(3):
+        mw.undo()
+    assert len(list(field.section.contours["imported"])) == 1
+    assert notices == []
+
+
+@pytest.mark.parametrize("trace_mode", ["poly", "pencil"])
+def test_a_draw_and_its_auto_merge_are_one_operation(mw, qapp, notices, monkeypatch, trace_mode):
+    """A closed trace drawn over the selected followed square merges into
+    it; the box is placed once, after the merge, on the merged trace, which
+    stays selected."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from test_roi_box import _move, _pix
+    from PyReconstruct.modules.datatypes import Trace
+    from PyReconstruct.modules.gui.main import field_widget_1_base as fwb
+    field = mw.field
+    mw.series.setOption("auto_merge", True)
+    mw.series.setOption("trace_mode", trace_mode)
+    mw.series.setOption("roll_average", False)
+    field.newTrace(
+        [(13.4, 23.6), (13.6, 23.6), (13.6, 23.8), (13.4, 23.8)],
+        Trace("drawn", (255, 0, 0)), points_as_pix=False, reduce_points=False,
+    )
+    _follow(mw, "drawn")
+    field.series.window = [12.5, 22.7, 2.0, 2.0]
+    field.generateView()
+    # with the ROI box on, only selected traces merge
+    field.section.selected_traces = list(field.section.contours["drawn"])
+    template = Trace("drawn", (255, 0, 0))
+    template.points = [(-0.1, -0.1), (0.1, -0.1), (0.1, 0.1), (-0.1, 0.1)]
+    mw.mouse_palette.modifyPaletteButton(0, template)
+    mw.mouse_palette.activatePaletteButton(0)
+    mw.mouse_palette.activateModeButton("Closed Trace")
+    calls = []
+    real = fwb.objectCenters
+    monkeypatch.setattr(fwb, "objectCenters", lambda *a, **k: calls.append(1) or real(*a, **k))
+
+    corners = [(13.5, 23.6), (13.9, 23.6), (13.9, 23.8), (13.5, 23.8)]
+    if trace_mode == "poly":
+        for x, y in corners:
+            QTest.mouseClick(field, Qt.LeftButton, Qt.NoModifier, _pix(field, x, y))
+        QTest.mouseClick(field, Qt.RightButton, Qt.NoModifier, _pix(field, *corners[-1]))
+    else:
+        QTest.mousePress(field, Qt.LeftButton, Qt.NoModifier, _pix(field, *corners[0]))
+        for x, y in corners[1:]:
+            _move(field, qapp, _pix(field, x, y))
+        QTest.mouseRelease(field, Qt.LeftButton, Qt.NoModifier, _pix(field, *corners[-1]))
+    qapp.processEvents()
+
+    (merged,) = list(field.section.contours["drawn"])
+    assert len(calls) == 1
+    assert field.roi_box_center == pytest.approx(_drawn_center(field, "drawn"))
+    assert field.section.selected_traces == [merged]
+    assert notices == []
 
 
 def test_a_borrowed_place_matches_its_source_under_a_nonuniform_alignment(mw, qapp, notices):
