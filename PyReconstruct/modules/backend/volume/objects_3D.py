@@ -19,34 +19,19 @@ from PyReconstruct.modules.calc.nesting import (  # noqa: F401 (tests import the
 
 
 def exportMesh(tm, output_file, export_type):
-    """Export trimesh obj to a file."""
-    with open(output_file, "w") as fp:
-            
-        if export_type == "obj":
-            
-            with open(output_file, "w") as fp:
-                fp.write(trimesh.exchange.obj.export_obj(tm))
-                
-        elif export_type == "off":
-            
-            with open(output_file, "w") as fp:
-                fp.write(trimesh.exchange.off.export_off(tm))
-                
-        elif export_type == "ply":
-            
-            with open(output_file, "wb") as fp:
-                fp.write(trimesh.exchange.ply.export_ply(tm))
-                
-        elif export_type == "stl":
-            
-            with open(output_file, "wb") as fp:
-                fp.write(trimesh.exchange.stl.export_stl(tm))
-                
-        elif export_type == "dae":
-            
-            with open(output_file, "wb") as fp:
-                fp.write(trimesh.exchange.dae.export_collada(tm))
-                    
+    """Serialize the mesh before opening the destination for replacement."""
+    exporters = {
+        "obj": (trimesh.exchange.obj.export_obj, "w"),
+        "off": (trimesh.exchange.off.export_off, "w"),
+        "ply": (trimesh.exchange.ply.export_ply, "wb"),
+        "stl": (trimesh.exchange.stl.export_stl, "wb"),
+        "dae": (trimesh.exchange.dae.export_collada, "wb"),
+    }
+    exporter, mode = exporters[export_type]
+    data = exporter(tm)
+    with open(output_file, mode) as fp:
+        fp.write(data)
+
 
 def mapTracePoints(points : list, tform : Transform = None) -> list:
     """Apply a transform to a trace's points, returning a list of (x, y) tuples.
