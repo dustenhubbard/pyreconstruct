@@ -679,7 +679,7 @@ class VPlotter(vedo.Plotter):
             Params:
                 objs (list): list of dictionaries containing object name, color, alpha, and tform (only names can also be provided)
                 ztraces (list): list of dictionaries containing ztrace name, color, alpha, and tform (only names can also be provided)
-                remove_first (bool): True if objects should be removed from scene first
+                remove_first (bool): True to replace existing meshes after generation succeeds
                 series (Series or str): the series or the filepath for the series containing the objects
                 save_state (bool): True if undo state should be saved
         """
@@ -711,12 +711,15 @@ class VPlotter(vedo.Plotter):
         elif type(series) is Series:
             series_fp = series.jser_fp
 
-        # remove existing objects from scene
+        # Keep displayed meshes until generation succeeds, using their scene attributes.
         if remove_first:
-            obj_dicts, ztrace_dicts = self.removeFromScene(obj_names, ztrace_names, series_fp, save_state=False)
-            # if removing, replace attributes in dict lists with those of the just-removed items
-            objs += obj_dicts
-            ztraces += ztrace_dicts
+            for names, obj_type, attrs in (
+                (obj_names, "object", objs), (ztrace_names, "ztrace", ztraces)
+            ):
+                for name in names:
+                    scene_obj = self.objs.search(name, obj_type, series_fp)
+                    if scene_obj:
+                        attrs.append(scene_obj.getExportDict())
             # remove redundant objects in the list
             for dlist in (objs, ztraces):
                 names = set()
@@ -764,7 +767,12 @@ class VPlotter(vedo.Plotter):
             ztraces,
             progress=True,
         )
-        worker.signals.result.connect(self.placeInScene)
+        def place_generated(result):
+            if remove_first:
+                self.removeFromScene(obj_names, ztrace_names, series_fp, save_state=False)
+            self.placeInScene(result)
+
+        worker.signals.result.connect(place_generated)
         self.threadpool.startAll(text="Generating 3D...", status_bar=self.mainwindow.statusbar)
 
     def showHelp(self):

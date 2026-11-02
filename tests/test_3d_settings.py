@@ -276,3 +276,79 @@ def test_rebuild_with_only_deleted_sources_leaves_scale_cube(
     assert launched == []
     assert list(viewer.plt.objs.values()) == [cube]
     assert notices == []
+
+
+@pytest.mark.parametrize("trigger", ["settings", "reload"])
+@pytest.mark.parametrize("failure", ["missing", "invalid", "generation"])
+def test_failed_rebuild_keeps_displayed_meshes(
+    main_window, monkeypatch, tmp_path, trigger, failure
+):
+    from types import SimpleNamespace
+    from PyReconstruct.modules.backend.threading.threading import Worker
+    from PyReconstruct.modules.gui.popup import custom_plotter as cp
+
+    viewer, _, objects, cube = populate(main_window, monkeypatch)
+    series = main_window.series
+    series.setOption("3D_auto_refresh", False)
+    for obj in objects:
+        series.setAttr(obj.name, "3D_mode", "contours")
+        obj.translate(2, 3, 4)
+    foreign_path = tmp_path / "unavailable.jser"
+    if failure == "invalid":
+        foreign_path.write_text("invalid JSON")
+    other = SimpleNamespace(jser_fp=str(foreign_path), host_tree=None)
+    foreign = [
+        viewer.plt.objs.add(_mesh(), other, objects[0].name, "object", (8, 9, 10), .7),
+        viewer.plt.objs.add(_mesh(), other, "path", "ztrace", (9, 8, 7), .6),
+    ]
+    for obj in foreign:
+        obj.translate(5, 6, 7)
+    expected = {obj.id: obj.getExportDict() for obj in [*objects, *foreign]}
+    viewer.plt.selected = [*objects, *foreign, cube]
+    failures = []
+    visible_during_generation = []
+
+    class Pool:
+        def createWorker(self, fn, source, objs, ztraces, **kwargs):
+            def generate():
+                if source == str(foreign_path):
+                    # Existing meshes remain visible while their replacements run.
+                    visible_during_generation.extend(
+                        viewer.plt.objs[obj.id] is obj for obj in foreign
+                    )
+                    if failure == "generation":
+                        raise RuntimeError("mesh generation failed")
+                return fn(source, objs, ztraces)
+
+            self.worker = Worker(generate)
+            self.worker.signals.error.connect(lambda error: failures.append(error[0]))
+            return self.worker
+
+        def startAll(self, **kwargs):
+            self.worker.run()
+
+    monkeypatch.setattr(cp, "ThreadPoolProgBar", Pool)
+    if trigger == "settings":
+        QTimer.singleShot(0, lambda: edit_options({"3D_xy_res": 80}))
+        main_window.allOptions()
+    else:
+        viewer.reload()
+
+    from PyReconstruct.modules.datatypes.series import SeriesOpenError
+    assert failures == [{"missing": FileNotFoundError, "invalid": SeriesOpenError,
+                         "generation": RuntimeError}[failure]]
+    assert visible_during_generation == [True, True]
+    for obj in foreign:
+        assert viewer.plt.objs.search(obj.name, obj.type, str(foreign_path)) is obj
+        assert obj.getExportDict() == expected[obj.id]
+        assert obj in viewer.plt.selected
+    for old in objects:
+        rebuilt = viewer.plt.objs.search(old.name, old.type, series.jser_fp)
+        assert rebuilt is not None and rebuilt is not old
+        attrs = rebuilt.getExportDict()
+        attrs.pop("id")
+        old_attrs = expected[old.id].copy()
+        old_attrs.pop("id")
+        assert attrs == old_attrs
+    assert viewer.plt.objs[cube.id] is cube
+    assert len(list(viewer.plt.objs.values())) == 5
