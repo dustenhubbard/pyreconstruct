@@ -26,9 +26,10 @@ def knife_field(main_window, local_series_settings, monkeypatch):
     return field, notices
 
 
-def _square(field, x, negative=False, closed=True):
+def _square(field, x, negative=False, closed=True, tags=()):
     trace = Trace(NAME, (0, 255, 0), closed=closed)
     trace.negative = negative
+    trace.tags = set(tags)
     pixels = [(x, 100.25), (x + 80.5, 100.25),
               (x + 80.5, 180.75), (x, 180.75)]
     trace.points = [
@@ -88,17 +89,40 @@ def test_a_missed_stroke_preserves_geometry_and_history(knife_field, closed, zoo
     assert notices == []
 
 
-def test_a_cut_leaves_the_missed_traces_geometry_exact(knife_field):
+@pytest.mark.parametrize("closed", [False, True])
+def test_a_cut_leaves_the_missed_traces_geometry_exact(knife_field, closed):
     field, notices = knife_field
-    first = _square(field, 100.25)
-    second = _square(field, 300.25)
+    first = _square(field, 100.25, closed=closed, tags={"first"})
+    second = _square(field, 300.25, closed=closed, tags={"second"})
+    field.section._assertColumnsMatchObjectModel("before mixed cut")
     _select(field, [first, second])
     before = list(second.points)
 
     assert field.cutTrace([(80, 140), (200, 140)]) is True
 
-    assert second in field.section.contours[NAME]
+    assert any(trace is second for trace in field.section.contours[NAME])
     assert list(second.points) == before
+    assert second.tags == {"first", "second"}
+    field.section._assertColumnsMatchObjectModel("after mixed cut")
+    assert notices == []
+
+
+@pytest.mark.parametrize("closed", [False, True])
+def test_a_missed_trace_can_be_hidden_after_a_cut(knife_field, closed):
+    field, notices = knife_field
+    first = _square(field, 100.25, closed=closed, tags={"first"})
+    missed = _square(field, 300.25, closed=closed, tags={"second"})
+    field.section._assertColumnsMatchObjectModel("before mixed cut")
+    _select(field, [first, missed])
+
+    assert field.cutTrace([(80, 140), (200, 140)]) is True
+    assert any(trace is missed for trace in field.section.contours[NAME])
+
+    field.section.hideTraces([missed], hide=True)
+
+    assert missed.hidden is True
+    assert missed.tags == {"first", "second"}
+    field.section._assertColumnsMatchObjectModel("after hiding missed trace")
     assert notices == []
 
 

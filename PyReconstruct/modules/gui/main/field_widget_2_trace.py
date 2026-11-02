@@ -862,6 +862,8 @@ class FieldWidgetTrace(FieldWidgetBase):
         # keep their original coordinates rather than a rounded pixel copy.
         for trace in untouched:
             trace.tags |= combined_tags
+        if untouched:
+            self.section.resyncColumnarStore()
         self.section.deleteTraces([trace for trace, _ in replacements], log_event=False)
 
         for trace, pieces in replacements:
