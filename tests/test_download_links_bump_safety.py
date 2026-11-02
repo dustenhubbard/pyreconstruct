@@ -13,10 +13,13 @@ import pytest
 from test_pruning_preserves_release_tags import workflow_script
 
 
-pytestmark = pytest.mark.skipif(os.name == "nt", reason="Linux workflow shell integration")
+pytestmark = pytest.mark.skipif(
+    os.name == "nt" or shutil.which("jq") is None, reason="Linux workflow shell with jq"
+)
 FILES = ("README.md", "docs/USER_GUIDE.md", "docs/index.md")
 WORKFLOW = "download-links-bump.yml"
 PR_URL = "https://github.com/owner/repo/pull/1"
+FOREIGN_PR_URL = "https://github.com/owner/repo/pull/99"
 
 
 def download_table(version):
@@ -36,7 +39,8 @@ class BumpWorkflow:
         self.bindir.mkdir()
         self.state = root / "github.json"
         self.state.write_text(json.dumps({
-            "pr": "", "create_error": False, "list_error": False, "created": 0,
+            "pr": "", "foreign_prs": [], "create_error": False, "list_error": False,
+            "created": 0,
         }))
         self.env = {
             **os.environ,
@@ -62,6 +66,7 @@ class BumpWorkflow:
             import json
             import os
             from pathlib import Path
+            import subprocess
             import sys
 
             path = Path(os.environ["TEST_GITHUB_STATE"])
@@ -72,7 +77,16 @@ class BumpWorkflow:
             elif args[:2] == ["pr", "list"]:
                 if state["list_error"]:
                     sys.exit("HTTP 403: cannot list pull requests")
-                print(state["pr"])
+                prs = [{"url": url, "isCrossRepository": True}
+                       for url in state["foreign_prs"]]
+                if state["pr"]:
+                    prs.append({"url": state["pr"], "isCrossRepository": False})
+                fields = args[args.index("--json") + 1].split(",")
+                response = [{field: pr[field] for field in fields} for pr in prs]
+                sys.exit(subprocess.run(
+                    ["jq", "-r", args[args.index("--jq") + 1]],
+                    input=json.dumps(response), text=True,
+                ).returncode)
             elif args[:2] == ["pr", "create"]:
                 if state["create_error"]:
                     sys.exit("HTTP 403: cannot create pull request")
@@ -157,8 +171,9 @@ def test_a_rerun_preserves_commits_on_the_existing_pr_branch(bump):
     )
 
 
-def test_a_pr_creation_error_fails_the_workflow(bump):
-    bump.github(create_error=True)
+@pytest.mark.parametrize("foreign_prs", [[], [FOREIGN_PR_URL]])
+def test_a_pr_creation_error_fails_the_workflow(bump, foreign_prs):
+    bump.github(create_error=True, foreign_prs=foreign_prs)
     result = bump.run()
     assert result.returncode != 0, result.stdout
     assert "HTTP 403: cannot create pull request" in result.stderr
@@ -224,6 +239,20 @@ def test_a_rerun_with_a_confirmed_pr_succeeds_without_recreating_it(bump):
     assert second.returncode == 0, second.stderr
     assert PR_URL in second.stdout
     assert bump.github()["created"] == 1
+
+
+@pytest.mark.parametrize("existing_pr", [False, True])
+def test_a_foreign_pr_does_not_replace_the_same_repository_pr(bump, existing_pr):
+    bump.github(foreign_prs=[FOREIGN_PR_URL], pr=PR_URL if existing_pr else "")
+    result = bump.run()
+    assert result.returncode == 0, result.stderr
+    assert PR_URL in result.stdout.splitlines()
+    assert FOREIGN_PR_URL not in result.stdout.splitlines()
+    assert bump.github()["pr"] == PR_URL
+    assert bump.github()["created"] == (0 if existing_pr else 1)
+    assert bump.git("ls-remote", "--heads", "origin", "docs/downloads-v1.26.0").split()[0] == (
+        bump.git("rev-parse", "HEAD")
+    )
 
 
 def test_an_already_current_main_needs_no_bump_branch(bump):

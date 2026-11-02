@@ -115,7 +115,8 @@ jobs:
           fi
           git push origin "$BRANCH"
           PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" \
-            --state open --json url --jq '.[0].url // empty')
+            --state open --json url,isCrossRepository \
+            --jq 'map(select(.isCrossRepository == false))[0].url // empty')
           if [ -n "$PR" ]; then
             echo "$PR"
           else
