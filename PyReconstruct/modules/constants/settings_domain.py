@@ -227,8 +227,11 @@ def store_copy_pending(app):
     keys = _read_keys(dev)
     if keys is None:
         return True
-    return (not dev.contains(FOLD_MARKER)
-            and any(not is_per_app_key(key) for key in keys))
+    if dev.contains(FOLD_MARKER):
+        return False
+    shared = QSettings(SETTINGS_ORG, app)
+    eligible = _fold_values(dev, shared, validate_list_layout=app != SHARED_APP)
+    return next(eligible, None) is not None
 
 
 @contextmanager
@@ -399,6 +402,24 @@ SEED_MARKER = "meta/settings_seeded"
 FOLD_MARKER = "meta/folded_into_shared"
 
 
+def _fold_values(flavored, shared, validate_list_layout=False):
+    """Values the Dev store can still contribute to the shared store."""
+    for key in flavored.allKeys():
+        if is_per_app_key(key) or shared.contains(key) or _removed(shared, key):
+            continue
+        value = flavored.value(key)
+        if validate_list_layout and key == "list_layout":
+            # Series.getOption decodes this as a JSON dictionary. Do not
+            # carry a damaged Dev layout into the stable app's store.
+            try:
+                layout = json.loads(value)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(layout, dict):
+                continue
+        yield key, value
+
+
 def _fold(flavored, shared, mark_always, validate_list_layout=False):
     """Copy ``flavored``'s shareable keys into ``shared`` where missing.
 
@@ -420,19 +441,7 @@ def _fold(flavored, shared, mark_always, validate_list_layout=False):
     skips them; only a key the Dev store alone holds is written.
     """
     copied = []
-    for key in flavored.allKeys():
-        if is_per_app_key(key) or shared.contains(key) or _removed(shared, key):
-            continue
-        value = flavored.value(key)
-        if validate_list_layout and key == "list_layout":
-            # Series.getOption decodes this as a JSON dictionary. Do not
-            # carry a damaged Dev layout into the stable app's store.
-            try:
-                layout = json.loads(value)
-            except (TypeError, ValueError):
-                continue
-            if not isinstance(layout, dict):
-                continue
+    for key, value in _fold_values(flavored, shared, validate_list_layout):
         shared.setValue(key, value)
         copied.append(key)
     if copied:

@@ -87,26 +87,26 @@ def scaleBarStructure(series, use_defaults=False):
     ]
 
 
+def scaleBarOptions(response):
+    """The stored options represented by the scale bar controls."""
+    options = {
+        "show_scale_bar_text": response[0][0][1],
+        "show_scale_bar_ticks": response[0][1][1],
+        "scale_bar_mode": "micron_pinned" if response[1][1][1] else "screen_fraction",
+        "scale_bar_width": response[2],
+        "scale_bar_thickness": response[4],
+    }
+    # Empty or invalid lengths keep the stored value.
+    if validPinnedLength(response[3]):
+        options["scale_bar_length_um"] = float(response[3])
+    return options
+
+
 def storeScaleBarResponse(series, response):
     """Store an accepted response (the tuple described at the top)."""
     with user_action():
-        series.setOption("show_scale_bar_text", response[0][0][1])
-        series.setOption("show_scale_bar_ticks", response[0][1][1])
-        series.setOption(
-            "scale_bar_mode",
-            "micron_pinned" if response[1][1][1] else "screen_fraction",
-        )
-        series.setOption("scale_bar_width", response[2])
-    # an empty or nonsensical box keeps the stored length rather than pinning
-    # the bar to nothing. "Nonsensical" has to mean more than `<= 0`: `inf > 0`
-    # is True and `1e400` parses to inf, and this key is global, so storing one
-    # would crash the palette on every launch from here on. validPinnedLength
-    # is the predicate the palette and the bar itself apply to the same value.
-    if validPinnedLength(response[3]):
-        with user_action():
-            series.setOption("scale_bar_length_um", float(response[3]))
-    with user_action():
-        series.setOption("scale_bar_thickness", response[4])
+        for key, value in scaleBarOptions(response).items():
+            series.setOption(key, value)
 
 
 def _controls(page):

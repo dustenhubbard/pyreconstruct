@@ -191,7 +191,10 @@ def test_options_offers_three_on_mac_dev_and_stores_light(qapp, window, build):
     try:
         assert w.accept(close=False)
         assert [label for label, _ in w.responses[0]] == ["System", "Light", "Dark"]
-        w.setOption([[("System", False), ("Light", True), ("Dark", False)]])
+        radios = w.inputs[0].widget.layout()
+        radios.itemAt(1).widget().setChecked(True)
+        assert w.accept(close=False)
+        w.set()
         assert window.series.getOption("theme") == "light"
     finally:
         dlg.deleteLater()
