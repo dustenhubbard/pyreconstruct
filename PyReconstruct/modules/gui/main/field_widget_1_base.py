@@ -464,16 +464,13 @@ class FieldWidgetBase:
 
     def heldTraces(self) -> list:
         """The traces a tool holds out of the shown section while it edits
-        them: the one Scissors picked up, until the cut ends or is
-        canceled. Still the section's for the ROI box."""
-        if not self.is_scissoring:
-            return []
-        # selected_trace from the pickup on; tracing_trace once it is set
-        held = []
-        for trace in (self.selected_trace, self.tracing_trace):
-            if isinstance(trace, Trace) and trace not in held:
-                held.append(trace)
-        return held
+        them: the one Scissors took out of its contour (selected_trace, set
+        before the pickup's first redraw), until the cut ends or is canceled.
+        Still the section's for the ROI box. tracing_trace is not one: it is
+        the palette's template until the pickup has drawn once."""
+        if self.is_scissoring and self.selected_type == "trace" and isinstance(self.selected_trace, Trace):
+            return [self.selected_trace]
+        return []
 
     def displayTform(self, snum : int):
         """The transform the field draws a section with: the shown section's

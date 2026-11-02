@@ -304,6 +304,44 @@ def test_a_scissors_pickup_keeps_following_an_object_on_one_section(
     assert notices == []
 
 
+def test_a_scissors_pickup_with_a_same_name_palette_trace_keeps_the_box(
+    mw, qapp, notices
+):
+    """The palette's template can share the object's name; only the trace
+    Scissors took out of the section counts, from the pickup's own redraw."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from test_roi_box import _pix
+    from PyReconstruct.modules.datatypes import Trace
+    field = mw.field
+    square = [(13.3, 23.5), (13.7, 23.5), (13.7, 23.9), (13.3, 23.9)]
+    assert field.newTrace(
+        square, Trace("solo", (0, 255, 0)), points_as_pix=False, reduce_points=False,
+    )
+    template = Trace("solo", (0, 255, 0))
+    template.points = [(-4.0, -4.0), (-2.0, -4.0), (-2.0, -2.0), (-4.0, -2.0)]
+    field.setTracingTrace(template)
+    _follow(mw, "solo", size=(1.0, 1.0))
+    center = field.roi_box_center
+    field.series.window = [12.5, 22.7, 2.0, 2.0]
+    field.generateView()
+
+    mw.mouse_palette.activateModeButton("Scissors")
+    p = _pix(field, 13.3, 23.7)
+    QTest.mousePress(field, Qt.LeftButton, Qt.NoModifier, p)
+
+    # the pickup's own redraw placed the box; nothing has drawn since
+    assert field.is_scissoring
+    assert field.roi_follow_name == "solo"
+    assert field.roi_box_center == pytest.approx(center)
+
+    QTest.mouseRelease(field, Qt.LeftButton, Qt.NoModifier, p)
+    mw.mouse_palette.activateModeButton("Pointer")
+    qapp.processEvents()
+    assert field.roi_box_center == pytest.approx(center)
+    assert notices == []
+
+
 def test_the_selected_trace_is_offered_to_follow(mw, qapp, monkeypatch):
     from PyReconstruct.modules.gui.main import field_widget_7_view as fwv
     field = mw.field
