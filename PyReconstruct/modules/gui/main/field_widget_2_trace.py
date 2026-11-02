@@ -607,6 +607,18 @@ class FieldWidgetTrace(FieldWidgetBase):
 
         if reduce_points:
 
+            # Centered resizes can translate pending screen points by half
+            # a pixel. The exterior grid needs integers, so retain those
+            # halves on a doubled grid and convert back after reduction.
+            point_scale = 1
+            if points_as_pix:
+                if any(x % 1 or y % 1 for x, y in trace_points):
+                    point_scale = 2
+                trace_points = [
+                    (round(x * point_scale), round(y * point_scale))
+                    for x, y in trace_points
+                ]
+
             if closed:
                 
                 trace_points = getExterior(trace_points)  # get exterior if closed (will reduce points)
@@ -614,6 +626,9 @@ class FieldWidgetTrace(FieldWidgetBase):
             else:
 
                 trace_points = reducePoints(trace_points, closed=False)  # only reduce points if trace is open
+
+            if point_scale != 1:
+                trace_points = [(x / point_scale, y / point_scale) for x, y in trace_points]
 
         # create the new trace
         new_trace = base_trace.copy()
