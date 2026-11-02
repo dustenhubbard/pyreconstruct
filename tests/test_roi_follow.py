@@ -414,6 +414,72 @@ def test_a_new_trace_inside_the_moved_box_stays_selected(mw, qapp, solo, notices
     assert notices == []
 
 
+@pytest.mark.parametrize("order", [(0.0, 1.0, -1.0), (1.0, -1.0, 0.0)])
+def test_a_paste_of_several_traces_keeps_each_one_inside_selected(mw, qapp, notices, order):
+    """Three squares pasted in any order: the box moves once the paste is
+    done, and the one that ends inside it stays selected."""
+    from PyReconstruct.modules.datatypes import Trace
+    field = mw.field
+    mw.series.setOption("auto_merge", False)
+    square = [(13.4, 23.6), (13.6, 23.6), (13.6, 23.8), (13.4, 23.8)]
+    field.newTrace(square, Trace("batch", (255, 0, 0)), points_as_pix=False, reduce_points=False)
+    mw.changeSection(53)
+    for dx in order:
+        field.newTrace(
+            [(x + dx, y) for x, y in square], Trace("batch", (255, 0, 0)),
+            points_as_pix=False, reduce_points=False,
+        )
+    field.section.selected_traces = list(field.section.contours["batch"])
+    field.copy()
+    assert len(field.clipboard) == 3
+    mw.changeSection(52)
+    _follow(mw, "batch")
+    field.series.window = [12.5, 22.7, 2.0, 2.0]
+    field.generateView()
+    field.section.selected_traces = []
+
+    field.paste()
+    qapp.processEvents()
+
+    traces = list(field.section.contours["batch"])
+    assert len(traces) == 4
+    assert field.roi_box_center == pytest.approx((13.5, 23.7))
+    inside = [t for t in traces[1:] if abs(t.getCentroid(field.section.tform)[0] - 13.5) < 0.01]
+    assert len(inside) == 1
+    assert inside[0] in field.section_layer.traces_in_view
+    assert inside[0] in field.section.selected_traces
+    assert all(field.inRoiBox(t) for t in field.section.selected_traces)
+    assert notices == []
+
+
+def test_a_grid_places_the_followed_box_once(mw, qapp, monkeypatch):
+    """A 20 by 20 grid of the followed object is one operation: the box is
+    placed once, from the finished grid, and every cell is drawn."""
+    from PyReconstruct.modules.calc import fieldPointToPixmap
+    from PyReconstruct.modules.datatypes import Trace
+    from PyReconstruct.modules.gui.main import field_widget_1_base as fwb
+    field = mw.field
+    mw.series.setOption("auto_merge", False)
+    mw.series.setOption("sampling_frame_grid", False)
+    _follow(mw, "d03p14", size=(1.0, 1.0))
+    center = field.roi_box_center
+    field.series.window = [center[0] - 1, center[1] - 1, 2.0, 2.0]
+    field.generateView()
+    template = Trace("d03p14", (255, 0, 0))
+    template.points = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+    p = fieldPointToPixmap(*center, field.series.window, field.pixmap_dim, field.section.mag)
+    calls = []
+    real = fwb.objectCenters
+    monkeypatch.setattr(fwb, "objectCenters", lambda *a, **k: calls.append(1) or real(*a, **k))
+
+    assert field.placeGrid(*p, template, 0.02, 0.02, 0.03, 0.03, 20, 20)
+
+    assert len(calls) == 1
+    traces = list(field.section.contours["d03p14"])
+    assert len(traces) == 401
+    assert all(t in field.section_layer.traces_in_view for t in traces)
+
+
 def test_a_borrowed_place_matches_its_source_under_a_nonuniform_alignment(mw, qapp, notices):
     """Two traces of different sizes, measured under a pinned identity
     alignment and drawn under one that scales x by 0.1 and y by 3: section

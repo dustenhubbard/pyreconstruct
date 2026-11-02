@@ -90,6 +90,13 @@ class FieldWidgetBase:
         # roi_follow_from names (the shown section when it has the object).
         self.roi_follow_name : str          = None
         self.roi_follow_from : int          = None
+        # The traces the selection rule last dropped (dropSelectedOutsideRoiBox),
+        # the traces made by the operation under way, and how deep the field
+        # interactions are nested (field_widget_2_trace.field_interaction)
+        self.roi_dropped : list             = []
+        self.new_traces : list              = []
+        self.interaction_depth : int        = 0
+        self.inner_modified : bool          = False
         # A drag in the ROI box mode, in field coordinates: where the press
         # was, and where the pointer is once the press has become a drag
         # (None until then, and no preview is drawn).
@@ -507,11 +514,18 @@ class FieldWidgetBase:
 
         A box that follows an object is placed first, from the shown
         section's traces as they are now, so a trace just drawn, pasted or
-        moved inside the box's new place stays selected.
+        moved inside the box's new place stays selected. While a field
+        interaction is under way (a paste, a grid, a cut), nothing is placed
+        or dropped: the interaction applies the rule once, when it is done.
 
             Returns:
                 (list): the traces that were deselected
         """
+        self.roi_dropped = []
+        if self.interaction_depth:
+            # a field interaction is under way; it applies the rule once it
+            # is done (field_widget_2_trace.field_interaction)
+            return []
         self.placeFollowedRoiBox()
         if self.roiBox() is None:
             return []
@@ -521,6 +535,7 @@ class FieldWidgetBase:
             return []
         dropped = [t for t in selected if t not in inside]
         self.section.selected_traces = inside
+        self.roi_dropped = dropped
         return dropped
 
     def focusHintText(self) -> str:

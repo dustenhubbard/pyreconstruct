@@ -86,6 +86,11 @@ class _Field:
         self.series_states = series_states
         self.focus_mode = focus_obj
         self.hide_trace_layer = False
+        # what a field interaction keeps for the ROI box's selection rule
+        self.interaction_depth = 0
+        self.inner_modified = False
+        self.new_traces = []
+        self.roi_dropped = []
 
         # single-click, left button, on a trace
         self.lclick = True
@@ -145,6 +150,9 @@ class _Field:
 
     def update(self, *args, **kwargs):
         pass
+
+    def dropSelectedOutsideRoiBox(self):
+        return []  # no ROI box here
 
 
 def _focus_edit_click(field, trace):
