@@ -1,4 +1,5 @@
-"""Where the ROI mode box sits while it follows an object.
+"""Where the ROI mode box sits while it follows an object, and which objects
+it keeps whole.
 
 The box keeps its size and is centered on the object, section by section. The
 object's place on a section comes from the series data, not the section: each
@@ -23,6 +24,8 @@ On a section without the object, the box takes its place on the nearest
 section with it, ties going to the earlier section. The zarr crop uses the
 same rule for a section without its object (backend/crop_zarr.py, planCrop).
 """
+import itertools
+
 import numpy as np
 
 from PyReconstruct.modules.calc import traceGeometry
@@ -100,7 +103,21 @@ def objectExtents(series, name : str, display_tform, moves : dict = None):
         cx, cy, r = arr[:, 1], arr[:, 2], arr[:, 3]
         tkeys = arr[:, 4].astype(int)
 
-    # one move per (section, measured transform) pair
+    return (snums, *displaySquares(snums, cx, cy, r, tkeys, measured, display_tform, moves))
+
+
+def displaySquares(snums, cx, cy, r, tkeys, measured, display_tform, moves=None):
+    """Move measured centroids and radii into displayed squares, one affine
+    per (section, measured transform) pair.
+
+        Params:
+            snums, cx, cy, r, tkeys: numpy arrays, one entry per trace; tkeys
+                index measured
+            measured (list): the transforms the numbers were measured with
+            display_tform, moves: as in objectExtents
+        Returns:
+            (tuple): numpy arrays xmin, ymin, xmax, ymax
+    """
     if moves is None:
         moves = {}
     pairs, which = np.unique(np.stack([snums, tkeys], axis=1), axis=0, return_inverse=True)
@@ -117,7 +134,7 @@ def objectExtents(series, name : str, display_tform, moves : dict = None):
     x = a * cx + b * cy + c
     y = d * cx + e * cy + f
     r = r * stretch
-    return snums, x - r, y - r, x + r, y + r
+    return x - r, y - r, x + r, y + r
 
 
 def sectionSquares(section, name : str, held=()):
@@ -211,3 +228,253 @@ def followCenter(centers : dict, snum : int):
     if near is None:
         return None
     return centers[near], near
+
+
+class SeriesSquares:
+    """Every trace's centroid, radius and measured transform, with its
+    object, grouped by section: what keeping objects whole tests against the
+    ROI box (KeepWhole in the field).
+
+    Built once from the series data (fromSeries). After an edit on the shown
+    section, the edited objects are read again from the loaded section
+    (setObjects), or the whole section when its transform moved
+    (setSection), so an edit costs what it changed, not the series.
+
+    generation is unique to each instance, never reused; version counts its
+    changes, and changes lists them (version after, section, the object names
+    or None for the whole section), so a result found at an earlier version
+    can be brought up to date (KeepWhole in the field, roiKeepSections).
+    """
+
+    _generations = itertools.count(1)
+
+    def __init__(self):
+        self.names, self._name_ix = [], {}
+        self.measured, self._tform_ix = [], {}
+        # section number -> numpy arrays (owner, cx, cy, r, tkey); owner
+        # indexes names, tkey indexes measured
+        self.sections = {}
+        self.generation = next(SeriesSquares._generations)
+        self.version = 0
+        self.changes = []
+
+    def _owner(self, name):
+        i = self._name_ix.get(name)
+        if i is None:
+            i = self._name_ix[name] = len(self.names)
+            self.names.append(name)
+        return i
+
+    def _tkey(self, tform):
+        i = self._tform_ix.get(id(tform))
+        if i is None:
+            i = self._tform_ix[id(tform)] = len(self.measured)
+            self.measured.append(tform)
+        return i
+
+    @classmethod
+    def fromSeries(cls, series):
+        """Read every object's traces from the series data. The traces an
+        open read into columns are taken a block at a time and the built ones
+        in one walk, so many objects cost one pass of array work."""
+        self = cls()
+        parts = []
+        blocks, built = {}, []
+        for name, obj_data in series.data["objects"].items():
+            rows = obj_data.columnRows()
+            if rows is not None:
+                columns, start, stop = rows
+                if start < stop:
+                    blocks.setdefault(id(columns), (columns, []))[1].append((start, stop, name))
+            elif not obj_data.isEmpty():
+                built.append(name)
+
+        for columns, runs in blocks.values():
+            runs.sort()
+            arrays = columns.arrays
+            size = len(arrays["snum"])
+            owner = np.full(size, -1, dtype=int)
+            for start, stop, name in runs:
+                owner[start:stop] = self._owner(name)
+            keep = owner >= 0  # rows of no run are not read
+            tmap = np.asarray([self._tkey(t) for t in columns.tforms], dtype=int)
+            tk = np.asarray(arrays["tform"], dtype=int)
+            parts.append((
+                owner[keep],
+                np.asarray(arrays["snum"], dtype=int)[keep],
+                np.asarray(arrays["cx"], dtype=float)[keep],
+                np.asarray(arrays["cy"], dtype=float)[keep],
+                np.asarray(arrays["radius"], dtype=float)[keep],
+                tmap[tk[keep]] if len(tmap) else tk[keep],
+            ))
+
+        items = []
+        for name in built:
+            i = self._owner(name)
+            for snum, tds in series.data["objects"][name].traces.items():
+                for td in tds:
+                    cx, cy = td.centroid
+                    items.append((i, snum, cx, cy, td.radius, self._tkey(getattr(td, "_tform", None))))
+        if items:
+            arr = np.asarray(items, dtype=float)
+            parts.append((
+                arr[:, 0].astype(int), arr[:, 1].astype(int),
+                arr[:, 2], arr[:, 3], arr[:, 4], arr[:, 5].astype(int),
+            ))
+
+        if parts:
+            owner, snums, cx, cy, r, tk = (np.concatenate(col) for col in zip(*parts))
+            order = np.argsort(snums, kind="stable")
+            owner, snums, cx, cy, r, tk = (a[order] for a in (owner, snums, cx, cy, r, tk))
+            cuts = np.flatnonzero(np.diff(snums)) + 1
+            for chunk in zip(*(np.split(a, cuts) for a in (owner, snums, cx, cy, r, tk))):
+                self.sections[int(chunk[1][0])] = (chunk[0], chunk[2], chunk[3], chunk[4], chunk[5])
+        return self
+
+    def setSection(self, section):
+        """Read one loaded section's traces again, as the field draws them:
+        the same centroid and radius the series data keeps (traceGeometry),
+        under the section's own transform."""
+        tform = section.tform
+        tkey = self._tkey(tform)
+        rows = []
+        for trace in section.tracesAsList():
+            if not trace.points:
+                continue
+            pts = tform.mapPointsArray(trace.points)
+            _, _, (cx, cy), r = traceGeometry(pts, trace.closed)
+            rows.append((self._owner(trace.name), cx, cy, r))
+        if rows:
+            arr = np.asarray(rows, dtype=float)
+            self.sections[section.n] = (
+                arr[:, 0].astype(int), arr[:, 1], arr[:, 2], arr[:, 3],
+                np.full(len(arr), tkey, dtype=int),
+            )
+        else:
+            self.sections.pop(section.n, None)
+        self.version += 1
+        self.changes.append((self.version, section.n, None))
+
+    def setObjects(self, section, names):
+        """Read some objects' traces on one loaded section again, as
+        setSection does, leaving the section's other rows as they are."""
+        names = frozenset(names)
+        tform = section.tform
+        tkey = self._tkey(tform)
+        drop = [self._name_ix[name] for name in names if name in self._name_ix]
+        parts = []
+        rows = self.sections.get(section.n)
+        if rows is not None:
+            keep = ~np.isin(rows[0], drop) if drop else np.ones(len(rows[0]), dtype=bool)
+            parts.append(tuple(a[keep] for a in rows))
+        new = []
+        for name in names:
+            for trace in section.contours.get(name, ()):
+                if not trace.points:
+                    continue
+                pts = tform.mapPointsArray(trace.points)
+                _, _, (cx, cy), r = traceGeometry(pts, trace.closed)
+                new.append((self._owner(name), cx, cy, r))
+        if new:
+            arr = np.asarray(new, dtype=float)
+            parts.append((
+                arr[:, 0].astype(int), arr[:, 1], arr[:, 2], arr[:, 3],
+                np.full(len(arr), tkey, dtype=int),
+            ))
+        if parts:
+            merged = tuple(np.concatenate(col) for col in zip(*parts))
+            if len(merged[0]):
+                self.sections[section.n] = merged
+            else:
+                self.sections.pop(section.n, None)
+        self.version += 1
+        self.changes.append((self.version, section.n, names))
+
+    def touches(self, snum : int, name : str, bounds : tuple, display) -> bool:
+        """Whether one object has a trace on one section that touches a box."""
+        i = self._name_ix.get(name)
+        rows = self.sections.get(snum)
+        if i is None or rows is None or bounds is None:
+            return False
+        on = rows[0] == i
+        if not on.any():
+            return False
+        owner, cx, cy, r, tk = (a[on] for a in rows)
+        xmin, ymin, xmax, ymax = displaySquares(
+            np.full(len(owner), snum, dtype=int), cx, cy, r, tk,
+            self.measured, lambda s: display, {},
+        )
+        return bool((
+            (xmin <= bounds[2]) & (xmax >= bounds[0])
+            & (ymin <= bounds[3]) & (ymax >= bounds[1])
+        ).any())
+
+    def _touchingOn(self, snum, bounds, display, moves):
+        """The owners of the rows on one section whose squares touch a box."""
+        rows = self.sections.get(snum)
+        if rows is None or bounds is None:
+            return np.empty(0, dtype=int)
+        owner, cx, cy, r, tk = rows
+        xmin, ymin, xmax, ymax = displaySquares(
+            np.full(len(owner), snum, dtype=int), cx, cy, r, tk,
+            self.measured, lambda s: display, moves,
+        )
+        hit = (
+            (xmin <= bounds[2]) & (xmax >= bounds[0])
+            & (ymin <= bounds[3]) & (ymax >= bounds[1])
+        )
+        return owner[hit]
+
+    def touching(self, boxes : dict, display_tform) -> dict:
+        """For each object that touches the box somewhere, the sections where
+        it does.
+
+            Params:
+                boxes (dict): section number -> (xmin, ymin, xmax, ymax)
+                display_tform (callable): as in objectExtents
+            Returns:
+                (dict): object name -> frozenset of section numbers
+        """
+        found, moves = {}, {}
+        for snum, bounds in boxes.items():
+            for i in set(self._touchingOn(snum, bounds, display_tform(snum), moves).tolist()):
+                found.setdefault(self.names[i], set()).add(snum)
+        return {name: frozenset(snums) for name, snums in found.items()}
+
+    def touchingOn(self, snum : int, bounds : tuple, display, exclude=()) -> set:
+        """The objects with a trace on one section that touches a box, under
+        the given drawn transform, leaving out the names in exclude."""
+        names = {self.names[i] for i in self._touchingOn(snum, bounds, display, {}).tolist()}
+        return names - set(exclude)
+
+
+def touchingSections(series, boxes : dict, display_tform) -> dict:
+    """The sections where each object has a trace that touches the ROI box,
+    for keeping whole every object that crosses the box's edge, from the
+    series data (SeriesSquares).
+
+    A trace counts by its square in displayed coordinates (objectExtents:
+    its centroid moved to where the field draws it, plus and minus its
+    radius grown by that move's stretch), so a trace near the box may count
+    when its outline does not reach it; it never misses one that does.
+
+        Params:
+            series (Series): the series
+            boxes (dict): section number -> the box there as (xmin, ymin,
+                xmax, ymax); a section not in it has no box
+            display_tform (callable): as in objectExtents
+        Returns:
+            (dict): object name -> frozenset of section numbers, for the
+                objects that touch the box somewhere
+    """
+    return SeriesSquares.fromSeries(series).touching(boxes, display_tform)
+
+
+def objectsTouching(series, boxes : dict, display_tform) -> frozenset:
+    """The objects with a trace that touches the ROI box on its section
+    (touchingSections).
+
+        Returns:
+            (frozenset): the object names
+    """
+    return frozenset(touchingSections(series, boxes, display_tform))
