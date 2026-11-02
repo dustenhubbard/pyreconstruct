@@ -257,9 +257,16 @@ class ImageLayer():
 
         # get the applicable zarr scale if using zarr file for images
         if self.is_zarr_file:
+            a, b, _, d, e, _ = tform._affine()
+            sx, sy = self.scaling, pmh * mag / wh
+            # The largest singular value is the most screen pixels per source
+            # pixel in any direction, including rotated or sheared alignments.
+            screen_scale = np.linalg.svd(
+                [[sx * a, sx * b], [sy * d, sy * e]], compute_uv=False
+            )[0]
             scale_level = self.scales[-1]
             for scale in self.scales[:-1]:
-                if (1/self.scaling) > scale:
+                if screen_scale * scale < 1:
                     scale_level = scale
                     break
             if self.selected_scale != scale_level:
