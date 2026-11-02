@@ -812,6 +812,11 @@ class FieldWidgetMouse(FieldWidgetData):
 
         ## User is not line tracing
         elif not self.is_line_tracing:
+            if (
+                click_pending and self.mouse_mode == CLOSEDTRACE
+                and self.closed_trace_shape in ("rect", "circle")
+            ):
+                self.pencilMove(event)
             self.pencilRelease(event)
 
     def pencilMove(self, event):

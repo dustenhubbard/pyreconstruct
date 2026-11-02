@@ -144,6 +144,68 @@ def test_quick_combo_drag_draws_trace(field, mode):
     assert trace.closed is (mode == CLOSEDTRACE)
 
 
+@pytest.mark.parametrize("shape", ["rect", "circle"])
+@pytest.mark.parametrize("path", ["release-only", "small-move", "final-move"])
+def test_shape_drag_uses_release_position(field, shape, path):
+    field.setMouseMode(CLOSEDTRACE)
+    field.closed_trace_shape = shape
+    field.series.setOption("trace_mode", "combo")
+    field.series.setOption("roll_average", False)
+    field.series.setOption("auto_merge", False)
+    field.tracing_trace = Trace("quick_shape", (255, 0, 255))
+    start, end = QPoint(200, 200), QPoint(250, 230)
+    scale = field.series.screen_mag
+
+    _mouse(field, QEvent.MouseButtonPress, start)
+    if path == "small-move":
+        _mouse(field, QEvent.MouseMove, QPoint(201, 201))
+    elif path == "final-move":
+        _mouse(field, QEvent.MouseMove, end)
+    _mouse(field, QEvent.MouseButtonRelease, end)
+
+    assert not field.is_line_tracing
+    (trace,) = field.section.contours["quick_shape"]
+    xs, ys = zip(*trace.points)
+    assert max(xs) - min(xs) == pytest.approx(50 * scale, abs=1e-6)
+    assert max(ys) - min(ys) == pytest.approx(30 * scale, abs=1e-6)
+    assert trace.closed
+    assert field.current_trace == []
+
+
+@pytest.mark.parametrize("shape", ["rect", "circle"])
+@pytest.mark.parametrize("elapsed", [0.05, 0.5], ids=["quick", "slow"])
+def test_shape_click_with_drift_starts_line_tracing(field, shape, elapsed):
+    field.setMouseMode(CLOSEDTRACE)
+    field.closed_trace_shape = shape
+    field.series.setOption("trace_mode", "combo")
+    field.tracing_trace = Trace("shape_click", (255, 0, 255))
+
+    _drag(field, QPoint(200, 200), [QPoint(201, 201)], elapsed)
+
+    assert field.is_line_tracing
+    assert len(field.current_trace) == 1
+    assert "shape_click" not in field.section.contours
+
+
+@pytest.mark.parametrize("shape", ["rect", "circle"])
+@pytest.mark.parametrize("trace_mode", ["combo", "poly"])
+def test_shape_polyline_adds_only_press_positions(field, shape, trace_mode):
+    field.setMouseMode(CLOSEDTRACE)
+    field.closed_trace_shape = shape
+    field.series.setOption("trace_mode", trace_mode)
+    field.tracing_trace = Trace("shape_line", (255, 0, 255))
+    start = QPoint(200, 200)
+    _mouse(field, QEvent.MouseButtonPress, start)
+    _mouse(field, QEvent.MouseButtonRelease, start)
+    _mouse(field, QEvent.MouseButtonPress, QPoint(250, 200))
+    _mouse(field, QEvent.MouseMove, QPoint(250, 230))
+    _mouse(field, QEvent.MouseButtonRelease, QPoint(260, 240))
+
+    assert field.is_line_tracing
+    assert field.current_trace == [(200, 200), (250, 200)]
+    assert "shape_line" not in field.section.contours
+
+
 @pytest.mark.parametrize("elapsed", [0.05, 0.5], ids=["quick", "slow"])
 def test_stamp_drag_sets_radius(field, elapsed):
     field.setMouseMode(STAMP)
