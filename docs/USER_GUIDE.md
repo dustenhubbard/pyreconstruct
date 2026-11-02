@@ -579,8 +579,8 @@ Right-click either button to choose the drawing **mode**:
 
 For **Closed Trace** you can also pick a fixed **shape** (freehand **Trace**,
 **Rectangle**, or **Ellipse**; drag to size) and optionally auto-merge new traces
-into selected same-named traces, or apply a rolling-average smooth while
-scribbling.
+into selected same-named traces with the same sign, or apply a rolling-average
+smooth while scribbling.
 
 ![A new closed trace, drawn freehand in orange beside the star with the Closed Trace tool.](assets/images/user-guide/06-closed-trace-drawn.png)
 
@@ -678,8 +678,9 @@ traces are selected and **Edit z-trace attributes...** when z-traces are, so the
 most-used edit is one click away above the per-entity submenus.
 
 - **Edit attributes** (`Ctrl+E`): change name, color, tags, and fill mode.
-- **Merge traces** (`Shift+M`): merge the exteriors of selected traces (they must
-  share a name).
+- **Merge traces** (`Shift+M`): merge the exteriors of selected closed traces
+  with the same name and sign. A selection containing both positive and negative
+  traces is left unchanged.
 - **Hide** (`Shift+H`) / **Unhide all** (`Ctrl+U`). Hidden traces can't be edited
   until unhidden.
 - **Make negative / positive**. Negative traces subtract from (cut into) the area
