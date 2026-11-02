@@ -253,6 +253,9 @@ class ImageLayer():
         tform = self.section.tform
         mag = self.section.mag
         wx, wy, ww, wh = tuple(self.series.window)
+        if pmw <= 0 or pmh <= 0 or ww <= 0 or wh <= 0:
+            return _blank(pmw, pmh)
+
         self.scaling = pmw / (ww / mag)
 
         # get the applicable zarr scale if using zarr file for images
@@ -277,9 +280,6 @@ class ImageLayer():
 
         if get_crop_only:  # only for use with brightness/contrast functions
             return self._cropWindow(tform, mag, scale_level)
-
-        if pmw <= 0 or pmh <= 0 or ww <= 0 or wh <= 0:
-            return _blank(pmw, pmh)
 
         image_layer = self._sampleWindow(pmw, pmh, tform, mag, scale_level)
 

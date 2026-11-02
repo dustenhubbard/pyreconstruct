@@ -83,3 +83,16 @@ def test_zoom_changes_still_use_coarser_levels(checker_layer, alignment_scale):
         assert gray.shape == (size, size)
         if expected_scale > 1:
             np.testing.assert_array_equal(gray, np.full((size, size), 127, dtype="u1"))
+
+
+@pytest.mark.parametrize(
+    "window",
+    [[0, 0, 0, 64], [0, 0, 64, 0], [0, 0, -1, 64], [0, 0, 64, -1]],
+    ids=["zero-width", "zero-height", "negative-width", "negative-height"],
+)
+def test_nonpositive_window_returns_blank_image(checker_layer, window):
+    layer, _ = checker_layer
+
+    gray = layer.generateImageArray((64, 64), window, bc=False)
+
+    np.testing.assert_array_equal(gray, np.zeros((64, 64), dtype="u1"))
