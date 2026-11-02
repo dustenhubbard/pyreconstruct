@@ -202,10 +202,9 @@ def show_error_report(
 
     A report suppressed here is not lost *when it came from the hook*:
     ``customExcepthook`` writes every occurrence to the log file before it gets
-    this far, and ``Help > View log file`` reads it back. The other two callers
-    do no logging of their own, so a report suppressed for them leaves no record
-    -- reachable only from inside an open report window, which is application
-    modal.
+    this far, and ``Help > Diagnostics > View log file`` reads it back. The other
+    two callers do no logging of their own, so a report suppressed for them leaves
+    no record. That can happen only inside an open, application-modal report window.
     """
     global _showing_report
 
@@ -382,7 +381,7 @@ def customExcepthook(exctype, value, tb):
     windows would still leave the user closing them forever; what they need is
     for the app to say this once and then let them save their work and quit.
     Every occurrence is still written to the log file below, so nothing about the
-    repetition is lost -- ``Help > View log file`` shows it.
+    repetition is lost -- ``Help > Diagnostics > View log file`` shows it.
 
     A fault is only marked reported once a window has actually opened for it. A
     report can be suppressed here without being shown, because
@@ -398,8 +397,8 @@ def customExcepthook(exctype, value, tb):
     report = build_error_report(exctype, value, tb)
 
     # Also record it in the log file, so it survives after the dialog is closed
-    # and can be pulled up via Help > View log file (best-effort). Every
-    # occurrence is logged, including the ones whose window is suppressed below.
+    # and can be pulled up via Help > Diagnostics > View log file (best-effort).
+    # Every occurrence is logged, including those whose window is suppressed below.
     try:
         from PyReconstruct.modules.backend.func.logging_setup import log_file_path
         with open(log_file_path(), "a", encoding="utf-8", errors="replace") as f:
@@ -420,7 +419,8 @@ def customExcepthook(exctype, value, tb):
     lead = (
         f"<b>An error occurred:</b><br><br>{message}<br><br>"
         "If this error happens again it will be written to the log file "
-        "(<b>Help &gt; View log file</b>) instead of opening another window."
+        "(<b>Help &gt; Diagnostics &gt; View log file</b>) "
+        "instead of opening another window."
     )
     # Only spend this fault's one window once one has actually opened.
     if show_error_report(_standard_summary(lead, report), report) and signature is not None:

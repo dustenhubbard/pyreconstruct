@@ -1,8 +1,14 @@
 """Help submenus retain their commands and open the public reference pages."""
 
-import pytest
+import sys
 
+import pytest
+from PySide6.QtGui import QTextDocument
+from PySide6.QtWidgets import QLabel
+
+from PyReconstruct.modules.backend.func import logging_setup
 from PyReconstruct.modules.gui.main.menu_search import collect_menu_commands
+from PyReconstruct.modules.gui.utils import errors
 
 pytestmark = pytest.mark.gui
 
@@ -50,6 +56,39 @@ def test_diagnostics_commands_and_search_paths(main_window, monkeypatch):
         ("viewLogFile", ()),
         ("openLogFolder", ()),
     ]
+
+
+def test_exception_dialog_log_path_matches_live_menu(
+    main_window, qtbot, monkeypatch, tmp_path,
+):
+    summaries = []
+
+    def capture_dialog(dialog):
+        qtbot.addWidget(dialog)
+        for label in dialog.findChildren(QLabel):
+            document = QTextDocument()
+            document.setHtml(label.text())
+            summaries.append(document.toPlainText())
+        return 0
+
+    monkeypatch.setattr(errors.ErrorReportDialog, "exec", capture_dialog)
+    monkeypatch.setattr(errors, "_reported_signatures", set())
+    monkeypatch.setattr(errors, "_showing_report", False)
+    monkeypatch.setattr(sys, "__excepthook__", lambda *args: None)
+    monkeypatch.setattr(logging_setup, "log_file_path", lambda: tmp_path / "error.log")
+
+    try:
+        raise RuntimeError("Log breadcrumb regression")
+    except RuntimeError:
+        errors.customExcepthook(*sys.exc_info())
+
+    paths = [
+        path for path, _, _, action in collect_menu_commands(main_window.menubar)
+        if action == main_window.viewlog_act
+    ]
+    assert paths == ["Help > Diagnostics > View log file"]
+    assert len(summaries) == 1
+    assert f"({paths[0]}) instead of opening another window." in summaries[0]
 
 
 @pytest.mark.parametrize("label,url", [
