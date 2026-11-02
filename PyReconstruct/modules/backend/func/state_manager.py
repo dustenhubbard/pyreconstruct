@@ -1382,8 +1382,8 @@ class SectionStep:
 
 def _changedObjects(section : Section) -> set:
     """The object names a section's tracking says changed: all of them when
-    the transform scaled, as SeriesData.updateSection reads it."""
-    if section.tformsModified(scaling_only=True):
+    a transform changed, as SeriesData.updateSection reads it."""
+    if section.tformsModified():
         return set(section.contours.keys())
     return set(section.getAllModifiedNames())
 

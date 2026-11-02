@@ -426,7 +426,7 @@ class TableManager():
         """
         if obj_names is None:
             # if the transform was modified, update all traces on section
-            if self.section.tformsModified(scaling_only=True):
+            if self.section.tformsModified():
                 obj_names = self.section.contours.keys()
             else:
                 obj_names = self.section.getAllModifiedNames()

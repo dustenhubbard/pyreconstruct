@@ -152,10 +152,7 @@ def export3DData(series: Series, obj_names: list, output_fp: str, notify_user: b
 
                 obj_data = meshes[obj]
                 obj_type = type(obj_data).__name__.lower()
-                area, vol = obj_data.measure()
-
-                surface_area = round(area, 5)
-                volume = round(vol, 5)
+                surface_area, volume = obj_data.measure()
 
                 csv_str += f"{series_code}{sep}{obj}{sep}{obj_type}{sep}{surface_area}{sep}{volume}\n"
 
