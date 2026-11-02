@@ -781,13 +781,15 @@ def _atomicWrite(fp : str, data):
         mode = None
 
     def opener(path, flags):
-        return os.open(path, flags, 0o666 if mode is None else mode)
+        # Windows rejects read-only destinations. Keep the temp writable so
+        # failure cleanup can delete it without changing either file's mode.
+        return os.open(path, flags, 0o666 if mode is None or os.name == "nt" else mode)
 
     folder = os.path.dirname(fp)
     while True:
         tmp_fp = os.path.join(folder, f".save-{secrets.token_hex(3)}.tmp")
         try:
-            # "x" is O_EXCL; replacements are restricted from creation.
+            # "x" is O_EXCL; POSIX replacements are restricted from creation.
             f = open(tmp_fp, "xb", opener=opener)
             break
         except FileExistsError:
@@ -796,7 +798,6 @@ def _atomicWrite(fp : str, data):
         with f:
             if mode is not None and os.name == "posix":
                 # Restore bits masked by umask without resolving the path again.
-                # On Windows, os.open already applies the read-only mode bit.
                 os.fchmod(f.fileno(), mode)
             if callable(data):
                 data(f)
