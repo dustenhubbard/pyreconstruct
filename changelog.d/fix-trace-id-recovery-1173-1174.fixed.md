@@ -1,0 +1,1 @@
+- **Series with invalid trace IDs still open with every trace intact.** PyReconstruct derives a replacement ID when the stored value is invalid. Duplicate IDs produce a warning in the log with the object name, section, and trace number.
