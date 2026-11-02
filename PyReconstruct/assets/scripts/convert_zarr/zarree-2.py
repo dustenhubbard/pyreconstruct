@@ -491,8 +491,12 @@ if __name__ == "__main__":
 
     if create_new:
 
-        zg = zarr.group(zarr_fp, overwrite=True)
-        zg.create_group("scale_1")
+        if os.path.lexists(zarr_fp):
+            raise SystemExit(
+                f"The output path already exists: {zarr_fp}\n"
+                "Choose a new path for the scaled images."
+            )
+        images = image_filenames(img_dir)
         message = "Converting to zarr now..."
 
     else:
@@ -502,9 +506,7 @@ if __name__ == "__main__":
 
     print(message, flush=True)
 
-    if create_new:
-        images = image_filenames(img_dir)
-    else:
+    if not create_new:
         unfinished = unfinished_arrays(zg, "scale_1")
         if unfinished:
             raise Exception(
@@ -519,8 +521,21 @@ if __name__ == "__main__":
     # no two images may share an array path (see check_array_paths)
     check_array_paths(images)
 
+    if create_new:
+        for filename in images:
+            img_fp = os.path.join(img_dir, filename)
+            if cv2.imread(img_fp, cv2.IMREAD_GRAYSCALE) is None:
+                raise Exception(f"{filename} is not an image file.")
+
     # fail fast if the target volume cannot hold the new scales
     check_disk_space(images)
+
+    if create_new:
+        # Claim an unused path after validation. mkdir also refuses a path
+        # another conversion created while these images were checked.
+        os.mkdir(zarr_fp)
+        zg = zarr.group(zarr_fp, overwrite=False)
+        zg.create_group("scale_1")
 
     # make the scale groups the first image needs; a worker adds any group a
     # larger image needs (see require_scale_group)
