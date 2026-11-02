@@ -121,18 +121,30 @@ def test_group_and_tag_filters_intersect_but_each_accepts_any_value(filtered_lis
     assert filtered_list.getSelected(single=True) == expected
 
 
-def test_invalid_regex_preserves_the_last_working_filter(filtered_list, gui_dialogs):
+@pytest.mark.parametrize(
+    ("pattern", "message"),
+    [
+        pytest.param("[", "unterminated character set", id="syntax"),
+        pytest.param("a{4294967295}", "the repetition number is too large", id="overflow"),
+        pytest.param(
+            "(" * 600 + "a" + ")" * 600,
+            "maximum recursion depth exceeded",
+            id="nesting",
+        ),
+    ],
+)
+def test_invalid_regex_preserves_the_last_working_filter(filtered_list, gui_dialogs, pattern, message):
     respond(filtered_list, gui_dialogs, "setREFilter", (["cell10"],))
     filtered_list.table.selectRow(0)
 
-    respond(filtered_list, gui_dialogs, "setREFilter", (["cell#", "["],))
+    respond(filtered_list, gui_dialogs, "setREFilter", (["cell#", pattern],))
 
     assert names(filtered_list) == ["cell10"]
     assert filtered_list.re_filters == {"cell10"}
     expected = "cell10" if filtered_list.name == "object" else ("cell10", 0)
     assert filtered_list.getSelected(single=True) == expected
     assert len(gui_dialogs.notices) == 1
-    assert gui_dialogs.notices[0].startswith("Invalid regex filter:")
+    assert gui_dialogs.notices[0].startswith(f"Invalid regex filter: {message}")
     respond(filtered_list, gui_dialogs, "setREFilter", (["cell20"],))
     assert names(filtered_list) == ["cell20"]
 
