@@ -1,4 +1,5 @@
 import os
+import csv
 import errno
 import gc
 import hashlib
@@ -13,6 +14,7 @@ from datetime import datetime, timezone
 from contextlib import contextmanager
 from copy import copy, deepcopy
 from pathlib import Path
+from math import isfinite
 from typing import Optional, Union
 
 from .log import LogSet, LogSetPair, LOG_READ_ERRORS, LOG_WRITE_ERRORS
@@ -6609,21 +6611,18 @@ class Series():
         if palette_name is None:
             palette_name = self.palette_index[0]
         
-        traces = self.palette_traces[palette_name].copy()
-        csv_str = "Name,Color,Fill,Tags,X,Y\n"
-
-        for trace in traces:
-            trace : Trace
-            name = trace.name
-            color = " ".join(str(n) for n in trace.color)
-            fill = " ".join(trace.fill_mode)
-            tags = " ".join(trace.tags)
-            x = " ".join(str(x) for x, y in trace.points)
-            y = " ".join(str(y) for x, y in trace.points)
-            csv_str += ",".join([name, color, fill, tags, x, y]) + "\n"
-        
-        with open(fp, "w", encoding="utf-8", errors=EXPORT_ERRORS) as f:
-            f.write(csv_str)
+        with open(fp, "w", newline="", encoding="utf-8", errors=EXPORT_ERRORS) as f:
+            writer = csv.writer(f)
+            writer.writerow(["Name", "Color", "Fill", "TagsJSON", "X", "Y"])
+            for trace in self.palette_traces[palette_name]:
+                writer.writerow([
+                    trace.name,
+                    " ".join(str(n) for n in trace.color),
+                    " ".join(trace.fill_mode),
+                    json.dumps(sorted(trace.tags)),
+                    " ".join(str(x) for x, y in trace.points),
+                    " ".join(str(y) for x, y in trace.points),
+                ])
     
     def dropEmptyPalettes(self):
         """Remove every palette that has no buttons.
@@ -6667,27 +6666,47 @@ class Series():
         # errors="replace": a palette CSV exported by an older build on a
         # non-UTF-8 locale is decoded leniently rather than crashing the import
         # (mirrors getFullHistory's log reader); new exports are always UTF-8.
-        with open(fp, "r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()[1:]
-        
         trace_list = []
+        with open(fp, "r", newline="", encoding="utf-8", errors="replace") as f:
+            reader = csv.reader(f, strict=True)
+            header_lines = 0
+            field_limit = csv.field_size_limit()
+            try:
+                csv.field_size_limit(max(field_limit, os.fstat(f.fileno()).st_size))
+                header = next(reader, [])
+                json_tags = len(header) == 6 and header[3] == "TagsJSON"
+                header_lines = reader.line_num
+                # Legacy exports wrote quotes literally, without CSV escaping.
+                reader = csv.reader(
+                    f, strict=True,
+                    quoting=csv.QUOTE_MINIMAL if json_tags else csv.QUOTE_NONE,
+                )
+                for row in reader:
+                    if not row or (len(row) == 1 and not row[0].strip()):
+                        continue
+                    if len(row) != 6:
+                        raise ValueError("Expected six columns.")
+                    name, color_text, fill_text, tags_text, x_text, y_text = row
+                    color = tuple(int(n) for n in color_text.split())
+                    fill = tuple(fill_text.split())
+                    tags = json.loads(tags_text) if json_tags else tags_text.split()
+                    if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
+                        raise ValueError("Tags must be a list of strings.")
+                    x = [float(n) for n in x_text.split()]
+                    y = [float(n) for n in y_text.split()]
+                    if not x or len(x) != len(y) or not all(isfinite(n) for n in x + y):
+                        raise ValueError("Expected matching, finite X and Y coordinates.")
 
-        for line in lines:
-            if not line.strip():
-                continue
-            l = line.split(",")
-            name = l[0]
-            color = tuple(int(n) for n in l[1].split())
-            fill = tuple(l[2].split())
-            tags = set(l[3].split())
-            x = [float(n) for n in l[4].split()]
-            y = [float(n) for n in l[5].split()]
-
-            t = Trace(name, color)
-            t.fill_mode = fill
-            t.tags = tags
-            t.points = list(zip(x, y))
-            trace_list.append(t)
+                    t = Trace(name, color)
+                    t.fill_mode = fill
+                    t.tags = set(tags)
+                    t.points = list(zip(x, y))
+                    trace_list.append(t)
+            except (ValueError, csv.Error) as exc:
+                line = header_lines + reader.line_num
+                raise ValueError(f"Invalid palette CSV at line {line}: {exc}") from exc
+            finally:
+                csv.field_size_limit(field_limit)
         
         # an empty palette has no button to select
         if not trace_list:
