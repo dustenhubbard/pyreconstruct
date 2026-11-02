@@ -16,7 +16,7 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QLineEdit, QMessageBox
 
 from conftest import clear_latched_modifiers, menu_leaf_paths
 from PyReconstruct.modules.backend.view.frame_render import FrameLayers, renderFrame
-from PyReconstruct.modules.datatypes import Flag, Transform, Ztrace
+from PyReconstruct.modules.datatypes import Flag, Trace, Transform, Ztrace
 from PyReconstruct.modules.gui.dialog import FileDialog
 from PyReconstruct.modules.gui.dialog.shortcuts import ShortcutsDialog
 from PyReconstruct.modules.gui.main.figure_capture import SHAPES
@@ -380,7 +380,8 @@ def test_native_preserves_finest_aligned_detail(capture, transform, finest_scale
     ("flags", "unresolved", True),
     ("ztraces", "none", False),
 ])
-def test_capture_includes_layers_hidden_in_field(capture, layer, flag_mode, resolved):
+@pytest.mark.parametrize("focus", [False, True])
+def test_capture_includes_layers_hidden_in_field(capture, layer, flag_mode, resolved, focus):
     field = capture.field
     x, y, width, height = capture.frameWindow()
     field.section.flags = [Flag("capture", x + width / 2, y + height / 2,
@@ -388,6 +389,10 @@ def test_capture_includes_layers_hidden_in_field(capture, layer, flag_mode, reso
     field.series.ztraces = {"capture": Ztrace("capture", (0, 255, 0), [
         (x + width / 3, y + height / 3, field.section.n),
         (x + width / 2, y + height / 3, field.section.n)])}
+    if focus:
+        field.section.selected_traces = [field.section.tracesAsList()[0]]
+        field.toggleFocusMode()
+        assert field.focus_mode
     field.series.setOption("show_flags", flag_mode)
     field.series.setOption("show_ztraces", False)
     field.generateView()
@@ -451,3 +456,57 @@ def test_save_confirms_suffixed_path_in_real_dialog(capture, tmp_path, monkeypat
         assert path.read_bytes() == b"existing figure"
     assert len(seen) == 1
     assert str(path) in seen[0]
+
+
+@pytest.mark.parametrize("layer", ["flags", "ztraces"])
+def test_capture_layers_in_focus_preserve_trace_colors_and_field(capture, layer, monkeypatch, tmp_path):
+    field = capture.field
+    x, y, width, height = capture.frameWindow()
+    trace = Trace("focused", (255, 0, 255))
+    trace.points = [(x + width * dx, y + height * dy)
+                    for dx, dy in [(0.15, 0.2), (0.25, 0.2), (0.25, 0.3), (0.15, 0.3)]]
+    trace.fill_mode = ("none", "none")
+    field.section.addTrace(trace, log_event=False)
+    field.section.flags = [Flag("capture", x + width / 2, y + height / 2,
+                                field.section.n, (255, 0, 0))]
+    field.series.ztraces = {"capture": Ztrace("capture", (0, 255, 0), [
+        (x + width / 3, y + height / 3, field.section.n),
+        (x + width / 2, y + height / 3, field.section.n)])}
+    field.series.setOption("show_flags", "all")
+    field.series.setOption("show_ztraces", True)
+    field.section.selected_traces = [trace]
+    field.toggleFocusMode()
+    assert field.focus_mode == "focused"
+    capture.width_input.setValue(capture.frameDim()[0] * 3)
+    before_field = pixels(field.field_pixmap.toImage())
+    assert field.section_layer.flags_in_view == []
+    assert field.section_layer.zsegments_in_view == []
+    off = pixels(capture.outputImage())
+    preview_off = pixels(capture.preview)
+    focused_pixels = (((off >> 16) & 255) >= 240) & (((off >> 8) & 255) >= 240) & ((off & 255) < 100)
+    assert focused_pixels.any(), "The focused trace must be visible in the frame"
+
+    check = capture.layer_checks[layer]
+    QTest.mouseClick(check, Qt.LeftButton, pos=QPoint(10, check.height() // 2))
+    assert check.isChecked()
+    on = pixels(capture.outputImage())
+    assert not np.array_equal(off, on)
+    assert not np.array_equal(preview_off, pixels(capture.preview))
+    assert np.array_equal(on[focused_pixels], off[focused_pixels])
+    path = tmp_path / "focused.png"
+    monkeypatch.setattr(FileDialog, "get", lambda *args, **kwargs: str(path))
+    QTest.mouseClick(capture.save_button, Qt.LeftButton)
+    assert np.array_equal(pixels(QImage(str(path))), on)
+    QTest.mouseClick(capture.copy_button, Qt.LeftButton)
+    assert np.array_equal(pixels(QApplication.clipboard().image()), on)
+
+    check.setChecked(False)
+    assert np.array_equal(pixels(capture.outputImage()), off)
+    assert field.focus_mode == "focused"
+    assert field.section.selected_traces == [trace]
+    assert field.series.getOption("show_flags") == "all"
+    assert field.series.getOption("show_ztraces") is True
+    field.generateView()
+    assert np.array_equal(before_field, pixels(field.field_pixmap.toImage()))
+    assert field.section_layer.flags_in_view == []
+    assert field.section_layer.zsegments_in_view == []

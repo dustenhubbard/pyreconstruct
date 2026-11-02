@@ -940,6 +940,7 @@ class TraceLayer():
                         if self.respect_overlay_visibility else True)
         show_flags = (self.series.getOption("show_flags")
                       if self.respect_overlay_visibility else "all")
+        overlays_visible = not focus_on or not self.respect_overlay_visibility
         flag_size = self.series.getOption("flag_size")
         self._selected_pens = self._selectedPens()
 
@@ -1042,7 +1043,7 @@ class TraceLayer():
         ## Draw ztraces
         self.zsegments_in_view = []
 
-        if show_ztraces and self.draw_ztraces and not focus_on:
+        if show_ztraces and self.draw_ztraces and overlays_visible:
 
             for ztrace in self.series.ztraces.values():
 
@@ -1055,7 +1056,7 @@ class TraceLayer():
 
         ## Draw flags
         self.flags_in_view = []
-        if show_flags != "none" and self.draw_flags and not focus_on:
+        if show_flags != "none" and self.draw_flags and overlays_visible:
             for flag in self.section.flags:
                 if show_flags == "unresolved" and flag.resolved:
                     continue

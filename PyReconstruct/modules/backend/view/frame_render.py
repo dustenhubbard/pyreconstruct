@@ -70,7 +70,8 @@ def renderFrame(
             label_size, tick_label_size (int): capture-only bar font sizes
             show_all_traces, focus_on, roi_box: the field's trace visibility
             respect_overlay_visibility (bool): apply the field's flag and
-                z-trace visibility preferences in addition to the layer choices
+                z-trace visibility preferences and Focus-mode suppression
+                in addition to the layer choices
         Returns:
             (QImage): the frame
     """
