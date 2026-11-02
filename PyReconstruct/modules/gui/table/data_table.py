@@ -1,3 +1,5 @@
+import csv
+
 from PySide6.QtWidgets import (
     QMainWindow, 
     QDockWidget, 
@@ -735,11 +737,12 @@ class DataTable(QDockWidget):
         
         ## A with-block: the handle leaked on any mid-export exception and
         ## the partial file stayed locked on Windows (found 2026-08-28)
-        with open(file_path, "w") as csv_file:
+        with open(file_path, "w", encoding="utf-8", newline="") as csv_file:
             self._writeCsv(csv_file)
 
     def _writeCsv(self, csv_file):
         """Write the visible table into an open file object."""
+        writer = csv.writer(csv_file)
         ## Headers first
         items = []
         checkable = []
@@ -755,7 +758,7 @@ class DataTable(QDockWidget):
             
             items.append(header_title)
             
-        csv_file.write(",".join(items) + "\n")
+        writer.writerow(items)
         
         ## Then data
         for r in range(self.table.rowCount()):
@@ -776,13 +779,9 @@ class DataTable(QDockWidget):
 
                     cell_text = cell.text()
 
-                    if "," in cell_text:  # e.g., multiple tags
-                        
-                        cell_text = cell_text.replace(",", "")
-                    
                 items.append(cell_text)
                 
-            csv_file.write(",".join(items) + "\n")
+            writer.writerow(items)
 
     def backspace(self):
         """Called when user hits delete or backspace.
