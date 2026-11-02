@@ -84,7 +84,7 @@ def test_saved_zero_survives_a_reload(tmp_path, mode):
         series.setAttr(name, "3D_opacity", 0.5)
 
         objs = [{"name": name, "color": None, "alpha": 0.0, "tform": None}]
-        mesh_data_list, _ = generateVolumes(series, objs, [])
+        mesh_data_list, _, _failures = generateVolumes(series, objs, [])
 
         assert len(mesh_data_list) == 1, mode
         assert mesh_data_list[0]["name"] == name
@@ -105,7 +105,7 @@ def test_absent_alpha_still_falls_back_to_the_stored_value(tmp_path, mode):
         series.setAttr(name, "3D_opacity", 0.5)
 
         objs = [{"name": name, "color": None, "alpha": None, "tform": None}]
-        mesh_data_list, _ = generateVolumes(series, objs, [])
+        mesh_data_list, _, _failures = generateVolumes(series, objs, [])
 
         assert mesh_data_list[0]["alpha"] == 0.5, mode
     finally:
@@ -122,14 +122,14 @@ def test_ztrace_saved_zero_survives_a_reload(tmp_path):
         name = names[0]
 
         ztraces = [{"name": name, "color": None, "alpha": 0.0, "tform": None}]
-        mesh_data_list, _ = generateVolumes(series, [], ztraces)
+        mesh_data_list, _, _failures = generateVolumes(series, [], ztraces)
 
         assert len(mesh_data_list) == 1
         assert mesh_data_list[0]["type"] == "ztrace"
         assert mesh_data_list[0]["alpha"] == 0.0
 
         ztraces = [{"name": name, "color": None, "alpha": None, "tform": None}]
-        mesh_data_list, _ = generateVolumes(series, [], ztraces)
+        mesh_data_list, _, _failures = generateVolumes(series, [], ztraces)
         assert mesh_data_list[0]["alpha"] == 1
     finally:
         series.close()

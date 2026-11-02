@@ -41,6 +41,11 @@ class _StubSeries:
     avg_mag = 0.01
     avg_thickness = 0.05
 
+    data = {"sections": {s: {"thickness": 0.05} for s in range(3)}}
+
+    def getZValues(self):
+        return {s: (s + 1) * self.avg_thickness for s in range(3)}
+
     def getOption(self, name):
         return {"3D_xy_res": 50, "3D_smoothing": "none",
                 "smoothing_iterations": 0}[name]

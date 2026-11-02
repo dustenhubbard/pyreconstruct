@@ -104,24 +104,12 @@ class VPlotter(vedo.Plotter):
                 series_fp (str): the path of the series the mesh came from;
                     None reads the open series
         """
-        # a mesh's z is its section number times its series' average
-        # thickness (objects_3D), so the inverse uses that same series: a
-        # mesh from another series has its own thickness and section numbers,
-        # recorded when it was added, since that series may be closed by now
         recorded = None if series_fp is None else self.objs.section_maps.get(series_fp)
         if recorded is None or series_fp == self.series.jser_fp:
-            thickness = self.series.avg_thickness
-            all_sections = sorted(self.series.sections)
+            zvals = self.series.getZValues()
         else:
-            thickness, all_sections = recorded
-        snum = round(z / thickness)
-
-        # if the section is not in the series, find closest section
-        if snum not in all_sections:
-            diffs = [abs(s - snum) for s in all_sections]
-            snum = all_sections[diffs.index(min(diffs))]
-        
-        return snum
+            zvals = recorded
+        return min(zvals, key=lambda snum: abs(zvals[snum] - z))
     
     def createScaleCube(self, attrs_dict=None):
         """Create the scale cube in the 3D scene."""
@@ -646,10 +634,10 @@ class VPlotter(vedo.Plotter):
 
         return objs, ztraces
     
-    def placeInScene(self, result):
+    def placeInScene(self, result, remove_first=True):
         """Called by addToScene after thread is completed"""
         # add objects and ztraces to scene
-        mesh_data_list, series = result
+        mesh_data_list, series, failures = result
 
         ## A series the 3D flow opened for itself gets its hidden dir removed
         ## the moment the meshes exist. Left open, that dir survived the app
@@ -664,6 +652,9 @@ class VPlotter(vedo.Plotter):
         placed = []
         for md in mesh_data_list:
             vm = vedo.Mesh([md["vertices"], md["faces"]], md["color"], md["alpha"])
+            if remove_first:
+                names = ([md["name"]], []) if md["type"] == "object" else ([], [md["name"]])
+                self.removeFromScene(*names, series.jser_fp, save_state=False)
             obj = self.objs.add(vm, series, md["name"], md["type"], md["color"], md["alpha"])
             if md["tform"]:
                 obj.applyTform(md["tform"])
@@ -672,6 +663,13 @@ class VPlotter(vedo.Plotter):
         self.render()
         if placed:
             self.qt_parent.updateObjectList(placed)
+        if failures:
+            for failure in failures:
+                names = ([failure["name"]], []) if failure["type"] == "object" else ([], [failure["name"]])
+                self.objs.markStale(*names, series.jser_fp)
+            notify("Could not generate 3D meshes:\n" + "\n".join(
+                f"{failure['name']}: {failure['error']}" for failure in failures
+            ))
     
     def addToScene(self, objs : list, ztraces : list, remove_first=True, series=None, save_state=True):
         """Add objects to the scene.
@@ -711,20 +709,15 @@ class VPlotter(vedo.Plotter):
         elif type(series) is Series:
             series_fp = series.jser_fp
 
-        # remove existing objects from scene
+        # Keep existing meshes until their replacements have been generated.
         if remove_first:
-            obj_dicts, ztrace_dicts = self.removeFromScene(obj_names, ztrace_names, series_fp, save_state=False)
-            # if removing, replace attributes in dict lists with those of the just-removed items
-            objs += obj_dicts
-            ztraces += ztrace_dicts
-            # remove redundant objects in the list
-            for dlist in (objs, ztraces):
-                names = set()
-                for d in reversed(dlist.copy()):
-                    if d["name"] in names:
-                        dlist.remove(d)
-                    else:
-                        names.add(d["name"])
+            for kind, dlist in (("object", objs), ("ztrace", ztraces)):
+                requested = {d["name"]: d for d in dlist}
+                for name in requested:
+                    old = self.objs.search(name, kind, series_fp)
+                    if old is not None:
+                        requested[name] = old.getExportDict()
+                dlist[:] = requested.values()
         
         # check for objects/ztraces that don't exist in the current series
         if series == self.series:  # operating from opened series
@@ -764,7 +757,9 @@ class VPlotter(vedo.Plotter):
             ztraces,
             progress=True,
         )
-        worker.signals.result.connect(self.placeInScene)
+        worker.signals.result.connect(
+            lambda result: self.placeInScene(result, remove_first=remove_first)
+        )
         self.threadpool.startAll(text="Generating 3D...", status_bar=self.mainwindow.statusbar)
 
     def showHelp(self):
@@ -1920,7 +1915,7 @@ class SceneObjectList():
         """Create the scene object list."""
         self.scene_objects = {}
         self.host_trees = {}
-        # per series path: (average thickness, sorted section numbers), for
+        # Per series path: physical section planes, for
         # the hover's section lookup once that series is no longer open
         self.section_maps = {}
         # IDs of scene objects whose 2D source data changed after their mesh
@@ -1969,9 +1964,7 @@ class SceneObjectList():
         # while the scene is up (a Series-like without sections records none)
         sections = getattr(series, "sections", None)
         if sections is not None:
-            self.section_maps[series.jser_fp] = (
-                series.avg_thickness, sorted(sections)
-            )
+            self.section_maps[series.jser_fp] = series.getZValues()
         
         return scene_object
     
