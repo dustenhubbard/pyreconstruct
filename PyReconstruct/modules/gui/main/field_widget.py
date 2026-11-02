@@ -300,6 +300,7 @@ class FieldWidget(QWidget, FieldWidgetView):
             self.clicked_y = self.mouse_y
         self.click_time = time.time()
         self.single_click = True
+        self.click_travel = 0
 
         # if any finger touch
         #
@@ -410,6 +411,8 @@ class FieldWidget(QWidget, FieldWidgetView):
         # if any finger touch
         if self.is_gesturing:
             return
+
+        self.trackClickTravel(event)
         
         # check if user is zooming with the mouse wheel
         if self.mainwindow.is_zooming:
@@ -490,6 +493,8 @@ class FieldWidget(QWidget, FieldWidgetView):
         # if any finger touch
         if self.is_gesturing:
             return
+
+        self.trackClickTravel(event)
         
         # panzoom if middle button
         if self.mclick:

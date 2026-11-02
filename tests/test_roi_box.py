@@ -1173,14 +1173,12 @@ def test_a_click_sets_the_center_and_keeps_the_size(mw, qapp):
     assert field.roi_box_size == SIZE
 
 
-def test_movement_inside_the_click_window_is_a_click(mw, qapp):
-    """The field's own click-versus-drag rule (isSingleClicking): a press
-    released inside the single-click window is a click even if it moved. The
-    center is the press point and the size is unchanged."""
+def test_movement_inside_the_click_tolerance_is_a_click(mw, qapp):
+    """Small movement keeps the center at the press and the size unchanged."""
     field = mw.field
     _turn_on(mw, qapp, center=None)
     start = _pix(field, *CENTER)
-    end = start + QPoint(25, 15)
+    end = start + QPoint(1, 1)
 
     _press_and_drag(field, qapp, start, end, past_click=False)
     _release(field, qapp, end)

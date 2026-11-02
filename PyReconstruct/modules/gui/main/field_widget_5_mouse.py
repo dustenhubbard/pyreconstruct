@@ -115,16 +115,24 @@ class FieldWidgetMouse(FieldWidgetData):
             self.mouse_boundary_timer.stop()
             self.mouse_boundary_timer = None
     
+    def trackClickTravel(self, event):
+        """Keep the farthest distance from the press, including the release."""
+        if self.lclick or self.mclick or self.rclick:
+            self.click_travel = max(
+                self.click_travel,
+                abs(event.x() - self.clicked_x),
+                abs(event.y() - self.clicked_y),
+            )
+
     def isSingleClicking(self):
         """Check if user is single-clicking.
         
             Returns:
                 (bool) True if user is single-clicking
         """
-        if self.single_click or (time.time() - self.click_time <= self.max_click_time):
-            return True
-        else:
-            return False
+        return self.click_travel <= self.click_tolerance and (
+            self.single_click or time.time() - self.click_time <= self.max_click_time
+        )
     
     def autoMerge(self):
         """Automatically merge the newly drawn trace into overlapping traces.
@@ -278,7 +286,7 @@ class FieldWidgetMouse(FieldWidgetData):
                 if self.current_trace:
                     x1, y1 = self.current_trace[0]
                 else:
-                    x1, y1 = x2, y2
+                    x1, y1 = self.clicked_x, self.clicked_y
 
                 self.current_trace = [
                     (x1, y1),
@@ -732,7 +740,6 @@ class FieldWidgetMouse(FieldWidgetData):
             self.last_x = event.x()
             self.last_y = event.y()
             self.current_trace = [(self.last_x, self.last_y)]
-            self.trace_press_travel = 0
             # only a left press made with no other button held can be a
             # click; a side button pressed during a left press lands here
             # too, since the held buttons still read as a left press
@@ -758,12 +765,6 @@ class FieldWidgetMouse(FieldWidgetData):
             
         else:
             
-            if self.lclick:
-                self.trace_press_travel = max(
-                    self.trace_press_travel,
-                    abs(event.x() - self.clicked_x),
-                    abs(event.y() - self.clicked_y),
-                )
             self.pencilMove(event)
     
     def isStillPress(self, event):
@@ -776,7 +777,7 @@ class FieldWidgetMouse(FieldWidgetData):
                     farther than `click_tolerance` pixels from the press point
         """
         travel = max(
-            self.trace_press_travel,
+            self.click_travel,
             abs(event.x() - self.clicked_x),
             abs(event.y() - self.clicked_y),
         )

@@ -92,6 +92,8 @@ class _Field:
         self.single_click = True
         self.click_time = 0.0
         self.max_click_time = 1.0
+        self.click_travel = 0
+        self.click_tolerance = 4
         self.zarr_layer = None
         self.selected_trace = None
         self.selected_type = "trace"
