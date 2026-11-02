@@ -484,7 +484,8 @@ button (or press its shortcut) to switch the active tool. **Right-clicking a
 tool button opens that tool's settings** (where it has any).
 
 If you switch tools while holding a mouse button, release it and press again to
-use the new tool. An unfinished z-trace remains available when you return to Ztool.
+use the new tool. An unfinished mouse pan or zoom is canceled, restoring the
+previous view. An unfinished z-trace remains available when you return to Ztool.
 
 In every tool except Pan/Zoom, **right-clicking the field** opens a context menu
 (for the selected traces, or for the field). The mouse wheel changes sections, and

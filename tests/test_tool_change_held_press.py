@@ -43,7 +43,7 @@ def _state(field):
         field.roi_box_on, field.roi_box_center, field.roi_box_size,
         field.hosted_trace.name if field.hosted_trace else None,
         field.current_trace, field.current_ztrace,
-        field.is_line_tracing, field.is_z_tracing,
+        field.is_line_tracing, field.is_z_tracing, field.is_panzooming,
     ))
 
 
@@ -175,3 +175,94 @@ def test_secondary_button_cannot_restore_a_transferred_press(
     field.mouseReleaseEvent(FakeMouseEvent(250, 250))
     assert _state(field) == before
     assert field_menu == []
+
+
+@pytest.mark.parametrize("source,button", [
+    ("Pointer", Qt.MiddleButton),
+    ("Pan/Zoom", Qt.MiddleButton),
+    ("Pan/Zoom", Qt.LeftButton),
+    ("Pan/Zoom", Qt.RightButton),
+])
+def test_tool_change_cancels_mouse_pan_or_zoom(main_window, source, button):
+    field = main_window.field
+    palette = main_window.mouse_palette
+    palette.activateModeButton(source)
+    field.generateView()
+    original_window = list(field.series.window)
+    original_image = field.field_pixmap.toImage()
+    field.mousePressEvent(FakeMouseEvent(200, 200, button))
+    field.mouseMoveEvent(FakeMouseEvent(280, 260, button))
+    assert field.is_panzooming
+    assert field.field_pixmap.toImage() != original_image
+
+    palette.activateModeButton("Closed Trace")
+
+    assert not field.is_panzooming
+    assert field.series.window == original_window
+    assert field.field_pixmap.toImage() == original_image
+    before = _state(field)
+    field.mouseMoveEvent(FakeMouseEvent(320, 280, button))
+    field.mouseReleaseEvent(FakeMouseEvent(320, 280, button=button))
+    assert _state(field) == before
+    assert field.field_pixmap.toImage() == original_image
+
+    # The next middle-button drag pans from its own press.
+    field.mousePressEvent(FakeMouseEvent(200, 200, Qt.MiddleButton))
+    field.mouseMoveEvent(FakeMouseEvent(240, 220, Qt.MiddleButton))
+    field.mouseReleaseEvent(FakeMouseEvent(240, 220, button=Qt.MiddleButton))
+    x, y, width, height = original_window
+    assert field.series.window == pytest.approx([
+        x - 40 * width / field.pixmap_dim[0],
+        y + 20 * height / field.pixmap_dim[1],
+        width, height,
+    ])
+    assert not field.is_panzooming
+
+
+@pytest.mark.parametrize("source,button", [
+    ("Pointer", Qt.MiddleButton),
+    ("Pan/Zoom", Qt.LeftButton),
+    ("Pan/Zoom", Qt.RightButton),
+])
+def test_reselecting_tool_keeps_mouse_pan_or_zoom(main_window, source, button):
+    field = main_window.field
+    palette = main_window.mouse_palette
+    palette.activateModeButton(source)
+    original_window = list(field.series.window)
+    field.mousePressEvent(FakeMouseEvent(200, 200, button))
+    field.mouseMoveEvent(FakeMouseEvent(280, 260, button))
+    preview = field.field_pixmap.toImage()
+
+    palette.activateModeButton(source)
+
+    assert field.is_panzooming
+    assert field.field_pixmap.toImage() == preview
+    field.mouseReleaseEvent(FakeMouseEvent(280, 260, button=button))
+    assert not field.is_panzooming
+    assert field.series.window != original_window
+
+
+@pytest.mark.parametrize("gesture", ["pinch", "wheel"])
+def test_tool_change_preserves_independent_zoom(main_window, gesture):
+    field = main_window.field
+    original_window = list(field.series.window)
+    field.panzoomPress(200, 200)
+    if gesture == "pinch":
+        field.is_gesturing = True
+    else:
+        main_window.is_zooming = True
+    field.panzoomMove(zoom_factor=1.5)
+    preview = field.field_pixmap.toImage()
+
+    main_window.mouse_palette.activateModeButton("Closed Trace")
+
+    assert field.is_panzooming
+    assert field.field_pixmap.toImage() == preview
+    assert field.series.window == original_window
+    field.panzoomRelease(zoom_factor=1.5)
+    field.is_gesturing = False
+    main_window.is_zooming = False
+    assert not field.is_panzooming
+    assert field.series.window[2:] == pytest.approx([
+        original_window[2] / 1.5, original_window[3] / 1.5,
+    ])

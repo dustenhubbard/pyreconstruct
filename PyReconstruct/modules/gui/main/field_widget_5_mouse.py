@@ -43,6 +43,13 @@ class FieldWidgetMouse(FieldWidgetData):
         # z-traces, which endPendingEvents also preserves. Selecting the
         # current tool again does not drop its press or cancel its lasso.
         if mode != self.mouse_mode:
+            if (
+                self.is_panzooming
+                and not self.is_gesturing
+                and not self.mainwindow.is_zooming
+            ):
+                # Discard the mouse preview before dropping its release.
+                self.panzoomRelease()
             self.cancelLasso()
             self.dropPress()
 
