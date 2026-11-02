@@ -24,6 +24,8 @@ On a section without the object, the box takes its place on the nearest
 section with it, ties going to the earlier section. The zarr crop uses the
 same rule for a section without its object (backend/crop_zarr.py, planCrop).
 """
+import itertools
+
 import numpy as np
 
 from PyReconstruct.modules.calc import traceGeometry
@@ -234,9 +236,17 @@ class SeriesSquares:
     ROI box (KeepWhole in the field).
 
     Built once from the series data (fromSeries). After an edit on the shown
-    section, that section is read again from the loaded section (setSection),
-    so an edit costs one section, not the series. version counts the changes.
+    section, the edited objects are read again from the loaded section
+    (setObjects), or the whole section when its transform moved
+    (setSection), so an edit costs what it changed, not the series.
+
+    generation is unique to each instance, never reused; version counts its
+    changes, and changes lists them (version after, section, the object names
+    or None for the whole section), so a result found at an earlier version
+    can be brought up to date (KeepWhole in the field, roiKeepSections).
     """
+
+    _generations = itertools.count(1)
 
     def __init__(self):
         self.names, self._name_ix = [], {}
@@ -244,7 +254,9 @@ class SeriesSquares:
         # section number -> numpy arrays (owner, cx, cy, r, tkey); owner
         # indexes names, tkey indexes measured
         self.sections = {}
+        self.generation = next(SeriesSquares._generations)
         self.version = 0
+        self.changes = []
 
     def _owner(self, name):
         i = self._name_ix.get(name)
@@ -341,6 +353,61 @@ class SeriesSquares:
         else:
             self.sections.pop(section.n, None)
         self.version += 1
+        self.changes.append((self.version, section.n, None))
+
+    def setObjects(self, section, names):
+        """Read some objects' traces on one loaded section again, as
+        setSection does, leaving the section's other rows as they are."""
+        names = frozenset(names)
+        tform = section.tform
+        tkey = self._tkey(tform)
+        drop = [self._name_ix[name] for name in names if name in self._name_ix]
+        parts = []
+        rows = self.sections.get(section.n)
+        if rows is not None:
+            keep = ~np.isin(rows[0], drop) if drop else np.ones(len(rows[0]), dtype=bool)
+            parts.append(tuple(a[keep] for a in rows))
+        new = []
+        for name in names:
+            for trace in section.contours.get(name, ()):
+                if not trace.points:
+                    continue
+                pts = tform.mapPointsArray(trace.points)
+                _, _, (cx, cy), r = traceGeometry(pts, trace.closed)
+                new.append((self._owner(name), cx, cy, r))
+        if new:
+            arr = np.asarray(new, dtype=float)
+            parts.append((
+                arr[:, 0].astype(int), arr[:, 1], arr[:, 2], arr[:, 3],
+                np.full(len(arr), tkey, dtype=int),
+            ))
+        if parts:
+            merged = tuple(np.concatenate(col) for col in zip(*parts))
+            if len(merged[0]):
+                self.sections[section.n] = merged
+            else:
+                self.sections.pop(section.n, None)
+        self.version += 1
+        self.changes.append((self.version, section.n, names))
+
+    def touches(self, snum : int, name : str, bounds : tuple, display) -> bool:
+        """Whether one object has a trace on one section that touches a box."""
+        i = self._name_ix.get(name)
+        rows = self.sections.get(snum)
+        if i is None or rows is None or bounds is None:
+            return False
+        on = rows[0] == i
+        if not on.any():
+            return False
+        owner, cx, cy, r, tk = (a[on] for a in rows)
+        xmin, ymin, xmax, ymax = displaySquares(
+            np.full(len(owner), snum, dtype=int), cx, cy, r, tk,
+            self.measured, lambda s: display, {},
+        )
+        return bool((
+            (xmin <= bounds[2]) & (xmax >= bounds[0])
+            & (ymin <= bounds[3]) & (ymax >= bounds[1])
+        ).any())
 
     def _touchingOn(self, snum, bounds, display, moves):
         """The owners of the rows on one section whose squares touch a box."""

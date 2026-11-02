@@ -558,3 +558,134 @@ def test_an_edit_reads_one_section_again_not_the_series(mw, qapp, monkeypatch):
     _go(mw, qapp, 53)
     assert "one" in field.roiKeep()
     assert reads == []
+
+
+def _rename_from_the_object_list(mw, monkeypatch, old, new):
+    """Rename every trace of an object through the object list's Edit."""
+    from PyReconstruct.modules.gui.main import field_widget_3_object as fwo
+    field = mw.field
+    field.openList("object")
+    table = field.table_manager.tables["object"][-1]
+    monkeypatch.setattr(field.table_manager, "hasFocus", lambda: table)
+    monkeypatch.setattr(table, "getSelected", lambda: [old])
+
+    class Answer:
+        tag_choices = {}
+        smooth_choice = None
+
+        def __init__(self, *a, **k):
+            pass
+
+        def exec(self):
+            return ((Trace(new, (255, 0, 0)), None), True)
+
+    monkeypatch.setattr(fwo, "TraceDialog", Answer)
+    field.editAttributes()
+
+
+@pytest.mark.parametrize("following", [False, True])
+def test_series_undo_and_redo_find_the_objects_again(mw, qapp, monkeypatch, following):
+    """A rename from the object list, then series undo and redo again and
+    again, seen from section 53: each step reads the series again, and the
+    object's trace there is kept, drawn and picked."""
+    field = mw.field
+    _go(mw, qapp, 52)
+    _square(field, "renamed", 13.5)
+    _square(field, "renamed", 16.5)
+    if following:
+        _square(field, "leader", 13.5, 23.8)
+    _go(mw, qapp, 53)
+    _square(field, "renamed", 16.5)
+    _go(mw, qapp, 52)
+    field.roi_box_on = True
+    field.roi_box_center = (13.5, 23.7)
+    _set(mw, whole=True, follow="leader" if following else "")
+    field.series.window = [12.5, 22.2, 8.0, 4.0]
+    field.generateView()
+    _rename_from_the_object_list(mw, monkeypatch, "renamed", "destination")
+    _go(mw, qapp, 53)
+
+    for i in range(12):
+        redo = i % 2 == 1
+        field.seriesUndo(redo=redo)
+        qapp.processEvents()
+        expected = "destination" if redo else "renamed"
+        (trace,) = list(field.section.contours[expected])
+        assert expected in field.roiKeep(), i
+        assert trace in field.section_layer.traces_in_view, i
+        point = field.section_layer.traceToPix(trace)[0]
+        assert field.section_layer.getTrace(*point) == (trace, "trace"), i
+
+
+@pytest.mark.parametrize("merge", [False, True])
+def test_a_rename_or_merge_from_the_object_list_finds_the_objects_again(
+    mw, qapp, monkeypatch, merge
+):
+    field = mw.field
+    _go(mw, qapp, 52)
+    _square(field, "renamed", 13.5)
+    _square(field, "renamed", 16.5)
+    _go(mw, qapp, 53)
+    _square(field, "renamed", 16.5)
+    if merge:
+        _square(field, "destination", 18.0)
+    _go(mw, qapp, 52)
+    field.roi_box_on = True
+    field.roi_box_center = (13.5, 23.7)
+    _set(mw, whole=True)
+    field.series.window = [12.5, 22.2, 8.0, 4.0]
+    field.generateView()
+    assert "renamed" in field.roiKeep()
+
+    _rename_from_the_object_list(mw, monkeypatch, "renamed", "destination")
+    qapp.processEvents()
+    assert "renamed" not in field.roiKeep() and "destination" in field.roiKeep()
+    _go(mw, qapp, 53)
+    assert all(
+        t in field.section_layer.traces_in_view for t in field.section.contours["destination"]
+    )
+    field.seriesUndo()
+    qapp.processEvents()
+    assert "renamed" in field.roiKeep() and "destination" not in field.roiKeep()
+    field.seriesUndo(redo=True)
+    qapp.processEvents()
+    assert "renamed" not in field.roiKeep() and "destination" in field.roiKeep()
+    mw.saveToJser(notify=False)
+    field.reload()
+    qapp.processEvents()
+    assert "renamed" not in field.roiKeep() and "destination" in field.roiKeep()
+
+
+def test_a_new_series_read_is_never_taken_for_an_old_one():
+    """Each read of the series has its own generation, never reused."""
+    a = RF.SeriesSquares()
+    b = RF.SeriesSquares()
+    assert a.generation != b.generation
+    del a
+    c = RF.SeriesSquares()
+    assert c.generation not in (b.generation,) and c.generation > b.generation
+
+
+def test_an_edit_tests_only_the_edited_objects_again(mw, qapp, monkeypatch):
+    """A new trace on the shown section: no series read, no test of every
+    section, and the new object is kept; others keep their sections."""
+    field = mw.field
+    _place(mw, qapp)
+    _set(mw, whole=True)
+    before = dict(field.roiKeepSections(field.roiSquares()))
+    passes = _count_passes(monkeypatch)
+    reads = _count_reads(monkeypatch)
+    rebuilt = []
+    real_section = RF.SeriesSquares.setSection
+    monkeypatch.setattr(
+        RF.SeriesSquares, "setSection",
+        lambda self, section: rebuilt.append(1) or real_section(self, section),
+    )
+
+    _square(field, "added", *CENTER)
+
+    assert passes == [] and reads == [] and rebuilt == []
+    assert "added" in field.roiKeep()
+    after = field.roiKeepSections(field.roiSquares())
+    assert {k: v for k, v in after.items() if k != "added"} == before
+    assert after["added"] == frozenset({field.section.n})

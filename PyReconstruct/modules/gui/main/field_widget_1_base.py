@@ -104,9 +104,10 @@ class FieldWidgetBase:
         self.inner_modified : bool          = False
         # Keep whole every object with a trace touching the box on any
         # section: all its traces are shown on every section (roiKeep). The
-        # series' traces are read once (SeriesSquares) and a section again
-        # after it is edited: roi_dirty names the sections to read again, or
-        # is None to read the series again (a reload, an undo, a refresh).
+        # series' traces are read once (SeriesSquares) and an edited object
+        # again after an edit: roi_dirty maps a section to the object names to
+        # read again there (None: the whole section), or is None to read the
+        # series again (a reload, an undo, a refresh).
         self.roi_keep_whole : bool          = False
         self._roi_squares                   = None
         self.roi_dirty                      = None
@@ -565,14 +566,19 @@ class FieldWidgetBase:
                 names.add(name)
         self._roi_keep_now = frozenset(names)
 
-    def roiDataChanged(self, snum=None) -> None:
-        """Note that the series' traces changed: on one section, or (None)
-        anywhere. Keeping objects whole reads them again when next needed."""
+    def roiDataChanged(self, snum=None, names=None) -> None:
+        """Note that the series' traces changed: some objects on one section,
+        a whole section (names None), or (snum None) anywhere. Keeping
+        objects whole reads them again when next needed."""
         if snum is None or self._roi_squares is None:
             self.roi_dirty = None
             self._roi_squares = None
+            self._roi_keep_cache = None
         elif self.roi_dirty is not None:
-            self.roi_dirty.add(snum)
+            if names is None or self.roi_dirty.get(snum, set()) is None:
+                self.roi_dirty[snum] = None
+            else:
+                self.roi_dirty.setdefault(snum, set()).update(names)
 
     def roiSquares(self):
         """The series' traces for keeping objects whole (SeriesSquares), read
@@ -582,20 +588,27 @@ class FieldWidgetBase:
             if not self.seriesDataComplete():
                 return None
             self._roi_squares = SeriesSquares.fromSeries(self.series)
-            self.roi_dirty = set()
+            self._roi_keep_cache = None
+            self.roi_dirty = {}
         elif self.roi_dirty:
-            if self.roi_dirty - {self.section.n}:
+            if set(self.roi_dirty) - {self.section.n}:
                 # an edit on a section not shown: read the series again
-                self._roi_squares = None
+                self.roiDataChanged()
                 return self.roiSquares()
-            self._roi_squares.setSection(self.section)
-            self.roi_dirty = set()
+            names = self.roi_dirty[self.section.n]
+            if names is None:
+                self._roi_squares.setSection(self.section)
+            else:
+                self._roi_squares.setObjects(self.section, names)
+            self.roi_dirty = {}
         return self._roi_squares
 
     def roiKeepSections(self, squares) -> dict:
         """For each object that touches the ROI box on a section, the
         sections where it does (SeriesSquares.touching). Found again when the
-        traces, a box (a followed box moves) or the series alignment change."""
+        series' traces are read again, a box moves (a followed box with its
+        object) or the series alignment changes; after an edit of some
+        objects, only those objects are tested again."""
         w, h = self.roi_box_size
         if self.roi_follow_name is not None:
             centers = objectCenters(
@@ -610,11 +623,32 @@ class FieldWidgetBase:
         else:
             bounds = roiBoxBounds(self.roiBox())
             boxes = {snum: bounds for snum in self.series.sections}
-        key = (id(squares), squares.version, self.series.alignment, tuple(sorted(boxes.items())))
-        if self._roi_keep_cache is not None and self._roi_keep_cache[0] == key:
-            return self._roi_keep_cache[1]
+        key = (squares.generation, self.series.alignment, tuple(sorted(boxes.items())))
+        cache = self._roi_keep_cache
+        if cache is not None and cache[0] == key:
+            version, touched = cache[1], cache[2]
+            if version == squares.version:
+                return touched
+            later = [c for c in squares.changes if c[0] > version]
+            if all(names is not None for _, _, names in later):
+                # only some objects changed, each on one section
+                touched = dict(touched)
+                for _, snum, names in later:
+                    for name in names:
+                        hit = squares.touches(snum, name, boxes.get(snum), self.displayTform(snum))
+                        snums = set(touched.get(name, ())) - {snum}
+                        if hit:
+                            snums.add(snum)
+                        if snums:
+                            touched[name] = frozenset(snums)
+                        else:
+                            touched.pop(name, None)
+                self._roi_keep_cache = (key, squares.version, touched)
+                squares.changes = []  # brought up to date; this field reads them alone
+                return touched
         touched = squares.touching(boxes, self.displayTform)
-        self._roi_keep_cache = (key, touched)
+        self._roi_keep_cache = (key, squares.version, touched)
+        squares.changes = []
         return touched
 
     def inRoiBox(self, trace : Trace) -> bool:
@@ -753,7 +787,8 @@ class FieldWidgetBase:
                 step (SectionStep): what the step changed
         """
         self.table_manager.updateAll(step.objects, step.ztraces)
-        self.roiDataChanged(self.section.n)
+        # a moved transform moves every trace on the section
+        self.roiDataChanged(self.section.n, None if step.tform_moved else step.objects)
         # the Groups menu lists groups from createMenuBar
         if step.groups_changed and hasattr(self.mainwindow, "createMenuBar"):
             self.mainwindow.createMenuBar()
