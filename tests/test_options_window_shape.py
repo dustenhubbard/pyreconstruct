@@ -1,16 +1,11 @@
-"""Series > Options opens as a proper window: big, zoomable, with a Colors tab.
-
-Three changes (2026-09-14): a larger default size, the
-autoseg colors page on its own Colors tab, and the maximize and minimize
-buttons in the title bar.
-"""
+"""Series > Options fits its contents and keeps every tab reachable."""
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QRect, Qt
 from PySide6.QtWidgets import QApplication, QTabWidget
 
 from PyReconstruct.modules.datatypes.series import Series
 from PyReconstruct.modules.backend.settings_store import DictSettingsStore
-from PyReconstruct.modules.gui.dialog.all_options import AllOptionsDialog, DEFAULT_SIZE
+from PyReconstruct.modules.gui.dialog.all_options import AllOptionsDialog
 
 pytestmark = pytest.mark.gui
 
@@ -52,9 +47,50 @@ def test_title_bar_offers_maximize_and_minimize(qapp, series):
     assert flags & Qt.WindowType.WindowMinimizeButtonHint
 
 
-def test_opens_large_but_inside_the_screen(qapp, series):
+@pytest.mark.parametrize("screen_size", [(1366, 768), (1920, 1080)])
+def test_opens_at_content_width_with_every_tab_usable(qtbot, series, monkeypatch, screen_size):
+    class Screen:
+        def availableGeometry(self):
+            return QRect(0, 0, *screen_size)
+
+    monkeypatch.setattr(QApplication, "primaryScreen", lambda: Screen())
     dlg = AllOptionsDialog(None, series)
-    avail = QApplication.primaryScreen().availableGeometry()
-    assert dlg.width() == min(DEFAULT_SIZE[0], int(avail.width() * 0.75))
-    assert dlg.height() == min(DEFAULT_SIZE[1], int(avail.height() * 0.85))
-    assert dlg.width() <= avail.width() and dlg.height() <= avail.height()
+    qtbot.addWidget(dlg)
+    dlg.show()
+    qtbot.wait(1)
+    assert dlg.width() < 900
+    assert dlg.height() <= int(screen_size[1] * 0.85)
+    width = dlg.width()
+    for i in range(dlg.tabs.count()):
+        dlg.tabs.setCurrentIndex(i)
+        qtbot.wait(1)
+        page = dlg.tabs.widget(i)
+        assert page.horizontalScrollBar().maximum() == 0, dlg.tabs.tabText(i)
+        bar = page.verticalScrollBar()
+        bar.setValue(bar.maximum())
+        bottom = page.widget().mapTo(page.viewport(), page.widget().rect().bottomLeft())
+        assert bottom.y() < page.viewport().height()
+        assert dlg.width() == width
+
+
+def test_small_screen_keeps_content_accessible_by_scrolling(qtbot, series, monkeypatch):
+    class Screen:
+        def availableGeometry(self):
+            return QRect(0, 0, 640, 480)
+
+    monkeypatch.setattr(QApplication, "primaryScreen", lambda: Screen())
+    dlg = AllOptionsDialog(None, series)
+    qtbot.addWidget(dlg)
+    dlg.show()
+    qtbot.wait(1)
+    assert dlg.width() <= 480
+    assert dlg.height() <= 408
+    for i in range(dlg.tabs.count()):
+        dlg.tabs.setCurrentIndex(i)
+        qtbot.wait(1)
+        page = dlg.tabs.widget(i)
+        for bar in (page.horizontalScrollBar(), page.verticalScrollBar()):
+            bar.setValue(bar.maximum())
+        corner = page.widget().mapTo(page.viewport(), page.widget().rect().bottomRight())
+        assert corner.x() < page.viewport().width()
+        assert corner.y() < page.viewport().height()
