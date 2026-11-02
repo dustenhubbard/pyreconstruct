@@ -206,6 +206,70 @@ def test_shape_polyline_adds_only_press_positions(field, shape, trace_mode):
     assert "shape_line" not in field.section.contours
 
 
+@pytest.mark.parametrize("shape", ["rect", "circle"])
+@pytest.mark.parametrize("move_away", [False, True], ids=["still", "return-to-start"])
+def test_scribble_shape_click_preserves_existing_traces(field, shape, move_away):
+    field.setMouseMode(CLOSEDTRACE)
+    field.closed_trace_shape = shape
+    field.series.setOption("trace_mode", "scribble")
+    field.series.setOption("roll_average", False)
+    field.series.setOption("auto_merge", True)
+    field.series.setOption("auto_merge_selected_only", True)
+    field.tracing_trace = Trace("existing_overlap", (255, 0, 255))
+    first = _add_square(field, "existing_overlap", 200, 200, 300, 300)
+    _add_square(field, "existing_overlap", 250, 200, 350, 300)
+    second = field.section.contours["existing_overlap"][-1]
+    assert first is not second
+    assert first.overlaps(second, threshold=0)
+    field.section.selected_traces = [first, second]
+    before = [list(trace.points) for trace in (first, second)]
+    start = QPoint(400, 400)
+
+    _mouse(field, QEvent.MouseButtonPress, start)
+    if move_away:
+        _mouse(field, QEvent.MouseMove, QPoint(450, 430))
+    _mouse(field, QEvent.MouseButtonRelease, start)
+
+    assert list(field.section.contours["existing_overlap"]) == [first, second]
+    assert [list(trace.points) for trace in (first, second)] == before
+    assert field.section.selected_traces == [first, second]
+    assert not field.is_line_tracing
+
+
+@pytest.mark.parametrize("mode", [CLOSEDTRACE, OPENTRACE])
+@pytest.mark.parametrize("trace_mode", ["combo", "scribble"])
+@pytest.mark.parametrize("path", ["release-only", "small-move", "final-move"])
+def test_freehand_drag_uses_release_position(field, mode, trace_mode, path):
+    field.setMouseMode(mode)
+    field.closed_trace_shape = "trace"
+    field.series.setOption("trace_mode", trace_mode)
+    field.series.setOption("roll_average", False)
+    field.series.setOption("auto_merge", False)
+    field.tracing_trace = Trace("release_freehand", (255, 0, 255))
+    start, end = QPoint(200, 200), QPoint(250, 230)
+    expected_start = pixmapPointToField(
+        200, 200, field.pixmap_dim, field.series.window, field.section.mag
+    )
+    expected_end = pixmapPointToField(
+        250, 230, field.pixmap_dim, field.series.window, field.section.mag
+    )
+    expected_start = field.section.tform.map(*expected_start, inverted=True)
+    expected_end = field.section.tform.map(*expected_end, inverted=True)
+
+    _mouse(field, QEvent.MouseButtonPress, start)
+    if path == "small-move":
+        _mouse(field, QEvent.MouseMove, QPoint(201, 201))
+    elif path == "final-move":
+        _mouse(field, QEvent.MouseMove, end)
+    _mouse(field, QEvent.MouseButtonRelease, end)
+
+    assert not field.is_line_tracing
+    (trace,) = field.section.contours["release_freehand"]
+    assert trace.points[0] == pytest.approx(expected_start, abs=1e-6)
+    assert trace.points[-1] == pytest.approx(expected_end, abs=1e-6)
+    assert field.current_trace == []
+
+
 @pytest.mark.parametrize("elapsed", [0.05, 0.5], ids=["quick", "slow"])
 def test_stamp_drag_sets_radius(field, elapsed):
     field.setMouseMode(STAMP)

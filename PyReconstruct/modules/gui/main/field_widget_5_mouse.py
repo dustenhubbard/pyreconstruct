@@ -813,8 +813,8 @@ class FieldWidgetMouse(FieldWidgetData):
         ## User is not line tracing
         elif not self.is_line_tracing:
             if (
-                click_pending and self.mouse_mode == CLOSEDTRACE
-                and self.closed_trace_shape in ("rect", "circle")
+                click_pending
+                and (event.x(), event.y()) != (self.last_x, self.last_y)
             ):
                 self.pencilMove(event)
             self.pencilRelease(event)
@@ -864,6 +864,8 @@ class FieldWidgetMouse(FieldWidgetData):
             if len(self.current_trace) < 2:
                 return
 
+            name = self.tracing_trace.name
+            contour_before = len(self.section.contours.get(name, []))
             self.newTrace(
                 self.current_trace,
                 self.tracing_trace,
@@ -871,7 +873,8 @@ class FieldWidgetMouse(FieldWidgetData):
                 simplify=self.series.getOption("roll_average")
             )
             
-            if closed and len(self.current_trace) > 2:
+            created = len(self.section.contours.get(name, [])) > contour_before
+            if created and closed and len(self.current_trace) > 2:
                 self.autoMerge()
                 
             self.current_trace = []
