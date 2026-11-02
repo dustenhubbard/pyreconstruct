@@ -80,22 +80,46 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.public.outputs.version }}
         run: |
+          set -euo pipefail
           FILES=(README.md docs/USER_GUIDE.md docs/index.md)
+          # Compare against every table on main and on an existing PR branch.
+          MAIN_VERSION=$(grep -hoE 'current stable release, \*\*v[0-9]+\.[0-9]+\.[0-9]+' "${FILES[@]}" | sed 's/.*v//' | sort -V | tail -1)
+          BRANCH="docs/downloads-v${VERSION}"
+          EXISTING=$(git ls-remote --heads origin "refs/heads/$BRANCH")
+          if [ -n "$EXISTING" ]; then
+            git fetch origin "refs/heads/$BRANCH"
+            git checkout -b "$BRANCH" FETCH_HEAD
+          else
+            git checkout -b "$BRANCH"
+          fi
+          BRANCH_VERSION=$(grep -hoE 'current stable release, \*\*v[0-9]+\.[0-9]+\.[0-9]+' "${FILES[@]}" | sed 's/.*v//' | sort -V | tail -1)
+          NEWEST=$(printf '%s\n' "$MAIN_VERSION" "$BRANCH_VERSION" "$VERSION" | sort -V | tail -1)
+          if [ "$NEWEST" != "$VERSION" ]; then
+            echo "v$VERSION is older than the recommended v$NEWEST; no bump"
+            exit 0
+          fi
           sed -E -i \
             -e "s|(releases/download/)v[0-9]+\.[0-9]+\.[0-9]+/|\1v${VERSION}/|g" \
             -e "s#PyReconstruct-[0-9]+\.[0-9]+\.[0-9]+-(Windows|macOS|Linux|linux)#PyReconstruct-${VERSION}-\1#g" \
             -e "s|current stable release, \*\*v[0-9]+\.[0-9]+\.[0-9]+\*\*|current stable release, **v${VERSION}**|" \
             "${FILES[@]}"
-          git diff --quiet "${FILES[@]}" && { echo "download links already current"; exit 0; }
-          git config user.name "$(git log -1 --format=%an)"
-          git config user.email "$(git log -1 --format=%ae)"
-          BRANCH="docs/downloads-v${VERSION}"
-          git checkout -b "$BRANCH"
-          git add "${FILES[@]}"
-          git commit -m "docs: point the download links at v${VERSION}" \
-            -m "The README, the User Guide, and the website now link to the v${VERSION} downloads."
-          git push -f origin "$BRANCH"
-          gh pr create --base main --head "$BRANCH" \
-            --title "docs: point the download links at v${VERSION}" \
-            --body "The v${VERSION} release is published; this points the download links in the README, the User Guide, and the website at it." \
-            || echo "PR already open for $BRANCH"
+          if ! git diff --quiet "${FILES[@]}"; then
+            git config user.name "$(git log -1 --format=%an)"
+            git config user.email "$(git log -1 --format=%ae)"
+            git add "${FILES[@]}"
+            git commit -m "docs: point the download links at v${VERSION}" \
+              -m "The README, the User Guide, and the website now link to the v${VERSION} downloads."
+          elif [ -z "$EXISTING" ]; then
+            echo "download links already current"
+            exit 0
+          fi
+          git push origin "$BRANCH"
+          PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" \
+            --state open --json url --jq '.[0].url // empty')
+          if [ -n "$PR" ]; then
+            echo "$PR"
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" \
+              --title "docs: point the download links at v${VERSION}" \
+              --body "The v${VERSION} release is published; this points the download links in the README, the User Guide, and the website at it."
+          fi
