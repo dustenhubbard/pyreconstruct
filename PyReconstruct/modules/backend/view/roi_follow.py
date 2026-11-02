@@ -3,13 +3,17 @@
 The box keeps its size and is centered on the object, section by section. The
 object's place on a section comes from the series data, not the section: each
 trace's centroid and radius (its farthest point from the centroid), so paging
-loads nothing extra. The center is the middle of the square that holds every
-trace of the object on that section; for one trace that is its centroid.
+loads nothing extra. The center is the middle of the range of the object's
+trace centroids on that section; for one trace it is that trace's centroid.
 
 The series data measures an object under its own alignment when it has one
 (ObjectData.sectionTransform), and the field draws every trace under the
 series alignment. So each centroid is moved into the displayed coordinates,
-and each radius grows by the most that move can stretch a length.
+and each radius grows by the most that move can stretch a length. An affine
+move takes a centroid to the centroid of the moved trace, so a center from
+the series data is the center the shown section gives; a grown radius is an
+upper bound only, used for touching the box (objectsTouching), never for the
+center.
 
 The shown section is the exception: its traces are read live, as drawn
 (sectionSquares), since an edit there reaches the series data only when it
@@ -168,12 +172,14 @@ def objectCenters(series, name : str, display_tform, shown=None, held=()) -> dic
         xmin, ymin, xmax, ymax = (
             np.concatenate([a[keep], b]) for a, b in zip((xmin, ymin, xmax, ymax), live)
         )
+    # each square's middle is its trace's centroid, exact under any affine
+    cx, cy = (xmin + xmax) / 2, (ymin + ymax) / 2
     centers = {}
     for snum in np.unique(snums):
         on = snums == snum
         centers[int(snum)] = (
-            float((xmin[on].min() + xmax[on].max()) / 2),
-            float((ymin[on].min() + ymax[on].max()) / 2),
+            float((cx[on].min() + cx[on].max()) / 2),
+            float((cy[on].min() + cy[on].max()) / 2),
         )
     return centers
 

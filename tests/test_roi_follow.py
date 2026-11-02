@@ -342,6 +342,149 @@ def test_a_scissors_pickup_with_a_same_name_palette_trace_keeps_the_box(
     assert notices == []
 
 
+def _drawn_center(field, name):
+    """The middle of the range of an object's trace centroids, as drawn on
+    the shown section, found without objectCenters."""
+    import numpy as np
+    cs = np.array([
+        t.getCentroid(field.section.tform)
+        for t in field.section.contours.get(name, ()) if t.points
+    ])
+    return (
+        float((cs[:, 0].min() + cs[:, 0].max()) / 2),
+        float((cs[:, 1].min() + cs[:, 1].max()) / 2),
+    )
+
+
+@pytest.fixture
+def solo(mw, qapp):
+    """Object "solo", one square on section 52, followed in a 0.4 μm box."""
+    from PyReconstruct.modules.datatypes import Trace
+    field = mw.field
+    mw.series.setOption("auto_merge", False)
+    mw.series.setOption("trace_mode", "poly")
+    square = [(13.4, 23.6), (13.6, 23.6), (13.6, 23.8), (13.4, 23.8)]
+    assert field.newTrace(
+        square, Trace("solo", (255, 0, 0)), points_as_pix=False, reduce_points=False,
+    )
+    field.section.selected_traces = []
+    template = Trace("solo", (255, 0, 0))
+    template.points = [(-0.1, -0.1), (0.1, -0.1), (0.1, 0.1), (-0.1, 0.1)]
+    mw.mouse_palette.modifyPaletteButton(0, template)
+    mw.mouse_palette.activatePaletteButton(0)
+    _follow(mw, "solo", size=(0.4, 0.4))
+    field.series.window = [12.5, 22.7, 2.0, 2.0]
+    field.generateView()
+    qapp.processEvents()
+    return field
+
+
+@pytest.mark.parametrize("tool", ["paste", "closed", "open", "stamp"])
+def test_a_new_trace_inside_the_moved_box_stays_selected(mw, qapp, solo, notices, tool):
+    """The new trace is outside the box's old place and inside its new one."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from test_roi_box import _pix
+    field = solo
+    (old,) = field.section.contours["solo"]
+    if tool == "paste":
+        field.section.selected_traces = [old]
+        field.copy()
+        field.section.selected_traces = []
+        field.clipboard[0].points = [(x + 0.5, y) for x, y in field.clipboard[0].points]
+        field.paste()
+    elif tool == "stamp":
+        mw.mouse_palette.activateModeButton("Stamp")
+        QTest.mouseClick(field, Qt.LeftButton, Qt.NoModifier, _pix(field, 14.0, 23.7))
+    else:
+        mw.mouse_palette.activateModeButton("Closed Trace" if tool == "closed" else "Open Trace")
+        corners = [(13.9, 23.6), (14.1, 23.6), (14.1, 23.8), (13.9, 23.8)]
+        for x, y in corners:
+            QTest.mouseClick(field, Qt.LeftButton, Qt.NoModifier, _pix(field, x, y))
+        QTest.mouseClick(field, Qt.RightButton, Qt.NoModifier, _pix(field, *corners[-1]))
+    qapp.processEvents()
+
+    traces = list(field.section.contours["solo"])
+    assert len(traces) == 2
+    new = traces[-1]
+    assert field.roi_box_center == pytest.approx(_drawn_center(field, "solo"))
+    assert new in field.section.selected_traces
+    assert new in field.section_layer.traces_in_view
+    assert "outside the ROI mode box" not in mw.statusBar().currentMessage()
+    assert notices == []
+
+
+def test_a_borrowed_place_matches_its_source_under_a_nonuniform_alignment(mw, qapp, notices):
+    """Two traces of different sizes, measured under a pinned identity
+    alignment and drawn under one that scales x by 0.1 and y by 3: section
+    51 borrows exactly the place section 52 shows."""
+    from PyReconstruct.modules.datatypes import Trace
+    field = mw.field
+    for corners in (
+        [(10.0, 20.0), (14.0, 20.0), (14.0, 20.2), (10.0, 20.2)],
+        [(20.0, 20.0), (20.2, 20.0), (20.2, 20.2), (20.0, 20.2)],
+    ):
+        t = Trace("pair", (255, 0, 0))
+        t.points = corners
+        field.section.addTrace(t)
+        field.saveState()
+    for n in mw.series.sections:
+        section = field.section if n == field.section.n else mw.series.loadSection(n)
+        section.tforms["pin"] = Transform.identity()
+        section.tforms["shown"] = Transform([0.1, 0.0, 0.0, 0.0, 3.0, 0.0])
+        section.save()
+    mw.series.setAttr("pair", "alignment", "pin")
+    mw.saveAllData()
+    mw.createContextMenus()
+    mw.changeAlignment("shown")
+    _follow(mw, "pair")
+
+    source = _drawn_center(field, "pair")
+    assert field.roi_box_center == pytest.approx(source)
+    mw.changeSection(51)
+    qapp.processEvents()
+    assert field.roi_follow_name == "pair" and field.roi_follow_from == 52
+    assert field.roi_box_center == pytest.approx(source)
+    assert notices == []
+
+
+def test_a_redraw_during_a_series_data_refresh_keeps_following(mw, qapp, notices):
+    """A refresh empties the series data and lets events run while it adds
+    the sections back; a redraw then must not decide the object is gone."""
+    from PySide6.QtCore import QTimer
+    field = mw.field
+    _follow(mw, "d03p14")
+    mw.changeSection(51)
+    qapp.processEvents()
+    field.openList("object")
+    qapp.processEvents()
+    QTimer.singleShot(0, lambda: mw.resize(mw.width() + 10, mw.height() + 10))
+    field.table_manager.refresh()
+    qapp.processEvents()
+
+    assert "d03p14" in mw.series.data["objects"]
+    assert field.roi_follow_name == "d03p14" and field.roi_follow_from == 52
+    assert notices == []
+
+
+def test_an_incomplete_series_data_leaves_the_box_where_it_is(mw, qapp, notices):
+    field = mw.field
+    _follow(mw, "d03p14")
+    center = field.roi_box_center
+    saved = mw.series.data.data
+    mw.series.data.data = {"sections": {}, "objects": {}}
+    contour = field.section.contours.pop("d03p14")
+    try:
+        field.generateView()
+        qapp.processEvents()
+        assert field.roi_follow_name == "d03p14"
+        assert field.roi_box_center == center
+        assert notices == []
+    finally:
+        mw.series.data.data = saved
+        field.section.contours["d03p14"] = contour
+
+
 def test_the_selected_trace_is_offered_to_follow(mw, qapp, monkeypatch):
     from PyReconstruct.modules.gui.main import field_widget_7_view as fwv
     field = mw.field

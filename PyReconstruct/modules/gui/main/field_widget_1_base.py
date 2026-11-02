@@ -346,11 +346,9 @@ class FieldWidgetBase:
         ## Resize series window to match view proportions
         self.resizeWindow(self.pixmap_dim)
 
-        ## A box that follows an object moves with it, section by section
-        self.placeFollowedRoiBox()
-
         ## A redraw follows every selection change, so the ROI box's one
-        ## selection rule is kept here
+        ## selection rule is kept here; a box that follows an object is
+        ## placed first, section by section
         self.dropSelectedOutsideRoiBox()
 
         ## Calculate scaling
@@ -441,9 +439,15 @@ class FieldWidgetBase:
         """Center a box that follows an object on it on this section, or as
         on the nearest section with it (backend/view/roi_follow.py). When no
         section has the object (deleted or renamed), the box stays where it
-        was, stops following, and a message says so."""
+        was, stops following, and a message says so.
+
+        Nothing is decided while the series data is being built again (a
+        refresh lets events run, a redraw among them): the box stays where it
+        is until the data has every section."""
         name = self.roi_follow_name
         if not self.roi_box_on or name is None:
+            return
+        if not self.seriesDataComplete():
             return
         placed = followCenter(
             objectCenters(
@@ -461,6 +465,12 @@ class FieldWidgetBase:
             ))
             return
         self.roi_box_center, self.roi_follow_from = placed
+
+    def seriesDataComplete(self) -> bool:
+        """Whether the series data has every section of the series. A
+        refresh (SeriesData.refresh) empties it, then adds the sections back
+        one by one."""
+        return len(self.series.data["sections"]) >= len(self.series.sections)
 
     def heldTraces(self) -> list:
         """The traces a tool holds out of the shown section while it edits
@@ -495,9 +505,14 @@ class FieldWidgetBase:
         lasso, Select all, Invert, focus mode, Find, a new trace) ends in a
         redraw, and generateView calls this first.
 
+        A box that follows an object is placed first, from the shown
+        section's traces as they are now, so a trace just drawn, pasted or
+        moved inside the box's new place stays selected.
+
             Returns:
                 (list): the traces that were deselected
         """
+        self.placeFollowedRoiBox()
         if self.roiBox() is None:
             return []
         selected = self.section.selected_traces
