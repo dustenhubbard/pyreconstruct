@@ -5566,23 +5566,23 @@ class Series():
                 # skip user column data
                 if attr_name == "user_columns":
                     continue
+                if attr_name == "curation_by" and "curation" in obj_data:
+                    continue  # imported with the status it belongs to
 
                 if obj_name not in self.obj_attrs:
                     self.obj_attrs[obj_name] = {}
                 
-                if attr_name not in self.obj_attrs[obj_name]:
+                if attr_name == "curation":
+                    if "curation" in self.obj_attrs[obj_name]:
+                        self_date = self.obj_attrs[obj_name]["curation"][-1]
+                        if attr_value[-1] < self_date:
+                            continue
+                    self.obj_attrs[obj_name]["curation"] = attr_value
+                    # The assigner follows the winning status, including a
+                    # first import or a legacy status with no assigner.
+                    self.obj_attrs[obj_name]["curation_by"] = obj_data.get("curation_by")
+                elif attr_name not in self.obj_attrs[obj_name]:
                     self.obj_attrs[obj_name][attr_name] = attr_value
-                # special case: overwrite self curation if other is more recent
-                elif attr_name == "curation":
-                    self_date = self.obj_attrs[obj_name]["curation"][-1]
-                    other_date = attr_value[-1]
-                    if other_date >= self_date:
-                        self.obj_attrs[obj_name]["curation"] = attr_value
-                        # the assigner belongs to the curation that won; a
-                        # missing value on the other side clears rather than
-                        # keeping an assigner for a status it did not set
-                        other_by = other.obj_attrs.get(obj_name, {}).get("curation_by")
-                        self.obj_attrs[obj_name]["curation_by"] = other_by
     
     def importTraces(
             self,
