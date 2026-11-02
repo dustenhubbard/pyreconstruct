@@ -1090,6 +1090,7 @@ class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
 
         ## Create vedo renderer
         self.plt = VPlotter(self, qt_widget=self)
+        self.plt.parallel_projection(True)
 
         ## Create menu bar
         menubar_list = [
@@ -1149,6 +1150,9 @@ class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
                         "text": "View",
                         "opts":
                         [
+                            ("orthographic_act", "Orthographic", "checkbox True", self.toggleProjection,
+                             "Turn off to use perspective projection."),
+                            None,
                             ("focusall_act", "Focus on all", "Home", self.plt.show),
                             ("focusselected_act", "Center on selected", "F", self.plt.setFocalPointToSelected),
                             {
@@ -1234,6 +1238,11 @@ class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
     def series(self):
         """The series open in the main window right now (see VPlotter.series)."""
         return self.mainwindow.series
+
+    def toggleProjection(self):
+        """Switch between orthographic and perspective projection."""
+        self.plt.parallel_projection(self.orthographic_act.isChecked())
+        self.plt.render()
 
     def _syncRenderWindowSize(self):
         """Resize the render window if it no longer matches this widget.
@@ -1331,6 +1340,8 @@ class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
         d["camera"]["focal_point"] = self.plt.camera.GetFocalPoint()
         d["camera"]["view_up"] = self.plt.camera.GetViewUp()
         d["camera"]["distance"] = self.plt.camera.GetDistance()
+        d["camera"]["parallel_projection"] = bool(self.plt.camera.GetParallelProjection())
+        d["camera"]["parallel_scale"] = self.plt.camera.GetParallelScale()
 
         if return_dict:
             return d
@@ -1380,6 +1391,12 @@ class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
             self.plt.camera.SetFocalPoint(d["camera"]["focal_point"])
             self.plt.camera.SetViewUp(d["camera"]["view_up"])
             self.plt.camera.SetDistance(d["camera"]["distance"])
+            # Older scene files were saved with perspective projection.
+            parallel = d["camera"].get("parallel_projection", False)
+            self.plt.parallel_projection(parallel)
+            self.orthographic_act.setChecked(parallel)
+            if "parallel_scale" in d["camera"]:
+                self.plt.camera.SetParallelScale(d["camera"]["parallel_scale"])
             self.plt.show(resetcam=False)
             
     def addFromOtherSeries(self):
