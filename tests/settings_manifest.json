@@ -32,6 +32,8 @@
     "changetform_act": "str",
     "copy_act": "str",
     "copytosections_act": "str",
+    "correlation_bright_cutoff": "int",
+    "correlation_dark_cutoff": "int",
     "cpu_max": "int",
     "cut_act": "str",
     "decbr_act": "str",

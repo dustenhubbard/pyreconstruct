@@ -2,8 +2,6 @@ import os
 import time
 import math
 
-import cv2
-
 from PySide6.QtWidgets import (
     QInputDialog,
 )
@@ -445,7 +443,7 @@ class FieldWidgetData(FieldWidgetObject):
         self.changeTform(a2b_tform)
 
     def corrAlign(self):
-        """Align image by correlation using FFT."""
+        """Align intact image regions, leaving weak matches unchanged."""
 
         if not self.b_section_layer or self.section.align_locked:
             if self.section.align_locked:
@@ -458,13 +456,24 @@ class FieldWidgetData(FieldWidgetObject):
         window = self.series.window
         dim = self.pixmap_dim
 
-        arr_prev = self.b_section_layer.generateImageArray(dim, window)
-        arr_curr = self.section_layer.generateImageArray(dim, window)
+        # Use source intensities so display brightness cannot mask valid tissue
+        # or turn the black image border into a correlation feature.
+        arr_prev = self.b_section_layer.generateImageArray(dim, window, bc=False)
+        arr_curr = self.section_layer.generateImageArray(dim, window, bc=False)
 
-        arr_prev = cv2.cvtColor(arr_prev, cv2.COLOR_RGB2BGR)
-        arr_curr = cv2.cvtColor(arr_curr, cv2.COLOR_RGB2BGR)
-
-        x, y = correlate(arr_curr, arr_prev)  # get cross correlation
+        try:
+            offset = correlate(
+                arr_curr, arr_prev,
+                dark_cutoff=self.series.getOption("correlation_dark_cutoff"),
+                bright_cutoff=self.series.getOption("correlation_bright_cutoff"),
+            )
+        except ValueError as error:
+            notify(str(error))
+            return
+        if offset is None:
+            notify("No reliable correlation match. The section was not moved.")
+            return
+        x, y = offset
 
         shift_x = x / self.scaling * self.section.mag
         shift_y = (y / self.scaling * self.section.mag) * -1
