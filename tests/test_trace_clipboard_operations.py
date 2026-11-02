@@ -168,6 +168,8 @@ def test_paste_attributes_keeps_geometry_and_does_not_share_tags(field):
     field.section.selected_traces = [source]
     field.copy()
     targets = [add_trace(field, "attribute_target", closed=closed) for closed in (False, True)]
+    targets[0].points = [(0.04, 0.01), (0.06, 0.01), (0.05, 0.03)]
+    targets[1].points = [(0.01, 0.05), (0.03, 0.05), (0.03, 0.07), (0.01, 0.07)]
     for target in targets:
         target.color = (255, 0, 0)
         target.tags = {"old"}
@@ -179,10 +181,12 @@ def test_paste_attributes_keeps_geometry_and_does_not_share_tags(field):
 
     traces = list(field.section.contours["attribute_source"])
     assert len(traces) == 3
-    assert sorted(t.closed for t in traces) == [False, True, True]
-    assert sorted(t.negative for t in traces) == [False, False, True]
+    assert sorted((t.closed, t.negative, t.points) for t in traces) == [
+        (False, False, [(0.04, 0.01), (0.06, 0.01), (0.05, 0.03)]),
+        (True, False, [(0.01, 0.05), (0.03, 0.05), (0.03, 0.07), (0.01, 0.07)]),
+        (True, True, TRIANGLE),
+    ]
     for trace in traces:
-        assert trace.points == TRIANGLE
         assert tuple(trace.color) == (20, 40, 60)
         assert tuple(trace.fill_mode) == ("solid", "selected")
         assert trace.tags == {"reviewed"}

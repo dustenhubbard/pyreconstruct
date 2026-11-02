@@ -209,9 +209,12 @@ def test_knife_with_no_selection_keeps_traces_and_reports_the_reason(edit_field,
 
 
 @pytest.mark.gui
-def test_smoothed_knife_splits_an_open_trace_and_keeps_its_attributes(edit_field):
+@pytest.mark.parametrize("smooth", [False, True])
+def test_knife_smoothing_moves_the_split_and_keeps_its_attributes(
+    edit_field, smooth,
+):
     field = edit_field
-    field.series.setOption("roll_knife_average", True)
+    field.series.setOption("roll_knife_average", smooth)
     field.series.setOption("roll_knife_window", 3)
     field.series.setOption("knife_del_threshold", 0)
     field.series.window = [0, 0, 0.1, 0.1]
@@ -221,19 +224,21 @@ def test_smoothed_knife_splits_an_open_trace_and_keeps_its_attributes(edit_field
     trace.negative = True
     field.section.selected_traces = [trace]
     (x0, y), (x1, _) = field.section_layer.traceToPix(trace)
-    knife = [((x0 + x1) / 2, y - 20 + 2 * i) for i in range(21)]
+    middle = (x0 + x1) / 2
+    knife = [(middle - 6, y - 8), (middle, y), (middle, y + 10)]
 
     assert field.cutTrace(knife) is True
 
     pieces = sorted(field.section.contours["smoothed_knife"], key=lambda t: t.points[0])
     assert len(pieces) == 2
-    # Pixel conversion rounds the original endpoints and crossing to the
-    # screen grid. Allow one field pixel, while checking the entire path.
-    tolerance = 0.1 / min(field.pixmap_dim)
+    # Each leg is 10 pixels long, giving five samples at five-pixel spacing.
+    # The middle sample averages to (middle - 1, y + 1/3), then truncates to
+    # integer pixels. The smoothed knife crosses at that sample.
+    crossing = int(middle - 1) if smooth else round(middle)
     for piece, expected in zip(pieces, [
-        [(0.02, 0.02), (0.05, 0.02)], [(0.05, 0.02), (0.08, 0.02)],
+        [(x0, y), (crossing, y)], [(crossing, y), (x1, y)],
     ]):
-        assert piece.points == [pytest.approx(p, abs=tolerance) for p in expected]
+        assert field.section_layer.traceToPix(piece) == expected
         assert piece.closed is False
         assert piece.negative is True
         assert piece.color == (20, 40, 60)
