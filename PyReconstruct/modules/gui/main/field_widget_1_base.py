@@ -18,11 +18,14 @@ from PySide6.QtCore import (
 )
 
 from PyReconstruct.modules.datatypes import Series, Section, Trace, Transform
+from PyReconstruct.modules.datatypes.transform import alignment_tform
 from PyReconstruct.modules.backend.view import SectionLayer, ZarrLayer
 from PyReconstruct.modules.backend.view.image_layer import dropReadAhead
 from PyReconstruct.modules.backend.view.trace_layer import traceInRoiBox
+from PyReconstruct.modules.backend.view.roi_follow import followCenter, objectCenters
 from PyReconstruct.modules.backend.func import SeriesStates
 from PyReconstruct.modules.backend.table import TableManager
+from PyReconstruct.modules.gui.utils import notify
 
 
 class FieldWidgetBase:
@@ -82,6 +85,11 @@ class FieldWidgetBase:
         # the box a click places, "center" or "corner" (the upper-left).
         self.roi_box_drag_draws : bool      = True
         self.roi_box_anchor : str           = "center"
+        # The object the box follows, or None: on each section the box is
+        # centered on it, or placed as on the nearest section with it, which
+        # roi_follow_from names (the shown section when it has the object).
+        self.roi_follow_name : str          = None
+        self.roi_follow_from : int          = None
         # A drag in the ROI box mode, in field coordinates: where the press
         # was, and where the pointer is once the press has become a drag
         # (None until then, and no preview is drawn).
@@ -206,6 +214,8 @@ class FieldWidgetBase:
         self.hide_image = False
         self.roi_box_on = False
         self.roi_box_center = None
+        self.roi_follow_name = None
+        self.roi_follow_from = None
         self.roi_box_drag_start = None
         self.roi_box_drag_end = None
 
@@ -336,6 +346,9 @@ class FieldWidgetBase:
         ## Resize series window to match view proportions
         self.resizeWindow(self.pixmap_dim)
 
+        ## A box that follows an object moves with it, section by section
+        self.placeFollowedRoiBox()
+
         ## A redraw follows every selection change, so the ROI box's one
         ## selection rule is kept here
         self.dropSelectedOutsideRoiBox()
@@ -423,6 +436,37 @@ class FieldWidgetBase:
         if not self.roi_box_on or self.roi_box_center is None:
             return None
         return (*self.roi_box_center, *self.roi_box_size)
+
+    def placeFollowedRoiBox(self):
+        """Center a box that follows an object on it on this section, or as
+        on the nearest section with it (backend/view/roi_follow.py). When no
+        section has the object (deleted or renamed), the box stays where it
+        was, stops following, and a message says so."""
+        name = self.roi_follow_name
+        if not self.roi_box_on or name is None:
+            return
+        placed = followCenter(
+            objectCenters(self.series, name, self.displayTform), self.section.n
+        )
+        if placed is None:
+            self.roi_follow_name = None
+            self.roi_follow_from = None
+            # after the redraw, never in the middle of it
+            QTimer.singleShot(0, lambda: notify(
+                f"No section has {name} now, so the ROI mode box stopped following it."
+            ))
+            return
+        self.roi_box_center, self.roi_follow_from = placed
+
+    def displayTform(self, snum : int):
+        """The transform the field draws a section with: the shown section's
+        own, else the series alignment's from the series data (None for a
+        section the series data does not have)."""
+        if snum == self.section.n:
+            return self.section.tform
+        if snum not in self.series.data["sections"]:
+            return None
+        return alignment_tform(self.series, snum)
 
     def inRoiBox(self, trace : Trace) -> bool:
         """Whether a trace on the current section is inside the ROI box

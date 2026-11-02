@@ -1264,7 +1264,8 @@ class FieldWidgetMouse(FieldWidgetData):
         its center is the middle of the dragged rectangle and its size, kept
         for later clicks, is the rectangle's. With drags off in the tool's
         options, a drag is a click at the press. Either one turns ROI mode on
-        if it was off. View-only, so no undo state is saved.
+        if it was off and ends following an object. View-only, so no undo
+        state is saved.
         """
         start = self.roi_box_drag_start
         self.roi_box_drag_start = None
@@ -1283,6 +1284,9 @@ class FieldWidgetMouse(FieldWidgetData):
 
         self.roi_box_on = True
         self.roi_box_center = center
+        # a box placed with the tool stays where it is put
+        self.roi_follow_name = None
+        self.roi_follow_from = None
         self.generateView()
 
     def roiBoxCenterAt(self, point : tuple) -> tuple:

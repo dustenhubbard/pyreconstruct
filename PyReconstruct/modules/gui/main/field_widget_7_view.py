@@ -62,6 +62,8 @@ class FieldWidgetView(FieldWidgetPaint):
 
         self.roi_box_on = False
         self.roi_box_center = None
+        self.roi_follow_name = None
+        self.roi_follow_from = None
         if self.mouse_mode == ROI_BOX:
             self.mainwindow.mouse_palette.activateModeButton("Pointer")
         self.generateView()
@@ -74,6 +76,10 @@ class FieldWidgetView(FieldWidgetPaint):
 
         A placed box takes a new size at once and keeps the point its anchor
         names: its center, or its upper-left corner.
+
+        An object named to follow (the selected trace's, offered first) turns
+        the box on and centers it on that object on every section; a blank
+        name ends following.
 
             Returns:
                 (bool): True if the user confirmed the options
@@ -94,6 +100,8 @@ class FieldWidgetView(FieldWidgetPaint):
                 ("Center", center),
                 ("Upper-left corner", not center),
             )],
+            ["Follow this object (blank for none):"],
+            [("combo", self.roiFollowChoices(), self.roiFollowOffer())],
         ]
         response, confirmed = QuickDialog.get(self, structure, "ROI mode")
         if not confirmed:
@@ -101,23 +109,47 @@ class FieldWidgetView(FieldWidgetPaint):
         new_size = (float(response[1]), float(response[2]))
         self.roi_box_drag_draws = response[0][0][1]
         self.roi_box_anchor = "center" if response[3][0][1] else "corner"
+        follow = response[4] or None
         if self.roi_box_center is not None and self.roi_box_anchor == "corner":
             # the upper-left corner stays where it is
             (cx, cy), (ow, oh) = self.roi_box_center, self.roi_box_size
             nw, nh = new_size
             self.roi_box_center = (cx - ow / 2 + nw / 2, cy + oh / 2 - nh / 2)
         self.roi_box_size = new_size
+        self.roi_follow_from = None
+        self.roi_follow_name = follow
+        if follow is not None:
+            self.roi_box_on = True
+            # placed by placeFollowedRoiBox when the view is drawn
+            self.roi_box_center = self.roi_box_center or (0.0, 0.0)
         if self.roiBox() is not None:
             self.generateView()
         else:
             self.update()
         return True
 
+    def roiFollowChoices(self) -> list:
+        """The object names the ROI mode box can follow, sorted."""
+        return sorted(self.series.data["objects"])
+
+    def roiFollowOffer(self) -> str:
+        """The name the options dialog offers to follow: the followed one,
+        else the selected trace's (the first, if several), else none."""
+        if self.roi_follow_name is not None:
+            return self.roi_follow_name
+        selected = self.section.selected_traces
+        return selected[0].name if selected else ""
+
     def roiBoxStatus(self) -> str:
         """The status-bar text for ROI mode, or None while it is off and its
         tool is not in use."""
         w, h = self.roi_box_size
         size = f"{w:g} x {h:g} μm"
+        if self.roi_box_on and self.roi_follow_name is not None:
+            text = f"ROI mode {size}, following {self.roi_follow_name}"
+            if self.roi_follow_from not in (None, self.section.n):
+                text += f" (not on this section; placed as on section {self.roi_follow_from})"
+            return text
         if self.roi_box_on:
             return f"ROI mode {size}"
         if self.mouse_mode == ROI_BOX:
