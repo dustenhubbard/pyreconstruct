@@ -7,6 +7,7 @@ import re
 import json
 import shutil
 import secrets
+import stat
 import subprocess
 import tempfile
 from datetime import datetime, timezone
@@ -762,6 +763,9 @@ def _atomicWrite(fp : str, data):
     ``<fp>.tmp`` plus any unique tail is longer than ``<fp>.tmp``, and a series
     name that fit the old name would no longer fit the 255 character limit.
 
+    Existing files keep their permissions. A new file gets the usual
+    0o666-less-umask permissions.
+
     `data` may also be a callable that writes into the open temp file, so a
     caller can stream a file too large to build in memory first. Anything it
     raises removes the temp file and leaves the destination as it was.
@@ -775,14 +779,21 @@ def _atomicWrite(fp : str, data):
     while True:
         tmp_fp = os.path.join(folder, f".save-{secrets.token_hex(3)}.tmp")
         try:
-            # "x" is O_EXCL, and the mode is the same 0o666-less-umask a plain
-            # open gives, so the saved file gets the usual new-file permissions
+            # "x" is O_EXCL; new files keep the usual 0o666-less-umask mode.
             f = open(tmp_fp, "xb")
             break
         except FileExistsError:
             continue  # another write's temp file, or a crashed one; not ours
     try:
         with f:
+            try:
+                mode = stat.S_IMODE(os.stat(fp).st_mode)
+            except FileNotFoundError:
+                pass  # a new destination keeps the mode open() gave it
+            else:
+                # Set this before writing so private data stays private in
+                # the temp file too. A failure leaves the destination intact.
+                os.chmod(tmp_fp, mode)
             if callable(data):
                 data(f)
             else:
