@@ -62,6 +62,7 @@ def test_source_run_needs_no_administrator_instruction(monkeypatch):
     assert I.installer_admin_required() is False
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="macOS paths use POSIX path resolution")
 @pytest.mark.parametrize("folder", [
     "/Volumes/PyReconstruct/PyReconstruct.app",
     "/private/var/folders/x/AppTranslocation/ABC/d/PyReconstruct.app",

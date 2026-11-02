@@ -65,6 +65,7 @@ def test_installer_adds_once_and_uninstalls_from_the_selected_path(tmp_path, dev
     original = [_path(*scope) for scope in scopes]
     selected = int(all_users)
     uninstaller = install / "unins000.exe"
+    uninstalled = False
     try:
         if trailing_separator:
             root, subkey = scopes[selected]
@@ -85,23 +86,26 @@ def test_installer_adds_once_and_uninstalls_from_the_selected_path(tmp_path, dev
         _run(command)
         assert [_path(*scope) for scope in scopes] == once
         _run([uninstaller, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"])
+        uninstalled = True
         assert [_path(*scope)[0] if _path(*scope) else "" for scope in scopes] == [
             value[0] if value else "" for value in before]
     finally:
-        if uninstaller.exists():
-            _run([uninstaller, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"])
-        for (root, subkey), value in zip(scopes, original):
-            with winreg.CreateKey(root, subkey) as key:
-                if value is not None:
-                    winreg.SetValueEx(key, "Path", 0, value[1], value[0])
-                else:
-                    try:
-                        winreg.DeleteValue(key, "Path")
-                    except FileNotFoundError:
-                        pass
-        # Inno preserves the extension's default association on uninstall.
-        classes = winreg.HKEY_LOCAL_MACHINE if all_users else winreg.HKEY_CURRENT_USER
         try:
-            winreg.DeleteKey(classes, "Software\\Classes\\" + extension)
-        except FileNotFoundError:
-            pass
+            if not uninstalled and uninstaller.exists():
+                _run([uninstaller, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"])
+        finally:
+            for (root, subkey), value in zip(scopes, original):
+                with winreg.CreateKey(root, subkey) as key:
+                    if value is not None:
+                        winreg.SetValueEx(key, "Path", 0, value[1], value[0])
+                    else:
+                        try:
+                            winreg.DeleteValue(key, "Path")
+                        except FileNotFoundError:
+                            pass
+            # Inno preserves the extension's default association on uninstall.
+            classes = winreg.HKEY_LOCAL_MACHINE if all_users else winreg.HKEY_CURRENT_USER
+            try:
+                winreg.DeleteKey(classes, "Software\\Classes\\" + extension)
+            except FileNotFoundError:
+                pass

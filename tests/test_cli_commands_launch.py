@@ -256,6 +256,7 @@ def link_to(mac, name):
     return os.readlink(mac["links"] / name)
 
 
+@posix_only
 @pytest.mark.parametrize("path,ok", [
     ("/Applications/PyReconstruct.app", True),
     ("/Applications/Science/PyReconstruct Dev.app", True),
