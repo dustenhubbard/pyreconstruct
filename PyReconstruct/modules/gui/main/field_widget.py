@@ -516,6 +516,8 @@ class FieldWidget(QWidget, FieldWidgetView):
             return
 
         if self.mouse_mode == POINTER:
+            # The release can be the first position beyond the click tolerance.
+            self.pointerMove(event)
             self.pointerRelease(event)
         elif self.mouse_mode == PANZOOM:
             self.mousePanzoomRelease(event)
@@ -535,6 +537,7 @@ class FieldWidget(QWidget, FieldWidgetView):
         ):
             self.traceRelease(event)
         elif self.mouse_mode == STAMP:
+            self.stampMove(event)
             self.stampRelease(event)
         elif self.mouse_mode == GRID:
             self.gridRelease(event)

@@ -26,7 +26,8 @@ def _mouse(field, kind, point):
 
 
 @pytest.fixture
-def field(main_window, monkeypatch):
+def field(main_window, local_series_settings, monkeypatch):
+    local_series_settings(main_window)
     field = main_window.field
     monkeypatch.setattr(field_widget.time, "time", lambda: 1000.0)
     return field
@@ -169,3 +170,60 @@ def test_pan_drag_moves_window(field, elapsed):
     _drag(field, QPoint(200, 200), [QPoint(250, 230)], elapsed)
 
     assert field.series.window == pytest.approx((x - 50 * scale, y + 30 * scale, w, h))
+
+
+def _release_drag(field, small_move):
+    _mouse(field, QEvent.MouseButtonPress, QPoint(200, 200))
+    if small_move:
+        _mouse(field, QEvent.MouseMove, QPoint(201, 201))
+    _mouse(field, QEvent.MouseButtonRelease, QPoint(250, 230))
+
+
+@pytest.mark.parametrize("small_move", [False, True], ids=["release-only", "small-move"])
+def test_pointer_release_moves_selected_trace(field, small_move):
+    field.setMouseMode(POINTER)
+    trace = _add_square(field, "move_me", 200, 200, 220, 220)
+    field.section.selected_traces = [trace]
+    before = list(trace.points)
+    scale = field.series.screen_mag
+
+    _release_drag(field, small_move)
+
+    for point, (x, y) in zip(trace.points, before):
+        assert point == pytest.approx((x + 50 * scale, y - 30 * scale))
+    assert not field.section.temp_hide
+    assert not field.is_moving_trace
+
+
+@pytest.mark.parametrize("small_move", [False, True], ids=["release-only", "small-move"])
+def test_pointer_release_selects_rectangle(field, small_move):
+    field.setMouseMode(POINTER)
+    field.series.setOption("pointer", ["rect", "exc"])
+    trace = _add_square(field, "select_me", 210, 210, 220, 220)
+
+    _release_drag(field, small_move)
+
+    assert field.section.selected_traces == [trace]
+    assert not field.is_selecting_traces
+    assert field.mouse_boundary_timer is None
+
+
+@pytest.mark.parametrize("small_move", [False, True], ids=["release-only", "small-move"])
+def test_stamp_release_sets_radius(field, small_move):
+    field.setMouseMode(STAMP)
+    field.tracing_trace = Trace("quick_stamp", (255, 0, 255))
+    field.tracing_trace.points = [(-1, -1), (1, -1), (1, 1), (-1, 1)]
+    scale = field.series.window[2] / field.pixmap_dim[0]
+
+    _release_drag(field, small_move)
+
+    (trace,) = field.section.contours["quick_stamp"]
+    assert trace.getRadius() == pytest.approx(
+        (50**2 + 30**2)**0.5 / 2 * scale, abs=1e-6
+    )
+    center = pixmapPointToField(
+        225, 215, field.pixmap_dim, field.series.window, field.section.mag
+    )
+    assert trace.getCentroid(field.section.tform) == pytest.approx(center)
+    assert not field.is_drawing_rad
+    assert field.current_trace == []
