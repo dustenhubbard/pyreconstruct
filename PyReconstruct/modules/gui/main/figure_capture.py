@@ -1,12 +1,15 @@
 """Frame the field and render a figure independently of its screen pixels."""
 
 import math
+from pathlib import Path
+
+import numpy as np
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, QSaveFile, QIODevice, QSignalBlocker, Qt
 from PySide6.QtGui import QColor, QImageWriter, QPainter, QPainterPath, QPen, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBox,
-    QFormLayout, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
+    QFormLayout, QFrame, QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea,
     QSpinBox, QVBoxLayout, QWidget,
 )
 
@@ -257,7 +260,7 @@ class FigureCapture(QWidget):
             layers, (bar.x(), bar.y()), self.bar_length,
             self.label_size.value(), self.tick_size.value(),
             show_all_traces=field.show_all_traces, focus_on=field.focus_mode,
-            roi_box=field.roiBox(),
+            roi_box=field.roiBox(), respect_overlay_visibility=False,
         )
 
     def refresh(self):
@@ -305,11 +308,16 @@ class FigureCapture(QWidget):
             self.syncSizeInputs()
 
     def nativeSize(self):
-        # Source pixel area after alignment; rotations and translations keep
-        # the native density, and a uniform scale changes it proportionally.
-        pixel_size = self.field.section.mag * math.sqrt(abs(self.field.section.tform.det))
+        # The smallest singular value preserves the finest aligned detail,
+        # including nonuniform scale and shear, with square output pixels.
+        a, b, _, d, e, _ = self.field.section.tform.getList()
+        pixel_size = self.field.section.mag * np.linalg.svd(
+            [[a, b], [d, e]], compute_uv=False)[-1]
         if pixel_size > 0:
-            self.out_width = max(1, round(self.frameWindow()[2] / pixel_size))
+            _, _, width, height = self.frameWindow()
+            fw, fh = self.frameDim()
+            self.out_width = max(1, math.ceil(width / pixel_size),
+                                 math.ceil(math.ceil(height / pixel_size) * fw / fh))
             self.syncSizeInputs()
 
     def outputImage(self):
@@ -326,6 +334,12 @@ class FigureCapture(QWidget):
             return
         if not path.lower().endswith(".png"):
             path += ".png"
+            # The dialog confirmed the entered path, not this suffixed path.
+            if Path(path).exists() and QMessageBox.question(
+                self, "Replace figure?", f"{path} already exists. Replace it?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            ) != QMessageBox.Yes:
+                return
         output = QSaveFile(path)
         if not output.open(QIODevice.WriteOnly):
             self.status.setText(f"Could not save figure: {output.errorString()}")

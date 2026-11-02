@@ -1,1 +1,1 @@
-New: Frame a figure with `Section > Export > Figure...`, or Cmd+Shift+L (Ctrl+Shift+L on Windows/Linux). Drag the frame and scale bar, lock an aspect ratio, and set the output size and bar label sizes. Save a PNG with DPI metadata or copy the figure to the clipboard. Exported figures render fresh at the chosen size.
+**New: Export framed figures as PNGs or copy them to the clipboard.** Section ▸ Export ▸ Figure sets the frame, scale bar, layers, and output size.

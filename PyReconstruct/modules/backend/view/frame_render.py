@@ -49,6 +49,7 @@ def renderFrame(
     show_all_traces=False,
     focus_on=False,
     roi_box=None,
+    respect_overlay_visibility=True,
 ) -> QImage:
     """Render the part of a section in `window` as an image `out_dim` in size.
 
@@ -68,6 +69,8 @@ def renderFrame(
                 right-click menu, or None for the stored sizing
             label_size, tick_label_size (int): capture-only bar font sizes
             show_all_traces, focus_on, roi_box: the field's trace visibility
+            respect_overlay_visibility (bool): apply the field's flag and
+                z-trace visibility preferences in addition to the layer choices
         Returns:
             (QImage): the frame
     """
@@ -87,6 +90,7 @@ def renderFrame(
         layer.draw_selection = layers.selection
         layer.draw_ztraces = layers.ztraces
         layer.draw_flags = layers.flags
+        layer.respect_overlay_visibility = respect_overlay_visibility
         view = layer.generateView(
             out_dim,
             list(window),

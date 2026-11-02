@@ -3,21 +3,26 @@
 Set PYRECON_CAPTURE_ARTIFACT_DIR to save before/after pictures and the PNG
 from test_save_and_copy_match_fresh_renderer for a review.
 """
+import math
 import os
 from pathlib import Path
 
 import numpy as np
 import pytest
-from PySide6.QtCore import QPoint, QPointF, QRectF, Qt
+from PySide6.QtCore import QPoint, QPointF, QRectF, QTimer, Qt
 from PySide6.QtGui import QImage, QKeySequence, QWheelEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QFileDialog, QLineEdit, QMessageBox
 
 from conftest import clear_latched_modifiers, menu_leaf_paths
 from PyReconstruct.modules.backend.view.frame_render import FrameLayers, renderFrame
 from PyReconstruct.modules.datatypes import Flag, Transform, Ztrace
+from PyReconstruct.modules.gui.dialog import FileDialog
 from PyReconstruct.modules.gui.dialog.shortcuts import ShortcutsDialog
 from PyReconstruct.modules.gui.main.figure_capture import SHAPES
+
+REAL_FILE_DIALOG_GET = FileDialog.get
+REAL_QUESTION = QMessageBox.question
 
 pytestmark = pytest.mark.gui
 
@@ -201,10 +206,12 @@ def test_output_pixels_inches_dpi_and_native(capture):
     assert capture.outputDim() == (450, 225)
     field.section.tform = Transform.identity()
     QTest.mouseClick(capture.native_button, Qt.LeftButton)
-    assert capture.outputDim()[0] == round(capture.frameWindow()[2] / field.section.mag)
+    assert capture.outputDim()[0] == pytest.approx(
+        capture.frameWindow()[2] / field.section.mag, abs=2)
     field.section.tform = Transform([2, 0, 0, 0, 2, 0])
     QTest.mouseClick(capture.native_button, Qt.LeftButton)
-    assert capture.outputDim()[0] == round(capture.frameWindow()[2] / (2 * field.section.mag))
+    assert capture.outputDim()[0] == pytest.approx(
+        capture.frameWindow()[2] / (2 * field.section.mag), abs=2)
 
 
 def test_save_and_copy_match_fresh_renderer(capture, monkeypatch, tmp_path):
@@ -349,3 +356,98 @@ def test_resize_and_new_series_clean_up_capture(capture, qtbot):
     field.createField(field.series)
     assert field.figure_capture is None
     assert not capture.isVisible()
+
+
+@pytest.mark.parametrize("transform, finest_scale", [
+    ([4, 0, 0, 0, 1, 0], 1),
+    ([1, 2, 0, 0, 1, 0], math.sqrt(2) - 1),
+    ([0, -1, 17, 4, 0, -9], 1),
+    ([-4, 0, 0, 0, 1, 0], 1),
+])
+def test_native_preserves_finest_aligned_detail(capture, transform, finest_scale):
+    capture.field.section.tform = Transform(transform)
+    QTest.mouseClick(capture.native_button, Qt.LeftButton)
+    window = capture.frameWindow()
+    width, height = capture.outputDim()
+    finest_pixel = capture.field.section.mag * finest_scale
+    assert window[2] / width <= finest_pixel * (1 + 1e-12)
+    assert window[3] / height <= finest_pixel * (1 + 1e-12)
+    assert width <= math.ceil(window[2] / finest_pixel) + 2
+
+
+@pytest.mark.parametrize("layer, flag_mode, resolved", [
+    ("flags", "none", False),
+    ("flags", "unresolved", True),
+    ("ztraces", "none", False),
+])
+def test_capture_includes_layers_hidden_in_field(capture, layer, flag_mode, resolved):
+    field = capture.field
+    x, y, width, height = capture.frameWindow()
+    field.section.flags = [Flag("capture", x + width / 2, y + height / 2,
+                                field.section.n, (255, 0, 0), resolved=resolved)]
+    field.series.ztraces = {"capture": Ztrace("capture", (0, 255, 0), [
+        (x + width / 3, y + height / 3, field.section.n),
+        (x + width / 2, y + height / 3, field.section.n)])}
+    field.series.setOption("show_flags", flag_mode)
+    field.series.setOption("show_ztraces", False)
+    field.generateView()
+    before_field = pixels(field.field_pixmap.toImage())
+    off = pixels(capture.outputImage())
+    QTest.mouseClick(capture.layer_checks[layer], Qt.LeftButton,
+                     pos=QPoint(10, capture.layer_checks[layer].height() // 2))
+    on = pixels(capture.outputImage())
+    assert not np.array_equal(off, on)
+    assert field.series.getOption("show_flags") == flag_mode
+    assert field.series.getOption("show_ztraces") is False
+    field.generateView()
+    assert np.array_equal(before_field, pixels(field.field_pixmap.toImage()))
+    field.series.setOption("show_flags", "all")
+    field.series.setOption("show_ztraces", True)
+    assert np.array_equal(on, pixels(capture.outputImage()))
+    capture.layer_checks[layer].setChecked(False)
+    assert np.array_equal(off, pixels(capture.outputImage()))
+
+
+@pytest.mark.parametrize("name, replace", [
+    ("figure", False), ("figure", True), ("figure.other", False),
+])
+def test_save_confirms_suffixed_path_in_real_dialog(capture, tmp_path, monkeypatch, name, replace):
+    monkeypatch.setattr(FileDialog, "get", staticmethod(REAL_FILE_DIALOG_GET))
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(REAL_QUESTION))
+    original_attribute = QApplication.testAttribute(Qt.AA_DontUseNativeDialogs)
+    QApplication.setAttribute(Qt.AA_DontUseNativeDialogs, True)
+    path = tmp_path / (name + ".png")
+    path.write_bytes(b"existing figure")
+    seen = []
+    submitted = False
+
+    def answer_dialog():
+        nonlocal submitted
+        for widget in QApplication.topLevelWidgets():
+            if isinstance(widget, QMessageBox) and widget.isVisible():
+                seen.append(widget.text())
+                button = widget.button(QMessageBox.Yes if replace else QMessageBox.No)
+                if button is not None:
+                    button.click()
+                else:
+                    widget.reject()
+            elif isinstance(widget, QFileDialog) and widget.isVisible() and not submitted:
+                submitted = True
+                widget.findChild(QLineEdit, "fileNameEdit").setText(str(tmp_path / name))
+                widget.accept()
+
+    timer = QTimer()
+    timer.timeout.connect(answer_dialog)
+    timer.start(20)
+    try:
+        capture.savePng()
+    finally:
+        timer.stop()
+        QApplication.setAttribute(Qt.AA_DontUseNativeDialogs, original_attribute)
+    assert submitted
+    if replace:
+        assert not QImage(str(path)).isNull()
+    else:
+        assert path.read_bytes() == b"existing figure"
+    assert len(seen) == 1
+    assert str(path) in seen[0]
