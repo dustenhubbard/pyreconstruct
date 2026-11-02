@@ -220,7 +220,10 @@ class TraceLayer():
         if self.traces_in_view or self.roi_box is not None or self.traces_hidden:
             traces = self.traces_in_view
         else:
-            traces = self.section.tracesAsList()
+            traces = [
+                trace for trace in self.section.tracesAsList()
+                if self.trace_visibile_p(trace)
+            ]
 
         # paintText asks on every paint; the store's bounds let findClosest
         # skip the traces far from the mouse without reading their points
