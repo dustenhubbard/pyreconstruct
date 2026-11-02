@@ -1,4 +1,5 @@
-"""Where the ROI mode box sits while it follows an object.
+"""Where the ROI mode box sits while it follows an object, and which objects
+it keeps whole.
 
 The box keeps its size and is centered on the object, section by section. The
 object's place on a section comes from the series data, not the section: each
@@ -100,7 +101,21 @@ def objectExtents(series, name : str, display_tform, moves : dict = None):
         cx, cy, r = arr[:, 1], arr[:, 2], arr[:, 3]
         tkeys = arr[:, 4].astype(int)
 
-    # one move per (section, measured transform) pair
+    return (snums, *displaySquares(snums, cx, cy, r, tkeys, measured, display_tform, moves))
+
+
+def displaySquares(snums, cx, cy, r, tkeys, measured, display_tform, moves=None):
+    """Move measured centroids and radii into displayed squares, one affine
+    per (section, measured transform) pair.
+
+        Params:
+            snums, cx, cy, r, tkeys: numpy arrays, one entry per trace; tkeys
+                index measured
+            measured (list): the transforms the numbers were measured with
+            display_tform, moves: as in objectExtents
+        Returns:
+            (tuple): numpy arrays xmin, ymin, xmax, ymax
+    """
     if moves is None:
         moves = {}
     pairs, which = np.unique(np.stack([snums, tkeys], axis=1), axis=0, return_inverse=True)
@@ -117,7 +132,7 @@ def objectExtents(series, name : str, display_tform, moves : dict = None):
     x = a * cx + b * cy + c
     y = d * cx + e * cy + f
     r = r * stretch
-    return snums, x - r, y - r, x + r, y + r
+    return x - r, y - r, x + r, y + r
 
 
 def sectionSquares(section, name : str, held=()):
@@ -211,3 +226,101 @@ def followCenter(centers : dict, snum : int):
     if near is None:
         return None
     return centers[near], near
+
+
+def _touching(snums, xmin, ymin, xmax, ymax, box_snums, bx):
+    """Which squares touch the box on their own section (boxes sorted by
+    section number in box_snums, bounds in bx)."""
+    if not len(snums):
+        return np.zeros(0, dtype=bool)
+    at = np.searchsorted(box_snums, snums)
+    at_ok = np.minimum(at, len(box_snums) - 1)
+    boxed = (at < len(box_snums)) & (box_snums[at_ok] == snums)
+    b = bx[at_ok]
+    return boxed & (
+        (xmin <= b[:, 2]) & (xmax >= b[:, 0]) & (ymin <= b[:, 3]) & (ymax >= b[:, 1])
+    )
+
+
+def touchingSections(series, boxes : dict, display_tform) -> dict:
+    """The sections where each object has a trace that touches the ROI box,
+    for keeping whole every object that crosses the box's edge, from the
+    series data.
+
+    A trace counts by its square in displayed coordinates (objectExtents:
+    its centroid moved to where the field draws it, plus and minus its
+    radius grown by that move's stretch), so a trace near the box may count
+    when its outline does not reach it; it never misses one that does.
+
+    The traces an open read into columns are tested together, a block at a
+    time, so a series of many objects takes one pass of array work rather
+    than one per object.
+
+        Params:
+            series (Series): the series
+            boxes (dict): section number -> the box there as (xmin, ymin,
+                xmax, ymax); a section not in it has no box
+            display_tform (callable): as in objectExtents
+        Returns:
+            (dict): object name -> frozenset of section numbers, for the
+                objects that touch the box somewhere
+    """
+    if not boxes:
+        return {}
+    snum_list = sorted(boxes)
+    box_snums = np.asarray(snum_list, dtype=int)
+    bx = np.asarray([boxes[s] for s in snum_list], dtype=float)
+    moves = {}
+    found = {}
+
+    blocks, built = {}, []
+    for name, obj_data in series.data["objects"].items():
+        rows = obj_data.columnRows()
+        if rows is not None:
+            columns, start, stop = rows
+            if start < stop:
+                blocks.setdefault(id(columns), (columns, []))[1].append((start, stop, name))
+        elif not obj_data.isEmpty():
+            built.append(name)
+
+    for columns, runs in blocks.values():
+        runs.sort()
+        starts = np.asarray([run[0] for run in runs], dtype=int)
+        stops = np.asarray([run[1] for run in runs], dtype=int)
+        arrays = columns.arrays
+        snums = np.asarray(arrays["snum"], dtype=int)
+        squares = displaySquares(
+            snums,
+            np.asarray(arrays["cx"], dtype=float),
+            np.asarray(arrays["cy"], dtype=float),
+            np.asarray(arrays["radius"], dtype=float),
+            np.asarray(arrays["tform"], dtype=int),
+            columns.tforms, display_tform, moves,
+        )
+        rows = np.nonzero(_touching(snums, *squares, box_snums, bx))[0]
+        # a row belongs to the run it falls in; rows of no run are not read
+        run = np.searchsorted(starts, rows, side="right") - 1
+        ok = (run >= 0) & (rows < stops[np.maximum(run, 0)])
+        for row, i in zip(rows[ok].tolist(), run[ok].tolist()):
+            found.setdefault(runs[i][2], set()).add(int(snums[row]))
+
+    for name in built:
+        extents = objectExtents(series, name, display_tform, moves)
+        if extents is None:
+            continue
+        snums = extents[0]
+        touch = _touching(snums, *extents[1:], box_snums, bx)
+        if touch.any():
+            found.setdefault(name, set()).update(snums[touch].tolist())
+
+    return {name: frozenset(snums) for name, snums in found.items()}
+
+
+def objectsTouching(series, boxes : dict, display_tform) -> frozenset:
+    """The objects with a trace that touches the ROI box on its section
+    (touchingSections).
+
+        Returns:
+            (frozenset): the object names
+    """
+    return frozenset(touchingSections(series, boxes, display_tform))
