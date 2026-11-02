@@ -734,9 +734,34 @@ class MousePalette():
         y = getattr(self, f"{group}_y")
         x = (x * (x2 - x1)) + x1
         y = (y * (y2 - y1)) + y1
-        if group in ("inc", "bc", "sb") and self.atDefaultPosition(group):
+        if group == "trace":
+            x, y = self.clearOfTools(x, y, (x1, x2, y1, y2))
+        elif group in ("inc", "bc", "sb") and self.atDefaultPosition(group):
             x, y = self.clearOfPalettes(group, x, y)
         return x, y
+
+    def clearOfTools(self, x, y, bounds):
+        """Move the drawn trace group clear of tools without changing its saved spot."""
+        x1, x2, y1, y2 = bounds
+        region = self.traceRegion()
+        left, right = x1 - region.left(), region.right() - x2
+        top, bottom = y1 - region.top(), region.bottom() - y2
+        tx, ty = self.getButtonCoords("mode")
+        cols, rows, size = self.modeGrid()
+        tools = QRectF(tx, ty, (size + 10) * cols - 10, (size + 10) * rows - 10)
+        tools = tools.adjusted(-10, -10, 10, 10)
+        candidates = [
+            (x, y), (tools.left() - right, y), (tools.right() + left, y),
+            (x, tools.top() - bottom), (x, tools.bottom() + top),
+        ]
+        clear = []
+        for cx, cy in candidates:
+            cx = max(x1, min(cx, x2))
+            cy = max(y1, min(cy, y2))
+            rect = QRectF(cx - left, cy - top, left + right, top + bottom)
+            if not rect.intersects(tools):
+                clear.append((cx, cy))
+        return min(clear, key=lambda p: (p[0] - x)**2 + (p[1] - y)**2) if clear else (x, y)
 
     def atDefaultPosition(self, group):
         """True if the user has not dragged the group from its default spot."""

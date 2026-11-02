@@ -72,6 +72,65 @@ def test_wide_trace_palettes_do_not_cover_default_controls(main_window, palette,
                 assert all(not button.geometry().intersects(other.geometry()) for other in other_group)
 
 
+@pytest.mark.parametrize("trace_x,trace_y,mode_x,mode_y", [
+    (0.51, 0.01, 0.99, 0.01),
+    (0.51, 0.99, 0.99, 0.99),
+    (0.01, 0.01, 0.01, 0.01),
+    (0.99, 0.99, 0.99, 0.99),
+    (0.5, 0.5, 0.5, 0.5),
+])
+def test_saved_positions_keep_both_palettes_reachable(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path,
+        trace_x, trace_y, mode_x, mode_y):
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    local_series_settings(main_window)
+    settings = QSettings(str(tmp_path / "positions.ini"), QSettings.IniFormat)
+    monkeypatch.setattr(mouse_palette, "_position_settings", lambda: settings)
+    positions = {
+        f"{group}_{axis}": value
+        for group, xy in mouse_palette.DEFAULT_POSITIONS.items()
+        for axis, value in zip(("x", "y"), xy)
+    }
+    positions.update(trace_x=trace_x, trace_y=trace_y, mode_x=mode_x, mode_y=mode_y)
+    mouse_palette.save_palette_positions(settings, positions)
+    main_window.resize(1280, 800)
+    main_window.show()
+    qapp.processEvents()
+    palette = main_window.mouse_palette
+    palette.reset()
+
+    series = main_window.series
+    series.setOption("trace_palette_per_row", 20)
+    series.setOption("tool_palette_cols", 12)
+    palette.reset()
+    for window in [(1280, 800), (800, 600), (1280, 800)]:
+        main_window.resize(*window)
+        qapp.processEvents()
+        palette.resize()
+        widgets = [
+            *palette.palette_buttons, *palette.palette_side_buttons,
+            *(b for b, _, _ in palette.mode_buttons.values()),
+            *palette.inc_buttons, *(w for pair in palette.bc_widgets for w in pair),
+            palette.label, palette.sb,
+        ]
+        for widget in widgets:
+            assert not widget.isHidden()
+            assert main_window.field.geometry().contains(widget.geometry())
+            assert main_window.childAt(widget.geometry().center()) is widget
+
+    for i, button in enumerate(palette.palette_buttons):
+        QTest.mouseClick(main_window.childAt(button.geometry().center()), Qt.LeftButton)
+        assert series.palette_index[1] == i
+    for button, mode, _ in palette.mode_buttons.values():
+        QTest.mouseClick(main_window.childAt(button.geometry().center()), Qt.LeftButton)
+        assert main_window.field.mouse_mode == mode
+    assert series.getOption("trace_palette_per_row") == 20
+    assert series.getOption("tool_palette_cols") == 12
+    assert mouse_palette.load_palette_positions(settings) == positions
+    assert {key: getattr(palette, key) for key in positions} == positions
+
+
 @pytest.mark.parametrize("tool_cols", [1, 5, 12])
 @pytest.mark.parametrize("copies", [1, 3, 5, 10])
 def test_resizing_fits_large_palettes_without_changing_the_preferences(main_window, palette, qapp, tool_cols, copies):
