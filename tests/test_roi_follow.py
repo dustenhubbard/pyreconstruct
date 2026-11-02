@@ -187,8 +187,11 @@ def test_a_pinned_alignment_follows_the_trace_as_drawn(mw, qapp):
     under the series alignment, moved 4 μm east here: the box goes where the
     trace is drawn."""
     field = mw.field
+    alignments = {name: name for name in mw.series.alignments}
+    alignments["pinned"] = mw.series.alignment
+    mw.series.modifyAlignments(alignments)
+    field.reload()
     (trace,) = [t for t in field.section.tracesAsList() if t.name == "d03p14"]
-    field.section.tforms["pinned"] = field.section.tform.copy()
     mw.series.setAttr("d03p14", "alignment", "pinned")
     field.section.align_locked = False
     field.section.selected_traces = []

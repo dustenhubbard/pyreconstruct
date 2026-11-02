@@ -1,11 +1,60 @@
 """The first profile adjustment offers a copy and preserves the starting values."""
 
+import hashlib
+from pathlib import Path
+
 import pytest
 from PySide6.QtWidgets import QMessageBox, QInputDialog
 
+from PyReconstruct.modules.constants import welcome_series_dir
 from PyReconstruct.modules.datatypes import Transform, Trace
 
 pytestmark = pytest.mark.gui
+
+
+@pytest.mark.parametrize("adjustment", ["brightness", "contrast", "alignment"])
+def test_welcome_adjustment_keeps_profiles_and_bundled_assets(
+    main_window, main_window_dialogs, monkeypatch, adjustment,
+):
+    assets = Path(welcome_series_dir).parent
+
+    def bundled_assets():
+        return {
+            path.relative_to(assets): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in assets.rglob("*") if path.is_file()
+        }
+
+    before_assets = bundled_assets()
+    try:
+        main_window.openWelcomeSeries()
+        assert main_window.series.isWelcomeSeries()
+        field, series = main_window.field, main_window.series
+        current = (series.bc_profile, series.alignment)
+        profiles = (set(field.section.bc_profiles), set(field.section.tforms))
+        main_window_dialogs.message_boxes.clear()
+        main_window_dialogs.message_box_response = QMessageBox.Yes
+        monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("welcome-adjusted", True))
+
+        if adjustment == "brightness":
+            field.setBrightness(34)
+            assert field.section.brightness == 34
+        elif adjustment == "contrast":
+            field.setContrast(-23)
+            assert field.section.contrast == -23
+        else:
+            field.unlockSection()
+            before_transform = field.section.tform.getList()
+            field.translateTform(5, 7)
+            after_transform = field.section.tform.getList()
+            assert after_transform[2] == before_transform[2] + 5
+            assert after_transform[5] == before_transform[5] + 7
+
+        assert (series.bc_profile, series.alignment) == current
+        assert (set(field.section.bc_profiles), set(field.section.tforms)) == profiles
+        assert main_window_dialogs.message_boxes == []
+        main_window.saveAllData()
+    finally:
+        assert bundled_assets() == before_assets
 
 
 def snapshot(series, name, alignment=False):

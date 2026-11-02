@@ -130,6 +130,8 @@ class FieldWidgetData(FieldWidgetObject):
         """Preserve a profile before its first adjustment in this open series."""
         alignment = kind == "alignment"
         series = self.series
+        if series.isWelcomeSeries():
+            return True
         current = series.alignment if alignment else series.bc_profile
         profiles = self.section.tforms if alignment else self.section.bc_profiles
         saved = self.profile_adjustments.get((kind, current))
