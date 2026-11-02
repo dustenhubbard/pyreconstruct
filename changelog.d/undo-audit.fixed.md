@@ -1,0 +1,4 @@
+- Pasting multiple traces takes one undo step, and redo restores the entire paste.
+- Undoing a z-trace move restores the coordinates before the move after creation or regeneration, preserving points on other sections.
+- Flag title, comment, position, status and color edits can be undone after redo.
+- Series undo and redo load only the affected sections.
