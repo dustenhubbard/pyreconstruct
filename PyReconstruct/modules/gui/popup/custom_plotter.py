@@ -1692,6 +1692,14 @@ class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
         self.mainwindow.saveAllData()
         for path, (objects, ztraces) in by_series.items():
             series = self.series if path == self.series.jser_fp else path
+            if series is self.series:
+                objects, ztraces, gone_objects, gone_ztraces = partitionExisting(
+                    objects, ztraces, series
+                )
+                if gone_objects or gone_ztraces:
+                    self.plt.removeFromScene(
+                        gone_objects, gone_ztraces, series_fp=path, save_state=False
+                    )
             self.plt.addToScene(objects, ztraces, series=series, save_state=False)
 
     def markStale(self, obj_names=None, ztrace_names=None):

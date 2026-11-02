@@ -198,3 +198,81 @@ def test_reload_groups_selected_meshes_by_source_and_preserves_attributes(main_w
     assert paths == [ztrace.getExportDict()]
     assert viewer.plt.objs[objects[1].id] is objects[1]
     assert viewer.plt.objs[cube.id] is cube
+
+
+@pytest.mark.parametrize("trigger", ["settings", "reload"])
+@pytest.mark.parametrize("missing_type", ["object", "ztrace"])
+def test_rebuild_with_deleted_source_preserves_valid_meshes(
+    main_window, monkeypatch, trigger, missing_type
+):
+    from types import SimpleNamespace
+    from PyReconstruct.modules.gui.popup import custom_plotter as cp
+
+    viewer, _, objects, cube = populate(main_window, monkeypatch)
+    series = main_window.series
+    series.setOption("3D_auto_refresh", False)
+    for obj in objects:
+        series.setAttr(obj.name, "3D_mode", "contours")
+        obj.translate(2, 3, 4)
+    expected = {obj.name: obj.getExportDict() for obj in objects}
+    for attrs in expected.values():
+        attrs.pop("id")
+    missing = viewer.plt.objs.add(
+        _mesh(), series, "deleted_source", missing_type, (9, 8, 7), .6
+    )
+    assert missing.name not in series.data["objects"]
+    assert missing.name not in series.ztraces
+    viewer.plt.selected = [*objects, missing]
+    notices = []
+    monkeypatch.setattr(cp, "notify", notices.append)
+    monkeypatch.setattr(cp, "notifyConfirm", lambda *a, **k: notices.append(a) or False)
+    workers = []
+
+    class Pool:
+        def createWorker(self, fn, source, objs, ztraces, **kwargs):
+            workers.append(([d["name"] for d in objs], [d["name"] for d in ztraces]))
+            self.run = lambda: fn(source, objs, ztraces)
+            return SimpleNamespace(signals=SimpleNamespace(
+                result=SimpleNamespace(connect=lambda slot: setattr(self, "place", slot))
+            ))
+
+        def startAll(self, **kwargs):
+            self.place(self.run())
+
+    monkeypatch.setattr(cp, "ThreadPoolProgBar", Pool)
+    if trigger == "settings":
+        QTimer.singleShot(0, lambda: edit_options({"3D_xy_res": 80}))
+        main_window.allOptions()
+    else:
+        viewer.reload()
+
+    assert workers == [([obj.name for obj in objects], [])]
+    assert notices == []
+    assert viewer.plt.objs.search(missing.name, missing_type, series.jser_fp) is None
+    for old in objects:
+        rebuilt = viewer.plt.objs.search(old.name, "object", series.jser_fp)
+        assert rebuilt is not None
+        assert rebuilt is not old
+        attrs = rebuilt.getExportDict()
+        attrs.pop("id")
+        assert attrs == expected[old.name]
+    assert viewer.plt.objs[cube.id] is cube
+
+
+@pytest.mark.parametrize("missing_type", ["object", "ztrace"])
+def test_rebuild_with_only_deleted_sources_leaves_scale_cube(
+    main_window, monkeypatch, missing_type
+):
+    from PyReconstruct.modules.gui.popup import custom_plotter as cp
+
+    viewer, launched, objects, cube = populate(main_window, monkeypatch)
+    viewer.plt.removeFromScene([obj.name for obj in objects], [], save_state=False)
+    missing = viewer.plt.objs.add(
+        _mesh(), main_window.series, "deleted_source", missing_type, (9, 8, 7), .6
+    )
+    notices = []
+    monkeypatch.setattr(cp, "notify", notices.append)
+    viewer.rebuildObjects([missing, cube])
+    assert launched == []
+    assert list(viewer.plt.objs.values()) == [cube]
+    assert notices == []
