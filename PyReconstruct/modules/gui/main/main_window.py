@@ -2839,51 +2839,55 @@ class MainWindow(QMainWindow):
         from PyReconstruct.modules.backend.imports.imagej_roi import holes as roi_holes
 
         failed = []
-        for fp in fps:
+        # every shape of every file is one operation for the ROI box: its
+        # selection rule applies once, to the imported traces where they end
+        # up; each shape keeps its own undo step
+        with self.field.fieldOperation():
+            for fp in fps:
 
-            print(f"Importing {fp}")
+                print(f"Importing {fp}")
 
-            try:
-                roi = Roi(fp)
-                shapes = roi.get_field_shapes(h, mag)  # px -> coords
-            except Exception as e:
-                # one unreadable file must not stop the rest of the batch
-                traceback.print_exc()
-                failed.append(f"{Path(fp).name}: {e}")
-                continue
-            if not shapes:
-                failed.append(f"{Path(fp).name}: no points")
-                continue
+                try:
+                    roi = Roi(fp)
+                    shapes = roi.get_field_shapes(h, mag)  # px -> coords
+                except Exception as e:
+                    # one unreadable file must not stop the rest of the batch
+                    traceback.print_exc()
+                    failed.append(f"{Path(fp).name}: {e}")
+                    continue
+                if not shapes:
+                    failed.append(f"{Path(fp).name}: no points")
+                    continue
 
-            trace = Trace(
-                Path(fp).stem,
-                (255, 255, 0)
-            )
+                trace = Trace(
+                    Path(fp).stem,
+                    (255, 255, 0)
+                )
 
-            # a composite roi is filled even-odd, so a nested outline is a hole
-            hole = roi_holes(shapes) if roi.composite else [False] * len(shapes)
-            hole_trace = trace.copy()
-            hole_trace.negative = True
+                # a composite roi is filled even-odd, so a nested outline is a hole
+                hole = roi_holes(shapes) if roi.composite else [False] * len(shapes)
+                hole_trace = trace.copy()
+                hole_trace.negative = True
 
-            made = 0
-            for shape, is_hole in zip(shapes, hole):
-                points = [tform.map(x, y) for x, y in shape]
-                closed = roi.closed
-                if roi.markers:
-                    # a marker becomes a stamp, as a click with the stamp tool would
-                    (cx, cy), = points
-                    points = [(cx + x, cy + y) for x, y in stamp]
-                    closed = True
-                made += bool(self.field.newTrace(
-                    points,
-                    hole_trace if is_hole else trace,
-                    points_as_pix=False,  # provide as coordinates
-                    closed=closed,
-                    reduce_points=False,
-                    simplify=False
-                ))
-            if not made:
-                failed.append(f"{Path(fp).name}: too few points for a trace")
+                made = 0
+                for shape, is_hole in zip(shapes, hole):
+                    points = [tform.map(x, y) for x, y in shape]
+                    closed = roi.closed
+                    if roi.markers:
+                        # a marker becomes a stamp, as a click with the stamp tool would
+                        (cx, cy), = points
+                        points = [(cx + x, cy + y) for x, y in stamp]
+                        closed = True
+                    made += bool(self.field.newTrace(
+                        points,
+                        hole_trace if is_hole else trace,
+                        points_as_pix=False,  # provide as coordinates
+                        closed=closed,
+                        reduce_points=False,
+                        simplify=False
+                    ))
+                if not made:
+                    failed.append(f"{Path(fp).name}: too few points for a trace")
 
         if failed:
             imported = len(fps) - len(failed)
