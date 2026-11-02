@@ -252,12 +252,12 @@ def test_the_update_notice_survives_a_repaint(main_window, monkeypatch):
     )
     try:
         notice = main_window.update_notice
-        assert not notice.isHidden() and "9.9.9" in notice.text()
+        assert not notice.isHidden() and "9.9.9" in notice.toolTip()
 
         main_window.field.mouse_x, main_window.field.mouse_y = 33, 44
         paint_the_field(main_window)
 
-        assert not notice.isHidden() and "9.9.9" in notice.text()
+        assert not notice.isHidden() and "9.9.9" in notice.toolTip()
         assert readout(main_window).startswith("Section: ")
     finally:
         key = mw.UPDATE_NOTICE_KEY
