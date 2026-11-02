@@ -137,3 +137,21 @@ def test_failed_backup_removes_its_reservation(copies, monkeypatch, from_saved):
     fp = MainWindow.backup(SimpleNamespace(series=series), from_saved=from_saved)
     assert fp == str(backups / "ABC-01.jser")
     assert json.loads(Path(fp).read_bytes())["series"]["options"]["concurrent_backup_marker"] == "first"
+
+
+@pytest.mark.parametrize("from_saved", [True, False])
+def test_empty_backup_name_keeps_jser_extension(copies, from_saved):
+    series_copies, backups = copies
+    for series in series_copies:
+        for part in ("prefix", "series", "filename", "date", "time", "user", "suffix"):
+            series.setOption(f"backup_{part}", False)
+
+    first = MainWindow.backup(SimpleNamespace(series=series_copies[0]), from_saved=from_saved)
+    first_bytes = Path(first).read_bytes()
+    second = MainWindow.backup(SimpleNamespace(series=series_copies[1]), from_saved=from_saved)
+
+    assert Path(first).name == ".jser"
+    assert Path(second).name == "-01.jser"
+    assert {p.name for p in backups.iterdir()} == {".jser", "-01.jser"}
+    assert Path(first).read_bytes() == first_bytes
+    assert json.loads(Path(second).read_bytes())["series"]["options"]["concurrent_backup_marker"] == "second"

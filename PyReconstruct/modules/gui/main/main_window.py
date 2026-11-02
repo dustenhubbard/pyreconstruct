@@ -3316,7 +3316,7 @@ class MainWindow(QMainWindow):
                 return
             # Claim the name before either writer can replace it. Another
             # window or process may be backing up the same series code here.
-            stem, ext = os.path.splitext(fp)
+            stem = fp.removesuffix(".jser")
             n = 0
             while True:
                 try:
@@ -3325,7 +3325,7 @@ class MainWindow(QMainWindow):
                     break
                 except FileExistsError:
                     n += 1
-                    fp = f"{stem}-{n:02d}{ext}"
+                    fp = f"{stem}-{n:02d}.jser"
             try:
                 if (
                     from_saved
