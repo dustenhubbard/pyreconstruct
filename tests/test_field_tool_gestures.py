@@ -70,11 +70,21 @@ def _add(field, name, points):
 
 
 @pytest.mark.parametrize("refusal", ["empty-rectangle", "hidden-layer"])
-def test_rejected_scribble_does_not_merge_existing_traces(tool_field, refusal):
+@pytest.mark.parametrize("pending_redo", [False, True], ids=["undo", "redo"])
+def test_rejected_scribble_preserves_existing_traces_and_history(
+    tool_field, refusal, pending_redo
+):
     field = tool_field
-    first = _add(field, "gesture", [(100, 100), (200, 100), (200, 200), (100, 200)])
-    second = _add(field, "gesture", [(150, 150), (250, 150), (250, 250), (150, 250)])
-    originals = [first, second]
+    _add(field, "gesture", [(100, 100), (200, 100), (200, 200), (100, 200)])
+    _add(field, "gesture", [(150, 150), (250, 150), (250, 250), (150, 250)])
+    expected_points = [
+        [(1, -1), (2, -1), (2, -2), (1, -2)],
+        [(1.5, -1.5), (2.5, -1.5), (2.5, -2.5), (1.5, -2.5)],
+    ]
+    if pending_redo:
+        field.undoState()
+    originals = list(field.section.contours["gesture"])
+    field.section.selected_traces = originals.copy()
     points_before = [list(t.points) for t in originals]
     field.series.setOption("auto_merge", True)
     field.setMouseMode(CLOSEDTRACE)
@@ -90,6 +100,23 @@ def test_rejected_scribble_does_not_merge_existing_traces(tool_field, refusal):
     assert [list(t.points) for t in originals] == points_before
     assert field.section.selected_traces == originals
     assert field.current_trace == []
+
+    field.hide_trace_layer = False
+    if not pending_redo:
+        field.undoState()
+        remaining = list(field.section.contours["gesture"])
+        assert len(remaining) == 1
+        assert len(remaining[0].points) == 4
+        for point, expected in zip(remaining[0].points, expected_points[0]):
+            assert point == pytest.approx(expected)
+
+    field.undoState(redo=True)
+    restored = list(field.section.contours["gesture"])
+    assert len(restored) == 2
+    for trace, points in zip(restored, expected_points):
+        assert len(trace.points) == 4
+        for point, expected in zip(trace.points, points):
+            assert point == pytest.approx(expected)
 
 
 @pytest.mark.parametrize("mode", [CLOSEDTRACE, OPENTRACE], ids=["closed", "open"])
