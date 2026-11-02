@@ -121,6 +121,21 @@ class FieldWidget(QWidget, FieldWidgetView):
         self.createField(series)
 
         self.show()
+
+    def openFigureCapture(self):
+        """Open the figure frame over the field, or focus the existing one."""
+        if self.figure_capture is not None:
+            self.figure_capture.raise_()
+            self.figure_capture.setFocus()
+            return
+        self.endPendingEvents()
+        if self.mainwindow.is_zooming:
+            self.panzoomRelease(zoom_factor=self.mainwindow.zoom_factor)
+            self.mainwindow.is_zooming = False
+        self.cancelLasso()
+        self.dropPress()
+        from .figure_capture import FigureCapture
+        self.figure_capture = FigureCapture(self)
     
     def resizeEvent(self, event):
         """Scale field window if main window size changes.
