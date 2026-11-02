@@ -204,6 +204,12 @@ asks to save any unsaved work, closes, and opens the installer. Complete
 installation, then launch the app again. Canceling the close also cancels
 the installation.
 
+PyReconstruct Dev also shows the offered nightly and each skipped nightly in
+newest-first order under **Changes in &lt;version&gt;**. Each list includes its pull
+requests and **Full Changelog** link, followed by earlier Stable notes. Use
+**View release on GitHub** to open the offered release. Stable keeps the
+link-only update dialog and shows What's New once after an update.
+
 If you are already current, you'll see a brief "You're already up to date"
 message; if no installer exists for your platform on that channel, it tells you so.
 
