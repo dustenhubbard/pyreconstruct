@@ -389,12 +389,13 @@ def test_replaced_ready_payload_is_not_held_by_a_returning_worker(slot, files, m
 @pytest.fixture
 def active_read(slot, monkeypatch):
     @contextmanager
-    def hold(series, number=2, *, dropped=False):
+    def hold(series, number=2, *, dropped=False, read_delay=0.1):
         path = series.presentSection(number)
         entered, release = threading.Event(), threading.Event()
         streams, attempts = [], []
         original_open = builtins.open
         original_rename, original_remove = os.rename, os.remove
+        original_replace = os.replace
 
         class HeldRead:
             def __enter__(self):
@@ -431,6 +432,12 @@ def active_read(slot, monkeypatch):
                           lambda src, *a, **kw: guard(original_rename, src, *a, **kw))
             patch.setattr(os, "remove",
                           lambda src, *a, **kw: guard(original_remove, src, *a, **kw))
+            def replace(src, dst, *args, **kwargs):
+                if os.fspath(dst) == path:
+                    return guard(lambda target: original_replace(src, target, *args, **kwargs), dst)
+                return original_replace(src, dst, *args, **kwargs)
+
+            patch.setattr(os, "replace", replace)
             slot.start(series, number, path)
             assert entered.wait(10)
             worker = slot._worker
@@ -440,7 +447,7 @@ def active_read(slot, monkeypatch):
                 canceled.wait(5)
                 # Keep the handle open beyond cancellation, as a slow read
                 # does. File mutations must wait for the context to close.
-                release.wait(0.1)
+                release.wait(read_delay)
                 release.set()
 
             finisher = threading.Thread(target=finish_read)
@@ -530,3 +537,33 @@ def test_stop_after_dropped_read_allows_another_neighbor(slot, files, monkeypatc
     slot.start(owner, 1, files[1])
     wait(slot)
     assert slot.take(owner, 1, files[1]) is not None
+
+
+@pytest.mark.parametrize("reader_state", ["active", "dropped", "fallback"])
+def test_save_releases_active_read(real_series, active_read, reader_state):
+    section = real_series.loadSection(2)
+    path = Path(section.filepath)
+    before = path.read_bytes()
+    # A slow read can outlast all of the atomic replacement retries.
+    with active_read(real_series, dropped=reader_state == "dropped", read_delay=2.5):
+        if reader_state == "fallback":
+            section = real_series.loadSection(2)
+        trace = Trace("active-read-save", (255, 0, 0), True)
+        trace.points = [(1, 1), (2, 1), (2, 2)]
+        section.addTrace(trace, log_event=False)
+        section.save()
+        assert path.read_bytes() != before
+        assert not Path(str(path) + ".tmp").exists()
+
+    saved = real_series.loadSection(2).contours["active-read-save"][0]
+    assert list(saved.points) == [(1, 1), (2, 1), (2, 2)]
+
+
+def test_unchanged_save_keeps_read_ahead_pending(real_series, active_read, slot):
+    section = real_series.loadSection(2)
+    section.save()
+    with active_read(real_series):
+        section.save()
+        assert slot._request is not None
+        assert slot._worker.is_alive()
+        slot.stop()

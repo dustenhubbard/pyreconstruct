@@ -98,10 +98,10 @@ class SectionReadAhead:
             self._drop()
 
     def stop(self):
-        """Cancel and release the worker before moving or deleting working files.
+        """Cancel and release the worker before mutating working files.
 
         Called on the foreground thread, like start, drop and take. Paging
-        uses drop or take instead, so it never waits for speculative work.
+        loads use drop or take, so a fallback never waits for speculative work.
         """
         with self._lock:
             self._drop()

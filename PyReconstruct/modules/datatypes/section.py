@@ -1615,6 +1615,9 @@ class Section():
             # a save fires on scroll / section switch; retry a transiently-locked
             # replace (Windows AV/indexer/sync) so it doesn't fail spuriously
             from PyReconstruct.modules.backend.func.atomic_io import replace_with_retry
+            from .section_read_ahead import READ_AHEAD
+            # Windows cannot replace a file still held by our speculative reader.
+            READ_AHEAD.stop()
             replace_with_retry(tmp_fp, self.filepath)
         except OSError:
             # leave the original file untouched; clean up the partial temp
