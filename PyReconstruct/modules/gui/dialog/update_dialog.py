@@ -72,7 +72,6 @@ def _add_release_notes(layout, info, *, after_update=False):
         browser = UpdateNotesBrowser(dev_update_notes(nightlies, remote))
         browser.setMinimumHeight(300)
         layout.addWidget(browser)
-        layout.parentWidget().resize(760, 600)
         label = "View release on GitHub"
     else:
         if after_update and info["status"] == "newer":
@@ -129,6 +128,8 @@ class UpdateDialog(QDialog):
         lay.addWidget(QLabel(sub))
 
         _add_release_notes(lay, info, after_update=True)
+        if info.get("nightly_releases"):
+            self.resize(760, 600)
 
         # progress (hidden until download starts)
         self._progress = QProgressBar()
@@ -365,6 +366,8 @@ class ReinstallDialog(QDialog):
         lay.addLayout(row)
 
         _add_release_notes(lay, info)
+        if info.get("nightly_releases"):
+            self.resize(760, 600)
 
         buttons = QHBoxLayout()
         buttons.addStretch(1)
