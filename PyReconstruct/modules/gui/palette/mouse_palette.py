@@ -4,7 +4,7 @@ import math
 
 from PySide6.QtWidgets import QWidget, QSlider
 from PySide6.QtGui import QIcon, QPixmap, QFont
-from PySide6.QtCore import QSize, Qt, QSettings
+from PySide6.QtCore import QSize, Qt, QSettings, QRectF
 from PyReconstruct.modules.constants.settings_domain import domain_for
 
 # Palette-visibility preferences are global (a UI choice, not per-series) and
@@ -133,6 +133,19 @@ from PyReconstruct.modules.gui.utils import notify
 from PyReconstruct.modules.gui.utils.fonts import uiFamily, uiFont
 
 
+def fitPaletteGrid(count, columns, size, gap, width, height):
+    """Keep the preferred columns when they fit, then wrap or reduce the size."""
+    count = max(1, count)
+    preferred = max(1, min(columns, count))
+    for fitted_size in range(size, 0, -1):
+        max_cols = max(1, (width + gap) // (fitted_size + gap))
+        max_rows = max(1, (height + gap) // (fitted_size + gap))
+        cols = max(min(preferred, max_cols), math.ceil(count / max_rows))
+        if cols <= max_cols:
+            return cols, math.ceil(count / cols), fitted_size
+    return count, 1, 1
+
+
 class MousePalette():
 
     def __init__(self, mainwindow : QWidget):
@@ -152,6 +165,10 @@ class MousePalette():
         self.ibw = 90  # inc button width
         self.ibh = 35  # inc button height
         self.bcsize = 30  # brightness/contrast button size
+        self.trace_palette_per_row = self.series.getOption("trace_palette_per_row")
+        self.tool_palette_cols = self.series.getOption("tool_palette_cols")
+        traces = self.shownTraces(self.series.palette_traces[self.series.palette_index[0]])
+        self.palette_button_count = len(traces)
 
         self.is_dragging = False
 
@@ -193,7 +210,6 @@ class MousePalette():
 
         # create palette buttons; a Dev build leaves off trailing rows that
         # copy the standard buttons (default_rows), and the series keeps them
-        traces = self.shownTraces(self.series.palette_traces[self.series.palette_index[0]])
         self.palette_buttons = [None] * len(traces)
         for i, trace in enumerate(traces):  # create all the palette buttons
             self.createPaletteButton(trace, i)
@@ -231,6 +247,7 @@ class MousePalette():
         # apply the restored visibility now that every palette widget exists
         self.applyVisibilityState()
         self.installHideMenus()
+        self.resize()
     
     def placeModeButtons(self):
         """Place every mode button; the bounds depend on the full count."""
@@ -245,8 +262,9 @@ class MousePalette():
                 pos (int): the position of the button
         """
         x, y = self.getButtonCoords("mode")
-        y += (10 + self.mblen) * pos
-        button.setGeometry(x, y, self.mblen, self.mblen)
+        cols, _, size = self.modeGrid()
+        row, col = divmod(pos, cols)
+        button.setGeometry(x + (size + 10) * col, y + (size + 10) * row, size, size)
     
     def createModeButton(self, name : str, pos : int):
         """Creates a new mouse mode button.
@@ -317,31 +335,22 @@ class MousePalette():
                 button (PaletteButton): the palette button to move
                 pos (int): its position
         """
-        # place the palette button in the middle of the FIELD (not mainwindow)
         x, y = self.getButtonCoords("trace")
-        if pos % 10 // 5 > 0:
-            x_offset = 1
-        else:
-            x_offset = -1
-        x_offset += (-5 + pos % 10) * self.pblen
-        x += x_offset
-
-        if pos//10 > 0:
-            y_offset = 1
-        else:
-            y_offset = -1
-        y_offset += (pos//10 - 1) * self.pblen
-        y += y_offset
-
-        button.setGeometry(x, y, self.pblen, self.pblen)
+        cols, rows, size = self.traceGrid()
+        row, col = divmod(pos, cols)
+        width, height = self.traceGridSize(cols, rows, size)
+        x += -(width // 2) + col * size + (2 if col >= (cols + 1) // 2 else 0)
+        y += -(height // 2) + row * size + (2 if row else 0)
+        button.setGeometry(x, y, size, size)
     
     def placePaletteSideButtons(self):
         x, y = self.getButtonCoords("trace")
 
         up, down, all, ind, opts, help = tuple(self.palette_side_buttons)
 
-        x1 = x + 3 + 5 * self.pblen
-        y1 = y - self.pblen
+        width, height = self.traceGridSize(*self.traceGrid())
+        x1 = x + width // 2 + 2
+        y1 = y - height // 2 + 1
         up.setGeometry(x1, y1, self.pblen // 2, self.pblen // 2)
 
         x2 = x1 + self.pblen // 2 + 1
@@ -444,10 +453,11 @@ class MousePalette():
         x, y = self.getButtonCoords("trace")
         self.label.resize(self.label.sizeHint())
         x -= self.label.width() / 2
+        _, height = self.traceGridSize(*self.traceGrid())
         if self.trace_y > 0.5:
-            y -= self.pblen + self.label.height() + 5
+            y -= height // 2 + self.label.height() + 4
         else:
-            y += self.pblen + 5
+            y += max(height, self.pblen * 2 + 1) - height // 2 + 4
         self.label.move(x, y)
 
     @staticmethod
@@ -724,8 +734,8 @@ class MousePalette():
         y = getattr(self, f"{group}_y")
         x = (x * (x2 - x1)) + x1
         y = (y * (y2 - y1)) + y1
-        if group in ("inc", "bc") and self.atDefaultPosition(group):
-            x = self.clearOfTools(group, x, y)
+        if group in ("inc", "bc", "sb") and self.atDefaultPosition(group):
+            x, y = self.clearOfPalettes(group, x, y)
         return x, y
 
     def atDefaultPosition(self, group):
@@ -734,29 +744,56 @@ class MousePalette():
         y = getattr(self, f"{group}_y")
         return (x, y) == DEFAULT_POSITIONS[group]
 
-    def clearOfTools(self, group, x, y):
-        """The x for a group at (x, y) that keeps it clear of the tool column.
-
-        The section buttons and the sliders default to the field's right edge,
-        under the tool column. In a short window the column reaches down to
-        them and they cover its last buttons, so a group that would touch
-        the column moves left of it. Only a group at its default spot moves:
-        one the user dragged stays where it was put.
-        """
+    def clearOfPalettes(self, group, x, y):
+        """Keep default section buttons, sliders and scale bar clear of the grids."""
         w, h = {
             "inc": (self.ibw, self.ibh*2 + 15),
             "bc": (self.bcsize*6 + 5, self.bcsize*2 + 20),
+            "sb": (self.sb.width(), self.sb.height()) if hasattr(self, "sb") else (10, 50),
         }[group]
         gap = 10
         tx, ty = self.getButtonCoords("mode")
-        th = (self.mblen + 10) * len(self.mode_buttons) - 10
-        touches = (
-            x < tx + self.mblen + gap and tx < x + w + gap and
-            y < ty + th + gap and ty < y + h + gap
-        )
-        if not touches:
-            return x
-        return max(self.mainwindow.field.x(), tx - gap - w)
+        cols, rows, size = self.modeGrid()
+        tw = (size + gap) * cols - gap
+        th = (size + gap) * rows - gap
+        obstacles = [QRectF(tx, ty, tw, th)]
+        tx, ty = self.getButtonCoords("trace")
+        trace_width, trace_height = self.traceGridSize(*self.traceGrid())
+        obstacles.append(QRectF(
+            tx - trace_width // 2, ty - trace_height // 2,
+            trace_width + self.pblen + 3, max(trace_height, self.pblen * 2 + 1),
+        ))
+        if group in ("bc", "sb"):
+            ix, iy = self.getButtonCoords("inc")
+            obstacles.append(QRectF(ix, iy, self.ibw, self.ibh * 2 + 15))
+        elif group == "inc" and self.atDefaultPosition("bc"):
+            bx1, bx2, by1, by2 = self.getBounds()["bc"]
+            obstacles.append(QRectF(
+                bx1 + self.bc_x * (bx2 - bx1), by1 + self.bc_y * (by2 - by1),
+                self.bcsize * 6 + 5, self.bcsize * 2 + 20,
+            ))
+        if group == "sb":
+            bx, by = self.getButtonCoords("bc")
+            obstacles.append(QRectF(bx, by, self.bcsize * 6 + 5, self.bcsize * 2 + 20))
+
+        field = QRectF(self.mainwindow.field.geometry())
+        candidates = [(x, y)]
+        for rect in obstacles:
+            candidates.extend([
+                (rect.left() - gap - w, y), (x, rect.top() - gap - h),
+                (rect.right() + gap, y), (x, rect.bottom() + gap),
+            ])
+        xs = [cx for cx, _ in candidates]
+        ys = [cy for _, cy in candidates]
+        candidates.extend((cx, cy) for cx in xs for cy in ys)
+        clear = []
+        for cx, cy in candidates:
+            cx = max(field.left(), min(cx, field.right() - w))
+            cy = max(field.top(), min(cy, field.bottom() - h))
+            candidate = QRectF(cx, cy, w, h).adjusted(-gap, -gap, gap, gap)
+            if all(not candidate.intersects(rect) for rect in obstacles):
+                clear.append((cx, cy))
+        return min(clear, key=lambda p: (p[0] - x)**2 + (p[1] - y)**2) if clear else (x, y)
 
     def moveButton(self, dx, dy, group):
         """Move a button group.
@@ -773,10 +810,10 @@ class MousePalette():
             # starts from the drawn position; from the saved spot the bar would
             # not move until that spot was on screen again
             current_x = self.sb.x()
-        new_x = ((current_x + dx) - x1) / (x2 - x1)
+        new_x = ((current_x + dx) - x1) / (x2 - x1) if x2 > x1 else getattr(self, f"{group}_x")
         if new_x < 0: new_x = 0
         elif new_x > 1: new_x = 1
-        new_y = ((current_y + dy) - y1) / (y2 - y1)
+        new_y = ((current_y + dy) - y1) / (y2 - y1) if y2 > y1 else getattr(self, f"{group}_y")
         if new_y < 0: new_y = 0
         elif new_y > 1: new_y = 1
         setattr(self, f"{group}_x", new_x)
@@ -785,6 +822,51 @@ class MousePalette():
         # special case: move selected traces if needed
         if group == "mode":
             self.mainwindow.field.update()
+
+    def modeGrid(self):
+        field = self.mainwindow.field
+        return fitPaletteGrid(
+            len(self.mode_buttons), self.tool_palette_cols, self.mblen, 10,
+            field.width(), field.height(),
+        )
+
+    def traceGrid(self):
+        field = self.traceRegion()
+        label_height = self.label.sizeHint().height() if hasattr(self, "label") else 30
+        return fitPaletteGrid(
+            self.palette_button_count, self.trace_palette_per_row, self.pblen, 0,
+            max(1, int(field.width()) - self.pblen - 7),
+            max(1, int(field.height()) - label_height - 10),
+        )
+
+    def traceRegion(self):
+        """Reserve control space when the trace grid fills most of the field."""
+        field = QRectF(self.mainwindow.field.geometry())
+        label_height = self.label.sizeHint().height() if hasattr(self, "label") else 30
+        cols, rows, fitted_size = fitPaletteGrid(
+            self.palette_button_count, self.trace_palette_per_row, self.pblen, 0,
+            max(1, int(field.width()) - self.pblen - 7),
+            max(1, int(field.height()) - label_height - 10),
+        )
+        trace_width, trace_height = self.traceGridSize(cols, rows, fitted_size)
+        cols, rows, size = self.modeGrid()
+        tool_width = (size + 10) * cols - 10
+        tool_height = (size + 10) * rows - 10
+        right = self.bcsize * 6 + 25
+        top = tool_height + 10 if tool_width > right else 0
+        bottom = max(50, self.sb.height() if hasattr(self, "sb") else 50) + 10
+        if (fitted_size == self.pblen and
+                trace_width + self.pblen + 3 <= field.width() - right and
+                max(trace_height, self.pblen * 2 + 1) + label_height + 4 <= field.height() - top - bottom):
+            return field
+        return QRectF(
+            field.x(), field.y() + top,
+            max(1, field.width() - right), max(1, field.height() - top - bottom),
+        )
+
+    @staticmethod
+    def traceGridSize(cols, rows, size):
+        return cols * size + (2 if cols > 1 else 0), rows * size + (2 if rows > 1 else 0)
 
     def getBounds(self):
         """Get the bounds for the buttons."""
@@ -796,16 +878,31 @@ class MousePalette():
         fy1      = field.y()
         fy2      = fy1 + field.height()
 
-        mblen    = self.mblen
-        buttons  = self.mode_buttons
         pblen    = self.pblen
         ibw      = self.ibw
         ibh      = self.ibh
         bcsize   = self.bcsize
 
+        cols, rows, size = self.modeGrid()
+        mode_width = (size + 10) * cols - 10
+        mode_height = (size + 10) * rows - 10
+        trace_width, trace_height = self.traceGridSize(*self.traceGrid())
+        trace_field = self.traceRegion()
+        label_size = self.label.sizeHint() if hasattr(self, "label") else QSize(0, 30)
+        trace_left = max(trace_width // 2, math.ceil(label_size.width() / 2))
+        trace_right = max(trace_width - trace_width // 2 + pblen + 3,
+                          math.ceil(label_size.width() / 2))
+        trace_top = trace_height // 2
+        trace_bottom = max(trace_height, pblen * 2 + 1) - trace_height // 2
+        if self.trace_y > 0.5:
+            trace_top += label_size.height() + 4
+        else:
+            trace_bottom += label_size.height() + 4
+
         return {
-            "mode": (fx1, fx2 - mblen, fy1, fy2 - (mblen + 10) * len(buttons) + 10),
-            "trace": (fx1 + pblen*5, fx2 - pblen*6 - 3, fy1 + pblen, fy2 - pblen),
+            "mode": (fx1, fx2 - mode_width, fy1, fy2 - mode_height),
+            "trace": (trace_field.left() + trace_left, trace_field.right() - trace_right,
+                      trace_field.top() + trace_top, trace_field.bottom() - trace_bottom),
             "inc": (fx1, fx2 - ibw, fy1, fy2 - ibh*2 - 15),
             "bc": (fx1, fx2 - 6*bcsize - 5, fy1, fy2 - 2*bcsize - 20),
             # the bar's height follows its thickness option
