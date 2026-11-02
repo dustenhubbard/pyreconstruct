@@ -39,11 +39,12 @@ class FieldWidgetMouse(FieldWidgetData):
         """
         self.endPendingEvents()  # end pending mouse events
 
-        # A real tool change ends a lasso. The pointer shortcut pressed
-        # mid-lasso is not one: it calls this with the pointer already the
-        # tool, and that lasso keeps going.
+        # The new tool must not inherit a held press. Keep unfinished
+        # z-traces, which endPendingEvents also preserves. Selecting the
+        # current tool again does not drop its press or cancel its lasso.
         if mode != self.mouse_mode:
             self.cancelLasso()
+            self.dropPress()
 
         self.mouse_mode = mode
 
@@ -799,10 +800,11 @@ class FieldWidgetMouse(FieldWidgetData):
             self.lineRelease(event)
 
         ## User decided to line trace (in combo trace_mode): a quick click,
-        ## or a press of any length that barely moved
-        elif trace_mode == "combo" and (
+        ## or a press of any length that barely moved. The context menu
+        ## takes its press, so its release cannot start a trace.
+        elif self.lclick and trace_mode == "combo" and (
             self.isSingleClicking()
-            or (click_pending and self.lclick and self.isStillPress(event))
+            or (click_pending and self.isStillPress(event))
         ):
             self.current_trace = [self.current_trace[0]]
             self.is_line_tracing = True
