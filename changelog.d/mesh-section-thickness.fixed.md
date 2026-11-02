@@ -1,0 +1,1 @@
+- **3D meshes follow each section's thickness.**
