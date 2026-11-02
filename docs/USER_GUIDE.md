@@ -680,9 +680,10 @@ or **Ztrace ▸ Edit z-trace attributes…** to edit selected z-traces.
 - **Edit attributes** (`Ctrl+E`): change name, color, tags, and fill mode.
 - **Merge traces** (`Shift+M`): merge the exteriors of selected traces (they must
   share a name).
-- **Hide** (`Shift+H`) / **Unhide all** (`Ctrl+U`). **Unhide all** clears the hidden
-  state of every trace on the current section. **Toggle show all** (`A`) displays
-  hidden traces temporarily without changing their hidden state.
+- **Hide** (`Shift+H`) / **Unhide all** (`Cmd+U`, or `Ctrl+U` on
+  Windows/Linux). **Unhide all** clears the hidden state of every trace on the
+  current section. **Toggle show all** (`A`) displays hidden traces temporarily
+  without changing their hidden state.
 - **Make negative / positive**. Negative traces subtract from (cut into) the area
   of same-named traces, e.g. to carve a hole; this matters for area and 3D volume.
 - **Cut / Copy / Paste** (`Ctrl+X` / `Ctrl+C` / `Ctrl+V`) and **Paste attributes**
@@ -905,10 +906,10 @@ active. Switch to a real alignment first.
   section from matched traces. Select **3 or more** traces of the same name on both
   sections (the same number on each); PyReconstruct computes the affine transform
   that best maps one set of centroids onto the other.
-- **Align by correlation** (`Ctrl+\`) registers the current image to the
-  last-viewed comparison ("B") section by image cross-correlation, using a
-  translation-only adjustment. Visit the reference section, then the section you
-  want to align.
+- **Align by correlation** (`Cmd+\`, or `Ctrl+\` on Windows/Linux) registers
+  the current image to the last-viewed comparison ("B") section by image
+  cross-correlation, using a translation-only adjustment. Visit the reference
+  section, then the section you want to align.
 - **Propagate transform** records a transform adjustment and applies it across many
   sections: **Start propagation recording**, make your adjustment, then **Propagate
   to start** / **Propagate to end** (or simply navigate; while recording, moving to
