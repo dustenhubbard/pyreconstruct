@@ -252,9 +252,10 @@ def touchingSections(series, boxes : dict, display_tform) -> dict:
     radius grown by that move's stretch), so a trace near the box may count
     when its outline does not reach it; it never misses one that does.
 
-    The traces an open read into columns are tested together, a block at a
-    time, so a series of many objects takes one pass of array work rather
-    than one per object.
+    Every object's traces are tested together, those an open read into
+    columns a block at a time and the built ones in one batch, so a series
+    of many objects takes one pass of array work rather than one per
+    object.
 
         Params:
             series (Series): the series
@@ -304,14 +305,30 @@ def touchingSections(series, boxes : dict, display_tform) -> dict:
         for row, i in zip(rows[ok].tolist(), run[ok].tolist()):
             found.setdefault(runs[i][2], set()).add(int(snums[row]))
 
-    for name in built:
-        extents = objectExtents(series, name, display_tform, moves)
-        if extents is None:
-            continue
-        snums = extents[0]
-        touch = _touching(snums, *extents[1:], box_snums, bx)
-        if touch.any():
-            found.setdefault(name, set()).update(snums[touch].tolist())
+    # the traces already built (a .jser open, an edited object): one Python
+    # walk gathers their numbers, then the same array work as above
+    owners, items, measured, index = [], [], [], {}
+    for i, name in enumerate(built):
+        for snum, tds in series.data["objects"][name].traces.items():
+            for td in tds:
+                tform = getattr(td, "_tform", None)
+                key = index.get(id(tform))
+                if key is None:
+                    key = index[id(tform)] = len(measured)
+                    measured.append(tform)
+                cx, cy = td.centroid
+                items.append((snum, cx, cy, td.radius, key))
+                owners.append(i)
+    if items:
+        arr = np.asarray(items, dtype=float)
+        snums = arr[:, 0].astype(int)
+        squares = displaySquares(
+            snums, arr[:, 1], arr[:, 2], arr[:, 3], arr[:, 4].astype(int),
+            measured, display_tform, moves,
+        )
+        rows = np.nonzero(_touching(snums, *squares, box_snums, bx))[0]
+        for row in rows.tolist():
+            found.setdefault(built[owners[row]], set()).add(int(snums[row]))
 
     return {name: frozenset(snums) for name, snums in found.items()}
 

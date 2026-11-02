@@ -421,3 +421,37 @@ def test_a_new_trace_its_object_keeps_whole_stays_selected(mw, qapp, how):
     assert new in field.section.selected_traces
     assert new in field.section_layer.traces_in_view
     assert "outside the ROI mode box" not in mw.statusBar().currentMessage()
+
+
+def test_the_batched_pass_matches_one_object_at_a_time():
+    """Built objects with traces under two measured transforms, a drawn
+    transform that differs from both: the batched pass finds the same
+    sections as testing each object's squares on its own."""
+    import numpy as np
+    rng = np.random.default_rng(7)
+    shown = Transform([1.2, 0.3, 0.5, -0.1, 0.9, 1.0])
+    measured = [Transform.identity(), Transform([2.0, 0.0, 1.0, 0.0, 2.0, -3.0])]
+    objects = {}
+    for i in range(300):
+        traces = {}
+        for _ in range(rng.integers(1, 4)):
+            snum = int(rng.integers(1, 6))
+            td = _TD(*rng.uniform(0, 20, 2), float(rng.uniform(0.05, 1.0)))
+            td._tform = measured[int(rng.integers(0, 2))]
+            traces.setdefault(snum, []).append(td)
+        obj = ObjectData()
+        obj.traces = traces
+        objects[f"o{i}"] = obj
+    series = _Series(objects)
+    boxes = {snum: (8.0 + snum, 8.0, 10.0 + snum, 10.0) for snum in range(1, 6)}
+    found = RF.touchingSections(series, boxes, lambda s: shown)
+
+    expected = {}
+    for name in objects:
+        snums, xmin, ymin, xmax, ymax = RF.objectExtents(series, name, lambda s: shown)
+        for k, s in enumerate(snums.tolist()):
+            b = boxes[s]
+            if xmin[k] <= b[2] and xmax[k] >= b[0] and ymin[k] <= b[3] and ymax[k] >= b[1]:
+                expected.setdefault(name, set()).add(s)
+    assert found == {k: frozenset(v) for k, v in expected.items()}
+    assert found
