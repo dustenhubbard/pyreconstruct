@@ -131,15 +131,19 @@ def test_saved_positions_keep_both_palettes_reachable(
     assert {key: getattr(palette, key) for key in positions} == positions
 
 
-@pytest.mark.parametrize("group", ["inc", "bc", "sb"])
-def test_saved_controls_stay_reachable_after_columns_change(
-        main_window, local_series_settings, monkeypatch, qapp, tmp_path, group):
+@pytest.mark.parametrize("group,wrapped_x", [("inc", 0.94), ("bc", 0.94), ("sb", 0.7)])
+@pytest.mark.parametrize("layout", ["configured", "wrapped"])
+def test_saved_controls_stay_reachable_after_layout_changes(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path, group, wrapped_x, layout):
     from PyReconstruct.modules.gui.palette import mouse_palette
 
     local_series_settings(main_window)
     settings = QSettings(str(tmp_path / "positions.ini"), QSettings.IniFormat)
     monkeypatch.setattr(mouse_palette, "_position_settings", lambda: settings)
-    positions = {f"{group}_x": 0.7, f"{group}_y": 0.01}
+    positions = {
+        f"{group}_x": 0.7 if layout == "configured" else wrapped_x,
+        f"{group}_y": 0.01,
+    }
     mouse_palette.save_palette_positions(settings, positions)
     main_window.resize(1280, 800)
     main_window.show()
@@ -161,20 +165,24 @@ def test_saved_controls_stay_reachable_after_columns_change(
 
     assert_reachable()
     series = main_window.series
-    series.setOption("tool_palette_cols", 12)
-    series.setOption("trace_palette_per_row", 20)
+    trace_cols, tool_cols = (20, 12) if layout == "configured" else (10, 1)
+    series.setOption("tool_palette_cols", tool_cols)
+    series.setOption("trace_palette_per_row", trace_cols)
     palette.reset()
-    for window in [(1280, 800), (800, 600), (1280, 800)]:
+    windows = [(1280, 800), (800, 600), (1280, 800)] if layout == "configured" else [
+        (1280, 800), (1280, 550), (1280, 800),
+    ]
+    for window in windows:
         main_window.resize(*window)
         qapp.processEvents()
         palette.resize()
         assert_reachable()
+        for button, mode, _ in palette.mode_buttons.values():
+            QTest.mouseClick(main_window.childAt(button.geometry().center()), Qt.LeftButton)
+            assert main_window.field.mouse_mode == mode
 
-    for button, mode, _ in palette.mode_buttons.values():
-        QTest.mouseClick(main_window.childAt(button.geometry().center()), Qt.LeftButton)
-        assert main_window.field.mouse_mode == mode
-    assert series.getOption("tool_palette_cols") == 12
-    assert series.getOption("trace_palette_per_row") == 20
+    assert series.getOption("tool_palette_cols") == tool_cols
+    assert series.getOption("trace_palette_per_row") == trace_cols
     assert mouse_palette.load_palette_positions(settings) == positions
     assert {key: getattr(palette, key) for key in positions} == positions
 

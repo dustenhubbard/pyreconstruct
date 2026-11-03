@@ -736,11 +736,17 @@ class MousePalette():
         y = (y * (y2 - y1)) + y1
         if group == "trace":
             x, y = self.clearOfTools(x, y, (x1, x2, y1, y2))
-        elif group in ("inc", "bc", "sb") and (
-                self.atDefaultPosition(group) or
-                self.trace_palette_per_row != default_settings["trace_palette_per_row"] or
-                self.tool_palette_cols != default_settings["tool_palette_cols"]):
-            x, y = self.clearOfPalettes(group, x, y)
+        elif group in ("inc", "bc", "sb"):
+            tool_cols, _, tool_size = self.modeGrid()
+            trace_cols, _, trace_size = self.traceGrid()
+            if (self.atDefaultPosition(group) or
+                    self.trace_palette_per_row != default_settings["trace_palette_per_row"] or
+                    self.tool_palette_cols != default_settings["tool_palette_cols"] or
+                    tool_cols != min(self.tool_palette_cols, len(self.mode_buttons)) or
+                    tool_size != self.mblen or
+                    trace_cols != min(self.trace_palette_per_row, self.palette_button_count) or
+                    trace_size != self.pblen):
+                x, y = self.clearOfPalettes(group, x, y)
         return x, y
 
     def clearOfTools(self, x, y, bounds):
