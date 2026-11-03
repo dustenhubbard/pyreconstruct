@@ -6688,6 +6688,8 @@ class Series():
                         raise ValueError("Expected six columns.")
                     name, color_text, fill_text, tags_text, x_text, y_text = row
                     color = tuple(int(n) for n in color_text.split())
+                    if len(color) != 3 or not all(0 <= n <= 255 for n in color):
+                        raise ValueError("Expected three RGB color values from 0 to 255.")
                     fill = tuple(fill_text.split())
                     if (
                         len(fill) != 2

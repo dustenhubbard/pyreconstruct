@@ -120,6 +120,92 @@ def test_invalid_csv_fill_preserves_palettes_and_editor(
     assert dialog.tab_widget.tabText(dialog.tab_widget.currentIndex()) == index[0]
 
 
+@pytest.mark.gui
+@pytest.mark.parametrize("tags_header,tags_text", [("Tags", "axon"), ("TagsJSON", '["axon"]')])
+@pytest.mark.parametrize("color", [
+    "", "10", "10 20", "10 20 30 40", "10 20 30 40 50",
+    "-1 20 30", "10 -1 30", "10 20 -1",
+    "256 20 30", "10 256 30", "10 20 256",
+    "99999999999999999999999 20 30", "10.5 20 30", "nan 20 30",
+])
+@pytest.mark.parametrize("replace", [True, False])
+def test_invalid_csv_color_preserves_palettes_and_label(
+    qtbot, real_series, tmp_path, tags_header, tags_text, color, replace
+):
+    from PyReconstruct.modules.gui.palette.mouse_palette import MousePalette
+    from PyReconstruct.modules.gui.palette.outlined_label import OutlinedLabel
+
+    series = real_series
+    name = series.palette_index[0] if replace else "new palette"
+    series.palette_index[1] = 1
+    before = dict(series.palette_traces)
+    for palette in before:
+        series.paletteToken(palette)
+    tokens = dict(series.palette_tokens)
+    index = list(series.palette_index)
+    selected = series.palette_traces[index[0]][index[1]]
+    limit = csv.field_size_limit()
+    path = tmp_path / "bad-color.csv"
+    with path.open("w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["Name", "Color", "Fill", tags_header, "X", "Y"])
+        writer.writerow(["valid", "10 20 30", "solid selected", tags_text, "0 2 0", "0 0 2"])
+        writer.writerow(["triangle", color, "solid selected", tags_text, "0 2 0", "0 0 2"])
+
+    with pytest.raises(ValueError, match="Invalid palette CSV at line 3"):
+        series.importTracePaletteCSV(str(path), name)
+
+    assert series.palette_traces == before
+    assert all(series.palette_traces[key] is value for key, value in before.items())
+    assert series.palette_tokens == tokens
+    assert series.palette_index == index
+    assert csv.field_size_limit() == limit
+    label = OutlinedLabel(None)
+    qtbot.addWidget(label)
+    palette = MousePalette.__new__(MousePalette)
+    palette.series = series
+    palette.palette_buttons = [None] * len(before[index[0]])
+    palette.label = label
+    palette.placeLabel = lambda: None
+    palette.updateLabel()
+    assert palette.selectedTrace() is selected
+    assert label.text() == selected.name
+    assert label.brush.color().getRgb() == (*selected.color, 255)
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("tags_header,tags_text", [("Tags", "axon"), ("TagsJSON", '["axon"]')])
+@pytest.mark.parametrize("color", [(0, 0, 0), (255, 255, 255), (0, 128, 255)])
+def test_palette_csv_roundtrips_rgb_boundaries_in_label(
+    main_window, main_window_dialogs, tmp_path, tags_header, tags_text, color
+):
+    path = tmp_path / "rgb.csv"
+    with path.open("w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["Name", "Color", "Fill", tags_header, "X", "Y"])
+        writer.writerow([
+            "triangle", " ".join(map(str, color)), "solid selected", tags_text, "0 2 0", "0 0 2"
+        ])
+    main_window_dialogs.file_responses = [str(path)]
+
+    main_window.importTracePaletteCSV()
+
+    series = main_window.series
+    trace = main_window.mouse_palette.selectedTrace()
+    assert series.palette_index == ["rgb", 0]
+    assert trace.color == color
+    assert trace.tags == {"axon"}
+    assert list(trace.points) == [(0, 0), (2, 0), (0, 2)]
+    assert main_window.mouse_palette.label.text() == "triangle"
+    assert main_window.mouse_palette.label.brush.color().getRgb() == (*color, 255)
+    series.exportTracePaletteCSV(str(path), "rgb")
+    assert series.importTracePaletteCSV(str(path), "roundtrip")
+    result, = series.palette_traces["roundtrip"]
+    assert result.color == color
+    assert result.tags == {"axon"}
+    assert list(result.points) == [(0, 0), (2, 0), (0, 2)]
+
+
 @pytest.mark.parametrize("tags_header,tags_text", [("Tags", "axon"), ("TagsJSON", '["axon"]')])
 @pytest.mark.parametrize("fill", list(itertools.product(
     ["none", "transparent", "solid"], ["none", "selected", "unselected", "always"]
@@ -180,12 +266,17 @@ def test_invalid_json_tags_leave_existing_palette_untouched(real_series, tmp_pat
     "triangle,10 20 30,solid selected,axon,0 2 0,0 0\n",
     "triangle,10 20 30,,axon,0 2 0,0 0 2\n",
     "triangle,10 20 30,solid,axon,0 2 0,0 0 2\n",
+    "triangle,10 20,solid selected,axon,0 2 0,0 0 2\n",
+    "triangle,99999999999999999999999 20 30,solid selected,axon,0 2 0,0 0 2\n",
 ])
 def test_window_reports_invalid_palette_csv_without_adding_a_palette(
     main_window, main_window_dialogs, tmp_path, row
 ):
     series = main_window.series
     before = dict(series.palette_traces)
+    for palette in before:
+        series.paletteToken(palette)
+    tokens = dict(series.palette_tokens)
     index = list(series.palette_index)
     path = tmp_path / "bad.csv"
     path.write_text(
@@ -197,6 +288,8 @@ def test_window_reports_invalid_palette_csv_without_adding_a_palette(
     main_window.importTracePaletteCSV()
 
     assert series.palette_traces == before
+    assert all(series.palette_traces[key] is value for key, value in before.items())
+    assert series.palette_tokens == tokens
     assert series.palette_index == index
     assert not series.modified
     assert len(main_window_dialogs.notices) == 1
