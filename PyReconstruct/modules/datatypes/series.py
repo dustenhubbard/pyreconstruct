@@ -6689,6 +6689,12 @@ class Series():
                     name, color_text, fill_text, tags_text, x_text, y_text = row
                     color = tuple(int(n) for n in color_text.split())
                     fill = tuple(fill_text.split())
+                    if (
+                        len(fill) != 2
+                        or fill[0] not in ("none", "transparent", "solid")
+                        or fill[1] not in ("none", "selected", "unselected", "always")
+                    ):
+                        raise ValueError("Expected a valid fill mode and condition.")
                     tags = json.loads(tags_text) if json_tags else tags_text.split()
                     if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
                         raise ValueError("Tags must be a list of strings.")
