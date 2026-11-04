@@ -1,3 +1,4 @@
+import math
 import os
 
 from PySide6.QtWidgets import (
@@ -390,7 +391,10 @@ class SectionTableWidget(DataTable):
 
         try:
             thickness = float(new_st)
+            if not math.isfinite(thickness) or thickness <= 0:
+                raise ValueError
         except ValueError:
+            notify("Section thickness must be a positive, finite number.")
             return
         
         self.mainwindow.saveAllData()

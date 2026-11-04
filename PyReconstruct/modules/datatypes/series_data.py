@@ -516,7 +516,7 @@ class SeriesData():
             ## Check if there are specific traces to be updated
             trace_names = section.getAllModifiedNames()
 
-            if section.tformsModified(scaling_only=True) or (all_traces and not trace_names):
+            if section.tformsModified() or (all_traces and not trace_names):
                 trace_names = section.contours.keys()
 
             ## Keep track of objects that are newly created/destroyed
