@@ -532,7 +532,7 @@ def test_a_composite_roi_import_keeps_each_shape_inside_selected(
     assert notices == []
 
 
-@pytest.mark.parametrize("trace_mode", ["poly", "pencil"])
+@pytest.mark.parametrize("trace_mode", ["poly", "pencil", "rect-release-only", "rect-small-move"])
 def test_a_draw_and_its_auto_merge_are_one_operation(mw, qapp, notices, monkeypatch, trace_mode):
     """A closed trace drawn over the selected followed square merges into
     it; the box is placed once, after the merge, on the merged trace, which
@@ -544,7 +544,7 @@ def test_a_draw_and_its_auto_merge_are_one_operation(mw, qapp, notices, monkeypa
     from PyReconstruct.modules.gui.main import field_widget_1_base as fwb
     field = mw.field
     mw.series.setOption("auto_merge", True)
-    mw.series.setOption("trace_mode", trace_mode)
+    mw.series.setOption("trace_mode", "combo" if trace_mode.startswith("rect-") else trace_mode)
     mw.series.setOption("roll_average", False)
     field.newTrace(
         [(13.4, 23.6), (13.6, 23.6), (13.6, 23.8), (13.4, 23.8)],
@@ -570,13 +570,23 @@ def test_a_draw_and_its_auto_merge_are_one_operation(mw, qapp, notices, monkeypa
             QTest.mouseClick(field, Qt.LeftButton, Qt.NoModifier, _pix(field, x, y))
         QTest.mouseClick(field, Qt.RightButton, Qt.NoModifier, _pix(field, *corners[-1]))
     else:
-        QTest.mousePress(field, Qt.LeftButton, Qt.NoModifier, _pix(field, *corners[0]))
-        for x, y in corners[1:]:
-            _move(field, qapp, _pix(field, x, y))
-        QTest.mouseRelease(field, Qt.LeftButton, Qt.NoModifier, _pix(field, *corners[-1]))
+        start = _pix(field, *corners[0])
+        if trace_mode.startswith("rect-"):
+            field.closed_trace_shape = "rect"
+        QTest.mousePress(field, Qt.LeftButton, Qt.NoModifier, start)
+        if trace_mode == "pencil":
+            for x, y in corners[1:]:
+                _move(field, qapp, _pix(field, x, y))
+        elif trace_mode == "rect-small-move":
+            _move(field, qapp, start + QPoint(1, 1))
+        end = corners[2] if trace_mode.startswith("rect-") else corners[-1]
+        QTest.mouseRelease(field, Qt.LeftButton, Qt.NoModifier, _pix(field, *end))
     qapp.processEvents()
 
     (merged,) = list(field.section.contours["drawn"])
+    assert max(x for x, _ in field.section.tform.map(merged.points)) == pytest.approx(
+        13.9, abs=field.series.screen_mag
+    )
     assert len(calls) == 1
     assert field.roi_box_center == pytest.approx(_drawn_center(field, "drawn"))
     assert field.section.selected_traces == [merged]
