@@ -27,7 +27,14 @@ def _mode_button_tops(palette):
 
 
 @pytest.mark.parametrize("saved_y", [0.01, 0.5, 0.99])
-def test_mode_buttons_are_evenly_spaced_right_after_construction(main_window, monkeypatch, saved_y):
+def test_mode_buttons_are_evenly_spaced_right_after_construction(
+    main_window, local_series_settings, monkeypatch, qapp, saved_y
+):
+    local_series_settings(main_window)
+    # Leave room for one column; shorter fields now wrap the tools.
+    main_window.resize(1280, 800)
+    main_window.show()
+    qapp.processEvents()
     # a persisted column position, as loadPositionState restores it
     monkeypatch.setattr(mp, "load_palette_positions", lambda settings: {"mode_y": saved_y})
     main_window.mouse_palette.reset()          # close + __init__, the startup path
