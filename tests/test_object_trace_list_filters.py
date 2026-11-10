@@ -2,7 +2,12 @@
 
 import pytest
 
-from PyReconstruct.modules.backend.settings_store import DictSettingsStore
+from PyReconstruct.modules.backend.settings_store import (
+    DictSettingsStore,
+    SettingsStore,
+    default_settings_store,
+    set_default_settings_store,
+)
 from PyReconstruct.modules.datatypes import Series, Trace
 from PyReconstruct.modules.gui.table.object import ObjectTableWidget
 from PyReconstruct.modules.gui.table.trace import TraceTableWidget
@@ -14,10 +19,46 @@ from tests.test_data_lists_real_widget import (
 pytestmark = pytest.mark.gui
 
 
+class SharedStoreWrites(SettingsStore):
+    """Reads pass through to the shared store; writes are only recorded."""
+
+    def __init__(self, shared):
+        self.shared = shared
+        self.keys = []
+
+    def contains(self, code, key):
+        return self.shared.contains(code, key)
+
+    def value(self, code, key, value_type):
+        return self.shared.value(code, key, value_type)
+
+    def set_value(self, code, key, value):
+        self.keys.append(key)
+
+
+@pytest.fixture(autouse=True)
+def no_shared_settings_writes():
+    """Fail a test whose setup, body or teardown writes the shared store."""
+    shared = default_settings_store()
+    guard = SharedStoreWrites(shared)
+    set_default_settings_store(guard)
+    yield
+    set_default_settings_store(shared)
+    assert guard.keys == []
+
+
 @pytest.fixture
 def real_series(tmp_path):
-    series = Series.new([str(tmp_path / "image.tif")], "filters", 1, 0.05)
-    series.setSettingsStore(DictSettingsStore())
+    store = DictSettingsStore()
+    # Series.new reads options such as username, and a missing option is
+    # written back as its default, so the store must be in place before it
+    previous = default_settings_store()
+    set_default_settings_store(store)
+    try:
+        series = Series.new([str(tmp_path / "image.tif")], "filters", 1, 0.05)
+    finally:
+        set_default_settings_store(previous)
+    series.setSettingsStore(store)
     section = series.loadSection(0)
     for name, closed, hidden, tags in [
         ("cell2", True, False, {"keep"}),
@@ -144,7 +185,7 @@ def test_invalid_regex_preserves_the_last_working_filter(filtered_list, gui_dial
     expected = "cell10" if filtered_list.name == "object" else ("cell10", 0)
     assert filtered_list.getSelected(single=True) == expected
     assert len(gui_dialogs.notices) == 1
-    assert gui_dialogs.notices[0].startswith(f"Invalid regex filter: {message}")
+    assert gui_dialogs.notices[0].startswith(f"Invalid regex filter {pattern!r}: {message}")
     respond(filtered_list, gui_dialogs, "setREFilter", (["cell20"],))
     assert names(filtered_list) == ["cell20"]
 
