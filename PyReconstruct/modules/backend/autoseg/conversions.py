@@ -996,6 +996,12 @@ def raw_volume(raw):
     read as sections.
     """
 
+    if raw.dtype.kind != "u" or raw.dtype.itemsize not in (1, 2):
+        raise ZarrRefused(
+            f"This Zarr raw array is {raw.dtype}. PyReconstruct reads grayscale "
+            "images as uint8 or uint16, so convert raw to one of those types "
+            "before importing it."
+        )
     shape = raw.shape
     if len(shape) == 3:
         return raw

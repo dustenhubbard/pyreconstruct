@@ -215,6 +215,7 @@ def _real_stub(monkeypatch, series, current_section, stored_tform):
         propagate_tform=True,
         stored_tform=stored_tform,
         propagated_sections={current_section},
+        prepareProfileAdjustment=lambda kind: True,
     )
     stub.generateView = lambda *a, **k: None
     stub.saveState = lambda *a, **k: None

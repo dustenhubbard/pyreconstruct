@@ -579,8 +579,8 @@ Right-click either button to choose the drawing **mode**:
 
 For **Closed Trace** you can also pick a fixed **shape** (freehand **Trace**,
 **Rectangle**, or **Ellipse**; drag to size) and optionally auto-merge new traces
-into selected same-named traces, or apply a rolling-average smooth while
-scribbling.
+into selected same-named traces with the same sign, or apply a rolling-average
+smooth while scribbling.
 
 ![A new closed trace, drawn freehand in orange beside the star with the Closed Trace tool.](assets/images/user-guide/06-closed-trace-drawn.png)
 
@@ -678,8 +678,9 @@ traces are selected and **Edit z-trace attributes...** when z-traces are, so the
 most-used edit is one click away above the per-entity submenus.
 
 - **Edit attributes** (`Ctrl+E`): change name, color, tags, and fill mode.
-- **Merge traces** (`Shift+M`): merge the exteriors of selected traces (they must
-  share a name).
+- **Merge traces** (`Shift+M`): merge the exteriors of selected closed traces
+  with the same name and sign. A selection containing both positive and negative
+  traces is left unchanged.
 - **Hide** (`Shift+H`) / **Unhide all** (`Ctrl+U`). Hidden traces can't be edited
   until unhidden.
 - **Make negative / positive**. Negative traces subtract from (cut into) the area
@@ -852,7 +853,8 @@ name regex, a color filter, and a comment-text filter.
 Object, Sections, Event), newest first. The object list's **View history** shows
 the same window filtered to the selected objects. Long histories can be trimmed
 with **Series ▸ Log ▸ Offload log history…**, which exports older entries to an
-external CSV.
+external CSV. If an offload fails, the series keeps its original history. Retry
+the offload after resolving the error.
 
 Older versions could write a history row PyReconstruct cannot read back, when a
 name had a line break or a comma in it. From a source install,
@@ -903,7 +905,10 @@ active. Switch to a real alignment first.
 - **Estimate affine transform** aligns the current section to the comparison ("B")
   section from matched traces. Select **3 or more** traces of the same name on both
   sections (the same number on each); PyReconstruct computes the affine transform
-  that best maps one set of centroids onto the other.
+  that best maps one set of centroids onto the other. The trace centers must not
+  all lie on one straight line on either section. If the landmarks cannot produce
+  a usable affine transform, PyReconstruct shows a notice and keeps the current
+  transform.
 - **Align by correlation** (`Ctrl+\`) automatically registers the current image to
   the section beneath it by image cross-correlation (a translation-only adjustment).
 - **Propagate transform** records a transform adjustment and applies it across many
@@ -948,9 +953,10 @@ propagation.
   number followed by the six transform numbers). Every section number must exist in
   the series; the translation terms are interpreted in pixels and scaled by the
   section magnification. Blank lines are skipped, and any other line that does not
-  fit stops the import with a message that names it. A file with no transforms
-  stops it too. The imported transforms are written to a new alignment named
-  after the file (with the date appended), and the series switches to it.
+  fit stops the import with a message that names it. All six transform numbers
+  must be finite, and each transform must be invertible. Invalid transforms stop
+  the import with a message that names the line, before any section transforms
+  change. A file with no transforms stops it too.
 - **SWiFT project**: import transforms from an AlignEM-SWiFT project; you choose
   the scale to import. The number of transforms must match the number of sections.
   They go to the sections in order, so the series does not have to start at
@@ -959,6 +965,13 @@ propagation.
   no section or more than one is marked, the first section gets it, and the
   message after the import says so. A file that is not a SWiFT project, or has no
   transforms at the chosen scale, stops the import with a message.
+
+Text and SWiFT imports use an alignment named after the file with the date
+appended, and the series switches to that alignment after import. If the name
+already exists, PyReconstruct asks whether to replace its transforms. Choose
+**Yes** to replace them or **No** to keep the existing transforms and current
+alignment. Files with the same name in different folders use the same alignment
+name when imported on the same date.
 
 The same alignment import is also one tab of **Series ▸ Import series data ▸ From
 another series…**, which is where to go when you want alignments *and* traces,
