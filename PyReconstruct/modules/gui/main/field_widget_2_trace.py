@@ -843,18 +843,8 @@ class FieldWidgetTrace(FieldWidgetBase):
         
         traces = self.section.selected_traces.copy()
 
-        ## Assume same, otherwise suffer consequences
         example_trace = traces[0]
-
-        ## Combine tags onto a copy, never the live trace: three refusals sit
-        ## below this point and each tells the user the object was left
-        ## unchanged. Mutating traces[0] here made that a lie, because a tag
-        ## just deleted from it came back the moment a cut was refused. The
-        ## copy is what the pieces of a completed cut are built from, so the
-        ## success path still gives every piece the selection's combined tags.
-        piece_base = example_trace.copy()
-        for trace in traces[1:]:
-            piece_base.tags |= trace.tags
+        combined_tags = set().union(*(trace.tags for trace in traces))
 
         ## Pixelize the selected traces
         traces_to_cut = [self.section_layer.traceToPix(t) for t in traces]
@@ -900,52 +890,51 @@ class FieldWidgetTrace(FieldWidgetBase):
                 window=window
             )        
         
-        ## Crunch the numbers
-        cut_traces = cutTraces(
-            traces_to_cut, 
-            scalpel_trace, 
-            self.series.getOption("knife_del_threshold"), 
-            closed=example_trace.closed
-        )
+        # Keep each result with its source until every cut is safe to commit.
+        replacements = []
+        untouched = []
+        for trace, pixels in zip(traces, traces_to_cut):
+            pieces = cutTraces(
+                [pixels],
+                scalpel_trace,
+                self.series.getOption("knife_del_threshold"),
+                closed=closed
+            )
+            if not pieces:
+                notify(
+                    "The cut could not be completed.\n"
+                    "The object was left unchanged."
+                )
+                return False
 
-        ## A cut line of fewer than two points is no cut at all
-        #
-        # `cutTraces` returns the list it was given, unchanged and by identity,
-        # for a degenerate cut line. A knife click with no drag produces one.
-        # Leave the section alone instead of deleting every selected trace and
-        # recreating it, which logged a modification and consumed a palette
-        # increment for a gesture that did nothing.
-        if cut_traces is traces_to_cut:
+            if len(pieces) == 1 and pieces[0] == pixels:
+                untouched.append(trace)
+            else:
+                replacements.append((trace, pieces))
+
+        if not replacements:
             return False
 
-        ## Nothing to put back
-        #
-        # The last line of defense, for any path that returns no pieces at all
-        # (every piece under the delete threshold, an open trace shapely could
-        # not split). Deleting here is what loses an object, so refuse the whole
-        # operation rather than half-completing it.
-        if not cut_traces:
+        # Successful cuts still combine the selection's tags. Missed traces
+        # keep their original coordinates rather than a rounded pixel copy.
+        for trace in untouched:
+            trace.tags |= combined_tags
+        if untouched:
+            self.section.resyncColumnarStore()
+        self.section.deleteTraces([trace for trace, _ in replacements], log_event=False)
 
-            notify(
-                "The cut could not be completed.\n"
-                "The object was left unchanged."
-            )
+        for trace, pieces in replacements:
+            piece_base = trace.copy()
+            piece_base.tags = combined_tags.copy()
+            for piece in pieces:
+                self.newTrace(
+                    piece,
+                    piece_base,
+                    closed=closed,
+                    reduce_points=False,
+                    log_event=False
+                )
 
-            return False
-
-        ## Remove old traces
-        self.section.deleteTraces(traces, log_event=False)
-
-        ## Create new traces
-        for piece in cut_traces:
-            self.newTrace(
-                piece,
-                piece_base,
-                closed=example_trace.closed,
-                reduce_points=False,
-                log_event=False
-            )
-        
         self.series.addLog(example_trace.name, self.section.n, "Modify trace(s)")
 
         return True

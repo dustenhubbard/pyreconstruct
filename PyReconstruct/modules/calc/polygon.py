@@ -206,7 +206,7 @@ def cut_open_trace(line, intersection):
     # Handle different types of intersections
     if isinstance(intersection, Point):
         # Single intersection point
-        return cut_at_point(line, intersection)
+        return cut_at_points(line, [intersection])
 
     # Where the knife runs along the trace, the intersection holds that shared
     # stretch as a line rather than as points. It used to be skipped, so a
@@ -263,9 +263,22 @@ def cut_at_points(line, points):
     eps = 1e-8
     length = line.length
 
-    # Distances along the line, without the ends and without duplicates
+    # A self-crossing trace can visit a point more than once. Project onto
+    # each segment so every visit gets its own distance along the path.
+    distances = []
+    offset = 0.0
+    coords = list(line.coords)
+    for start, stop in zip(coords, coords[1:]):
+        segment = LineString([start, stop])
+        if segment.length:
+            for point in points:
+                if segment.distance(point) <= eps:
+                    distances.append(offset + segment.project(point))
+        offset += segment.length
+
+    # Exclude the ends and deduplicate cuts at shared segment vertices.
     cuts = []
-    for distance in sorted(line.project(point) for point in points):
+    for distance in sorted(distances):
         if distance <= eps or distance >= length - eps:
             continue
         if cuts and distance - cuts[-1] <= eps:
@@ -280,49 +293,3 @@ def cut_at_points(line, points):
         substring(line, start, stop)
         for start, stop in zip(bounds, bounds[1:])
     ]
-
-def cut_at_point(line, point):
-    """Cut a line at a single point.
-    
-    Args:
-        line: LineString to cut
-        point: Point to cut at
-        
-    Returns:
-        list: List of LineString segments (0, 1, or 2)
-    """
-    # Get distance along the line
-    distance = line.project(point)
-    
-    # If point is at start or end, return original line
-    if distance <= 1e-8 or abs(distance - line.length) <= 1e-8:
-        return [line]
-    
-    # Get coordinates
-    coords = list(line.coords)
-    
-    # Initialize segments
-    segment1_coords = [point.coords[0]]
-    segment2_coords = [point.coords[0]]
-    
-    # Find the segment containing the point
-    current_length = 0
-    for i in range(len(coords) - 1):
-        segment = LineString([coords[i], coords[i+1]])
-        if current_length <= distance <= current_length + segment.length:
-            # This segment contains the point
-            # Add all previous points to segment1
-            segment1_coords = list(coords[:i+1]) + [point.coords[0]]
-            # Add all following points to segment2
-            segment2_coords = [point.coords[0]] + list(coords[i+1:])
-            break
-        current_length += segment.length
-    
-    # Create LineStrings
-    segments = []
-    if len(segment1_coords) > 1:
-        segments.append(LineString(segment1_coords))
-    if len(segment2_coords) > 1:
-        segments.append(LineString(segment2_coords))
-        
-    return segments
