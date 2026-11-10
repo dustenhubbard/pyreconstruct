@@ -3632,8 +3632,7 @@ class Series():
             self.addLog(name, None, "Delete object")
             self.host_tree.deleteKept(name)
             self.removeObjAttrs(name)
-        if traceless:
-            self.modified = True
+        self.modified = True
 
         return self._dropEmptiedGroupViz(groups_before)
 
@@ -3668,8 +3667,6 @@ class Series():
         }
         self.emptied_group_viz.update(dropped)
         return dropped
-
-        self.modified = True
 
     def copyObjectNames(self, obj_names : list) -> list:
         """The object names `copyObjects` would write its traces into.
