@@ -173,9 +173,9 @@ class FieldWidgetBase:
         self.single_click : bool            = False
         self.click_time : float             = None
         self.max_click_time : float         = 0.15
-        # widget pixels a trace press may drift and still count as a click
+        # widget pixels a press may drift and still count as a click
         self.click_tolerance : int          = 4
-        self.trace_press_travel : int       = 0
+        self.click_travel : int             = 0
         # a trace tool started a new trace with the press under way, and
         # nothing has ended it since (see traceRelease)
         self.trace_click_pending : bool     = False
@@ -198,6 +198,7 @@ class FieldWidgetBase:
                 series (Series): the new series to load
         """
         self.series = series
+        self.profile_adjustments = {}
         series.setPassWriteHook(self.refreshPassWrite)
 
         ## An image read ahead for the series before this one is of no use
@@ -922,6 +923,13 @@ class FieldWidgetBase:
         if (self.propagate_tform and
             not self.section.align_locked and
             new_section_num not in self.propagated_sections):
+            # A profile copy can process paint events in its progress dialog.
+            # Finish the newly loaded layer before opening that dialog.
+            self.generateView()
+            if not self.prepareProfileAdjustment("alignment"):
+                self.setPropagationMode(False)
+                self.generateView()
+                return
             current_tform = self.section.tform
             new_tform = self.stored_tform * current_tform
             # Replay the recorded delta without recording it again through

@@ -154,6 +154,10 @@ class FieldWidget(QWidget, FieldWidgetView):
             window[3] *= h / old_h
             window[0] = center_x - window[2] / 2
             window[1] = center_y - window[3] / 2
+            # Pending vertices use screen pixels, so follow the image's
+            # translation as the centered view grows or shrinks.
+            dx, dy = (w - old_w) / 2, (h - old_h) / 2
+            self.current_trace = [(x + dx, y + dy) for x, y in self.current_trace]
 
         self.pixmap_dim = (w, h)
         self.generateView()
@@ -300,6 +304,7 @@ class FieldWidget(QWidget, FieldWidgetView):
             self.clicked_y = self.mouse_y
         self.click_time = time.time()
         self.single_click = True
+        self.click_travel = 0
 
         # if any finger touch
         #
@@ -410,6 +415,8 @@ class FieldWidget(QWidget, FieldWidgetView):
         # if any finger touch
         if self.is_gesturing:
             return
+
+        self.trackClickTravel(event)
         
         # check if user is zooming with the mouse wheel
         if self.mainwindow.is_zooming:
@@ -490,6 +497,8 @@ class FieldWidget(QWidget, FieldWidgetView):
         # if any finger touch
         if self.is_gesturing:
             return
+
+        self.trackClickTravel(event)
         
         # panzoom if middle button
         if self.mclick:
@@ -511,6 +520,8 @@ class FieldWidget(QWidget, FieldWidgetView):
             return
 
         if self.mouse_mode == POINTER:
+            # The release can be the first position beyond the click tolerance.
+            self.pointerMove(event)
             self.pointerRelease(event)
         elif self.mouse_mode == PANZOOM:
             self.mousePanzoomRelease(event)
@@ -530,6 +541,7 @@ class FieldWidget(QWidget, FieldWidgetView):
         ):
             self.traceRelease(event)
         elif self.mouse_mode == STAMP:
+            self.stampMove(event)
             self.stampRelease(event)
         elif self.mouse_mode == GRID:
             self.gridRelease(event)
