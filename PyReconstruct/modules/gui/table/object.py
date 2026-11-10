@@ -1,4 +1,5 @@
 import csv
+import re
 
 from PySide6.QtWidgets import (
     QTableWidgetItem,
@@ -1016,8 +1017,14 @@ class ObjectTableWidget(DataTable):
         if not confirmed:
             return
         
-        self.re_filters = set(response[0] if response[0] else [".*"])
-        self.re_filters = set([s.replace("#", "[0-9]") for s in self.re_filters])
+        re_filters = {s.replace("#", "[0-9]") for s in (response[0] or [".*"])}
+        try:
+            for pattern in re_filters:
+                re.compile(pattern)
+        except (re.error, OverflowError, RecursionError) as error:
+            notify(f"Invalid regex filter {pattern!r}: {error}")
+            return
+        self.re_filters = re_filters
 
         # call through manager to update self
         self.manager.recreateTable(self)

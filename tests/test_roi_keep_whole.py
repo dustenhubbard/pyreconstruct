@@ -366,8 +366,11 @@ def test_a_pinned_alignment_counts_where_the_trace_is_drawn(mw, qapp):
     alignment, moved 10 μm east: a box on the drawn trace keeps it whole."""
     field = mw.field
     _go(mw, qapp, 52)
+    alignments = {name: name for name in mw.series.alignments}
+    alignments["pinned"] = mw.series.alignment
+    mw.series.modifyAlignments(alignments)
+    field.reload()
     (trace,) = [t for t in field.section.tracesAsList() if t.name == "x1"]
-    field.section.tforms["pinned"] = field.section.tform.copy()
     mw.series.setAttr("x1", "alignment", "pinned")
     field.section.align_locked = False
     field.section.selected_traces = []
@@ -398,7 +401,9 @@ def test_keeping_whole_writes_nothing_and_saves_no_undo_state(mw, qapp):
 
 
 @pytest.mark.parametrize("how", ["new_trace", "closed_trace_tool"])
-def test_a_new_trace_its_object_keeps_whole_stays_selected(mw, qapp, how):
+def test_a_new_trace_its_object_keeps_whole_stays_selected(
+    mw, local_series_settings, qapp, how
+):
     """A small square just past the box's right edge: its outline misses the
     box and its centroid and radius reach it, so its object is kept whole.
     It stays selected and no message says it is outside."""
@@ -407,6 +412,7 @@ def test_a_new_trace_its_object_keeps_whole_stays_selected(mw, qapp, how):
     from test_roi_box import _pix
     field = mw.field
     _go(mw, qapp, 52)
+    local_series_settings(mw)
     mw.series.setOption("trace_mode", "poly")
     _place(mw, qapp)
     _set(mw, whole=True)
