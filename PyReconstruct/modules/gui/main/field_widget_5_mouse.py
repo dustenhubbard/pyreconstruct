@@ -949,6 +949,7 @@ class FieldWidgetMouse(FieldWidgetData):
             if self.is_scissoring:
 
                 self.is_scissoring = False
+                index = self.scissors_index
                 self.scissors_index = None
 
                 # The scissors pickup deletes the original trace up front
@@ -956,9 +957,13 @@ class FieldWidgetMouse(FieldWidgetData):
                 # If the replacement was never created -- most importantly while
                 # the trace layer is hidden, where newTrace is suppressed -- put
                 # the original trace back instead of silently destroying the
-                # user's work. See upstream issue #51.
+                # user's work. See upstream issue #51. It goes back in its old
+                # place in its contour, so the Trace List rows that index into
+                # it still match.
                 if not recreated and self.tracing_trace is not None:
-                    self.section.addTrace(self.tracing_trace, log_event=False)
+                    self.section.addTrace(
+                        self.tracing_trace, log_event=False, index=index
+                    )
                     self.section.addSelectedTrace(self.tracing_trace)
 
                 self.setMouseMode(SCISSORS)
