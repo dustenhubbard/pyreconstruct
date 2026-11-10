@@ -3311,23 +3311,39 @@ class MainWindow(QMainWindow):
 
         # double check if user entered a valid backup directory
         if os.path.isdir(self.series.backupFolder(create=True)):
-            fp = self.series.getBackupPath(comment)
+            fp = self.series.getBackupPath(comment, check_existing=False)
             if "\0" in fp:
                 # a NUL in the series code, the user name, the comment or a
                 # name part in Backup Settings: the copy would raise
                 # ValueError on the path
                 self._refuseNulBackup("file", from_saved)
                 return
-            if (
-                from_saved
-                and self.series.jser_fp
-                and os.path.isfile(self.series.jser_fp)
-            ):
-                # the series was just saved -- copy those bytes instead of
-                # re-dumping the entire (potentially very large) jser again
-                shutil.copyfile(self.series.jser_fp, fp)
-            else:
-                self.series.saveJser(fp)
+            # Claim the name before either writer can replace it. Another
+            # window or process may be backing up the same series code here.
+            stem = fp.removesuffix(".jser")
+            n = 0
+            while True:
+                try:
+                    with open(fp, "xb"):
+                        pass
+                    break
+                except FileExistsError:
+                    n += 1
+                    fp = f"{stem}-{n:02d}.jser"
+            try:
+                if (
+                    from_saved
+                    and self.series.jser_fp
+                    and os.path.isfile(self.series.jser_fp)
+                ):
+                    # the series was just saved -- copy those bytes instead of
+                    # re-dumping the entire (potentially very large) jser again
+                    shutil.copyfile(self.series.jser_fp, fp)
+                else:
+                    self.series.saveJser(fp)
+            except BaseException:
+                os.remove(fp)
+                raise
             return fp
         else:
             notify(
