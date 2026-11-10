@@ -146,6 +146,39 @@ def fitPaletteGrid(count, columns, size, gap, width, height):
     return count, 1, 1
 
 
+def boxSpots(x, y, w, h, obstacles, area, gap):
+    """Top-left corners to try for a w by h box: (x, y), beside each
+    obstacle, and their mixes, each kept inside area."""
+    candidates = [(x, y)]
+    for rect in obstacles:
+        candidates.extend([
+            (rect.left() - gap - w, y), (x, rect.top() - gap - h),
+            (rect.right() + gap, y), (x, rect.bottom() + gap),
+        ])
+    xs = [cx for cx, _ in candidates]
+    ys = [cy for _, cy in candidates]
+    candidates.extend((cx, cy) for cx in xs for cy in ys)
+    return [
+        (max(area.left(), min(cx, area.right() - w)),
+         max(area.top(), min(cy, area.bottom() - h)))
+        for cx, cy in candidates
+    ]
+
+
+def nearestClearSpot(x, y, w, h, obstacles, area, gap):
+    """The spot nearest (x, y) where the box stays gap clear of every
+    obstacle, or None. A box that only touches the gap's edge is clear:
+    the half pixel absorbs rounding in the fractional positions."""
+    clear = []
+    for cx, cy in boxSpots(x, y, w, h, obstacles, area, gap):
+        box = QRectF(cx, cy, w, h).adjusted(0.5 - gap, 0.5 - gap, gap - 0.5, gap - 0.5)
+        if not any(box.intersects(rect) for rect in obstacles):
+            clear.append((cx, cy))
+    if not clear:
+        return None
+    return min(clear, key=lambda p: (p[0] - x)**2 + (p[1] - y)**2)
+
+
 class MousePalette():
 
     def __init__(self, mainwindow : QWidget):
@@ -757,20 +790,15 @@ class MousePalette():
         top, bottom = y1 - region.top(), region.bottom() - y2
         tx, ty = self.getButtonCoords("mode")
         cols, rows, size = self.modeGrid()
-        tools = QRectF(tx, ty, (size + 10) * cols - 10, (size + 10) * rows - 10)
-        tools = tools.adjusted(-10, -10, 10, 10)
-        candidates = [
-            (x, y), (tools.left() - right, y), (tools.right() + left, y),
-            (x, tools.top() - bottom), (x, tools.bottom() + top),
-        ]
-        clear = []
-        for cx, cy in candidates:
-            cx = max(x1, min(cx, x2))
-            cy = max(y1, min(cy, y2))
-            rect = QRectF(cx - left, cy - top, left + right, top + bottom)
-            if not rect.intersects(tools):
-                clear.append((cx, cy))
-        return min(clear, key=lambda p: (p[0] - x)**2 + (p[1] - y)**2) if clear else (x, y)
+        tools = [QRectF(tx, ty, (size + 10) * cols - 10, (size + 10) * rows - 10)]
+        # the group's whole box, label included, placed by its top-left corner
+        w, h = left + right, top + bottom
+        area = QRectF(x1 - left, y1 - top, x2 - x1 + w, y2 - y1 + h)
+        for gap in (10, 0):
+            spot = nearestClearSpot(x - left, y - top, w, h, tools, area, gap)
+            if spot is not None:
+                return spot[0] + left, spot[1] + top
+        return x, y
 
     def atDefaultPosition(self, group):
         """True if the user has not dragged the group from its default spot."""
@@ -811,23 +839,21 @@ class MousePalette():
             obstacles.append(QRectF(bx, by, self.bcsize * 6 + 5, self.bcsize * 2 + 20))
 
         field = QRectF(self.mainwindow.field.geometry())
-        candidates = [(x, y)]
-        for rect in obstacles:
-            candidates.extend([
-                (rect.left() - gap - w, y), (x, rect.top() - gap - h),
-                (rect.right() + gap, y), (x, rect.bottom() + gap),
-            ])
-        xs = [cx for cx, _ in candidates]
-        ys = [cy for _, cy in candidates]
-        candidates.extend((cx, cy) for cx in xs for cy in ys)
-        clear = []
-        for cx, cy in candidates:
-            cx = max(field.left(), min(cx, field.right() - w))
-            cy = max(field.top(), min(cy, field.bottom() - h))
-            candidate = QRectF(cx, cy, w, h).adjusted(-gap, -gap, gap, gap)
-            if all(not candidate.intersects(rect) for rect in obstacles):
-                clear.append((cx, cy))
-        return min(clear, key=lambda p: (p[0] - x)**2 + (p[1] - y)**2) if clear else (x, y)
+        # A small window can leave no room with the full gap. Then the
+        # control may touch its neighbors, and then cover another control,
+        # but never a tool or trace button while any spot is clear of them.
+        buttons = obstacles[:2]
+        for spacing, blockers in ((gap, obstacles), (0, obstacles), (0, buttons)):
+            spot = nearestClearSpot(x, y, w, h, blockers, field, spacing)
+            if spot is not None:
+                return spot
+
+        def covered(p):
+            box = QRectF(p[0], p[1], w, h)
+            return sum(box.intersected(rect).width() * box.intersected(rect).height()
+                       for rect in buttons)
+        return min(boxSpots(x, y, w, h, buttons, field, 0),
+                   key=lambda p: (covered(p), (p[0] - x)**2 + (p[1] - y)**2))
 
     def moveButton(self, dx, dy, group):
         """Move a button group.
