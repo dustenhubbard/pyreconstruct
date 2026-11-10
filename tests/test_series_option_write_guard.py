@@ -72,6 +72,27 @@ def test_a_qsettings_store_on_a_private_file_passes(tmp_path):
     assert series.getOption("trace_mode") == "poly"
 
 
+def test_a_qsettings_store_on_a_private_named_domain_passes():
+    import uuid
+
+    from PySide6.QtCore import QSettings
+
+    settings = QSettings("option-guard-" + uuid.uuid4().hex, "PyReconstruct")
+    store = QSettingsStore()
+    store._settings = lambda code: settings
+    assert not settings.contains("trace_mode")
+    series = bare(store)
+    series.setOption("trace_mode", "poly")
+    assert series.getOption("trace_mode") == "poly"
+    assert bare().getOption("trace_mode", write_default=False) != "poly"
+
+
+def test_a_shared_per_series_write_fails():
+    assert "backup_dir" in Series.qsettings_series_defaults
+    with pytest.raises(Failed, match="backup_dir"):
+        bare().setOption("backup_dir", "/not-written")
+
+
 def test_a_welcome_series_per_series_option_writes_nothing_and_passes(
     tmp_path, monkeypatch
 ):

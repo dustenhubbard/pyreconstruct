@@ -951,22 +951,33 @@ def pytest_runtest_protocol(item, nextitem):
         _current_item[0] = None
 
 
-def _in_shared_store(path):
-    """True when ``path`` is a file of the worker's shared settings store.
+def _shared_store_file(code):
+    """The file the default `QSettingsStore` writes for ``code``.
 
-    That is the redirected organization domain under the isolation root. An
-    explicit `QSettings(fileName, format)` is replayed under the root's
-    `explicit/` folder at its own path, so a file a test names in its own
-    `tmp_path` stays its own and does not count.
+    Built the way `QSettingsStore._settings` builds it, from the shared domain
+    names, so it names the worker's shared store whatever a test has done to a
+    store instance: the global scope for ``code=None``, else that series code's
+    scope. Under the suite's redirect it lies under the isolation root.
     """
-    root = qsettings_isolation.isolation_root
-    if root is None:  # no redirect at all: the store is the real one
-        return True
-    root = os.path.realpath(root)
-    path = os.path.realpath(path)
-    return path.startswith(root + os.sep) and not path.startswith(
-        os.path.join(root, "explicit") + os.sep
+    from PySide6.QtCore import QSettings
+
+    from PyReconstruct.modules.constants.settings_domain import (
+        SETTINGS_ORG,
+        SHARED_APP,
+        series_app,
     )
+
+    app = SHARED_APP if code is None else series_app(SHARED_APP, code)
+    return os.path.realpath(QSettings(SETTINGS_ORG, app).fileName())
+
+
+def _in_shared_store(path, code):
+    """True when ``path`` is the shared store's file for ``code``.
+
+    Any other file is a store of the test's own and passes: a private named
+    domain, or an explicit `QSettings(fileName, format)` in its `tmp_path`.
+    """
+    return os.path.realpath(path) == _shared_store_file(code)
 
 
 def _install_option_write_guard():
@@ -982,8 +993,9 @@ def _install_option_write_guard():
     So a `setOption` call made from code under `tests/` must reach a per-test
     store: `local_series_settings`, or any store the test injects itself
     (`setSettingsStore`, `set_default_settings_store`, a `QSettingsStore` whose
-    `_settings` opens a file of the test's own). The check is made where the
-    value is written, on the file it is written to, so a call that writes
+    `_settings` opens a domain or a file of the test's own). The check is made
+    where the value is written: it fails only when the file written is the one
+    the default store addresses for that scope, so a call that writes
     nothing passes: an option kept in the series file (`series.options`), or a
     per-series option on the welcome series, which `setOption` drops.
 
@@ -1018,7 +1030,7 @@ def _install_option_write_guard():
         if (
             caller is not None
             and not (item is not None and item.get_closest_marker("shared_settings_store"))
-            and _in_shared_store(self._settings(code).fileName())
+            and _in_shared_store(self._settings(code).fileName(), code)
         ):
             pytest.fail(
                 f"{os.path.basename(caller)} writes the series option {key!r} "
