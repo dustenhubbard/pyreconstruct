@@ -29,7 +29,7 @@ def _settings(key):
 
 
 @pytest.fixture
-def launch(main_window, monkeypatch):
+def launch(main_window, monkeypatch, local_series_settings):
     """Run the real launch check on ``main_window`` as an installed build.
 
     ``launch(info)`` feeds the check ``info``; ``launch(None)`` is a launch
@@ -38,6 +38,8 @@ def launch(main_window, monkeypatch):
     """
     from PyReconstruct.modules.gui.dialog import update_dialog as UD
     from PyReconstruct.modules.gui.main import main_window as MW
+
+    local_series_settings(main_window)
 
     # The window schedules its own launch check 2.5 s after it is built.
     # Stopped here, so the check runs only when the test calls it.

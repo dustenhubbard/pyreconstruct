@@ -219,13 +219,13 @@ def test_delete_flickered_section_drops_it_from_the_field(main_window, gui_dialo
 
 
 @pytest.mark.parametrize("op", ["insert", "reorder"])
-def test_renumber_with_ztraces_shown(main_window, gui_dialogs, op):
+def test_renumber_with_ztraces_shown(main_window, gui_dialogs, op, local_series_settings):
     """The field redraws z-traces from series.data, which has to follow the
     renumbering before the field loads again."""
     from PyReconstruct.modules.datatypes import Ztrace
 
     mw = main_window
-    series = mw.series
+    series = local_series_settings(mw)
     if op == "reorder":
         series.deleteSections([sorted(series.sections)[0]])
         mw.field.clearStates()

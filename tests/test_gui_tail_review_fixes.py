@@ -68,12 +68,12 @@ def test_a_canceled_close_forgets_the_pending_restart(main_window, main_window_d
     assert window.restart_mainwindow is False        # and the restart unarmed
 
 
-def test_reset_defaults_reaches_the_shipped_bindings(main_window):
+def test_reset_defaults_reaches_the_shipped_bindings(main_window, local_series_settings):
     """Remap a key, save it, reopen the dialog: Reset Defaults must show the
     factory binding, not the stored remap it already shows."""
     from PyReconstruct.modules.gui.dialog import ShortcutsDialog
 
-    series = main_window.series
+    series = local_series_settings(main_window)
     default = series.getOption("save_act", get_default=True)
     assert default, "the fixture series ships no default for save_act"
     series.setOption("save_act", "Ctrl+Shift+F12")   # the user's remap, stored

@@ -328,7 +328,9 @@ def test_merge_refuses_two_vanishing_copies(main_window, monkeypatch, offset_px,
 
 
 @pytest.mark.gui
-def test_auto_merge_refuses_a_drawn_copy_of_a_vanishing_trace(main_window, monkeypatch):
+def test_auto_merge_refuses_a_drawn_copy_of_a_vanishing_trace(
+    main_window, monkeypatch, local_series_settings
+):
     """Drawing a copy of the speck auto-merges it with the speck and the long
     trace. Neither speck survives that grid, so the merge refuses and the
     field keeps all three traces."""
@@ -336,6 +338,7 @@ def test_auto_merge_refuses_a_drawn_copy_of_a_vanishing_trace(main_window, monke
 
     notices = []
     monkeypatch.setattr(fw2, "notify", lambda msg, *a, **k: notices.append(msg))
+    local_series_settings(main_window)
     main_window.series.setOption("auto_merge", True)
     main_window.series.setOption("auto_merge_selected_only", False)
 

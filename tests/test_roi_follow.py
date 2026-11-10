@@ -60,8 +60,9 @@ def _center_on(mw, name, snum):
 
 
 @pytest.fixture
-def mw(main_window, main_window_dialogs, qapp):
+def mw(main_window, main_window_dialogs, qapp, local_series_settings):
     main_window.main_window_dialogs = main_window_dialogs
+    local_series_settings(main_window)
     assert main_window.series.current_section == 52
     return main_window
 

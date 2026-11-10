@@ -129,6 +129,9 @@ def pytest_configure(config):
         "perf: a speed or memory limit on a large series "
         "(tests/test_perf_gates.py). Skipped unless PERF_GATES=1; run on "
         "khgpu, alone, never in CI.",
+        "shared_settings_store: the test's subject is the session's shared "
+        "settings store itself, so it may call `Series.setOption` against it "
+        "(see `_series_option_writes_stay_local` in tests/conftest.py).",
     ):
         config.addinivalue_line("markers", marker)
 
@@ -899,19 +902,28 @@ def local_series_settings():
 
     Yields a callable: pass it the window, and it swaps the store on that
     window's series and rebuilds the menus so the actions pick the new store's
-    values up. The real store is restored on teardown.
+    values up. The real store is restored on teardown. Pass a bare `Series`
+    instead (one with no window) and only its store is swapped.
 
     Both menus are rebuilt, in the order `MainWindow.__init__` uses them.
     `createMenuBar` alone is not enough: a dozen `<name>_act` attributes are
     owned by the *context* menus (`sethosts_act`, `edittrace_act`, ...), so
     rebuilding only the menubar leaves them carrying shortcuts from the previous
     store.
+
+    `_series_option_writes_stay_local` below fails a test that calls
+    `setOption` itself without this fixture.
     """
     from PyReconstruct.modules.backend.settings_store import DictSettingsStore
 
     swapped = []
 
-    def redirect(window):
+    def redirect(target):
+        if not hasattr(target, "createMenuBar"):
+            target.setSettingsStore(DictSettingsStore())
+            swapped.append(target)
+            return target
+        window = target
         window.series.setSettingsStore(DictSettingsStore())
         swapped.append(window.series)
         window.createMenuBar()
@@ -922,6 +934,64 @@ def local_series_settings():
 
     for series in swapped:
         series.setSettingsStore(None)
+
+
+_TESTS_DIR = os.path.dirname(os.path.abspath(__file__)) + os.sep
+
+
+@pytest.fixture(autouse=True)
+def _series_option_writes_stay_local(request, monkeypatch):
+    """Fail a test that writes a `Series` option into the session's shared store.
+
+    The suite redirects `QSettings` once per worker session
+    (`qsettings_isolation`), so the store is shared by every test that worker
+    runs and is never reset. A value a test writes stays for every later test on
+    that worker: a `trace_mode` of ``"poly"`` left behind turns a later test's
+    drag-drawn trace into a polygon vertex, and the trace it expects never
+    appears. Which test it breaks depends on how xdist splits the run.
+
+    So a `setOption` call made from code under `tests/` must reach a per-test
+    store: `local_series_settings`, or any store the test injects itself
+    (`setSettingsStore`, `set_default_settings_store`). The check looks at the
+    direct caller only, so writes the product makes on its own (opening a series
+    records it in `recently_opened_series`) are not counted; those are the
+    product's behavior under test. Options kept in the series file itself
+    (`series.options`) never reach the store and are not counted either.
+
+    A test whose subject is the shared store itself is marked
+    ``shared_settings_store``.
+    """
+    if request.node.get_closest_marker("shared_settings_store"):
+        yield
+        return
+
+    from PyReconstruct.modules.backend.settings_store import QSettingsStore
+    from PyReconstruct.modules.datatypes.series import Series
+
+    real = Series.setOption
+
+    def setOption(self, option_name, value):
+        caller = os.path.abspath(sys._getframe(1).f_code.co_filename)
+        stored = option_name not in self.options and (
+            option_name in Series.qsettings_series_defaults
+            or option_name in Series.qsettings_defaults
+        )
+        if (
+            stored
+            and caller.startswith(_TESTS_DIR)
+            and isinstance(self._settingsStore(), QSettingsStore)
+        ):
+            pytest.fail(
+                f"{os.path.basename(caller)} writes the series option "
+                f"{option_name!r} into the worker's shared settings store, where "
+                "it reaches every later test on that worker. Redirect the series "
+                "first with the `local_series_settings` fixture.",
+                pytrace=True,
+            )
+        return real(self, option_name, value)
+
+    monkeypatch.setattr(Series, "setOption", setOption)
+    yield
 
 
 @pytest.fixture

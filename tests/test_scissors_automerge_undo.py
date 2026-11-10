@@ -100,7 +100,8 @@ def _cut_ends(field):
 
 
 @pytest.mark.parametrize("finish", [_right_click, _change_tool])
-def test_one_undo_takes_back_a_cut_that_merges(main_window, qapp, finish):
+def test_one_undo_takes_back_a_cut_that_merges(main_window, qapp, finish, local_series_settings):
+    local_series_settings(main_window)
     field = _setup(main_window, SQ_OVERLAP)
     before = _traces(field)
     assert len(before) == 2
@@ -122,8 +123,9 @@ def test_one_undo_takes_back_a_cut_that_merges(main_window, qapp, finish):
     assert _traces(field) == merged
 
 
-def test_undo_in_the_middle_of_a_cut_that_merges(main_window, qapp):
+def test_undo_in_the_middle_of_a_cut_that_merges(main_window, qapp, local_series_settings):
     """Cmd+Z finishes the cut and takes it back, merge included."""
+    local_series_settings(main_window)
     field = _setup(main_window, SQ_OVERLAP)
     before = _traces(field)
 
@@ -183,8 +185,9 @@ def test_a_cut_finished_from_a_focused_trace_list_still_merges(
     assert _traces(field) == merged
 
 
-def test_a_cut_that_does_not_merge_is_one_undo_step(main_window, qapp):
+def test_a_cut_that_does_not_merge_is_one_undo_step(main_window, qapp, local_series_settings):
     """With nothing to merge into, the cut is still one step each way."""
+    local_series_settings(main_window)
     field = _setup(main_window, SQ_DISJOINT)
     before = _traces(field)
     states = field.series_states[field.section.n]
