@@ -15,17 +15,19 @@ PyReconstruct adds one term for each trace of the object, on every section:
   the section the trace is on.
 - **Closed trace** (a loop). Its area comes from the shoelace formula,
   ½ |Σ (x<sub>i</sub>·y<sub>i+1</sub> − x<sub>i+1</sub>·y<sub>i</sub>)|. PyReconstruct
-  adds the area as it is, with no thickness.
+  adds the area with no thickness. A negative closed trace subtracts its area.
 
 Each trace is open or closed, and that alone sets its term. Flat area does not detect
-the orientation of a synapse. On each section, you choose the tool that matches what
-the section shows.
+the orientation of a synapse, and it makes no correction for tilt. An open trace on a
+tilted surface adds its length × T, which is less than the area of the tilted strip.
 
 ## Three synapse orientations
 
-The figures show one synapse cut three ways. Each side view is a stack of sections,
-50 nm thick. The thick line is the synapse seen edge-on. The green marks are the traces
-on each section. The numbers are examples, with lengths in µm and areas in µm².
+The figures show how the traces can fall for three orientations. Each side view is a
+stack of sections, 50 nm thick. The thick line is the synapse seen edge-on. The green
+marks are the traces on each section. The trace choices on each section are examples,
+not a tracing rule. All traces are positive. The values are chosen so that each case
+totals 0.066 µm², with lengths in µm and areas in µm².
 
 <div class="fa-grid">
 <div class="fa-card">
@@ -67,14 +69,15 @@ on each section. The numbers are examples, with lengths in µm and areas in µm�
 </div>
 </div>
 
-The three cuts give the same flat area, 0.066 µm², because each term measures the same
-surface. An open trace stands for a strip one section thick. A closed trace stands for
-the part of the surface that lies flat in its section.
+In each case, an open trace adds a strip one section thick, and a closed trace adds the
+area it encloses. The same synapse traced at a different orientation can give a
+different flat area.
 
 ## Flat area and volume
 
-Volume uses closed traces only: Σ closed-trace area × T. Open traces add nothing to
-volume. Flat area uses both kinds of trace, as above.
+Volume uses closed traces only: Σ closed-trace area × T, where a negative closed trace
+subtracts. Open traces add nothing to volume. Flat area uses both kinds of trace, as
+above.
 
 ## In the code
 
