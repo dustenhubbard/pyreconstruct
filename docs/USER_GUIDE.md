@@ -1050,7 +1050,8 @@ The 3D window has its own menu bar:
 - **Scene ▸ Save scene screenshot…** saves a rendered image (PNG, JPG, TIF, or BMP)
   at the configured DPI.
 - **Scene ▸ Export scene…** exports the whole scene as a single Wavefront `.obj`
-  (with a `.mtl` material file).
+  (with a `.mtl` material file). If either file already exists, PyReconstruct
+  asks once before it replaces both; **Cancel** writes nothing.
 - From the **Object list ▸ 3D ▸ Export mesh as**, export individual objects as
   **Wavefront (.obj)**, **OFF (.off)**, **Stanford PLY (.ply)**, **STL (.stl)**, or
   **Collada (.dae)**. (Surface and Spheres objects export; contour and tube types do
