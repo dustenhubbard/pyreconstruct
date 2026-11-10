@@ -1604,7 +1604,8 @@ class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
         fp = FileDialog.get(
             "save", self, "Save scene as obj",
             filter="*.obj",
-            file_name="scene.obj"
+            file_name="scene.obj",
+            confirm_overwrite=False
         )
 
         if not fp: return
@@ -1612,12 +1613,11 @@ class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
         combo_obj_fp = Path(fp)
         combo_mtl = combo_obj_fp.with_suffix(".mtl")
 
-        # the save dialog asked about the .obj; the .mtl beside it is ours too
-        if combo_mtl.exists() and not notifyConfirm(
-            f"This folder already has a file named {combo_mtl.name}.\n\n"
-            "Exporting the scene will replace it.\n\n"
-            "Continue?",
-            yn=True
+        existing = [p.name for p in (combo_obj_fp, combo_mtl) if p.exists()]
+        if existing and not notifyConfirm(
+            "Exporting the scene will replace these files:\n\n"
+            + "\n".join(existing)
+            + "\n\nContinue?"
         ):
             return
 
