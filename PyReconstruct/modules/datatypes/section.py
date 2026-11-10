@@ -123,7 +123,7 @@ StoredTraceID = namedtuple("StoredTraceID", ("trace_id", "fill_mode_key"))
 ## `resyncColumnarStore()` is the public repair for that last case, and it is not
 ## hypothetical. Always-on turned every out-of-class mutation in the tree into a
 ## `ColumnarDualWriteMismatch` raised at the user, on paths a user reaches
-## constantly. The calls outside this module are, at this writing, nine:
+## constantly. The calls outside this module are, at this writing, ten:
 ##
 ##     backend/func/state_manager.py    SectionStates._restoreState (rebind)
 ##     backend/autoseg/conversions.py   exportTraces, group delete  (rebind)
@@ -134,11 +134,12 @@ StoredTraceID = namedtuple("StoredTraceID", ("trace_id", "fill_mode_key"))
 ##     datatypes/series.py              Series.combineDuplicateTraces (in place)
 ##     gui/main/field_widget_2_trace.py FieldWidgetTrace.findFlag   (in place)
 ##     gui/main/field_widget_2_trace.py FieldWidgetTrace.smoothTraces (in place)
+##     gui/main/field_widget_2_trace.py FieldWidgetTrace.cutTrace   (in place)
 ##
 ## `undoState` and `redoState` share the one call in `_restoreState`.
-## `Series.deleteObjects` and `FieldWidgetTrace.cutTrace` were once on this
-## list and no longer need the repair: the delete routes every trace through
-## `removeTrace`, and the cut merges tags onto a copy. Read the list as a
+## `Series.deleteObjects` was once on this list and no longer needs the
+## repair: it routes every trace through `removeTrace`. `cutTrace` calls it
+## only after merging tags onto traces the cut missed. Read the list as a
 ## snapshot. The current one is what a search for `resyncColumnarStore(`
 ## outside this module finds, and the tests that hold the rule are
 ## `test_no_module_outside_section_py_edits_a_store_backed_trace_column` and
@@ -227,8 +228,8 @@ StoredTraceID = namedtuple("StoredTraceID", ("trace_id", "fill_mode_key"))
 ##     `_column_rows` keyed on discarded `Trace` objects, so the next hooked
 ##     mutation touching a surviving trace goes through `_rowFor` and raises
 ##     "holds no row for" -- before any save runs.
-##   * an IN-PLACE write (the `setHidden` / `smooth` / `mergeTags` sites)
-##     leaves one row's value stale, so the next hooked
+##   * an IN-PLACE write (the `setHidden` / `smooth` / `mergeTags` / tag-set
+##     sites) leaves one row's value stale, so the next hooked
 ##     mutation of that same trace runs `_assertRowMatchesTrace`, which compares
 ##     the whole row, and raises on the column that drifted.
 ##
@@ -1793,7 +1794,7 @@ class Section():
     # were unreachable with a store present, and the comment here said only that
     # they "owe the resync". They are on hot user paths, and with a store
     # always present every one of them was a `ColumnarDualWriteMismatch`
-    # raised in a real session. At this writing nine calls outside this
+    # raised in a real session. At this writing ten calls outside this
     # module make the repair, `resyncColumnarStore()`:
     #
     #   backend/func/state_manager.py    SectionStates._restoreState
@@ -1805,6 +1806,7 @@ class Section():
     #   datatypes/series.py              Series.combineDuplicateTraces
     #   gui/main/field_widget_2_trace.py FieldWidgetTrace.findFlag
     #   gui/main/field_widget_2_trace.py FieldWidgetTrace.smoothTraces
+    #   gui/main/field_widget_2_trace.py FieldWidgetTrace.cutTrace
     #
     # Undo and redo share the one call in `_restoreState`. The module header
     # says which earlier sites no longer need the repair, and which tests
@@ -1814,7 +1816,7 @@ class Section():
     # Two shapes, and the second is the one that keeps being missed: a *rebind*
     # (the contour dict or a key is replaced) and an *in-place write* (a trace
     # the section still holds has one of the eight columns written on it). The
-    # first two rows are rebinds and the other seven are in-place writes.
+    # first two rows are rebinds and the other eight are in-place writes.
     #
     # That is a real limit on this design, not a fixed bug: a new such site
     # added later fails the same way. What it costs is smaller now that `save()`
