@@ -173,9 +173,9 @@ class FieldWidgetBase:
         self.single_click : bool            = False
         self.click_time : float             = None
         self.max_click_time : float         = 0.15
-        # widget pixels a trace press may drift and still count as a click
+        # widget pixels a press may drift and still count as a click
         self.click_tolerance : int          = 4
-        self.trace_press_travel : int       = 0
+        self.click_travel : int             = 0
         # a trace tool started a new trace with the press under way, and
         # nothing has ended it since (see traceRelease)
         self.trace_click_pending : bool     = False
