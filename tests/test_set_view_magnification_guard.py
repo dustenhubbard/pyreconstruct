@@ -60,7 +60,7 @@ def test_cancelled_dialog_does_nothing(monkeypatch):
     assert calls == []
 
 
-# The same dialog on a live MainWindow, through the View menu's action.
+# The same dialog on a live MainWindow.
 # float() also accepts "nan", "inf" and overflow such as "1e309", and none of
 # them is <= 0, so they reached setView and wrote NaN or zero sizes into
 # series.window. A value so small that the scale rounds to zero divided by
@@ -68,17 +68,18 @@ def test_cancelled_dialog_does_nothing(monkeypatch):
 
 
 def _ask_live(main_window, qapp, monkeypatch, text, confirmed=True):
-    """Trigger View > View magnification... with the dialog answered.
+    """Run the View magnification... slot with the dialog answered.
 
-    generateView is recorded, not run, so a bad window never reaches Qt;
-    the test reads series.window instead.
+    The slot is called directly, so an exception fails the test instead of
+    opening the app's error dialog. generateView is recorded, not run, so a
+    bad window never reaches Qt; the test reads series.window instead.
     """
     _patch_input(monkeypatch, text, confirmed)
     field = main_window.field
     drawn = []
     monkeypatch.setattr(field, "generateView", lambda *a, **k: drawn.append(1))
     before = list(field.series.window)
-    main_window.viewmag_act.trigger()
+    field.setViewMagnification()
     qapp.processEvents()
     return before, list(field.series.window), drawn
 
@@ -139,3 +140,4 @@ def test_live_set_view_leaves_the_window_for_an_unusable_scale(
 
     assert list(field.series.window) == before
     assert drawn == []
+
