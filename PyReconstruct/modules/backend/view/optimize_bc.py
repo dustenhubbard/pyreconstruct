@@ -150,6 +150,17 @@ def optimizeSectionBC(section : Section, desired_mean=128, desired_std=60, windo
                     section.zarrPath(scale)
                 )
                 image = zarr.open(fp, "r")[:]
+                if image.dtype.kind == "u" and image.dtype.itemsize == 2:
+                    # Qt displays 16-bit gray at 8 bits; score those same levels.
+                    image = np.ascontiguousarray(image, dtype=np.uint16)
+                    height, width = image.shape
+                    gray = QImage(
+                        image.data, width, height, image.strides[0],
+                        QImage.Format.Format_Grayscale16,
+                    ).convertToFormat(QImage.Format.Format_Grayscale8)
+                    image = np.frombuffer(
+                        gray.constBits(), np.uint8, gray.sizeInBytes()
+                    ).reshape(height, gray.bytesPerLine())[:, :width].copy()
             cv2.resize(image, (1024, 1024))
         except:
             print(f"Image at {fp} is corrupt. Skipping...")

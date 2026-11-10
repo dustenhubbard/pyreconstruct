@@ -411,6 +411,9 @@ def real_series(series_jser):
 class StubField:
     """The attributes of MainWindow.field that the list slots touch."""
 
+    def prepareProfileAdjustment(self, kind):
+        return True
+
     def __init__(self, section):
         self.section = section
         self.b_section = None
