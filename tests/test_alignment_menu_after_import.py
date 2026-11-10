@@ -214,11 +214,11 @@ def test_reimport_checks_only_the_active_alignment(
 ):
     from PySide6.QtWidgets import QMenu
 
-    for module in ("import_transforms", "import_swift_transforms"):
-        monkeypatch.setattr(
-            f"PyReconstruct.modules.backend.func.{module}.getDateTime",
-            lambda: ("26-11-02", "12:00:00"),
-        )
+    # both importers name the alignment through import_transforms
+    monkeypatch.setattr(
+        "PyReconstruct.modules.backend.func.import_transforms.getDateTime",
+        lambda: ("26-11-02", "12:00:00"),
+    )
 
     window = main_window
     if kind == "text":
