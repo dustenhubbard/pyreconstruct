@@ -1143,6 +1143,14 @@ def field(qapp, rich_series, monkeypatch):
             self.hide_trace_layer = False
             self.saved = 0
             self.notices = notices
+            # what a field interaction keeps for the ROI box's selection rule
+            self.interaction_depth = 0
+            self.inner_modified = False
+            self.new_traces = []
+            self.roi_dropped = []
+
+        def dropSelectedOutsideRoiBox(self):
+            return []  # no ROI box here
 
         def saveAllData(self):
             pass

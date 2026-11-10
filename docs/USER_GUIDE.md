@@ -852,7 +852,8 @@ name regex, a color filter, and a comment-text filter.
 Object, Sections, Event), newest first. The object list's **View history** shows
 the same window filtered to the selected objects. Long histories can be trimmed
 with **Series ▸ Log ▸ Offload log history…**, which exports older entries to an
-external CSV.
+external CSV. If an offload fails, the series keeps its original history. Retry
+the offload after resolving the error.
 
 Older versions could write a history row PyReconstruct cannot read back, when a
 name had a line break or a comma in it. From a source install,
