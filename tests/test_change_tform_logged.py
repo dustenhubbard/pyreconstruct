@@ -13,6 +13,7 @@ def test_change_tform_is_logged():
         series=SimpleNamespace(addLog=lambda *args: calls.append(args)),
         propagate_tform=False,
         tform_before_change=None,
+        prepareProfileAdjustment=lambda kind: True,
         generateView=lambda: None,
         saveState=lambda: None,
     )

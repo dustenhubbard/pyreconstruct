@@ -84,3 +84,37 @@ def test_the_threshold_still_drops_short_pieces():
         [(0.0, 0.0), (7.142857, 0.0)],
         [(7.142857, 0.0), (10.0, 0.0), (10.0, 5.0), (2.857143, 5.0)],
     ]
+
+
+@pytest.mark.parametrize("knife_end, expected", [
+    (0.1, [
+        [(-1.0, -1.0), (0.0, 0.0)],
+        [(0.0, 0.0), (1.0, 1.0), (1.0, -1.0), (0.0, 0.0)],
+        [(0.0, 0.0), (-1.0, 1.0)],
+    ]),
+    (1.1, [
+        [(-1.0, -1.0), (0.0, 0.0)],
+        [(0.0, 0.0), (1.0, 1.0), (1.0, 0.0)],
+        [(1.0, 0.0), (1.0, -1.0), (0.0, 0.0)],
+        [(0.0, 0.0), (-1.0, 1.0)],
+    ]),
+])
+def test_every_traversal_through_a_shared_crossing_is_split(knife_end, expected):
+    trace = [(-1.0, -1.0), (1.0, 1.0), (1.0, -1.0), (-1.0, 1.0)]
+
+    pieces = cutTraces([trace], [(-0.1, 0.0), (knife_end, 0.0)], 0.0, closed=False)
+
+    assert [_rounded(p) for p in pieces] == expected
+    _assert_pieces_follow(trace, pieces)
+
+
+def test_a_return_to_the_starting_point_is_an_interior_cut():
+    trace = [(0.0, 0.0), (1.0, 1.0), (1.0, -1.0), (-1.0, 1.0)]
+
+    pieces = cutTraces([trace], [(-0.1, 0.0), (0.1, 0.0)], 0.0, closed=False)
+
+    assert [_rounded(p) for p in pieces] == [
+        [(0.0, 0.0), (1.0, 1.0), (1.0, -1.0), (0.0, 0.0)],
+        [(0.0, 0.0), (-1.0, 1.0)],
+    ]
+    _assert_pieces_follow(trace, pieces)

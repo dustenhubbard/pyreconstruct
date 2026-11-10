@@ -135,6 +135,11 @@ def _run_scissors_cycle(hide_trace_layer, other_hidden, closed):
         setattr(stub, attr, (lambda *a, **k: None))
     stub.newTrace = types.MethodType(FieldWidgetTrace.newTrace, stub)
     stub.dropSelectedOutsideRoiBox = lambda: []  # the ROI box is off
+    # what a field interaction keeps for the ROI box's selection rule
+    stub.interaction_depth = 0
+    stub.inner_modified = False
+    stub.new_traces = []
+    stub.roi_dropped = []
 
     FieldWidgetMouse.scissorsPress(stub, None)
     after_pickup = _count(sec, "mytrace")
