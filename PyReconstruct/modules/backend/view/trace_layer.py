@@ -85,6 +85,8 @@ class TraceLayer():
         # the field's ROI box (center x, center y, width, height in field
         # units), or None. View-only: set by every draw, never saved
         self.roi_box = None
+        # the objects the ROI box keeps whole (shown on every section), or None
+        self.roi_keep = None
         # True while every trace is hidden (H): nothing is drawn, so
         # nothing can be picked
         self.traces_hidden = False
@@ -663,7 +665,7 @@ class TraceLayer():
         """
         if tform is None:
             tform = self.section.tform
-        return traceInRoiBox(trace, tform, self.roi_box)
+        return traceInRoiBox(trace, tform, self.roi_box, self.roi_keep)
 
     def _storeBounds(self, columns) -> tuple:
         """The bounds of every trace in the section's store, before any transform.
@@ -900,6 +902,7 @@ class TraceLayer():
             window_moved=True,
             focus_on=False,
             roi_box=None,
+            roi_keep=None,
     ) -> QPixmap:
         """Draw traces on a transparent background.
         
@@ -911,6 +914,8 @@ class TraceLayer():
                 window_moved (bool): True if the window has moved (upstream: same as generate_image)
                 roi_box (tuple): the ROI box (center x, center y, width,
                     height in field units); only traces inside it are drawn
+                roi_keep (frozenset): the objects the box keeps whole, drawn
+                    in full wherever they are
             Returns:
                 (QPixmap): the pixmap with traces drawn in
         """
@@ -918,6 +923,7 @@ class TraceLayer():
         self.pixmap_dim = pixmap_dim
         self.show_all_traces = show_all_traces
         self.roi_box = roi_box
+        self.roi_keep = roi_keep
         pixmap_w, pixmap_h = tuple(pixmap_dim)
         trace_layer = QPixmap(pixmap_w, pixmap_h)
         trace_layer.fill(Qt.transparent)
@@ -1272,21 +1278,25 @@ def pointBounds(points) -> tuple:
     return (*arr.min(axis=0), *arr.max(axis=0))
 
 
-def traceInRoiBox(trace : Trace, tform : Transform, roi_box : tuple) -> bool:
+def traceInRoiBox(trace : Trace, tform : Transform, roi_box : tuple, keep=None) -> bool:
     """Whether a trace is shown and can be picked under an ROI box.
 
     A trace is inside when its bounds in field coordinates (the section
-    transform applied, as Trace.getBounds does) touch or overlap the box. It
-    is then drawn whole, not clipped.
+    transform applied, as Trace.getBounds does) touch or overlap the box, or
+    when its object is one the box keeps whole. It is then drawn whole, not
+    clipped.
 
         Params:
             trace (Trace): the trace to test
             tform (Transform): the section transform
             roi_box (tuple): center x, center y, width, height, or None (off)
+            keep (frozenset): the object names kept whole, or None
         Returns:
             (bool): True if the trace is inside the box or the box is off
     """
     if roi_box is None:
+        return True
+    if keep and trace.name in keep:
         return True
     if not trace.points:
         return False

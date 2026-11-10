@@ -7,6 +7,7 @@ import re
 import json
 import shutil
 import secrets
+import stat
 import subprocess
 import tempfile
 from datetime import datetime, timezone
@@ -762,6 +763,9 @@ def _atomicWrite(fp : str, data):
     ``<fp>.tmp`` plus any unique tail is longer than ``<fp>.tmp``, and a series
     name that fit the old name would no longer fit the 255 character limit.
 
+    Existing files keep their permissions. A new file gets the usual
+    0o666-less-umask permissions.
+
     `data` may also be a callable that writes into the open temp file, so a
     caller can stream a file too large to build in memory first. Anything it
     raises removes the temp file and leaves the destination as it was.
@@ -771,18 +775,30 @@ def _atomicWrite(fp : str, data):
             data (bytes or callable): the bytes to write, or a function taking
                 the open binary file and writing the contents into it
     """
+    try:
+        mode = stat.S_IMODE(os.stat(fp).st_mode)
+    except FileNotFoundError:
+        mode = None
+
+    def opener(path, flags):
+        # Windows rejects read-only destinations. Keep the temp writable so
+        # failure cleanup can delete it without changing either file's mode.
+        return os.open(path, flags, 0o666 if mode is None or os.name == "nt" else mode)
+
     folder = os.path.dirname(fp)
     while True:
         tmp_fp = os.path.join(folder, f".save-{secrets.token_hex(3)}.tmp")
         try:
-            # "x" is O_EXCL, and the mode is the same 0o666-less-umask a plain
-            # open gives, so the saved file gets the usual new-file permissions
-            f = open(tmp_fp, "xb")
+            # "x" is O_EXCL; POSIX replacements are restricted from creation.
+            f = open(tmp_fp, "xb", opener=opener)
             break
         except FileExistsError:
             continue  # another write's temp file, or a crashed one; not ours
     try:
         with f:
+            if mode is not None and os.name == "posix":
+                # Restore bits masked by umask without resolving the path again.
+                os.fchmod(f.fileno(), mode)
             if callable(data):
                 data(f)
             else:

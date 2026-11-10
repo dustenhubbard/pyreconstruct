@@ -612,3 +612,8 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           PYRECON_TEST_STRICT_SETTINGS: "1"
         run: uv run --frozen --no-default-groups --extra test python -m pytest -rA tests/test_section_read_ahead.py
+
+      - name: Save permission tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run --frozen --no-default-groups --extra test python -m pytest -rA tests/test_save_permissions.py tests/test_save_permissions_windows.py
