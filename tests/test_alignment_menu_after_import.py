@@ -207,6 +207,54 @@ def test_swift_import_adds_the_alignment_to_the_submenu(
 
 
 @pytest.mark.gui
+@pytest.mark.parametrize("kind", ["text", "swift"])
+@pytest.mark.parametrize("switch_away", [False, True])
+def test_reimport_checks_only_the_active_alignment(
+    main_window, main_window_dialogs, tmp_path, monkeypatch, kind, switch_away
+):
+    from PySide6.QtWidgets import QMenu
+
+    # both importers name the alignment through import_transforms
+    monkeypatch.setattr(
+        "PyReconstruct.modules.backend.func.import_transforms.getDateTime",
+        lambda: ("26-11-02", "12:00:00"),
+    )
+
+    window = main_window
+    if kind == "text":
+        path = _write_tforms_file(window.series, tmp_path / "transforms.txt")
+    else:
+        path = _write_swift_project(window.series, tmp_path / "transforms.json")
+
+    def run_import():
+        if kind == "text":
+            window.importTransforms(path)
+        else:
+            main_window_dialogs.responses.append(
+                (["1", [("Includes cal grid", False)]], True)
+            )
+            window.importSwiftTransforms(path)
+
+    run_import()
+    imported = window.series.alignment
+    before = _alignment_submenu_items(window)
+    if switch_away:
+        window.changeAlignment("default")
+    main_window_dialogs.confirm_accepted = True
+
+    run_import()
+
+    assert window.series.alignment == imported
+    assert _alignment_submenu_items(window) == before
+    for menu in window.field_menu.findChildren(QMenu):
+        if menu.title() == "Series alignment":
+            assert [a.text() for a in menu.actions() if a.isChecked()] == [imported]
+            break
+    else:
+        raise AssertionError("no 'Series alignment' submenu in the field menu")
+
+
+@pytest.mark.gui
 def test_a_malformed_transforms_file_does_not_rebuild_the_menus(
     main_window, tmp_path, monkeypatch
 ):

@@ -123,7 +123,7 @@ def test_slow_still_press_starts_line_tracing(main_window, mode, path):
 
 def test_fast_click_with_drift_still_starts_line_tracing(main_window):
     field = _field(main_window, CLOSEDTRACE, "combo")
-    _release(field, _press(field, DRAG), slow=False)
+    _release(field, _press(field, DRIFT), slow=False)
     try:
         assert field.is_line_tracing
         assert field.current_trace == [(X, Y)]

@@ -641,6 +641,10 @@ class ObjectTableWidget(DataTable):
         )
         return sortList(filtered_list)
 
+    def refresh(self):
+        """Reload the objects matching this list's filters."""
+        self.manager.refreshObjects(self)
+
     def createTable(self):
         """Create the virtualized object list (model + view).
 
@@ -953,7 +957,7 @@ class ObjectTableWidget(DataTable):
         model = self.model
         n_cols = model.columnCount()
 
-        with open(file_path, "w", newline="") as csv_file:
+        with open(file_path, "w", encoding="utf-8", newline="") as csv_file:
             writer = csv.writer(csv_file)
 
             ## Headers first
