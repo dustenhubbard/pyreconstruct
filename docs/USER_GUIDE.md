@@ -204,6 +204,12 @@ asks to save any unsaved work, closes, and opens the installer. Complete
 installation, then launch the app again. Canceling the close also cancels
 the installation.
 
+PyReconstruct Dev also shows the offered nightly and each skipped nightly in
+newest-first order under **Changes in &lt;version&gt;**. Each list includes its pull
+requests and **Full Changelog** link, followed by earlier Stable notes. Use
+**View release on GitHub** to open the offered release. Stable keeps the
+link-only update dialog and shows What's New once after an update.
+
 If you are already current, you'll see a brief "You're already up to date"
 message; if no installer exists for your platform on that channel, it tells you so.
 
@@ -1079,7 +1085,8 @@ The 3D window has its own menu bar:
 - **Scene ▸ Save scene screenshot…** saves a rendered image (PNG, JPG, TIF, or BMP)
   at the configured DPI.
 - **Scene ▸ Export scene…** exports the whole scene as a single Wavefront `.obj`
-  (with a `.mtl` material file).
+  (with a `.mtl` material file). If either file already exists, PyReconstruct
+  asks once before it replaces both; **Cancel** writes nothing.
 - From the **Object list ▸ 3D ▸ Export mesh as**, export individual objects as
   **Wavefront (.obj)**, **OFF (.off)**, **Stanford PLY (.ply)**, **STL (.stl)**, or
   **Collada (.dae)**. (Surface and Spheres objects export; contour and tube types do

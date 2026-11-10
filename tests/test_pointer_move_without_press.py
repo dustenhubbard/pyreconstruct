@@ -93,6 +93,7 @@ def test_opening_series_clears_pointer_selection_state(monkeypatch):
         setPassWriteHook=lambda _hook: None,
     )
     field.refreshPassWrite = lambda _written: None
+    field.section_read_timer = SimpleNamespace(stop=lambda: None)
     field.selected_trace = object()
     field.selected_type = "trace"
     field.pointer_press_recorded = True
