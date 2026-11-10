@@ -1,4 +1,5 @@
 import csv
+import re
 
 from PySide6.QtWidgets import (
     QTableWidgetItem,
@@ -640,6 +641,10 @@ class ObjectTableWidget(DataTable):
         )
         return sortList(filtered_list)
 
+    def refresh(self):
+        """Reload the objects matching this list's filters."""
+        self.manager.refreshObjects(self)
+
     def createTable(self):
         """Create the virtualized object list (model + view).
 
@@ -952,7 +957,7 @@ class ObjectTableWidget(DataTable):
         model = self.model
         n_cols = model.columnCount()
 
-        with open(file_path, "w", newline="") as csv_file:
+        with open(file_path, "w", encoding="utf-8", newline="") as csv_file:
             writer = csv.writer(csv_file)
 
             ## Headers first
@@ -1016,8 +1021,14 @@ class ObjectTableWidget(DataTable):
         if not confirmed:
             return
         
-        self.re_filters = set(response[0] if response[0] else [".*"])
-        self.re_filters = set([s.replace("#", "[0-9]") for s in self.re_filters])
+        re_filters = {s.replace("#", "[0-9]") for s in (response[0] or [".*"])}
+        try:
+            for pattern in re_filters:
+                re.compile(pattern)
+        except (re.error, OverflowError, RecursionError) as error:
+            notify(f"Invalid regex filter {pattern!r}: {error}")
+            return
+        self.re_filters = re_filters
 
         # call through manager to update self
         self.manager.recreateTable(self)
