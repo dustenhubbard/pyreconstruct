@@ -1,11 +1,9 @@
-import os
 import json
 import numpy as np
 
 from PyReconstruct.modules.datatypes import Series, Transform
-from PyReconstruct.modules.constants import getDateTime
 
-from .import_transforms import TransformImportError
+from .import_transforms import TransformImportError, transformImportAlignment
 
 
 class IncorrectFormatError(TransformImportError):
@@ -190,7 +188,7 @@ def transforms_as_strings(recon_transforms, output_file=None):
     return output
 
         
-def importSwiftTransforms(series: Series, project_fp: str, scale: int = 1, cal_grid: bool = False, series_states=None, log_event=True):
+def importSwiftTransforms(series: Series, project_fp: str, scale: int = 1, cal_grid: bool = False, series_states=None, log_event=True, *, overwrite=False):
     """Import a SWiFT project's transforms as a new alignment.
 
     Returns a note for the user about where the cal grid transform went, or None.
@@ -256,10 +254,7 @@ def importSwiftTransforms(series: Series, project_fp: str, scale: int = 1, cal_g
             raise IncorrectFormatError("Incorrect project file format.")
         
     # set tforms
-    fname = os.path.basename(project_fp)
-    fname = fname[:fname.rfind(".")]
-    d, t = getDateTime()
-    new_alignment_name = f"{fname}-{d}"
+    new_alignment_name = transformImportAlignment(series, project_fp, overwrite)
     
     for section_num, section in series.enumerateSections(
         message="Importing transforms...",

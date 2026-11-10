@@ -25,7 +25,8 @@ from PyReconstruct.modules.backend.volume import (
     convert_vedo_to_tm,
     return_mesh_mtl,
     combine_mtl_files,
-    combine_obj_files
+    combine_obj_files,
+    mesh_export_name,
 )
 from PyReconstruct.modules.gui.utils import (
     populateMenuBar,
@@ -1620,7 +1621,8 @@ class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
         fp = FileDialog.get(
             "save", self, "Save scene as obj",
             filter="*.obj",
-            file_name="scene.obj"
+            file_name="scene.obj",
+            confirm_overwrite=False
         )
 
         if not fp: return
@@ -1628,12 +1630,11 @@ class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
         combo_obj_fp = Path(fp)
         combo_mtl = combo_obj_fp.with_suffix(".mtl")
 
-        # the save dialog asked about the .obj; the .mtl beside it is ours too
-        if combo_mtl.exists() and not notifyConfirm(
-            f"This folder already has a file named {combo_mtl.name}.\n\n"
-            "Exporting the scene will replace it.\n\n"
-            "Continue?",
-            yn=True
+        existing = [p.name for p in (combo_obj_fp, combo_mtl) if p.exists()]
+        if existing and not notifyConfirm(
+            "Exporting the scene will replace these files:\n\n"
+            + "\n".join(existing)
+            + "\n\nContinue?"
         ):
             return
 
@@ -2185,21 +2186,13 @@ class SceneObjectList():
 
         obj_files = []
         failed = []
-        used = set()  # lowercase, for case-insensitive file systems
+        used = set()  # casefolded, for case-insensitive file systems
 
         for _, obj in self.scene_objects.items():
 
             try:
 
-                base = obj.name.replace(" ", "_")  # "Scale_Cube" and not "Scale Cube"
-
-                # same-named objects (one per series) get their own files
-                obj_name, n = base, 1
-                while obj_name.lower() in used:
-                    n += 1
-                    obj_name = f"{base}_{n}"
-                used.add(obj_name.lower())
-
+                obj_name = mesh_export_name(obj.name, used)
                 obj_fp = export_dir / f"{obj_name}.obj"
                 mtl_fp = obj_fp.with_suffix(".mtl")
 

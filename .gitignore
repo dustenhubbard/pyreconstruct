@@ -28,3 +28,6 @@ site/
 tests/visual_diffs/
 tests/visual_baselines/*
 !tests/visual_baselines/linux/
+
+# wrangler dev state (site-worker/)
+.wrangler/

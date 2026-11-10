@@ -599,6 +599,13 @@ class TableManager():
                     return data_table
         return None
     
+    def refreshObjects(self, table):
+        """Reload matching objects without rebuilding the open tables."""
+        self.mainwindow.saveAllData()
+        names = table.getFiltered()
+        self.series.data.refreshObjects(names)
+        self.updateObjects(names)
+
     def refresh(self):
         """Reload all of the section data.
         
