@@ -5845,7 +5845,12 @@ class MainWindow(QMainWindow):
             i += 1
             name = f"{name}-{i}"
 
-        if not self.series.importTracePaletteCSV(fp, name):
+        try:
+            imported = self.series.importTracePaletteCSV(fp, name)
+        except ValueError as exc:
+            notify(f"{exc}\nNothing was imported.")
+            return
+        if not imported:
             notify("This CSV file has no palette rows. Nothing was imported.")
             return
         self.series.palette_index[0] = name
