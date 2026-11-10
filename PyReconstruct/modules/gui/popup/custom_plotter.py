@@ -25,7 +25,8 @@ from PyReconstruct.modules.backend.volume import (
     convert_vedo_to_tm,
     return_mesh_mtl,
     combine_mtl_files,
-    combine_obj_files
+    combine_obj_files,
+    mesh_export_name,
 )
 from PyReconstruct.modules.gui.utils import (
     populateMenuBar,
@@ -2192,21 +2193,13 @@ class SceneObjectList():
 
         obj_files = []
         failed = []
-        used = set()  # lowercase, for case-insensitive file systems
+        used = set()  # casefolded, for case-insensitive file systems
 
         for _, obj in self.scene_objects.items():
 
             try:
 
-                base = obj.name.replace(" ", "_")  # "Scale_Cube" and not "Scale Cube"
-
-                # same-named objects (one per series) get their own files
-                obj_name, n = base, 1
-                while obj_name.lower() in used:
-                    n += 1
-                    obj_name = f"{base}_{n}"
-                used.add(obj_name.lower())
-
+                obj_name = mesh_export_name(obj.name, used)
                 obj_fp = export_dir / f"{obj_name}.obj"
                 mtl_fp = obj_fp.with_suffix(".mtl")
 

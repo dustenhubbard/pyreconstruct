@@ -387,7 +387,8 @@ class ImageLayer():
             x0, y0 = 0, 0
 
         if self.is_zarr_file:
-            fmt, lut = QImage.Format.Format_Grayscale8, None
+            screen, fmt = _zarrPixels(screen)
+            lut = None
         else:
             fmt, lut = self._pixels.format, self._pixels.lut
         if lut is not None:
@@ -438,7 +439,7 @@ class ImageLayer():
             zy0 = max(0, math.floor(fymin / scale_level))
             zx1 = min(zw_total, math.ceil(fxmax / scale_level))
             zy1 = min(zh_total, math.ceil(fymax / scale_level))
-            zarr_saved = np.ascontiguousarray(
+            zarr_saved, fmt = _zarrPixels(
                 self.image[zh_total - zy1: zh_total - zy0, zx0:zx1]
             )
             zh, zw = zarr_saved.shape
@@ -447,7 +448,7 @@ class ImageLayer():
                 zw,
                 zh,
                 zarr_saved.strides[0],
-                QImage.Format.Format_Grayscale8
+                fmt
             )
             # copy so the returned image owns its data
             return im_crop.copy()
@@ -483,6 +484,19 @@ class ImageLayer():
         arr = np.array(raw, dtype=np.uint8)
 
         return arr
+
+
+def _zarrPixels(array : np.ndarray) -> tuple:
+    """Contiguous grayscale pixels in the native byte order Qt reads."""
+    dtype = array.dtype.newbyteorder("=")
+    if dtype == np.uint8:
+        fmt = QImage.Format.Format_Grayscale8
+    elif dtype == np.uint16:
+        fmt = QImage.Format.Format_Grayscale16
+    else:
+        raise ValueError(f"Unsupported Zarr image dtype {array.dtype}; use uint8 or uint16.")
+    return np.ascontiguousarray(array, dtype=dtype), fmt
+
 
 def _blank(w : int, h : int) -> QImage:
     """A black image layer."""
