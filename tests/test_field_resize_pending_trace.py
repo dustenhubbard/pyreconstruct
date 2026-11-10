@@ -16,8 +16,9 @@ pytestmark = pytest.mark.gui
 
 
 @pytest.fixture
-def field(main_window, qapp):
+def field(main_window, local_series_settings, qapp):
     field = main_window.field
+    local_series_settings(main_window)
     field.setFixedSize(800, 600)
     qapp.processEvents()
     field.series.window = [0, 0, 800, 600]

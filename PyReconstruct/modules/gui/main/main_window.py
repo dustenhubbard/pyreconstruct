@@ -4024,7 +4024,7 @@ class MainWindow(QMainWindow):
         self.field.updateStatusBar()
 
     def refreshAlignmentActions(self, alignments_before):
-        """Rebuild the context menus if the series' alignment names changed.
+        """Refresh the alignment entries and their active checkmark.
 
         The "Series alignment" submenu and the one <name>_alignment_act per
         name are both built from series.alignments at createContextMenus()
@@ -4045,6 +4045,11 @@ class MainWindow(QMainWindow):
         # the same file on the same day reuses the alignment name
         if set(self.series.alignments) != set(alignments_before):
             self.createContextMenus()
+        else:
+            # Reimporting can select an existing alignment without adding a name.
+            for name in self.series.alignments:
+                action = getattr(self, f"{name}_alignment_act")
+                action.setChecked(name == self.series.alignment)
 
     def changeBCProfiles(self):
         """Open dialog to modify and change brightness/contrast profiles."""
@@ -5845,7 +5850,12 @@ class MainWindow(QMainWindow):
             i += 1
             name = f"{name}-{i}"
 
-        if not self.series.importTracePaletteCSV(fp, name):
+        try:
+            imported = self.series.importTracePaletteCSV(fp, name)
+        except ValueError as exc:
+            notify(f"{exc}\nNothing was imported.")
+            return
+        if not imported:
             notify("This CSV file has no palette rows. Nothing was imported.")
             return
         self.series.palette_index[0] = name
