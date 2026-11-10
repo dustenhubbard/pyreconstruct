@@ -176,7 +176,9 @@ class FieldWidgetPaint(FieldWidgetMouse):
     
     def paintRoiBox(self, field_painter : QPainter):
         """Paint the ROI box outline while the box is placed, and the
-        rectangle being dragged, in the same outline, during a drag."""
+        rectangle being dragged, in the same outline, during a drag. A box
+        that follows an object is drawn orange on a section without the
+        object, where it takes its place from another section."""
         rects = []
         box = self.roiBox()
         if box is not None:
@@ -187,7 +189,8 @@ class FieldWidgetPaint(FieldWidgetMouse):
             rects.append(((min(x1, x2), max(y1, y2)), (max(x1, x2), min(y1, y2))))
         if not rects:
             return
-        pen = QPen(QColor(255, 255, 0), 2)
+        borrowed = self.roi_follow_from not in (None, self.section.n)
+        pen = QPen(QColor(255, 165, 0) if borrowed else QColor(255, 255, 0), 2)
         pen.setStyle(Qt.DashLine)
         field_painter.setPen(pen)
         field_painter.setBrush(Qt.NoBrush)
