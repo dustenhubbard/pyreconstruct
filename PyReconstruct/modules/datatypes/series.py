@@ -1,4 +1,5 @@
 import os
+import csv
 import errno
 import gc
 import hashlib
@@ -14,6 +15,7 @@ from datetime import datetime, timezone
 from contextlib import contextmanager
 from copy import copy, deepcopy
 from pathlib import Path
+from math import hypot, isfinite
 from typing import Optional, Union
 
 from .log import LogSet, LogSetPair, LOG_READ_ERRORS, LOG_WRITE_ERRORS
@@ -32,7 +34,7 @@ from .host_tree import HostTree
 from .filters import passesFilters
 from . import collector, lazy_sections, local_stores, store_open, store_recovery, store_save
 
-from PyReconstruct.modules.calc import traceGeometry
+from PyReconstruct.modules.calc import centroid, traceGeometry
 
 from PyReconstruct.modules.constants import (
     createHiddenDir,
@@ -3581,13 +3583,28 @@ class Series():
 
     #### Series-wide trace functions ###############################################################
     
-    def deleteObjects(self, obj_names : list, series_states=None):
+    def deleteObjects(self, obj_names : list, series_states=None) -> dict:
         """Delete object(s) from the series.
-        
+
+        An object with traces is deleted by the save of its last section
+        (SeriesData.updateSection). One with no traces that the series still
+        keeps (its sections were deleted, an import emptied it) has no
+        section to save, so it is deleted here: its attributes, groups and
+        host links go, and the name's next traces are a new object.
+
             Params:
                 obj_names (list): the objects to delete
                 series_states (dict): for use with GUI states
+            Returns:
+                (dict): group -> its visibility, for each group the delete
+                    emptied and dropped (the caller rebuilds the Groups menu)
         """
+        traceless = [
+            name for name in obj_names
+            if name not in self.data["objects"] and self._keepsObject(name)
+        ]
+        groups_before = set(self.object_groups.getGroupList())
+
         def edit(section):
             modified = False
             for obj_name in obj_names:
@@ -3609,10 +3626,49 @@ class Series():
             return modified  # deleting object will automatically be logged
 
         self._forEachObjectSection(
-            obj_names, "Deleting object(s)...", edit, series_states
+            obj_names, "Deleting object(s)...", edit, series_states,
+            writes_after=bool(traceless),
         )
 
+        for name in traceless:
+            self.addLog(name, None, "Delete object")
+            self.host_tree.deleteKept(name)
+            self.removeObjAttrs(name)
         self.modified = True
+
+        return self._dropEmptiedGroupViz(groups_before)
+
+    def _keepsObject(self, name : str) -> bool:
+        """True if the series keeps anything for an object name: attributes,
+        a group, or host links."""
+        return bool(
+            name in self.obj_attrs
+            or self.object_groups.getObjectGroups(name)
+            or self.host_tree.keptIds(name)
+        )
+
+    def _dropEmptiedGroupViz(self, groups_before) -> dict:
+        """Drop the visibility entry of each group an action emptied.
+
+        `View` > `Groups` lists groups from these entries, so an emptied group
+        kept its row. A series undo of the action gives the group back the
+        value it had (SeriesState.applySeriesAttributes), and
+        `emptied_group_viz` keeps it for a section undo that brings the group
+        back (dropEmptiedGroups in state_manager does the same for section
+        steps).
+
+            Params:
+                groups_before (iterable): the groups before the action
+            Returns:
+                (dict): group -> its visibility, for each entry dropped
+        """
+        emptied = set(groups_before) - set(self.object_groups.getGroupList())
+        dropped = {
+            group: self.groups_visibility.pop(group)
+            for group in emptied if group in self.groups_visibility
+        }
+        self.emptied_group_viz.update(dropped)
+        return dropped
 
     def copyObjectNames(self, obj_names : list) -> list:
         """The object names `copyObjects` would write its traces into.
@@ -3900,6 +3956,18 @@ class Series():
                 if self.getObjectSections([obj_name]) - set(sections):
                     kept.add(obj_name)
 
+        ## An object renamed off its last trace loses its old name's
+        ## attributes and groups when that section is saved
+        ## (SeriesData.updateSection). One with no traces has no section to
+        ## save, so the full rename clears the old name after the move.
+        traceless = []
+        if name:
+            traceless = [
+                obj_name for obj_name in obj_names
+                if obj_name != name and obj_name not in kept
+                and obj_name not in self.data["objects"]
+            ]
+
         ## Modify object on every section
         attrs_migrated = False
         section_numbers = self.getObjectSections(obj_names)
@@ -3970,6 +4038,9 @@ class Series():
                         obj_name, name, keep_old=obj_name in kept
                     )
             attrs_migrated = True
+
+        for obj_name in traceless:
+            self.removeObjAttrs(obj_name)
 
         self.modified = True
 
@@ -5995,12 +6066,13 @@ class Series():
                 g = group
         return g
     
-    def addLog(self, obj_name : str, snum : int, event : str):
+    def addLog(self, obj_name : str, snum : Optional[int], event : str):
         """Add a log to the log set.
-        
+
             Params:
                 obj_name (str): the name of the modified object
-                snum (int): the section number of the event
+                snum (int): the section number of the event, or None for
+                    an event on the whole series
                 event (str): the description of the event
         """
         self.log_set.addLog(self.user, obj_name, snum, event)
@@ -6269,8 +6341,9 @@ class Series():
         #
         # The invariant that made the del safe is still an invariant, and
         # tests/test_remove_obj_attrs_guard.py pins it rather than leaving it to
-        # an incidental KeyError. The only caller, SeriesData.updateSection,
-        # calls addLog(obj_name, None, "Delete object") on the line above, and
+        # an incidental KeyError. The caller for an object with traces,
+        # SeriesData.updateSection, calls addLog(obj_name, None, "Delete
+        # object") on the line above, and
         # addLog writes setAttr(obj_name, "last_user", self.user), which creates
         # obj_attrs[obj_name]. That holds only while obj_name is truthy and
         # series.user is not None; neither is checked at the call site.
@@ -6625,21 +6698,18 @@ class Series():
         if palette_name is None:
             palette_name = self.palette_index[0]
         
-        traces = self.palette_traces[palette_name].copy()
-        csv_str = "Name,Color,Fill,Tags,X,Y\n"
-
-        for trace in traces:
-            trace : Trace
-            name = trace.name
-            color = " ".join(str(n) for n in trace.color)
-            fill = " ".join(trace.fill_mode)
-            tags = " ".join(trace.tags)
-            x = " ".join(str(x) for x, y in trace.points)
-            y = " ".join(str(y) for x, y in trace.points)
-            csv_str += ",".join([name, color, fill, tags, x, y]) + "\n"
-        
-        with open(fp, "w", encoding="utf-8", errors=EXPORT_ERRORS) as f:
-            f.write(csv_str)
+        with open(fp, "w", newline="", encoding="utf-8", errors=EXPORT_ERRORS) as f:
+            writer = csv.writer(f)
+            writer.writerow(["Name", "Color", "Fill", "TagsJSON", "X", "Y"])
+            for trace in self.palette_traces[palette_name]:
+                writer.writerow([
+                    trace.name,
+                    " ".join(str(n) for n in trace.color),
+                    " ".join(trace.fill_mode),
+                    json.dumps(sorted(trace.tags)),
+                    " ".join(str(x) for x, y in trace.points),
+                    " ".join(str(y) for x, y in trace.points),
+                ])
     
     def dropEmptyPalettes(self):
         """Remove every palette that has no buttons.
@@ -6683,27 +6753,76 @@ class Series():
         # errors="replace": a palette CSV exported by an older build on a
         # non-UTF-8 locale is decoded leniently rather than crashing the import
         # (mirrors getFullHistory's log reader); new exports are always UTF-8.
-        with open(fp, "r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()[1:]
-        
         trace_list = []
+        with open(fp, "r", newline="", encoding="utf-8", errors="replace") as f:
+            reader = csv.reader(f, strict=True)
+            header_lines = 0
+            field_limit = csv.field_size_limit()
+            try:
+                csv.field_size_limit(max(field_limit, os.fstat(f.fileno()).st_size))
+                header = next(reader, [])
+                json_tags = len(header) == 6 and header[3] == "TagsJSON"
+                header_lines = reader.line_num
+                # Legacy exports wrote quotes literally, without CSV escaping.
+                reader = csv.reader(
+                    f, strict=True,
+                    quoting=csv.QUOTE_MINIMAL if json_tags else csv.QUOTE_NONE,
+                )
+                for row in reader:
+                    if not row or (len(row) == 1 and not row[0].strip()):
+                        continue
+                    if len(row) != 6:
+                        raise ValueError("Expected six columns.")
+                    name, color_text, fill_text, tags_text, x_text, y_text = row
+                    color = tuple(int(n) for n in color_text.split())
+                    if len(color) != 3 or not all(0 <= n <= 255 for n in color):
+                        raise ValueError("Expected three RGB color values from 0 to 255.")
+                    fill = tuple(fill_text.split())
+                    if (
+                        len(fill) != 2
+                        or fill[0] not in ("none", "transparent", "solid")
+                        or fill[1] not in ("none", "selected", "unselected", "always")
+                    ):
+                        raise ValueError("Expected a valid fill mode and condition.")
+                    tags = json.loads(tags_text) if json_tags else tags_text.split()
+                    if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
+                        raise ValueError("Tags must be a list of strings.")
+                    x = [float(n) for n in x_text.split()]
+                    y = [float(n) for n in y_text.split()]
+                    if not x or len(x) != len(y) or not all(isfinite(n) for n in x + y):
+                        raise ValueError("Expected matching, finite X and Y coordinates.")
 
-        for line in lines:
-            if not line.strip():
-                continue
-            l = line.split(",")
-            name = l[0]
-            color = tuple(int(n) for n in l[1].split())
-            fill = tuple(l[2].split())
-            tags = set(l[3].split())
-            x = [float(n) for n in l[4].split()]
-            y = [float(n) for n in l[5].split()]
-
-            t = Trace(name, color)
-            t.fill_mode = fill
-            t.tags = tags
-            t.points = list(zip(x, y))
-            trace_list.append(t)
+                    t = Trace(name, color)
+                    t.fill_mode = fill
+                    t.tags = set(tags)
+                    t.points = list(zip(x, y))
+                    # The palette editor scales each shape to radius 1, then
+                    # divides it by its farthest point from the centroid. Both
+                    # steps round, so points that coincide, or nearly, can pass
+                    # the radius check and still leave nothing to divide by:
+                    # try the editor's steps on a copy.
+                    try:
+                        radius = t.getRadius()
+                        usable = (
+                            len(set(t.points)) > 1
+                            and isfinite(radius) and radius > 0 and isfinite(1 / radius)
+                        )
+                        if usable:
+                            unit = t.copy()
+                            unit.resize(1)
+                            cx, cy = centroid(unit.points)
+                            span = max(hypot(px - cx, py - cy) for px, py in unit.points)
+                            usable = isfinite(span) and span > 0
+                    except (OverflowError, ZeroDivisionError):
+                        usable = False
+                    if not usable:
+                        raise ValueError("Expected points that span a finite, nonzero stamp radius.")
+                    trace_list.append(t)
+            except (ValueError, csv.Error) as exc:
+                line = header_lines + reader.line_num
+                raise ValueError(f"Invalid palette CSV at line {line}: {exc}") from exc
+            finally:
+                csv.field_size_limit(field_limit)
         
         # an empty palette has no button to select
         if not trace_list:
