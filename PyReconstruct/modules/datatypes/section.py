@@ -24,7 +24,6 @@ from PyReconstruct.modules.calc import (
 )
 
 from PyReconstruct.modules.constants import (
-    fast_loads,
     fast_dumps,
     canon_keys_inplace,
     fill_mode_row_key,
@@ -648,17 +647,12 @@ class Section():
         self.temp_hide = []          # traces to temp hide
         self.traces_group_hide = []  # traces to hide by group viz
 
-        with open(self.filepath, "rb") as f:
-            raw = f.read()
-        section_data = fast_loads(raw)
-        
-        ## `stored_ids` collects the ids the section file's own keyed rows
-        ## assert. Empty for every positional file, which is every file written
-        ## by a build before this one.
-        stored_ids = {}
-        Section.updateJSON(  # update any missing attributes
-            section_data, n, stored_ids=stored_ids
-        )
+        from .section_read_ahead import READ_AHEAD, readSection
+        prepared = READ_AHEAD.take(series, n, self.filepath)
+        if prepared is None:
+            prepared = readSection(self.filepath, n)
+        section_data = prepared.data
+        stored_ids = prepared.stored_ids
 
         self.src = Section.imageName(section_data["src"])
         self.bc_profiles = section_data["brightness_contrast_profiles"]
@@ -671,66 +665,23 @@ class Section():
             self.tforms[a] = Transform(section_data["tforms"][a])
         
         self.thickness = section_data["thickness"]
-        self.contours : dict[str, Contour] = {}
+        self.contours = prepared.contours
 
-        ## Every trace loaded from a file gets an id (`issueLoadedTraceIDs`).
+        # Only this foreground step touches the series-wide ID issuer.
         restored, adopted_ids, derived_ids = Section.issueLoadedTraceIDs(
-            n, series, raw, section_data["contours"], stored_ids
+            n, series, None, section_data["contours"], stored_ids,
+            digest=prepared.digest,
         )
-        del raw
         self.trace_ids_trusted = restored
-        self._loaded_trace_ids = {} if derived_ids is not None else None
-        from .columnar_store import coordinatesFromRow
-        from .lazy_points import LazyPoints
-        self._loaded_coordinates = {}
+        self._loaded_trace_ids = None
+        if derived_ids is not None:
+            self._loaded_trace_ids = {
+                trace: (adopted_ids[(name, i)] if (name, i) in adopted_ids
+                        else derived_ids[(name, i)])
+                for trace, (name, i) in prepared.trace_keys.items()
+            }
+        self._loaded_coordinates = prepared.coordinates
 
-        for name in section_data["contours"]:
-
-            trace_list = []
-
-            for i, trace_data in enumerate(section_data["contours"][name]):
-                ## the row as `Trace.fromList` reads it: a 9-field row
-                ## carries its name first
-                fields = trace_data[1:] if len(trace_data) == 9 else trace_data
-                ## The row's x and y lists, read once into an (n, 2) array
-                ## for the store, and kept as the trace's points, which are
-                ## built from the same lists only when something reads them
-                ## (`lazy_points.py`). Paging draws from the store, so most
-                ## sections never build a point tuple.
-                coordinates = coordinatesFromRow(fields[0], fields[1])
-                points = LazyPoints.fromRow(fields[0], fields[1], coordinates)
-                trace = Trace.fromList(trace_data, name, points=points)
-                # screen for defective traces. `updateJSON` above now applies
-                # both screens to the stored data as well, so on this path the
-                # two lines below are a no-op; they are kept because callers
-                # that build a Section from data that has not been through
-                # `updateJSON` still need them, and because the in-memory value
-                # is the one the rest of the program reads.
-                l = len(trace.points)
-                if l == 2:
-                    trace.closed = False
-                if l > 1:
-                    trace_list.append(trace)
-                    if coordinates is not None:
-                        self._loaded_coordinates[trace] = coordinates
-                    if derived_ids is not None:
-                        ## Adopted beats derived. A row is in exactly one of the
-                        ## two maps: `deriveForSection` was told to skip every
-                        ## key `adoptForSection` returned, so `[(name, i)]` on
-                        ## the fallback is still a hard lookup and a row that
-                        ## reached neither map would raise here rather than
-                        ## silently load without an identity.
-                        self._loaded_trace_ids[trace] = (
-                            adopted_ids[(name, i)]
-                            if (name, i) in adopted_ids
-                            else derived_ids[(name, i)]
-                        )
-
-            self.contours[name] = Contour(
-                name,
-                trace_list
-            )
-        
         ## Build the parallel store. Unconditional as of 2026-08-05: every
         ## section in every session carries one.
         ##
@@ -1664,6 +1615,9 @@ class Section():
             # a save fires on scroll / section switch; retry a transiently-locked
             # replace (Windows AV/indexer/sync) so it doesn't fail spuriously
             from PyReconstruct.modules.backend.func.atomic_io import replace_with_retry
+            from .section_read_ahead import READ_AHEAD
+            # Windows cannot replace a file still held by our speculative reader.
+            READ_AHEAD.stop()
             replace_with_retry(tmp_fp, self.filepath)
         except OSError:
             # leave the original file untouched; clean up the partial temp
