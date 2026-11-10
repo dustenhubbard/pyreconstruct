@@ -1,0 +1,29 @@
+// The Cloudflare Worker that serves pyreconstruct.org. docs.yml builds the
+// site into ../site and deploys this from main. The account id and API token
+// come from the repository secrets CLOUDFLARE_ACCOUNT_ID and
+// CLOUDFLARE_API_TOKEN.
+//
+// The two routes cover the whole domain. Cloudflare sends a request to the
+// most specific matching route, so the narrower routes other Workers hold on
+// this zone (pyreconstruct.org/class* and pyreconstruct.org/companion/*) keep
+// their traffic.
+{
+  "name": "pyreconstruct-site",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-09",
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "../site",
+    "binding": "ASSETS",
+    // The Worker runs first so it can redirect www before any file is served.
+    "run_worker_first": true,
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  "routes": [
+    { "pattern": "pyreconstruct.org/*", "zone_name": "pyreconstruct.org" },
+    { "pattern": "www.pyreconstruct.org/*", "zone_name": "pyreconstruct.org" }
+  ],
+  "observability": { "enabled": false }
+}

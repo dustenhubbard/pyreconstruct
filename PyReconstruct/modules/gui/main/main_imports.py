@@ -129,7 +129,9 @@ from PyReconstruct.modules.backend.func import (
     importTransforms,
     importSwiftTransforms
 )
-from PyReconstruct.modules.backend.func.import_transforms import TransformImportError
+from PyReconstruct.modules.backend.func.import_transforms import (
+    AlignmentExistsError, TransformImportError,
+)
 from PyReconstruct.modules.backend.func.import_swift_transforms import (
     read_swift_project,
     swift_scales,
