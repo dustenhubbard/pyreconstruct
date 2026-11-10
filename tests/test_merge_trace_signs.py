@@ -49,13 +49,14 @@ def test_mixed_sign_merge_preserves_traces(
 @pytest.mark.parametrize("negative", [False, True])
 @pytest.mark.parametrize("selected_only", [False, True])
 def test_auto_merge_keeps_opposite_sign_trace(
-    main_window, monkeypatch, negative, selected_only
+    main_window, local_series_settings, monkeypatch, negative, selected_only
 ):
     from PyReconstruct.modules.gui.main import field_widget_2_trace as fw2
 
     notices = []
     monkeypatch.setattr(fw2, "notify", lambda message: notices.append(message))
     field = main_window.field
+    local_series_settings(main_window)
     main_window.series.setOption("auto_merge", True)
     main_window.series.setOption("auto_merge_selected_only", selected_only)
     same_sign = Trace(NAME, (0, 255, 0), True)
