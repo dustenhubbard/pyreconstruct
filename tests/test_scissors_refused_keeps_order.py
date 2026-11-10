@@ -44,7 +44,10 @@ def _two_traces(field):
     raise AssertionError("fixture section has no unlocked single-trace object")
 
 
-def test_a_refused_cut_keeps_the_trace_in_its_place(main_window, qapp):
+def test_a_refused_cut_keeps_the_trace_in_its_place(
+    main_window, qapp, local_series_settings
+):
+    local_series_settings(main_window)  # trace_mode is written on release
     field = main_window.field
     name, first, second = _two_traces(field)
 
