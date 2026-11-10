@@ -1,3 +1,5 @@
+from math import isfinite
+
 from PySide6.QtWidgets import (
     QInputDialog,
     QToolButton,
@@ -199,13 +201,11 @@ class TracePaletteDialog(QuickTabDialog):
         # collapses a palette trace onto its centroid and a negative mirrors
         # it, silently, on OK (found 2026-08-28). TraceDialog rejects the
         # same input; this dialog had no equivalent check.
-        for palette_name, inputs in response.items():
-            if palette_name == "current_tab_text":
-                continue
+        for inputs in response.values():
             for i in range(6, len(inputs), 7):
-                if inputs[i] <= 0:
+                if not isfinite(inputs[i]) or inputs[i] <= 0:
                     notify(
-                        "Every stamp radius must be a positive number. "
+                        "Every stamp radius must be a finite, positive number. "
                         "Nothing was changed."
                     )
                     return None, False
@@ -213,7 +213,7 @@ class TracePaletteDialog(QuickTabDialog):
         # a palette with no buttons has nothing to select, and showing it
         # crashed the mouse palette
         for palette_name, inputs in response.items():
-            if palette_name != "current_tab_text" and not inputs:
+            if not inputs:
                 notify(
                     f"The palette {palette_name} has no buttons. "
                     "Nothing was changed."
@@ -221,8 +221,9 @@ class TracePaletteDialog(QuickTabDialog):
                 return None, False
 
         # modify the series directly
-        self.series.palette_index[0] = response["current_tab_text"]
-        del(response["current_tab_text"])
+        self.series.palette_index[0] = self.tab_widget.tabText(
+            self.tab_widget.currentIndex()
+        )
         
         self.series.palette_traces = {}
         # carried tokens for the tabs that came from the series; a new tab gets

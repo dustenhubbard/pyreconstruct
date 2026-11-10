@@ -1,0 +1,1 @@
+- **Knife cuts preserve trace signs and missed geometry.** Cuts split every visit to an open trace crossing and refuse to discard every piece of a selected trace.

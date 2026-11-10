@@ -10,6 +10,7 @@ nightly. These pin the pieces that would break silently, and run the shell of
 the decision steps against disposable repositories.
 """
 
+import json
 import os
 from pathlib import Path
 import re
@@ -99,7 +100,7 @@ def test_the_tag_step_is_gated_on_the_pick():
     assert pick.count('echo "tag=" >> "$GITHUB_OUTPUT"') == 2, "two skips, both neutral"
     assert "already exists" in pick
     assert 'git rev-list --count "$prev..HEAD"' in pick
-    assert "exit 1" in pick   # the only failures: no stable tag, a bad override
+    assert "exit 1" in pick   # a missing stable tag or a bad override fails
 
 
 def test_every_step_spells_the_nightly_shape_the_same_way():
@@ -182,15 +183,127 @@ def fake_date(tmp_path, now):
     return bindir
 
 
-def run_pick(tmp_path, repo, version_input="", now=NOW):
+def release_cli(tmp_path, releases, *, fail=False):
+    bindir = tmp_path / "release-cli"
+    bindir.mkdir(exist_ok=True)
+    gh = bindir / "gh"
+    gh.write_text(f"#!{sys.executable}\n" + textwrap.dedent(f'''\
+        import sys
+        args = sys.argv[1:]
+        if args[:2] == ["workflow", "run"]:
+            import json
+            import os
+            from pathlib import Path
+            Path(os.environ["TEST_DISPATCH_LOG"]).write_text(json.dumps(args))
+            sys.exit(int(os.environ["TEST_DISPATCH_FAIL"]))
+        assert args[:2] == ["api", "repos/fixture/repository/releases"], args
+        assert "--paginate" in args, args
+        assert args[args.index("--jq") + 1] == '.[] | select(.draft == false) | .tag_name'
+        if {fail!r}:
+            sys.exit("release lookup failed")
+        for release in {releases!r}:
+            if not release["draft"]:
+                print(release["tag_name"])
+    '''))
+    gh.chmod(0o755)
+    return bindir
+
+
+def run_pick(tmp_path, repo, version_input="", now=NOW, releases=(), lookup_fails=False):
     out_file = tmp_path / "github_output"
     out_file.write_text("")
     env = dict(os.environ, GITHUB_OUTPUT=str(out_file), VERSION_INPUT=version_input,
-               PATH=f"{fake_date(tmp_path, now)}{os.pathsep}{os.environ['PATH']}")
+               GITHUB_REPOSITORY="fixture/repository", GH_TOKEN="unused-by-fake-gh",
+               PATH=os.pathsep.join((str(release_cli(tmp_path, releases, fail=lookup_fails)),
+                                     str(fake_date(tmp_path, now)), os.environ['PATH'])))
     result = subprocess.run(["bash", "-eo", "pipefail", "-c", workflow_script(NIGHTLY, PICK)],
                             cwd=repo, env=env, capture_output=True, text=True, timeout=30)
     outputs = dict(line.split("=", 1) for line in out_file.read_text().splitlines() if "=" in line)
     return result, outputs
+
+
+@linux_only
+@pytest.mark.parametrize("draft", [None, True, False])
+def test_only_a_published_nightly_suppresses_a_retry(tmp_path, draft):
+    repo, git = make_repo(tmp_path)
+    commit(git)
+    tag = "v1.24.0.dev202610080709"
+    subprocess.run(git + ["tag", tag], check=True)
+    releases = [] if draft is None else [{"tag_name": tag, "draft": draft}]
+    result, outputs = run_pick(tmp_path, repo, releases=releases)
+    assert result.returncode == 0, result.stderr
+    assert outputs == {"tag": "" if draft is False else "v1.24.0.dev202610081315"}
+
+
+@linux_only
+def test_an_unpublished_tag_does_not_hide_changes_after_a_published_nightly(tmp_path):
+    repo, git = make_repo(tmp_path)
+    commit(git)
+    published = "v1.24.0.dev20261007"
+    subprocess.run(git + ["tag", published], check=True)
+    commit(git)
+    draft = "v1.24.0.dev202610080709"
+    subprocess.run(git + ["tag", draft], check=True)
+    result, outputs = run_pick(tmp_path, repo, releases=[
+        {"tag_name": draft, "draft": True}, {"tag_name": published, "draft": False},
+    ])
+    assert result.returncode == 0, result.stderr
+    assert outputs == {"tag": "v1.24.0.dev202610081315"}
+
+
+@linux_only
+def test_a_failed_release_lookup_stops_instead_of_guessing(tmp_path):
+    repo, git = make_repo(tmp_path)
+    commit(git)
+    result, outputs = run_pick(tmp_path, repo, lookup_fails=True)
+    assert result.returncode != 0
+    assert "release lookup failed" in result.stderr
+    assert outputs == {}
+
+
+@linux_only
+def test_a_failed_dispatch_retries_without_a_new_commit(tmp_path):
+    repo, git = make_repo(tmp_path)
+    commit(git)
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--quiet", "--bare", str(remote)], check=True)
+    subprocess.run(git + ["remote", "add", "origin", str(remote)], check=True)
+    dispatch_log = tmp_path / "dispatch.json"
+
+    def dispatch(tag, fail):
+        env = dict(os.environ, TAG=tag, GITHUB_REPOSITORY="fixture/repository",
+                   GH_TOKEN="unused-by-fake-gh", TEST_DISPATCH_LOG=str(dispatch_log),
+                   TEST_DISPATCH_FAIL=str(int(fail)),
+                   GIT_CONFIG_COUNT="2", GIT_CONFIG_KEY_0="core.hooksPath",
+                   GIT_CONFIG_VALUE_0="/dev/null", GIT_CONFIG_KEY_1="tag.gpgsign",
+                   GIT_CONFIG_VALUE_1="false",
+                   PATH=f"{release_cli(tmp_path, ())}{os.pathsep}{os.environ['PATH']}")
+        return subprocess.run(
+            ["bash", "-eo", "pipefail", "-c", workflow_script(NIGHTLY, TAG_AND_BUILD)],
+            cwd=repo, env=env, capture_output=True, text=True, timeout=30,
+        )
+
+    result, first = run_pick(tmp_path, repo, now="2026-10-08T06:00")
+    assert result.returncode == 0, result.stderr
+    result = dispatch(first["tag"], fail=True)
+    assert result.returncode != 0
+    sha = subprocess.check_output(git + ["rev-parse", "HEAD"], text=True).strip()
+    assert subprocess.check_output(
+        ["git", "--git-dir", str(remote), "rev-parse", f"{first['tag']}^{{commit}}"],
+        text=True,
+    ).strip() == sha
+
+    result, retry = run_pick(tmp_path, repo, now="2026-10-09T06:00")
+    assert result.returncode == 0, result.stderr
+    assert retry == {"tag": "v1.24.0.dev202610090600"}
+    result = dispatch(retry["tag"], fail=False)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(dispatch_log.read_text()) == [
+        "workflow", "run", "build-installers.yml", "--repo", "fixture/repository",
+        "--ref", "v1.24.0.dev202610090600",
+    ]
+    assert subprocess.check_output(git + ["rev-parse", f"{retry['tag']}^{{commit}}"],
+                                   text=True).strip() == sha
 
 
 @linux_only
@@ -233,7 +346,8 @@ def test_a_second_nightly_the_same_day_gets_its_own_tag(tmp_path, morning):
     commit(git)
     subprocess.run(git + ["tag", morning], check=True)
     commit(git, "merged after the morning nightly")
-    result, outputs = run_pick(tmp_path, repo, now="2026-10-08T13:15")
+    result, outputs = run_pick(tmp_path, repo, now="2026-10-08T13:15",
+                               releases=[{"tag_name": morning, "draft": False}])
     assert result.returncode == 0, result.stderr
     assert outputs == {"tag": "v1.24.0.dev202610081315"}
     assert f"newest nightly: {morning}" in result.stdout
@@ -259,7 +373,10 @@ def test_a_quiet_main_since_a_timed_nightly_cuts_nothing(tmp_path):
     subprocess.run(git + ["tag", "v1.24.0.dev20261008"], check=True)
     commit(git)
     subprocess.run(git + ["tag", "v1.24.0.dev202610080709"], check=True)
-    result, outputs = run_pick(tmp_path, repo)
+    result, outputs = run_pick(tmp_path, repo, releases=[
+        {"tag_name": "v1.24.0.dev20261008", "draft": False},
+        {"tag_name": "v1.24.0.dev202610080709", "draft": False},
+    ])
     assert result.returncode == 0, result.stderr
     assert outputs == {"tag": ""}
     assert "no commits since v1.24.0.dev202610080709" in result.stdout
@@ -270,7 +387,9 @@ def test_a_quiet_main_since_the_last_nightly_cuts_nothing(tmp_path):
     repo, git = make_repo(tmp_path)
     commit(git)
     subprocess.run(git + ["tag", "v1.24.0.dev20200101"], check=True)
-    result, outputs = run_pick(tmp_path, repo)
+    result, outputs = run_pick(tmp_path, repo, releases=[
+        {"tag_name": "v1.24.0.dev20200101", "draft": False},
+    ])
     assert result.returncode == 0, result.stderr
     assert outputs == {"tag": ""}
     assert "no commits since v1.24.0.dev20200101" in result.stdout

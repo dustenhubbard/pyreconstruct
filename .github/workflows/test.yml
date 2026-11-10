@@ -579,7 +579,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2022, macos-14]
+        os: [windows-2022, macos-15]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25   # the cold wheel install, as in `test`; the tests take seconds
     steps:
@@ -606,3 +606,8 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: uv run --frozen --no-default-groups --extra test python -m pytest -rA tests/test_series_code_windows_registry.py
+
+      - name: Save permission tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run --frozen --no-default-groups --extra test python -m pytest -rA tests/test_save_permissions.py tests/test_save_permissions_windows.py
