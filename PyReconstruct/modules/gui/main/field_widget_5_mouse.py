@@ -53,6 +53,12 @@ class FieldWidgetMouse(FieldWidgetData):
                 self.panzoomRelease()
             self.cancelLasso()
             self.dropPress()
+            # The dropped release cannot clear the old stroke's points, and
+            # the next pointer lasso would start from them. A host link under
+            # way ends with its line.
+            if not self.is_z_tracing:
+                self.current_trace = []
+            self.hosted_trace = None
 
         self.mouse_mode = mode
 

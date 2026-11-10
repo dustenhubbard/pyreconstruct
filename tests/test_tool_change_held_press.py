@@ -49,8 +49,10 @@ def _state(field):
 
 @pytest.mark.parametrize("source,target", list(permutations(TOOLS, 2)))
 def test_every_tool_pair_ignores_the_old_press(
-    main_window, main_window_dialogs, field_notices, source, target  # noqa: F811
+    main_window, main_window_dialogs, field_notices, local_series_settings,  # noqa: F811
+    source, target,
 ):
+    local_series_settings(main_window)
     field = main_window.field
     palette = main_window.mouse_palette
     field.series.setOption("trace_mode", "combo")
@@ -89,7 +91,8 @@ def test_every_tool_pair_ignores_the_old_press(
     assert field.roi_box_on
 
 
-def test_still_pointer_press_cannot_start_a_trace(main_window):
+def test_still_pointer_press_cannot_start_a_trace(main_window, local_series_settings):
+    local_series_settings(main_window)
     field = main_window.field
     field.series.setOption("trace_mode", "combo")
     field.setMouseMode(POINTER)
@@ -103,8 +106,9 @@ def test_still_pointer_press_cannot_start_a_trace(main_window):
 @pytest.mark.parametrize("source,target", [(CLOSEDTRACE, OPENTRACE), (OPENTRACE, CLOSEDTRACE)])
 @pytest.mark.parametrize("line_under_way", [False, True])
 def test_trace_tool_change_does_not_reuse_a_still_or_line_press(
-    main_window, source, target, line_under_way
+    main_window, local_series_settings, source, target, line_under_way
 ):
+    local_series_settings(main_window)
     field = main_window.field
     field.series.setOption("trace_mode", "combo")
     field.series.setOption("auto_merge", False)
@@ -123,8 +127,9 @@ def test_trace_tool_change_does_not_reuse_a_still_or_line_press(
 
 @pytest.mark.parametrize("mode", [CLOSEDTRACE, OPENTRACE])
 def test_combo_menu_release_does_not_start_a_trace(
-    main_window, field_menu, mode  # noqa: F811
+    main_window, field_menu, local_series_settings, mode  # noqa: F811
 ):
+    local_series_settings(main_window)
     field = main_window.field
     field.series.setOption("trace_mode", "combo")
     field.setMouseMode(mode)
@@ -266,3 +271,42 @@ def test_tool_change_preserves_independent_zoom(main_window, gesture):
     assert field.series.window[2:] == pytest.approx([
         original_window[2] / 1.5, original_window[3] / 1.5,
     ])
+
+
+@pytest.mark.parametrize("source", ["Closed Trace", "Open Trace", "Knife", "Stamp", "Host"])
+def test_fresh_pointer_lasso_selects_only_what_it_encloses(
+    main_window, local_series_settings, source
+):
+    local_series_settings(main_window)
+    field = main_window.field
+    palette = main_window.mouse_palette
+    field.series.setOption("trace_mode", "combo")
+    field.series.setOption("pointer", ["rect", "inc"])
+    field.tracing_trace = Trace("abandoned_stroke", (255, 0, 255))
+    _add_square(field, "outside", 240, 180, 280, 220)
+    _add_square(field, "inside", 360, 310, 390, 340)
+    field.section.selected_traces.clear()
+    palette.activateModeButton(source)
+    if source == "Host":
+        # A link under way: the first click picked the trace to host.
+        field.mousePressEvent(FakeMouseEvent(260, 180, HELD))
+        field.mouseReleaseEvent(FakeMouseEvent(260, 180))
+        assert field.current_trace
+        palette.activateModeButton("Pointer")
+    else:
+        field.mousePressEvent(FakeMouseEvent(150, 150, HELD))
+        field.click_time = 0
+        field.mouseMoveEvent(FakeMouseEvent(180, 160, HELD))
+        palette.activateModeButton("Pointer")
+        field.mouseReleaseEvent(FakeMouseEvent(180, 160))
+    assert field.current_trace == []
+    assert field.hosted_trace is None
+
+    field.mousePressEvent(FakeMouseEvent(350, 300, HELD))
+    # Within the click tolerance, so the lasso keeps this point.
+    field.mouseMoveEvent(FakeMouseEvent(351, 300, HELD))
+    field.click_time = 0
+    field.mouseMoveEvent(FakeMouseEvent(400, 350, HELD))
+    field.mouseReleaseEvent(FakeMouseEvent(400, 350))
+
+    assert [trace.name for trace in field.section.selected_traces] == ["inside"]
