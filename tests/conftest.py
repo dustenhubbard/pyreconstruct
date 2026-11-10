@@ -131,7 +131,7 @@ def pytest_configure(config):
         "khgpu, alone, never in CI.",
         "shared_settings_store: the test's subject is the session's shared "
         "settings store itself, so it may call `Series.setOption` against it "
-        "(see `_series_option_writes_stay_local` in tests/conftest.py).",
+        "(see `_install_option_write_guard` in tests/conftest.py).",
     ):
         config.addinivalue_line("markers", marker)
 
@@ -911,7 +911,7 @@ def local_series_settings():
     rebuilding only the menubar leaves them carrying shortcuts from the previous
     store.
 
-    `_series_option_writes_stay_local` below fails a test that calls
+    `_install_option_write_guard` below fails a test that calls
     `setOption` itself without this fixture.
     """
     from PyReconstruct.modules.backend.settings_store import DictSettingsStore
@@ -938,10 +938,39 @@ def local_series_settings():
 
 _TESTS_DIR = os.path.dirname(os.path.abspath(__file__)) + os.sep
 
+# the test now running, setup and teardown included; read by the option guard
+_current_item = [None]
 
-@pytest.fixture(autouse=True)
-def _series_option_writes_stay_local(request):
-    """Fail a test that writes a `Series` option into the session's shared store.
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_protocol(item, nextitem):
+    _current_item[0] = item
+    try:
+        yield
+    finally:
+        _current_item[0] = None
+
+
+def _in_shared_store(path):
+    """True when ``path`` is a file of the worker's shared settings store.
+
+    That is the redirected organization domain under the isolation root. An
+    explicit `QSettings(fileName, format)` is replayed under the root's
+    `explicit/` folder at its own path, so a file a test names in its own
+    `tmp_path` stays its own and does not count.
+    """
+    root = qsettings_isolation.isolation_root
+    if root is None:  # no redirect at all: the store is the real one
+        return True
+    root = os.path.realpath(root)
+    path = os.path.realpath(path)
+    return path.startswith(root + os.sep) and not path.startswith(
+        os.path.join(root, "explicit") + os.sep
+    )
+
+
+def _install_option_write_guard():
+    """Fail a test that writes a `Series` option into the worker's shared store.
 
     The suite redirects `QSettings` once per worker session
     (`qsettings_isolation`), so the store is shared by every test that worker
@@ -952,50 +981,60 @@ def _series_option_writes_stay_local(request):
 
     So a `setOption` call made from code under `tests/` must reach a per-test
     store: `local_series_settings`, or any store the test injects itself
-    (`setSettingsStore`, `set_default_settings_store`). The check looks at the
-    direct caller only, so writes the product makes on its own (opening a series
-    records it in `recently_opened_series`) are not counted; those are the
-    product's behavior under test. Options kept in the series file itself
-    (`series.options`) never reach the store and are not counted either.
+    (`setSettingsStore`, `set_default_settings_store`, a `QSettingsStore` whose
+    `_settings` opens a file of the test's own). The check is made where the
+    value is written, on the file it is written to, so a call that writes
+    nothing passes: an option kept in the series file (`series.options`), or a
+    per-series option on the welcome series, which `setOption` drops.
+
+    It is installed once per session, before any fixture runs, so a fixture of
+    any scope is held to it as well as a test body; a write from a module-scoped
+    fixture fails the first test that requests it. The check looks at the direct
+    caller of `setOption` only, so writes the product makes on its own (opening a
+    series records it in `recently_opened_series`) are not counted; those are the
+    product's behavior under test.
 
     A test whose subject is the shared store itself is marked
     ``shared_settings_store``.
     """
-    if request.node.get_closest_marker("shared_settings_store"):
-        yield
-        return
-
     from PyReconstruct.modules.backend.settings_store import QSettingsStore
     from PyReconstruct.modules.datatypes.series import Series
 
-    real = Series.setOption
+    real_set_option = Series.setOption
+    real_set_value = QSettingsStore.set_value
+    test_callers = []  # the caller's file, while a test's setOption runs
 
     def setOption(self, option_name, value):
         caller = os.path.abspath(sys._getframe(1).f_code.co_filename)
-        stored = option_name not in self.options and (
-            option_name in Series.qsettings_series_defaults
-            or option_name in Series.qsettings_defaults
-        )
+        test_callers.append(caller if caller.startswith(_TESTS_DIR) else None)
+        try:
+            return real_set_option(self, option_name, value)
+        finally:
+            test_callers.pop()
+
+    def set_value(self, code, key, value):
+        caller = test_callers[-1] if test_callers else None
+        item = _current_item[0]
         if (
-            stored
-            and caller.startswith(_TESTS_DIR)
-            and isinstance(self._settingsStore(), QSettingsStore)
+            caller is not None
+            and not (item is not None and item.get_closest_marker("shared_settings_store"))
+            and _in_shared_store(self._settings(code).fileName())
         ):
             pytest.fail(
-                f"{os.path.basename(caller)} writes the series option "
-                f"{option_name!r} into the worker's shared settings store, where "
-                "it reaches every later test on that worker. Redirect the series "
-                "first with the `local_series_settings` fixture.",
+                f"{os.path.basename(caller)} writes the series option {key!r} "
+                "into the worker's shared settings store, where it reaches every "
+                "later test on that worker. Redirect the series first with the "
+                "`local_series_settings` fixture.",
                 pytrace=True,
             )
-        return real(self, option_name, value)
+        return real_set_value(self, code, key, value)
 
-    # its own patcher, not the `monkeypatch` fixture: an autouse fixture that
-    # requested that one would set it up first and so undo every test's own
-    # patches after the test's other fixtures had torn down
-    with pytest.MonkeyPatch.context() as patcher:
-        patcher.setattr(Series, "setOption", setOption)
-        yield
+    Series.setOption = setOption
+    QSettingsStore.set_value = set_value
+
+
+def pytest_sessionstart(session):
+    _install_option_write_guard()
 
 
 @pytest.fixture
