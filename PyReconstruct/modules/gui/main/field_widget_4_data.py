@@ -439,7 +439,14 @@ class FieldWidgetData(FieldWidgetObject):
             centsB.append(centroid(pts))
         
         # calculate the tform
-        a2b_tform = Transform.estimateTform(centsA, centsB)
+        try:
+            a2b_tform = Transform.estimateTform(centsA, centsB)
+        except ValueError:
+            notify(
+                "Cannot align these landmarks. Select at least three non-collinear "
+                "trace centers on each section."
+            )
+            return
 
         # change the transform
         self.changeTform(a2b_tform)
