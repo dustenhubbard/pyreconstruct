@@ -29,6 +29,7 @@ from PyReconstruct.modules.backend.crop_zarr import CropError, CropStopped, LOG_
 from PyReconstruct.modules.backend.view.image_layer import dropReadAhead
 from PyReconstruct.modules.gui.dialog.crop_zarr import cropWithProgress
 from PyReconstruct.modules.gui.dialog.all_options import SERIES_CODE_NUL
+from PyReconstruct.modules.gui.dialog.chosen_options import ChosenOptions
 from PyReconstruct.modules.backend.func.window_geometry import (
     default_window_rect,
     window_geometry_is_usable,
@@ -2718,6 +2719,11 @@ class MainWindow(QMainWindow):
 
         current_shape = self.field.closed_trace_shape
         current_mode = self.series.getOption("trace_mode")
+        chosen = ChosenOptions(self.series, {
+            key: self.series.getOption(key)
+            for key in ("trace_mode", "auto_merge", "auto_merge_selected_only",
+                        "roll_average", "roll_window")
+        })
 
         structure = [
             ["Mode:"],
@@ -2766,15 +2772,14 @@ class MainWindow(QMainWindow):
         else:
             new_shape = "trace"
         
-        with user_action():
-            self.series.setOption("trace_mode", new_mode)
+        chosen.store({
+            "trace_mode": new_mode,
+            "auto_merge": response[2][0][1],
+            "auto_merge_selected_only": response[3][0][1],
+            "roll_average": response[4][0][1],
+            "roll_window": response[5],
+        })
         self.field.closed_trace_shape = new_shape
-        
-        with user_action():
-            self.series.setOption("auto_merge", response[2][0][1])
-            self.series.setOption("auto_merge_selected_only", response[3][0][1])
-            self.series.setOption("roll_average", response[4][0][1])
-            self.series.setOption("roll_window", response[5])
 
     def changeTracingTrace(self, trace):
         """Change trace utilized by the user.
@@ -4157,6 +4162,10 @@ class MainWindow(QMainWindow):
     def modifyPointer(self, event=None):
         """Modify the pointer properties."""
         s, t = tuple(self.series.getOption("pointer"))
+        chosen = ChosenOptions(self.series, {
+            "pointer": [s, t],
+            "display_closest": self.series.getOption("display_closest"),
+        })
         structure = [
             ["Shape:"],
             [("radio", ("Rectangle", s=="rect"), ("Lasso", s=="lasso"))],
@@ -4170,13 +4179,15 @@ class MainWindow(QMainWindow):
         
         s = "rect" if response[0][0][1] else "lasso"
         t = "inc" if response[1][0][1] else "exc"
-        with user_action():
-            self.series.setOption("pointer", [s, t])
-            self.series.setOption("display_closest", response[2][0][1])
+        chosen.store({"pointer": [s, t], "display_closest": response[2][0][1]})
         self.seriesModified()
     
     def modifyGrid(self, event=None):
         """Modify the grid properties."""
+        chosen = ChosenOptions(self.series, {
+            key: self.series.getOption(key)
+            for key in ("grid", "sampling_frame_grid")
+        })
         response, confirmed = GridDialog(
             self,
             tuple(self.series.getOption("grid")),
@@ -4186,13 +4197,16 @@ class MainWindow(QMainWindow):
             return
         
         grid_response, sf_grid = response
-        with user_action():
-            self.series.setOption("grid", grid_response)
-            self.series.setOption("sampling_frame_grid", sf_grid)
+        chosen.store({"grid": grid_response, "sampling_frame_grid": sf_grid})
         self.seriesModified()
     
     def modifyKnife(self, event=None):
         """Modify the knife properties."""
+        keys = ("knife_del_threshold", "roll_knife_average", "roll_knife_window",
+                "knife_ignore_secondary_click")
+        chosen = ChosenOptions(
+            self.series, {key: self.series.getOption(key) for key in keys}
+        )
         structure = [
             [
                 "Delete traces smaller than this percent:\n"
@@ -4225,11 +4239,9 @@ class MainWindow(QMainWindow):
         if not confirmed:
             return
 
-        with user_action():
-            self.series.setOption("knife_del_threshold", response[0])
-            self.series.setOption("roll_knife_average", response[1][0][1])
-            self.series.setOption("roll_knife_window", response[2])
-            self.series.setOption("knife_ignore_secondary_click", response[3][0][1])
+        chosen.store(dict(zip(keys, (
+            response[0], response[1][0][1], response[2], response[3][0][1]
+        ))))
 
         self.seriesModified()
     
@@ -5285,11 +5297,12 @@ class MainWindow(QMainWindow):
     
     def displayShortcuts(self):
         """Display the shortcuts."""
-        response, confirmed = ShortcutsDialog(self, self.series).exec()
+        dialog = ShortcutsDialog(self, self.series)
+        response, confirmed = dialog.exec()
         if not confirmed:
             return
         
-        self.resetShortcuts(response)
+        self.resetShortcuts(response, dialog.chosen)
 
     def openWebsite(self, site):
         """Open website in user's browser."""
@@ -5741,11 +5754,13 @@ class MainWindow(QMainWindow):
         self.field.reload()
         self.field.table_manager.updateSections(sections)
     
-    def resetShortcuts(self, shortcuts_dict : dict = None):
+    def resetShortcuts(self, shortcuts_dict : dict = None, chosen=None):
         """Reset the shortcuts for the window.
         
             Params:
                 shortcuts_dict: the action name : shortcut pairs (will use series opts if not provided)
+                chosen (ChosenOptions): the dialog's opening bindings, so that
+                    a pending settings copy keeps the bindings left alone
         """
         if shortcuts_dict is None:
             shortcuts_dict = {}
@@ -5754,16 +5769,17 @@ class MainWindow(QMainWindow):
                 if k.endswith("_act") and getattr(self, k, None):
                     shortcuts_dict[k] = self.series.getOption(k)
         
-        for act_name, kbd in shortcuts_dict.items():
-            # The dialog also edits bindings that are not QActions at all, such
-            # as focus mode's edit-click modifier, which is a held modifier
-            # rather than a key sequence. Those are stored the same way and have
-            # nothing to apply to a menu entry.
-            with user_action():
-                self.series.setOption(act_name, kbd)
+        # The dialog also edits bindings that are not QActions at all, such
+        # as focus mode's edit-click modifier, which is a held modifier
+        # rather than a key sequence. Those are stored the same way and have
+        # nothing to apply to a menu entry.
+        if chosen is None:
+            chosen = ChosenOptions(self.series, {})
+        chosen.store(shortcuts_dict)
+        for act_name in shortcuts_dict:
             if act_name.endswith("_act"):
                 # through the helper so a legacy alias follows every rebind:
-                # option first, so the helper reads the fresh value and the
+                # options first, so the helper reads the fresh value and the
                 # claim check sees the user's newest bindings
                 applySeriesShortcut(getattr(self, act_name), act_name, self.series)
 

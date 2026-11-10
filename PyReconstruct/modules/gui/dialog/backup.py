@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget
 )
 
+from .chosen_options import settings_copy_pending, store_chosen_options
 from .helper import BrowseWidget, BorderedWidget
 
 from PyReconstruct.modules.datatypes import Series
@@ -62,11 +63,7 @@ class BackupDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Backup Settings")
         self.series = series
-        store = series._settingsStore()
-        store.contains(None, "utc")
-        store.contains(series.code, "backup_dir")
-        self._copy_pending = not (store.may_save_defaults(None)
-                                  and store.may_save_defaults(series.code))
+        self._copy_pending = settings_copy_pending(series)
 
         utc = self.series.getOption("utc")
         if utc:
@@ -341,13 +338,12 @@ class BackupDialog(QDialog):
     def set(self):
         """Store backup controls, limiting pending copies to deliberate edits."""
         if self.accept():
-            with user_action():
-                use_defaults = self.use_defaults_cb.isChecked()
-                if not self._copy_pending or use_defaults != self._initial_use_defaults:
+            use_defaults = self.use_defaults_cb.isChecked()
+            if not self._copy_pending or use_defaults != self._initial_use_defaults:
+                with user_action():
                     self.series.setBackupUsesDefaults(use_defaults)
-                for key, value in self._options().items():
-                    if not self._copy_pending or value != self._initial_options[key]:
-                        self.series.setOption(key, value)
+            store_chosen_options(self.series, self._options(),
+                                 self._initial_options, self._copy_pending)
             self._initial_use_defaults = use_defaults
             self._initial_options = self._options()
 

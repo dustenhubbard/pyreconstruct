@@ -130,6 +130,7 @@ from PyReconstruct.modules.constants import (
 )
 from PyReconstruct.modules.gui.dialog import TracePaletteDialog, QuickDialog
 from PyReconstruct.modules.gui.dialog.scale_bar_settings import ScaleBarSettingsDialog
+from PyReconstruct.modules.gui.dialog.chosen_options import ChosenOptions
 from PyReconstruct.modules.gui.popup import TextWidget
 from PyReconstruct.modules.gui.utils import notify
 from PyReconstruct.modules.gui.utils.fonts import uiFamily, uiFont
@@ -1126,6 +1127,9 @@ class MousePalette():
     def modifyFlag(self):
         """Modify the default flag."""
         show_flags = self.series.getOption("show_flags")
+        chosen = ChosenOptions(self.series, {
+            key: self.series.getOption(key) for key in ("flag_name", "flag_color")
+        })
         structure = [
             ["Default name:", ("text", self.series.getOption("flag_name"))],
             ["Default color:", ("color", self.series.getOption("flag_color"))],
@@ -1145,7 +1149,9 @@ class MousePalette():
         elif response[3][2][1]: show_flags = "none"
         else: show_flags = "unresolved"
         
-        self.setFlag(response[0], response[1], response[2], show_flags)
+        chosen.store({"flag_name": response[0], "flag_color": response[1]})
+        # size and display are stored by setFlag, and only when changed
+        self.setFlag(font_size=response[2], display_flags=show_flags)
     
     def displayHelp(self):
         """Display the help associated with the trace palette."""

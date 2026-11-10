@@ -1,5 +1,4 @@
 from copy import deepcopy
-from PyReconstruct.modules.constants.settings_domain import user_action
 import os
 
 from PySide6.QtWidgets import (
@@ -21,6 +20,7 @@ from PySide6.QtGui import (
 from .quick_dialog import QuickDialog
 from .backup import BackupDialog
 from .autoseg_palette import AutosegColorsWidget
+from .chosen_options import settings_copy_pending, store_chosen_options
 from .local_store_option import LocalStoreOptionWidget
 
 from PyReconstruct.modules.datatypes import Series
@@ -86,11 +86,7 @@ class AllOptionsDialog(QDialog):
             | Qt.WindowType.WindowMinMaxButtonsHint,
         )
         self.series = series
-        store = series._settingsStore()
-        store.contains(None, "username")
-        store.contains(series.code, "backup_dir")
-        self._copy_pending = not (store.may_save_defaults(None)
-                                  and store.may_save_defaults(series.code))
+        self._copy_pending = settings_copy_pending(series)
         self.tabs = QTabWidget(self)
         self.createWidgets()
         self.placeWidgets()
@@ -850,11 +846,8 @@ class OptionWidget(QuickDialog):
     def set(self):
         """Set the series option for the widget"""
         options = self.getOptions(self.responses)
-        with user_action():
-            for key, value in options.items():
-                if (self.force_save or key not in self.initial_options
-                        or value != self.initial_options[key]):
-                    self.series.setOption(key, value)
+        store_chosen_options(self.series, options, self.initial_options,
+                             copy_pending=not self.force_save)
         self.initial_options.update(deepcopy(options))
         self.initial_responses = deepcopy(self.responses)
     

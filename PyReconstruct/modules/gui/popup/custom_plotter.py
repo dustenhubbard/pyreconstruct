@@ -18,6 +18,7 @@ from PySide6.QtCore import Qt, QEvent
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 from PyReconstruct.modules.gui.dialog import QuickDialog, FileDialog
+from PyReconstruct.modules.gui.dialog.chosen_options import ChosenOptions
 from PyReconstruct.modules.backend.threading import ThreadPoolProgBar
 from PyReconstruct.modules.datatypes import Series
 from PyReconstruct.modules.datatypes.host_tree import HostTree
@@ -1588,6 +1589,10 @@ class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
         
     def setStep(self):
         """Set the translate/rotate increments."""
+        chosen = ChosenOptions(self.series, {
+            key: self.series.getOption(key)
+            for key in ("translate_step_3D", "rotate_step_3D")
+        })
         structure = [
             ["Translate step (in microns):", (True, "float", self.series.getOption("translate_step_3D"))],
             ["Rotate step (in degrees):", (True, "float", self.series.getOption("rotate_step_3D"))],
@@ -1596,9 +1601,7 @@ class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
         if not confirmed:
             return
         
-        with user_action():
-            self.series.setOption("translate_step_3D", response[0])
-            self.series.setOption("rotate_step_3D", response[1])
+        chosen.store({"translate_step_3D": response[0], "rotate_step_3D": response[1]})
 
     def exportScene(self):
         """Export 3D scene as an obj file."""

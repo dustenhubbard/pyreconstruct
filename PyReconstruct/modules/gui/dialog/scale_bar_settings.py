@@ -19,9 +19,9 @@ widest the bar may grow before its length steps down a decade (see
 scale_bar.pinnedLength), so it still does something; its label says which.
 The length field does nothing in share-of-field mode, so it is disabled there.
 """
-from PyReconstruct.modules.constants.settings_domain import user_action
 from PySide6.QtWidgets import QDialog, QLabel
 
+from .chosen_options import ChosenOptions
 from .quick_dialog import QuickDialog
 from PyReconstruct.modules.datatypes.default_settings import (
     MAX_SCALE_BAR_THICKNESS,
@@ -100,13 +100,6 @@ def scaleBarOptions(response):
     if validPinnedLength(response[3]):
         options["scale_bar_length_um"] = float(response[3])
     return options
-
-
-def storeScaleBarResponse(series, response):
-    """Store an accepted response (the tuple described at the top)."""
-    with user_action():
-        for key, value in scaleBarOptions(response).items():
-            series.setOption(key, value)
 
 
 def _controls(page):
@@ -193,9 +186,9 @@ class ScaleBarSettingsDialog(QuickDialog):
     """The scale bar's right-click "Scale bar settings..." dialog.
 
     The same page as the Options group, previewed on the bar as it changes.
-    OK stores every option and Cancel puts the bar back; either way the bar
-    is changed in place, so its position, visibility and right-click menu are
-    untouched.
+    OK stores the options (while a settings copy is pending, only the changed
+    ones) and Cancel puts the bar back; either way the bar is changed in
+    place, so its position, visibility and right-click menu are untouched.
     """
 
     def __init__(self, parent, series, palette=None):
@@ -203,6 +196,8 @@ class ScaleBarSettingsDialog(QuickDialog):
         self.series = series
         self.palette = palette
         self.previewed = False
+        opening = [field.getResponse()[0] for field in self.inputs]
+        self.chosen = ChosenOptions(series, scaleBarOptions(opening))
         wireScaleBarControls(self, series, self._preview)
 
     def _preview(self, settings):
@@ -213,7 +208,7 @@ class ScaleBarSettingsDialog(QuickDialog):
     def accept(self, close=True):
         if not super().accept(close=False):
             return False
-        storeScaleBarResponse(self.series, self.responses)
+        self.chosen.store(scaleBarOptions(self.responses))
         if self.palette is not None:
             self.palette.restoreScaleBar()
         self.previewed = False

@@ -26,8 +26,6 @@ so changing the *number* of colors reshuffles every id -> color assignment (not
 just the colors that changed). The status line under the preview says so the
 moment the count differs from what was loaded.
 """
-from PyReconstruct.modules.constants.settings_domain import user_action
-
 import re
 
 from PySide6.QtWidgets import (
@@ -48,6 +46,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtCore import QSize, Qt, Signal
 
+from .chosen_options import store_chosen_options
 from .helper import resizeLineEdit
 from PyReconstruct.modules.backend.autoseg.palette import (
     DEFAULT_AUTOSEG_PALETTE, palette_color, next_shuffle_seed,
@@ -553,12 +552,14 @@ class AutosegColorsWidget(QWidget):
 
     def set(self):
         """Commit the seed and palette to the series options."""
-        with user_action():
-            if not self._copy_pending or self._use_defaults or self._seed != self._initial_seed:
-                self.series.setOption("autoseg_color_seed", self._seed)
-            palette = normalize_palette(self.colors)
-            if not self._copy_pending or self._use_defaults or palette != self._initial_palette:
-                self.series.setOption("autoseg_color_palette", palette)
+        store_chosen_options(
+            self.series,
+            {"autoseg_color_seed": self._seed,
+             "autoseg_color_palette": normalize_palette(self.colors)},
+            {"autoseg_color_seed": self._initial_seed,
+             "autoseg_color_palette": self._initial_palette},
+            self._copy_pending and not self._use_defaults,
+        )
         self._initial_seed = self._seed
         self._initial_palette = normalize_palette(self.colors)
 
