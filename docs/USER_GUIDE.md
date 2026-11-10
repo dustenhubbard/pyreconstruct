@@ -577,9 +577,12 @@ Right-click either button to choose the drawing **mode**:
 ![The Closed Trace settings dialog: Mode (Scribble, Poly or Combo), Closed Trace Shape (Trace, Rectangle or Ellipse), Automatically merge overlapping traces, and Apply rolling average while scribbling.](assets/images/user-guide/06-closed-trace-mode-dialog.png)
 
 For **Closed Trace** you can also pick a fixed **shape** (freehand **Trace**,
-**Rectangle**, or **Ellipse**; drag to size) and optionally auto-merge new traces
-into selected same-named traces with the same sign, or apply a rolling-average
-smooth while scribbling.
+**Rectangle**, or **Ellipse**; drag to size). **Automatically merge overlapping
+traces** merges a new closed trace with the overlapping closed traces of the same
+name and sign. **Only merge selected traces** is checked by default, so only
+selected traces merge; clear it to include unselected traces. While the ROI box
+is on, only selected traces merge either way. You can also apply a
+rolling-average smooth while scribbling.
 
 ![A new closed trace, drawn freehand in orange beside the star with the Closed Trace tool.](assets/images/user-guide/06-closed-trace-drawn.png)
 
