@@ -128,6 +128,10 @@ def test_invalid_csv_fill_preserves_palettes_and_editor(
     ("1 1 1", "2 2 2"),
     ("0 1e308", "0 -1e308"),
     ("0 5e-324", "0 0"),
+    ("0.0000001", "0"),
+    ("0.0000001 0.0000001 0.0000001", "0 0 0"),
+    ("123.4567891 123.4567891", "-0.25 -0.25"),
+    ("4.566615243026992e-07 4.566615243026993e-07", "0 0"),
 ])
 @pytest.mark.parametrize("replace", [True, False])
 def test_zero_radius_csv_shape_preserves_palettes_and_editor(

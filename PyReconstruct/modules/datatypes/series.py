@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from contextlib import contextmanager
 from copy import copy, deepcopy
 from pathlib import Path
-from math import isfinite
+from math import hypot, isfinite
 from typing import Optional, Union
 
 from .log import LogSet, LogSetPair, LOG_READ_ERRORS, LOG_WRITE_ERRORS
@@ -34,7 +34,7 @@ from .host_tree import HostTree
 from .filters import passesFilters
 from . import collector, lazy_sections, local_stores, store_open, store_recovery, store_save
 
-from PyReconstruct.modules.calc import traceGeometry
+from PyReconstruct.modules.calc import centroid, traceGeometry
 
 from PyReconstruct.modules.constants import (
     createHiddenDir,
@@ -6725,11 +6725,24 @@ class Series():
                     t.fill_mode = fill
                     t.tags = set(tags)
                     t.points = list(zip(x, y))
-                    # the palette editor scales each shape by 1 / radius
+                    # The palette editor scales each shape to radius 1, then
+                    # divides it by its farthest point from the centroid. Both
+                    # steps round, so points that coincide, or nearly, can pass
+                    # the radius check and still leave nothing to divide by:
+                    # try the editor's steps on a copy.
                     try:
                         radius = t.getRadius()
-                        usable = isfinite(radius) and radius > 0 and isfinite(1 / radius)
-                    except OverflowError:
+                        usable = (
+                            len(set(t.points)) > 1
+                            and isfinite(radius) and radius > 0 and isfinite(1 / radius)
+                        )
+                        if usable:
+                            unit = t.copy()
+                            unit.resize(1)
+                            cx, cy = centroid(unit.points)
+                            span = max(hypot(px - cx, py - cy) for px, py in unit.points)
+                            usable = isfinite(span) and span > 0
+                    except (OverflowError, ZeroDivisionError):
                         usable = False
                     if not usable:
                         raise ValueError("Expected points that span a finite, nonzero stamp radius.")
