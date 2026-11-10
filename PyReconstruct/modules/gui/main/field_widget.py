@@ -154,6 +154,10 @@ class FieldWidget(QWidget, FieldWidgetView):
             window[3] *= h / old_h
             window[0] = center_x - window[2] / 2
             window[1] = center_y - window[3] / 2
+            # Pending vertices use screen pixels, so follow the image's
+            # translation as the centered view grows or shrinks.
+            dx, dy = (w - old_w) / 2, (h - old_h) / 2
+            self.current_trace = [(x + dx, y + dy) for x, y in self.current_trace]
 
         self.pixmap_dim = (w, h)
         self.generateView()

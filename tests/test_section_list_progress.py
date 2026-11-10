@@ -80,6 +80,9 @@ class _Stub:
                 pass
 
         class _Field:
+            def prepareProfileAdjustment(self, kind):
+                return True
+
             def reload(self):
                 table_self.reloaded += 1
 
