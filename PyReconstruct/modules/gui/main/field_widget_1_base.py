@@ -53,6 +53,7 @@ class FieldWidgetBase:
 
         self.pixmap_dim : tuple             = None
         self.section_layer : SectionLayer   = None
+        self.figure_capture                 = None
 
         self.table_manager : TableManager   = None
 
@@ -197,6 +198,8 @@ class FieldWidgetBase:
             Params:
                 series (Series): the new series to load
         """
+        if self.figure_capture is not None:
+            self.figure_capture.close()
         self.series = series
         series.setPassWriteHook(self.refreshPassWrite)
 
@@ -453,6 +456,9 @@ class FieldWidgetBase:
 
         # every focus mode change and every resize ends in a redraw
         self.updateFocusHint()
+
+        if self.figure_capture is not None:
+            self.figure_capture.refresh()
 
         if update:
             self.update()

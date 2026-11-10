@@ -1196,6 +1196,7 @@ on Windows and Linux it is `Ctrl` or `Alt`, shown after it.
 | `Cmd+O` (`Ctrl+O` on Windows/Linux) | Open a series file |
 | `Cmd+S` (`Ctrl+S` on Windows/Linux) | Save |
 | `Cmd+Shift+B` (`Ctrl+Shift+B` on Windows/Linux) | Backup series |
+| `Cmd+Shift+L` (`Ctrl+Shift+L` on Windows/Linux) | Capture a framed figure |
 | `Cmd+N` (`Ctrl+N` on Windows/Linux) | New series |
 | `Cmd+Option+R` (`Ctrl+Alt+R` on Windows/Linux) | Restart |
 | `Cmd+Q` (`Ctrl+Q` on Windows/Linux) | Quit |

@@ -275,8 +275,10 @@ def return_section_menu(self):
                 "text": "Export",
                 "opts":
                 [
-                    ("exportsvg_act", "As .svg...", "", self.exportSectionSVG),
-                    ("exportpng_act", "As .png...", "", self.exportSectionPNG),
+                    ("figurecapture_act", "Figure...", self.series, self.field.openFigureCapture),
+                    None,
+                    ("exportsvg_act", "Traces with unlabeled 1 µm bar as .svg...", "", self.exportSectionSVG),
+                    ("exportpng_act", "Traces with unlabeled 1 µm bar as .png...", "", self.exportSectionPNG),
                     ("exportroi_act", "As .roi...", "", self.exportROIFiles)
                 ]
             }

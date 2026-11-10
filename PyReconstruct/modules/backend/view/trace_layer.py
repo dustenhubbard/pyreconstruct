@@ -106,6 +106,7 @@ class TraceLayer():
         self.draw_selection = True
         self.draw_ztraces = True
         self.draw_flags = True
+        self.respect_overlay_visibility = True
 
     def penWidth(self, width):
         """A pen width in screen pixels, times pen_scale."""
@@ -941,8 +942,11 @@ class TraceLayer():
         # for a non-series option constructs a QSettings and re-reads the
         # platform store (~60 us), and these values cannot change mid-render
         fill_opacity = self.series.getOption("fill_opacity")
-        show_ztraces = self.series.getOption("show_ztraces")
-        show_flags = self.series.getOption("show_flags")
+        show_ztraces = (self.series.getOption("show_ztraces")
+                        if self.respect_overlay_visibility else True)
+        show_flags = (self.series.getOption("show_flags")
+                      if self.respect_overlay_visibility else "all")
+        overlays_visible = not focus_on or not self.respect_overlay_visibility
         flag_size = self.series.getOption("flag_size")
         self._selected_pens = self._selectedPens()
 
@@ -1045,7 +1049,7 @@ class TraceLayer():
         ## Draw ztraces
         self.zsegments_in_view = []
 
-        if show_ztraces and self.draw_ztraces and not focus_on:
+        if show_ztraces and self.draw_ztraces and overlays_visible:
 
             for ztrace in self.series.ztraces.values():
 
@@ -1058,7 +1062,7 @@ class TraceLayer():
 
         ## Draw flags
         self.flags_in_view = []
-        if show_flags != "none" and self.draw_flags and not focus_on:
+        if show_flags != "none" and self.draw_flags and overlays_visible:
             for flag in self.section.flags:
                 if show_flags == "unresolved" and flag.resolved:
                     continue
