@@ -13,7 +13,10 @@ returns at once; with no argument the command just starts the app.
   and ``<short name>`` beside it as a relative symlink. The script finds its
   own bundle by following symlinks, so a link to it from ~/.local/bin works,
   and hands the file to ``open -a <bundle>``. Written before signing, so the
-  scripts are sealed with the bundle's resources.
+  scripts are sealed with the bundle's resources. PyInstaller has already
+  sealed the bundle ad hoc by then, so the bundle is sealed again ad hoc
+  after the scripts go in; an unsigned build then still passes
+  ``codesign --verify``. A bundle signed with an identity is refused.
 * Windows: ``<app folder>\\bin\\<name>.cmd`` for both names. The installer puts
   only that ``bin`` folder on the user's PATH.
 
@@ -22,13 +25,15 @@ its short-name link in ~/.local/bin.
 
 The flavor comes from the bundle or folder name (``PyReconstruct Dev``), the
 same name the spec gives it. ``--check`` runs each command with ``--version``
-and fails unless it prints the app name and the version.
+and fails unless it prints the app name and the version; on a signed macOS
+bundle it also fails unless ``codesign --verify --deep --strict`` passes.
 """
 
 import argparse
 import os
 import plistlib
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -224,6 +229,29 @@ def _bin_dir(build, platform):
     return build / "bin"
 
 
+def _signature(app):
+    """How the bundle itself is signed: ``None``, ``"adhoc"`` or ``"identity"``.
+
+    ``None`` too where ``codesign`` does not exist (not macOS)."""
+    if shutil.which("codesign") is None:
+        return None
+    done = subprocess.run(["codesign", "--display", "--verbose=2", str(app)],
+                          capture_output=True, text=True, timeout=60)
+    if done.returncode != 0:
+        return None  # "code object is not signed at all"
+    return "adhoc" if "Signature=adhoc" in done.stderr else "identity"
+
+
+def _reseal_adhoc(app):
+    """Seal the bundle again ad hoc, so it lists the files just added.
+
+    Only the bundle's own signature changes; the code inside keeps the
+    signatures PyInstaller gave it."""
+    subprocess.run(["codesign", "--force", "--sign", "-",
+                    "--preserve-metadata=identifier,entitlements,flags,runtime", str(app)],
+                   check=True, capture_output=True, text=True, timeout=300)
+
+
 def write_shims(build, platform, version=None):
     """Write both commands into ``build``. Returns the paths written."""
     build = Path(build)
@@ -234,6 +262,9 @@ def write_shims(build, platform, version=None):
     bin_dir = _bin_dir(build, platform)
     if bin_dir.exists() and any(bin_dir.iterdir()):
         raise FileExistsError(f"{bin_dir} already holds files")
+    signature = _signature(build) if platform == "macos" else None
+    if signature == "identity":
+        raise ValueError(f"{build} is already signed; write the commands before signing it")
     bin_dir.mkdir(parents=True, exist_ok=True)
     written = []
     if platform == "macos":
@@ -242,6 +273,8 @@ def write_shims(build, platform, version=None):
         target.chmod(0o755)
         os.symlink(long_, bin_dir / short)
         written = [target, bin_dir / short]
+        if signature == "adhoc":
+            _reseal_adhoc(build)
     elif platform == "windows":
         for name in (short, long_):
             path = bin_dir / f"{name}.cmd"
@@ -280,6 +313,19 @@ def check_shims(build, platform, version=None):
                             + (f"; stderr {done.stderr.strip()!r}" if done.stderr.strip() else ""))
         else:
             print(f"{path} --version: {out}")
+    if platform == "macos" and _signature(build) is not None:
+        done = subprocess.run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(build)],
+                              capture_output=True, text=True, timeout=600)
+        if done.returncode != 0:
+            # The reason is on stderr among a line per file checked
+            # ("--prepared:", "--validated:"); the files at fault
+            # ("file added: ...") are on stdout.
+            lines = (done.stderr + "\n" + done.stdout).splitlines()
+            said = "; ".join(line.strip() for line in lines
+                             if line.strip() and not line.startswith(("--prepared:", "--validated:")))
+            problems.append(f"{build} fails codesign --verify --deep --strict: {said}")
+        else:
+            print(f"{build}: codesign --verify --deep --strict passed")
     return problems
 
 

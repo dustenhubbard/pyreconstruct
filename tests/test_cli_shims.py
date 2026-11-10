@@ -243,3 +243,72 @@ def test_windows_check_runs_each_command(tmp_path):  # pragma: no cover - Window
     folder.mkdir()
     shims.write_shims(folder, "windows", version="1.24.0")
     assert shims.check_shims(folder, "windows", "1.24.0") == []
+
+
+# ---- the macOS seal -------------------------------------------------------------
+
+codesign_only = pytest.mark.skipif(shutil.which("codesign") is None, reason="macOS codesign")
+
+
+def sealed_bundle(parent, name="PyReconstruct"):
+    """A stand-in bundle with a real executable, sealed ad hoc the way
+    PyInstaller leaves a build no identity signed."""
+    app = fake_bundle(parent, name)
+    exe = app / "Contents" / "MacOS" / name
+    shutil.copyfile("/usr/bin/true", exe)
+    exe.chmod(0o755)
+    with open(app / "Contents" / "Info.plist", "rb") as f:
+        info = plistlib.load(f)
+    info.update(CFBundleExecutable=name, CFBundleIdentifier="edu.example.sealtest",
+                CFBundlePackageType="APPL")
+    with open(app / "Contents" / "Info.plist", "wb") as f:
+        plistlib.dump(info, f)
+    (app / "Contents" / "Resources").mkdir()
+    (app / "Contents" / "Resources" / "data.txt").write_text("sealed\n")
+    subprocess.run(["codesign", "--force", "--sign", "-", str(app)], check=True,
+                   capture_output=True, timeout=60)
+    return app
+
+
+def verify(app):
+    return subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)],
+                          capture_output=True, text=True, timeout=60)
+
+
+@codesign_only
+@pytest.mark.parametrize("name", ["PyReconstruct", "PyReconstruct Dev"])
+def test_an_ad_hoc_sealed_bundle_stays_sealed(tmp_path, name):
+    app = sealed_bundle(tmp_path, name)
+    assert verify(app).returncode == 0
+    shims.write_shims(app, "macos")
+    done = verify(app)
+    assert done.returncode == 0, done.stderr
+    assert shims._signature(app) == "adhoc"
+    assert shims.check_shims(app, "macos") == []
+
+
+@codesign_only
+def test_check_reports_a_broken_seal(tmp_path):
+    app = sealed_bundle(tmp_path)
+    shims.write_shims(app, "macos")
+    (app / "Contents" / "Resources" / "late.txt").write_text("added after the seal\n")
+    problems = shims.check_shims(app, "macos")
+    assert len(problems) == 1
+    assert "codesign --verify --deep --strict" in problems[0]
+    assert "late.txt" in problems[0]
+
+
+def test_a_bundle_signed_with_an_identity_is_refused(tmp_path, monkeypatch):
+    app = fake_bundle(tmp_path)
+    monkeypatch.setattr(shims, "_signature", lambda build: "identity")
+    with pytest.raises(ValueError, match="before signing"):
+        shims.write_shims(app, "macos")
+    assert not (app / "Contents" / "Resources" / "bin").exists()
+
+
+def test_an_unsigned_bundle_is_not_signed(tmp_path, monkeypatch):
+    app = fake_bundle(tmp_path)
+    monkeypatch.setattr(shims, "_signature", lambda build: None)
+    monkeypatch.setattr(shims, "_reseal_adhoc", lambda build: pytest.fail("signed an unsigned bundle"))
+    shims.write_shims(app, "macos")
+    assert (app / "Contents" / "Resources" / "bin" / "pyreconstruct").exists()
