@@ -300,6 +300,8 @@ class SectionTableWidget(DataTable):
             
             b, c = tuple(response)
 
+        if not self.mainwindow.field.prepareProfileAdjustment("bc"):
+            return
         self.mainwindow.saveAllData()
 
         # Same shared iterator as lockSections: this loads and saves one section

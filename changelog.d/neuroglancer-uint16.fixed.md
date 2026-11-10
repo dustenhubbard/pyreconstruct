@@ -1,0 +1,1 @@
+- **16-bit Neuroglancer images display correctly after import.**

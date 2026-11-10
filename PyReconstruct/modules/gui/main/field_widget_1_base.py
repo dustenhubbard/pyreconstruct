@@ -198,6 +198,7 @@ class FieldWidgetBase:
                 series (Series): the new series to load
         """
         self.series = series
+        self.profile_adjustments = {}
         series.setPassWriteHook(self.refreshPassWrite)
 
         ## An image read ahead for the series before this one is of no use
@@ -922,6 +923,13 @@ class FieldWidgetBase:
         if (self.propagate_tform and
             not self.section.align_locked and
             new_section_num not in self.propagated_sections):
+            # A profile copy can process paint events in its progress dialog.
+            # Finish the newly loaded layer before opening that dialog.
+            self.generateView()
+            if not self.prepareProfileAdjustment("alignment"):
+                self.setPropagationMode(False)
+                self.generateView()
+                return
             current_tform = self.section.tform
             new_tform = self.stored_tform * current_tform
             # Replay the recorded delta without recording it again through

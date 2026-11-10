@@ -836,6 +836,9 @@ OUT_OF_CLASS_TRACE_EDITS = {
     "modules/backend/view/trace_layer.py::TraceLayer.getCopiedTraces":
         "DETACHED: `trace = trace.copy()` rebinds the loop name to a copy "
         "before .points is rewritten; the section's own trace is only read",
+    "modules/backend/volume/export_volumes.py::mesh_export_name":
+        "NOT A TRACE: both callers pass a plain set; `used.add(...)` inserts "
+        "only casefolded export filename strings, with no trace or store edit",
     "modules/datatypes/contour.py::Contour.importTraces.addDuplicate":
         "REPAIRED by its only caller: `Section.importTraces` is the sole "
         "caller of `Contour.importTraces`, and it ends in `_dualWriteResync()` "

@@ -1,0 +1,1 @@
+- **Object list CSV exports preserve commas, quotes and multiline comments.**
