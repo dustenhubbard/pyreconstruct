@@ -1,3 +1,4 @@
+import csv
 import re
 
 from PySide6.QtWidgets import (
@@ -952,7 +953,8 @@ class ObjectTableWidget(DataTable):
         model = self.model
         n_cols = model.columnCount()
 
-        with open(file_path, "w") as csv_file:
+        with open(file_path, "w", newline="") as csv_file:
+            writer = csv.writer(csv_file)
 
             ## Headers first
             items = []
@@ -962,7 +964,7 @@ class ObjectTableWidget(DataTable):
                 if header_title in CHECKBOX_EXPORT_COLUMNS:
                     checkable.append(c)
                 items.append(header_title)
-            csv_file.write(",".join(items) + "\n")
+            writer.writerow(items)
 
             ## Then data
             for r in range(model.rowCount()):
@@ -976,10 +978,8 @@ class ObjectTableWidget(DataTable):
                         cell_text = checkboxExportText(check_state)
                     else:
                         cell_text = model.data(index, Qt.DisplayRole) or ""
-                        if "," in cell_text:  # e.g., multiple tags
-                            cell_text = cell_text.replace(",", "")
                     items.append(cell_text)
-                csv_file.write(",".join(items) + "\n")
+                writer.writerow(items)
 
     ############################################################################
     ## Menu-related functions ##################################################

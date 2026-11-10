@@ -1,0 +1,2 @@
+- **Traces in hidden groups can no longer be picked in an empty view.**
+- **Open traces are picked only along their drawn segments and endpoints.**

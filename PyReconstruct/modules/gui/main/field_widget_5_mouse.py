@@ -1,5 +1,6 @@
 import os
 import time
+from contextlib import nullcontext
 
 from PySide6.QtCore import (
     Qt, 
@@ -132,8 +133,9 @@ class FieldWidgetMouse(FieldWidgetData):
         Called by pencilRelease and lineRelease right after newTrace, so the
         freshly drawn trace is the last trace in its contour (and selected,
         which newTrace guarantees). Only overlapping same-name closed traces
-        are eligible. By default existing traces must also be selected; turning
-        off auto_merge_selected_only allows unselected overlap targets too.
+        with the same sign are eligible. By default existing traces must also
+        be selected; turning off auto_merge_selected_only allows unselected
+        overlap targets too.
         Non-overlapping traces always remain separate.
 
         The existing traces go first in the merge list, so the merged trace
@@ -165,7 +167,7 @@ class FieldWidgetMouse(FieldWidgetData):
         )
         traces_to_merge = []
         for t in contour:
-            if t is new_trace or not t.closed:
+            if t is new_trace or not t.closed or t.negative != new_trace.negative:
                 continue
             if selected_only and t not in self.section.selected_traces:
                 continue
@@ -858,15 +860,17 @@ class FieldWidgetMouse(FieldWidgetData):
             if len(self.current_trace) < 2:
                 return
 
-            self.newTrace(
-                self.current_trace,
-                self.tracing_trace,
-                closed=closed,
-                simplify=self.series.getOption("roll_average")
-            )
-            
-            if closed and len(self.current_trace) > 2:
-                self.autoMerge()
+            # the draw and its auto-merge are one operation for the ROI box
+            with self.fieldOperation():
+                self.newTrace(
+                    self.current_trace,
+                    self.tracing_trace,
+                    closed=closed,
+                    simplify=self.series.getOption("roll_average")
+                )
+
+                if closed and len(self.current_trace) > 2:
+                    self.autoMerge()
                 
             self.current_trace = []
     
@@ -910,28 +914,35 @@ class FieldWidgetMouse(FieldWidgetData):
                 name = self.tracing_trace.name
                 contour_before = len(self.section.contours.get(name, []))
 
-                self.newTrace(
-                    current_trace_copy,
-                    self.tracing_trace,
-                    closed=closed,
-                    log_event=(log_event and (not self.is_scissoring))
+                # the draw and its auto-merge are one operation for the ROI
+                # box; a Scissors cut is not, since the trace it holds still
+                # counts until the cut ends below
+                operation = (
+                    nullcontext() if self.is_scissoring else self.fieldOperation()
                 )
+                with operation:
+                    self.newTrace(
+                        current_trace_copy,
+                        self.tracing_trace,
+                        closed=closed,
+                        log_event=(log_event and (not self.is_scissoring))
+                    )
 
-                recreated = len(self.section.contours.get(name, [])) > contour_before
+                    recreated = len(self.section.contours.get(name, [])) > contour_before
 
-                if recreated and log_event and self.is_scissoring:
-                    self.series.addLog(self.tracing_trace.name, self.section.n, "Modify trace(s)")
+                    if recreated and log_event and self.is_scissoring:
+                        self.series.addLog(self.tracing_trace.name, self.section.n, "Modify trace(s)")
 
-                # A logged draw saves its undo state inside newTrace, and
-                # autoMerge folds the merge into that state. A cut is not
-                # logged there, so it saves its state here, before the merge:
-                # otherwise autoMerge drops the state holding the section from
-                # before the cut, and Undo gives back the merged trace.
-                if recreated and self.is_scissoring:
-                    self.saveState()
+                    # A logged draw saves its undo state inside newTrace, and
+                    # autoMerge folds the merge into that state. A cut is not
+                    # logged there, so it saves its state here, before the merge:
+                    # otherwise autoMerge drops the state holding the section from
+                    # before the cut, and Undo gives back the merged trace.
+                    if recreated and self.is_scissoring:
+                        self.saveState()
 
-                if recreated and closed and len(self.current_trace) > 2:
-                    self.autoMerge()
+                    if recreated and closed and len(self.current_trace) > 2:
+                        self.autoMerge()
 
             self.current_trace = []
 
@@ -1264,7 +1275,8 @@ class FieldWidgetMouse(FieldWidgetData):
         its center is the middle of the dragged rectangle and its size, kept
         for later clicks, is the rectangle's. With drags off in the tool's
         options, a drag is a click at the press. Either one turns ROI mode on
-        if it was off. View-only, so no undo state is saved.
+        if it was off and ends following an object. View-only, so no undo
+        state is saved.
         """
         start = self.roi_box_drag_start
         self.roi_box_drag_start = None
@@ -1283,6 +1295,9 @@ class FieldWidgetMouse(FieldWidgetData):
 
         self.roi_box_on = True
         self.roi_box_center = center
+        # a box placed with the tool stays where it is put
+        self.roi_follow_name = None
+        self.roi_follow_from = None
         self.generateView()
 
     def roiBoxCenterAt(self, point : tuple) -> tuple:

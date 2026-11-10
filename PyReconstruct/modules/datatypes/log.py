@@ -2,6 +2,7 @@ import codecs
 import re
 
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from datetime import datetime
 
 from PyReconstruct.modules.constants import EXPORT_ERRORS, getDateTime, remove_days_from_today
@@ -651,46 +652,53 @@ class LogSet():
 
         existing_log = Path(hidden_dir) / "existing_log.csv"
         storage_log = Path(output_fp)
-        new_log = existing_log.with_name("new_log.csv")
 
         if storage_log.exists(): storage_log.unlink()  # remove if already exists
         
         older_than = remove_days_from_today(older_than)
 
-        # The exported file is for other programs, so a lone surrogate goes
-        # there as the text \ud800 and the file stays valid UTF-8.
-        with storage_log.open("a", encoding="utf-8", errors=EXPORT_ERRORS) as external_store, \
-                new_log.open("a", encoding="utf-8", errors=LOG_WRITE_ERRORS) as new:
+        temporary_log = NamedTemporaryFile(
+            mode="w", dir=hidden_dir, prefix="new_log-", suffix=".csv",
+            encoding="utf-8", errors=LOG_WRITE_ERRORS, delete=False,
+        )
+        new_log = Path(temporary_log.name)
+        try:
+            # The exported file is for other programs, so a lone surrogate goes
+            # there as the text \ud800 and the file stays valid UTF-8.
+            with temporary_log, storage_log.open("a", encoding="utf-8", errors=EXPORT_ERRORS) as external_store:
+                new = temporary_log.file
 
-            with existing_log.open("r", encoding="utf-8", errors=LOG_READ_ERRORS) as log:
+                with existing_log.open("r", encoding="utf-8", errors=LOG_READ_ERRORS) as log:
 
-                # where the row currently being read was sent, so its
-                # continuation lines can follow it. None until the first row.
-                current = new
+                    # where the row currently being read was sent, so its
+                    # continuation lines can follow it. None until the first row.
+                    current = new
 
-                for line in log.readlines():
+                    for line in log.readlines():
 
-                    if line.strip() == LOG_HEADER:
+                        if line.strip() == LOG_HEADER:
 
-                        external_store.write(line)
-                        new.write(line)
+                            external_store.write(line)
+                            new.write(line)
 
-                    elif ROW_START.match(line):
+                        elif ROW_START.match(line):
 
-                        log_date = line.split(",")[0].strip()
-                        log_date = datetime.strptime(log_date, "%y-%m-%d").date()
+                            log_date = line.split(",")[0].strip()
+                            log_date = datetime.strptime(log_date, "%y-%m-%d").date()
 
-                        current = external_store if log_date <= older_than else new
-                        current.write(line)
+                            current = external_store if log_date <= older_than else new
+                            current.write(line)
 
-                    else:
+                        else:
 
-                        # A continuation of the row above: a field of that row
-                        # held a literal newline. It is not a row and has no
-                        # date of its own, so it goes wherever its row went.
-                        current.write(line)
+                            # A continuation of the row above: a field of that row
+                            # held a literal newline. It is not a row and has no
+                            # date of its own, so it goes wherever its row went.
+                            current.write(line)
 
-        new_log.replace(existing_log)  # overwrite old log
+            new_log.replace(existing_log)  # overwrite only after both files close
+        finally:
+            new_log.unlink(missing_ok=True)
                         
 
 class LogSetPair():
