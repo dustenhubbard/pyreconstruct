@@ -133,8 +133,9 @@ class FieldWidgetMouse(FieldWidgetData):
         Called by pencilRelease and lineRelease right after newTrace, so the
         freshly drawn trace is the last trace in its contour (and selected,
         which newTrace guarantees). Only overlapping same-name closed traces
-        are eligible. By default existing traces must also be selected; turning
-        off auto_merge_selected_only allows unselected overlap targets too.
+        with the same sign are eligible. By default existing traces must also
+        be selected; turning off auto_merge_selected_only allows unselected
+        overlap targets too.
         Non-overlapping traces always remain separate.
 
         The existing traces go first in the merge list, so the merged trace
@@ -166,7 +167,7 @@ class FieldWidgetMouse(FieldWidgetData):
         )
         traces_to_merge = []
         for t in contour:
-            if t is new_trace or not t.closed:
+            if t is new_trace or not t.closed or t.negative != new_trace.negative:
                 continue
             if selected_only and t not in self.section.selected_traces:
                 continue
