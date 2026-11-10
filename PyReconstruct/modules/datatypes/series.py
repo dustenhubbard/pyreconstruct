@@ -6709,6 +6709,10 @@ class Series():
                     t.fill_mode = fill
                     t.tags = set(tags)
                     t.points = list(zip(x, y))
+                    # the palette editor scales each shape by 1 / radius
+                    radius = t.getRadius()
+                    if not (isfinite(radius) and radius > 0 and isfinite(1 / radius)):
+                        raise ValueError("Expected points that span a finite, nonzero stamp radius.")
                     trace_list.append(t)
             except (ValueError, csv.Error) as exc:
                 line = header_lines + reader.line_num

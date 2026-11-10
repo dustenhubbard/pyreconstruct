@@ -122,6 +122,71 @@ def test_invalid_csv_fill_preserves_palettes_and_editor(
 
 @pytest.mark.gui
 @pytest.mark.parametrize("tags_header,tags_text", [("Tags", "axon"), ("TagsJSON", '["axon"]')])
+@pytest.mark.parametrize("x_text,y_text", [
+    ("0", "0"),
+    ("2.5", "-1"),
+    ("1 1 1", "2 2 2"),
+    ("0 1e308", "0 -1e308"),
+    ("0 5e-324", "0 0"),
+])
+@pytest.mark.parametrize("replace", [True, False])
+def test_zero_radius_csv_shape_preserves_palettes_and_editor(
+    qtbot, real_series, tmp_path, tags_header, tags_text, x_text, y_text, replace
+):
+    from PyReconstruct.modules.gui.dialog.trace_palette import TracePaletteDialog
+
+    series = real_series
+    name = series.palette_index[0] if replace else "new palette"
+    series.palette_index[1] = 1
+    before = dict(series.palette_traces)
+    for palette in before:
+        series.paletteToken(palette)
+    tokens = dict(series.palette_tokens)
+    index = list(series.palette_index)
+    path = tmp_path / "bad-shape.csv"
+    with path.open("w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["Name", "Color", "Fill", tags_header, "X", "Y"])
+        writer.writerow(["valid", "10 20 30", "solid selected", tags_text, "0 2 0", "0 0 2"])
+        writer.writerow(["dot", "10 20 30", "solid selected", tags_text, x_text, y_text])
+
+    with pytest.raises(ValueError, match="Invalid palette CSV at line 3: .*radius"):
+        series.importTracePaletteCSV(str(path), name)
+
+    assert series.palette_traces == before
+    assert all(series.palette_traces[key] is value for key, value in before.items())
+    assert series.palette_tokens == tokens
+    assert series.palette_index == index
+    dialog = TracePaletteDialog(None, series)
+    qtbot.addWidget(dialog)
+    assert dialog.tab_widget.tabText(dialog.tab_widget.currentIndex()) == index[0]
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("tags_header,tags_text", [("Tags", "axon"), ("TagsJSON", '["axon"]')])
+def test_csv_line_shape_imports_and_opens_in_editor(
+    qtbot, real_series, tmp_path, tags_header, tags_text
+):
+    from PyReconstruct.modules.gui.dialog.trace_palette import TracePaletteDialog
+
+    path = tmp_path / "line.csv"
+    with path.open("w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["Name", "Color", "Fill", tags_header, "X", "Y"])
+        writer.writerow(["line", "10 20 30", "none none", tags_text, "0 2", "0 0"])
+
+    assert real_series.importTracePaletteCSV(str(path), "lines")
+
+    trace, = real_series.palette_traces["lines"]
+    assert list(trace.points) == [(0, 0), (2, 0)]
+    real_series.palette_index[:] = ["lines", 0]
+    dialog = TracePaletteDialog(None, real_series)
+    qtbot.addWidget(dialog)
+    assert dialog.tab_widget.tabText(dialog.tab_widget.currentIndex()) == "lines"
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("tags_header,tags_text", [("Tags", "axon"), ("TagsJSON", '["axon"]')])
 @pytest.mark.parametrize("color", [
     "", "10", "10 20", "10 20 30 40", "10 20 30 40 50",
     "-1 20 30", "10 -1 30", "10 20 -1",

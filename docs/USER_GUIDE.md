@@ -671,6 +671,7 @@ Palette CSV exports preserve tags containing spaces, commas, or quotes. The
 `TagsJSON` column stores a JSON list of tag strings, such as `["axon,1", "two words"]`.
 CSV imports also accept older files with space-separated tags in a `Tags` column.
 Each row needs six columns and equal numbers of finite X and Y coordinates.
+The points must not all be the same, so the shape has a stamp radius.
 The `Fill` column needs a style (`none`, `transparent`, or `solid`) and a condition
 (`none`, `selected`, `unselected`, or `always`), separated by a space.
 An invalid row cancels the import without changing any palette.
