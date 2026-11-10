@@ -1067,6 +1067,9 @@ The 3D window has its own menu bar:
   (X/Y) and `Ctrl`+Up/Down (Z). Edit its **edge length (µm)**, color, opacity, and
   outline width via **Edit ▸ Edit attributes…** (`Ctrl+E`). It's a physical
   measuring reference.
+- **Scene ▸ View ▸ Orthographic** is on in every new scene, so an object keeps
+  the same size at any depth. Turn it off for perspective, where nearer objects
+  look larger.
 - **Scene ▸ Change background** sets the background color.
 - **Scene ▸ Organize scene…** (`Ctrl+Shift+H`) lines objects up side by side, by
   host group or individually.
@@ -1074,7 +1077,9 @@ The 3D window has its own menu bar:
   0.1 µm and 10°).
 - **File ▸ Save scene… / Load scene…** save the scene (objects, colors, camera) to
   a JSON file and reload it later (also **Series ▸ 3D ▸ Load 3D scene…** from the
-  main window). **Add to scene** can also pull objects from another series.
+  main window). **Add to scene** can also pull objects from another series. The
+  saved camera includes the projection and the orthographic zoom. A scene saved
+  by an older version, without a projection, reopens in perspective.
 
 ### Saving images and exporting meshes
 
