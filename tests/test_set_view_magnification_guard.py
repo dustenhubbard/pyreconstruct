@@ -140,4 +140,3 @@ def test_live_set_view_leaves_the_window_for_an_unusable_scale(
 
     assert list(field.series.window) == before
     assert drawn == []
-
