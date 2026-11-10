@@ -598,6 +598,43 @@ _MAIN_WINDOW_SETTINGS_KEYS = (
 )
 
 
+def _top_level_widgets():
+    """The application's top-level widgets by C++ address, or {} with no app."""
+    widgets = sys.modules.get("PySide6.QtWidgets")
+    app = widgets.QApplication.instance() if widgets else None
+    if app is None:
+        return {}
+    from shiboken6 import getCppPointer
+
+    return {getCppPointer(w)[0]: w for w in app.topLevelWidgets()}
+
+
+@pytest.fixture(autouse=True)
+def _delete_windows_a_test_leaves_behind():
+    """Queue for deletion every top-level widget a test made and left alive.
+
+    A `MainWindow` or options dialog a test builds itself and only closes is
+    never deleted. `setMainWindow` and the window's own signal connections keep
+    its wrapper alive, so dropping the last test reference frees nothing, and a
+    worker ends a full run holding thousands of widgets. Each one makes every
+    later deletion slower (measured on PySide6 6.9: deleting one closed window
+    took 1 ms beside no leaked windows and 21 ms beside 40). The pending
+    deletions run in the first later test that spins an event loop, which on
+    khgpu then took over 100 s inside one `qtbot.wait`.
+
+    Widgets that existed before the test, a session window among them, are left
+    alone. Only `deleteLater` is called: the deletion runs when the event loop
+    next does, the same way the `main_window` fixture deletes its own window.
+    """
+    before = _top_level_widgets()
+    yield
+    from shiboken6 import isValid
+
+    for address, widget in _top_level_widgets().items():
+        if address not in before and isValid(widget):
+            widget.deleteLater()
+
+
 @pytest.fixture
 def qsettings_snapshot():
     """Leave `QSettings("KHLab", "PyReconstruct")` as the test found it.
