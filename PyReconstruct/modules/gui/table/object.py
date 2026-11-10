@@ -953,7 +953,7 @@ class ObjectTableWidget(DataTable):
         model = self.model
         n_cols = model.columnCount()
 
-        with open(file_path, "w", newline="") as csv_file:
+        with open(file_path, "w", encoding="utf-8", newline="") as csv_file:
             writer = csv.writer(csv_file)
 
             ## Headers first
