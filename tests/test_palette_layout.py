@@ -257,6 +257,29 @@ def test_controls_without_room_still_leave_presets_reachable(
         assert main_window.childAt(button.geometry().center()) is button
 
 
+def test_the_scale_bar_leaves_the_contrast_control_reachable(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path):
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    local_series_settings(main_window)
+    settings = QSettings(str(tmp_path / "positions.ini"), QSettings.IniFormat)
+    monkeypatch.setattr(mouse_palette, "_position_settings", lambda: settings)
+    main_window.resize(1280, 800)
+    main_window.show()
+    qapp.processEvents()
+    main_window.series.setOption("tool_palette_cols", 12)
+    main_window.resize(500, 300)
+    qapp.processEvents()
+    palette = main_window.mouse_palette
+    palette.reset()
+    palette.resize()
+    qapp.processEvents()
+    for widget in [*(w for pair in palette.bc_widgets for w in pair), palette.sb]:
+        assert main_window.childAt(widget.geometry().center()) is widget
+    assert not palette.sb.geometry().intersects(palette.bc_widgets[1][0].geometry())
+    assert mouse_palette.load_palette_positions(settings) == {}
+
+
 @pytest.mark.parametrize("tool_cols", [1, 5, 12])
 @pytest.mark.parametrize("copies", [1, 3, 5, 10])
 def test_resizing_fits_large_palettes_without_changing_the_preferences(main_window, palette, qapp, tool_cols, copies):
@@ -379,3 +402,63 @@ def test_invalid_dimensions_do_not_save(main_window, palette, qtbot, monkeypatch
     assert notices
     assert main_window.series.getOption("trace_palette_per_row") == 10
     dialog.reject()
+
+
+SWEEP_ROWS = (1, 10, 20, 100)
+SWEEP_COLS = (1, 3, 12)
+SWEEP_SPOTS = ((0.01, 0.01), (0.99, 0.01), (0.5, 0.5), (0.01, 0.99), (0.99, 0.99))
+TIGHT_WINDOWS = {(450, 300), (400, 300)}
+
+
+def missed_controls(main_window, palette):
+    """Names of the clickable controls whose center does not hit them."""
+    field = main_window.field.geometry()
+    targets = [("trace", b) for b in [*palette.palette_buttons, *palette.palette_side_buttons]]
+    targets += [("tool", b) for b, _, _ in palette.mode_buttons.values()]
+    targets += [("inc", b) for b in palette.inc_buttons]
+    targets += [("bc", w) for pair in palette.bc_widgets for w in pair]
+    targets += [("sb", palette.sb)]
+    missed = set()
+    for name, widget in targets:
+        center = widget.geometry().center()
+        if not field.contains(center) or main_window.childAt(center) is not widget:
+            missed.add(name)
+    return sorted(missed)
+
+
+@pytest.mark.parametrize("window", [(1280, 800), (800, 600), (600, 400), (500, 300), (450, 300), (400, 300)])
+def test_every_control_is_reachable_across_layouts(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path, window):
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    local_series_settings(main_window)
+    settings = QSettings(str(tmp_path / "positions.ini"), QSettings.IniFormat)
+    monkeypatch.setattr(mouse_palette, "_position_settings", lambda: settings)
+    main_window.resize(*window)
+    main_window.show()
+    qapp.processEvents()
+    series = main_window.series
+    saved = [{}] + [
+        {f"{group}_x": x, f"{group}_y": y}
+        for group in mouse_palette.DEFAULT_POSITIONS for x, y in SWEEP_SPOTS
+    ]
+    failures = []
+    for rows in SWEEP_ROWS:
+        for cols in SWEEP_COLS:
+            series.setOption("trace_palette_per_row", rows)
+            series.setOption("tool_palette_cols", cols)
+            palette = main_window.mouse_palette
+            palette.reset()
+            for positions in saved:
+                mouse_palette.set_default_positions(palette)
+                for key, value in positions.items():
+                    setattr(palette, key, value)
+                palette.resize()
+                missed = missed_controls(main_window, palette)
+                if window in TIGHT_WINDOWS:
+                    missed = [name for name in missed if name in ("trace", "tool")]
+                if missed:
+                    failures.append((rows, cols, positions, missed))
+                assert {key: getattr(palette, key) for key in positions} == positions
+    assert mouse_palette.load_palette_positions(settings) == {}
+    assert not failures, f"{window}: {len(failures)} of {len(SWEEP_ROWS) * len(SWEEP_COLS) * len(saved)}: {failures[:5]}"

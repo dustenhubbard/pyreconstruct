@@ -122,7 +122,7 @@ from PyReconstruct.modules.constants import build_flavor
 from PyReconstruct.modules.constants.roi_mode import roi_mode_enabled
 from PyReconstruct.modules.datatypes import Series, Trace
 from PyReconstruct.modules.datatypes.trace import copyObjDefaults
-from PyReconstruct.modules.datatypes.default_settings import default_settings, pinnedLengthFor
+from PyReconstruct.modules.datatypes.default_settings import pinnedLengthFor
 from PyReconstruct.modules.constants import (
     locations as loc
 )
@@ -148,35 +148,82 @@ def fitPaletteGrid(count, columns, size, gap, width, height):
 
 def boxSpots(x, y, w, h, obstacles, area, gap):
     """Top-left corners to try for a w by h box: (x, y), beside each
-    obstacle, and their mixes, each kept inside area."""
-    candidates = [(x, y)]
+    obstacle, and their mixes, each kept inside area, without repeats."""
+    xs, ys = [x], [y]
     for rect in obstacles:
-        candidates.extend([
-            (rect.left() - gap - w, y), (x, rect.top() - gap - h),
-            (rect.right() + gap, y), (x, rect.bottom() + gap),
-        ])
-    xs = [cx for cx, _ in candidates]
-    ys = [cy for _, cy in candidates]
-    candidates.extend((cx, cy) for cx in xs for cy in ys)
-    return [
-        (max(area.left(), min(cx, area.right() - w)),
-         max(area.top(), min(cy, area.bottom() - h)))
-        for cx, cy in candidates
-    ]
+        xs += [rect.left() - gap - w, rect.right() + gap]
+        ys += [rect.top() - gap - h, rect.bottom() + gap]
+    left, top = area.left(), area.top()
+    right, bottom = area.right() - w, area.bottom() - h
+    xs = list(dict.fromkeys(max(left, min(cx, right)) for cx in xs))
+    ys = list(dict.fromkeys(max(top, min(cy, bottom)) for cy in ys))
+    return [(cx, cy) for cx in xs for cy in ys]
 
 
 def nearestClearSpot(x, y, w, h, obstacles, area, gap):
     """The spot nearest (x, y) where the box stays gap clear of every
     obstacle, or None. A box that only touches the gap's edge is clear:
     the half pixel absorbs rounding in the fractional positions."""
-    clear = []
-    for cx, cy in boxSpots(x, y, w, h, obstacles, area, gap):
-        box = QRectF(cx, cy, w, h).adjusted(0.5 - gap, 0.5 - gap, gap - 0.5, gap - 0.5)
-        if not any(box.intersects(rect) for rect in obstacles):
-            clear.append((cx, cy))
-    if not clear:
+    reach = gap - 0.5
+    rects = [(r.left() - reach - w, r.top() - reach - h, r.right() + reach, r.bottom() + reach)
+             for r in obstacles]
+    spots = boxSpots(x, y, w, h, obstacles, area, gap)
+    for cx, cy in sorted(spots, key=lambda p: (p[0] - x)**2 + (p[1] - y)**2):
+        if all(cx <= left or cx >= right or cy <= top or cy >= bottom
+               for left, top, right, bottom in rects):
+            return cx, cy
+    return None
+
+
+def clearSpot(x, y, w, h, obstacles, area):
+    """The spot nearest (x, y) clear of every obstacle, 10 px apart if
+    there is room and touching if not; None if there is no such spot."""
+    for gap in (10, 0):
+        spot = nearestClearSpot(x, y, w, h, obstacles, area, gap)
+        if spot is not None:
+            return spot
+    return None
+
+
+def leastCoveringSpot(x, y, w, h, obstacles, area):
+    """With no clear spot, the one that covers the least of the obstacles."""
+    def covered(p):
+        box = QRectF(p[0], p[1], w, h)
+        return sum(box.intersected(rect).width() * box.intersected(rect).height()
+                   for rect in obstacles)
+    return min(boxSpots(x, y, w, h, obstacles, area, 0),
+               key=lambda p: (covered(p), (p[0] - x)**2 + (p[1] - y)**2))
+
+
+def largestFit(low, high, fit):
+    """The largest size in low..high for which fit(size) is not None, with
+    that result, or None. A smaller box fits where a larger one does, so
+    after trying high, then low, the rest is a binary search."""
+    if low > high:
         return None
-    return min(clear, key=lambda p: (p[0] - x)**2 + (p[1] - y)**2)
+    found = fit(high)
+    if found is not None:
+        return high, found
+    found = fit(low)
+    if found is None:
+        return None
+    best = low, found
+    low, high = low + 1, high - 1
+    while low <= high:
+        size = (low + high + 1) // 2
+        found = fit(size)
+        if found is None:
+            high = size - 1
+        else:
+            best, low = (size, found), size + 1
+    return best
+
+
+def spanOf(area, left, right, top, bottom):
+    """The (x1, x2, y1, y2) a saved fraction maps onto: area less the
+    group's reach on each side of its anchor."""
+    return (area.left() + left, area.right() - right,
+            area.top() + top, area.bottom() - bottom)
 
 
 class MousePalette():
@@ -757,103 +804,166 @@ class MousePalette():
         self.updateBC()
     
     def getButtonCoords(self, group):
-        """Get the coordinates for a button group.
-        
+        """Where a group is drawn: the top-left corner, or for the trace
+        palette the anchor its buttons are centered on.
+
             Params:
                 group (str): the name of the button group.
         """
-        x1, x2, y1, y2 = self.getBounds()[group]
-        x = getattr(self, f"{group}_x")
-        y = getattr(self, f"{group}_y")
-        x = (x * (x2 - x1)) + x1
-        y = (y * (y2 - y1)) + y1
-        if group == "trace":
-            x, y = self.clearOfTools(x, y, (x1, x2, y1, y2))
-        elif group in ("inc", "bc", "sb"):
-            tool_cols, _, tool_size = self.modeGrid()
-            trace_cols, _, trace_size = self.traceGrid()
-            if (self.atDefaultPosition(group) or
-                    self.trace_palette_per_row != default_settings["trace_palette_per_row"] or
-                    self.tool_palette_cols != default_settings["tool_palette_cols"] or
-                    tool_cols != min(self.tool_palette_cols, len(self.mode_buttons)) or
-                    tool_size != self.mblen or
-                    trace_cols != min(self.trace_palette_per_row, self.palette_button_count) or
-                    trace_size != self.pblen):
-                x, y = self.clearOfPalettes(group, x, y)
-        return x, y
+        return self.layout()[group]
 
-    def clearOfTools(self, x, y, bounds):
-        """Move the drawn trace group clear of tools without changing its saved spot."""
-        x1, x2, y1, y2 = bounds
-        region = self.traceRegion()
-        left, right = x1 - region.left(), region.right() - x2
-        top, bottom = y1 - region.top(), region.bottom() - y2
-        tx, ty = self.getButtonCoords("mode")
-        cols, rows, size = self.modeGrid()
-        tools = [QRectF(tx, ty, (size + 10) * cols - 10, (size + 10) * rows - 10)]
-        # the group's whole box, label included, placed by its top-left corner
-        w, h = left + right, top + bottom
-        area = QRectF(x1 - left, y1 - top, x2 - x1 + w, y2 - y1 + h)
-        for gap in (10, 0):
-            spot = nearestClearSpot(x - left, y - top, w, h, tools, area, gap)
-            if spot is not None:
-                return spot[0] + left, spot[1] + top
-        return x, y
-
-    def atDefaultPosition(self, group):
-        """True if the user has not dragged the group from its default spot."""
-        x = getattr(self, f"{group}_x")
-        y = getattr(self, f"{group}_y")
-        return (x, y) == DEFAULT_POSITIONS[group]
-
-    def clearOfPalettes(self, group, x, y):
-        """Keep controls clear of resized grids without changing saved spots."""
-        w, h = {
+    def groupSize(self, group):
+        """The width and height of a group with a fixed shape."""
+        if group == "mode":
+            cols, rows, size = self.modeGrid()
+            return (size + 10) * cols - 10, (size + 10) * rows - 10
+        return {
             "inc": (self.ibw, self.ibh*2 + 15),
             "bc": (self.bcsize*6 + 5, self.bcsize*2 + 20),
             "sb": (self.sb.width(), self.sb.height()) if hasattr(self, "sb") else (10, 50),
         }[group]
-        gap = 10
-        tx, ty = self.getButtonCoords("mode")
-        cols, rows, size = self.modeGrid()
-        tw = (size + gap) * cols - gap
-        th = (size + gap) * rows - gap
-        obstacles = [QRectF(tx, ty, tw, th)]
-        tx, ty = self.getButtonCoords("trace")
-        trace_width, trace_height = self.traceGridSize(*self.traceGrid())
-        obstacles.append(QRectF(
-            tx - trace_width // 2, ty - trace_height // 2,
-            trace_width + self.pblen + 3, max(trace_height, self.pblen * 2 + 1),
-        ))
-        if group in ("bc", "sb"):
-            ix, iy = self.getButtonCoords("inc")
-            obstacles.append(QRectF(ix, iy, self.ibw, self.ibh * 2 + 15))
-        elif group == "inc" and self.atDefaultPosition("bc"):
-            bx1, bx2, by1, by2 = self.getBounds()["bc"]
-            obstacles.append(QRectF(
-                bx1 + self.bc_x * (bx2 - bx1), by1 + self.bc_y * (by2 - by1),
-                self.bcsize * 6 + 5, self.bcsize * 2 + 20,
-            ))
-        if group == "sb":
-            bx, by = self.getButtonCoords("bc")
-            obstacles.append(QRectF(bx, by, self.bcsize * 6 + 5, self.bcsize * 2 + 20))
 
+    @staticmethod
+    def spotIn(fraction, bounds):
+        """A saved fraction of 0..1 mapped onto (x1, x2, y1, y2)."""
+        x1, x2, y1, y2 = bounds
+        return fraction[0] * (x2 - x1) + x1, fraction[1] * (y2 - y1) + y1
+
+    def savedFractions(self):
+        """Each group's saved spot, as fractions of its bounds."""
+        return {group: (getattr(self, f"{group}_x"), getattr(self, f"{group}_y"))
+                for group in DEFAULT_POSITIONS}
+
+    def layoutKey(self):
+        """Everything the layout depends on."""
+        return (
+            self.mainwindow.field.geometry().getRect(),
+            tuple(self.savedFractions().items()),
+            self.trace_palette_per_row, self.tool_palette_cols,
+            self.palette_button_count, len(self.mode_buttons),
+            self.sb.size().toTuple() if hasattr(self, "sb") else None,
+            self.label.sizeHint().toTuple() if hasattr(self, "label") else None,
+        )
+
+    def layout(self):
+        """Where each group is drawn, and the trace grid's shape.
+
+        The groups are placed one at a time: the tools, the section
+        buttons, brightness/contrast, the scale bar, and last the trace
+        palette, the one group that can wrap and shrink. Each goes to the
+        spot nearest where it was left that is clear of every group placed
+        before it. When a group has no clear spot, the default arrangement
+        is tried. In a window too small for either, the controls keep clear
+        of the tools only, so they may cover each other, and the trace
+        buttons take the room that is left; failing that too, each group
+        covers as little as it can. Saved positions are never changed.
+        """
+        key = self.layoutKey()
+        if key != getattr(self, "_layout_key", None):
+            saved = self.savedFractions()
+            attempts = ((saved, False), (DEFAULT_POSITIONS, False),
+                        (saved, True), (DEFAULT_POSITIONS, True))
+            placed = next(filter(None, (self.arrange(f, tight) for f, tight in attempts)), None)
+            self._layout_key = key
+            self._layout = placed or self.arrange(saved, tight=True, force=True)
+        return self._layout
+
+    def arrange(self, fractions, tight=False, force=False):
+        """Every group placed from these fractions clear of the ones before
+        it, the controls only of the tools when tight. None if a group has
+        no clear spot, unless forced."""
         field = QRectF(self.mainwindow.field.geometry())
-        # A small window can leave no room with the full gap. Then the
-        # control may touch its neighbors, and then cover another control,
-        # but never a tool or trace button while any spot is clear of them.
-        buttons = obstacles[:2]
-        for spacing, blockers in ((gap, obstacles), (0, obstacles), (0, buttons)):
-            spot = nearestClearSpot(x, y, w, h, blockers, field, spacing)
-            if spot is not None:
-                return spot
+        w, h = self.groupSize("mode")
+        placed = {"mode": self.spotIn(fractions["mode"], spanOf(field, 0, w, 0, h))}
+        tools = [QRectF(*placed["mode"], w, h)]
+        boxes = list(tools)
+        for group in ("inc", "bc", "sb"):
+            w, h = self.groupSize(group)
+            # a bar wider than its room is drawn as far left as it must be
+            x, y = self.spotIn(fractions[group], spanOf(field, 0, 10 if group == "sb" else w, 0, h))
+            spot = clearSpot(x, y, w, h, tools if tight else boxes, field)
+            if spot is None:
+                if not force:
+                    return None
+                spot = leastCoveringSpot(x, y, w, h, tools, field)
+            placed[group] = spot
+            boxes.append(QRectF(*spot, w, h))
+        trace = self.placeTrace(fractions["trace"], boxes, field)
+        if trace is None:
+            if not force:
+                return None
+            trace = (self.placeTrace(fractions["trace"], tools, field) or
+                     self.coverTrace(fractions["trace"], tools, field))
+        placed["trace"], placed["trace grid"] = trace
+        return placed
 
-        def covered(p):
-            box = QRectF(p[0], p[1], w, h)
-            return sum(box.intersected(rect).width() * box.intersected(rect).height()
-                       for rect in buttons)
-        return min(boxSpots(x, y, w, h, buttons, field, 0),
-                   key=lambda p: (covered(p), (p[0] - x)**2 + (p[1] - y)**2))
+    def traceAnchor(self, fraction, shape, obstacles, field, find):
+        """Where find puts the trace group with this grid, as its anchor;
+        None if clearSpot finds no room."""
+        if find is clearSpot and not self.traceFits(shape, fraction, field):
+            return None
+        left, right, top, bottom = self.traceExtents(*shape, fraction[1])
+        x, y = self.spotIn(fraction, spanOf(field, left, right, top, bottom))
+        found = find(x - left, y - top, left + right, top + bottom, obstacles, field)
+        return None if found is None else (found[0] + left, found[1] + top)
+
+    def traceColumns(self):
+        """Row lengths to try, the requested one first, then the fewest
+        columns for each row count, nearest the requested length first."""
+        count = max(1, self.palette_button_count)
+        preferred = max(1, min(self.trace_palette_per_row, count))
+        fewest = {}
+        for cols in range(1, count + 1):
+            fewest.setdefault(math.ceil(count / cols), cols)
+        columns = sorted({*fewest.values()} - {preferred}, key=lambda c: (abs(c - preferred), c))
+        return [(cols, math.ceil(count / cols)) for cols in [preferred, *columns]]
+
+    def placeTrace(self, fraction, obstacles, field):
+        """The trace palette's anchor and grid, clear of the other groups:
+        the largest buttons that fit, at the requested row length if it
+        fits at that size. None if no grid fits."""
+        best = None
+        for cols, rows in self.traceColumns():
+            fit = largestFit(
+                best[1][2] + 1 if best else 1, self.pblen,
+                lambda size, cols=cols, rows=rows: self.traceAnchor(
+                    fraction, (cols, rows, size), obstacles, field, clearSpot),
+            )
+            if fit is not None:
+                size, anchor = fit
+                best = anchor, (cols, rows, size)
+            if best and best[1][2] == self.pblen:
+                break
+        return best
+
+    def coverTrace(self, fraction, obstacles, field):
+        """With no clear spot, the requested row length at the largest size
+        that fits the field, where it covers the least of the obstacles."""
+        cols, rows = self.traceColumns()[0]
+        size = next((size for size in range(self.pblen, 1, -1)
+                     if self.traceFits((cols, rows, size), fraction, field)), 1)
+        shape = (cols, rows, size)
+        return self.traceAnchor(fraction, shape, obstacles, field, leastCoveringSpot), shape
+
+    def traceFits(self, shape, fraction, field):
+        """True if the trace group with this grid fits inside the field."""
+        left, right, top, bottom = self.traceExtents(*shape, fraction[1])
+        return left + right <= field.width() and top + bottom <= field.height()
+
+    def traceExtents(self, cols, rows, size, trace_y=None):
+        """How far the trace group reaches left, right, up and down from its
+        anchor: the buttons, the side buttons and the label."""
+        width, height = self.traceGridSize(cols, rows, size)
+        label = self.label.sizeHint() if hasattr(self, "label") else QSize(0, 30)
+        left = max(width // 2, math.ceil(label.width() / 2))
+        right = max(width - width // 2 + self.pblen + 3, math.ceil(label.width() / 2))
+        top = height // 2
+        bottom = max(height, self.pblen * 2 + 1) - height // 2
+        if (self.trace_y if trace_y is None else trace_y) > 0.5:
+            top += label.height() + 4
+        else:
+            bottom += label.height() + 4
+        return left, right, top, bottom
 
     def moveButton(self, dx, dy, group):
         """Move a button group.
@@ -891,83 +1001,22 @@ class MousePalette():
         )
 
     def traceGrid(self):
-        field = self.traceRegion()
-        label_height = self.label.sizeHint().height() if hasattr(self, "label") else 30
-        return fitPaletteGrid(
-            self.palette_button_count, self.trace_palette_per_row, self.pblen, 0,
-            max(1, int(field.width()) - self.pblen - 7),
-            max(1, int(field.height()) - label_height - 10),
-        )
-
-    def traceRegion(self):
-        """Reserve control space when the trace grid fills most of the field."""
-        field = QRectF(self.mainwindow.field.geometry())
-        label_height = self.label.sizeHint().height() if hasattr(self, "label") else 30
-        cols, rows, fitted_size = fitPaletteGrid(
-            self.palette_button_count, self.trace_palette_per_row, self.pblen, 0,
-            max(1, int(field.width()) - self.pblen - 7),
-            max(1, int(field.height()) - label_height - 10),
-        )
-        trace_width, trace_height = self.traceGridSize(cols, rows, fitted_size)
-        cols, rows, size = self.modeGrid()
-        tool_width = (size + 10) * cols - 10
-        tool_height = (size + 10) * rows - 10
-        right = self.bcsize * 6 + 25
-        top = tool_height + 10 if tool_width > right else 0
-        bottom = max(50, self.sb.height() if hasattr(self, "sb") else 50) + 10
-        if (fitted_size == self.pblen and
-                trace_width + self.pblen + 3 <= field.width() - right and
-                max(trace_height, self.pblen * 2 + 1) + label_height + 4 <= field.height() - top - bottom):
-            return field
-        return QRectF(
-            field.x(), field.y() + top,
-            max(1, field.width() - right), max(1, field.height() - top - bottom),
-        )
+        return self.layout()["trace grid"]
 
     @staticmethod
     def traceGridSize(cols, rows, size):
         return cols * size + (2 if cols > 1 else 0), rows * size + (2 if rows > 1 else 0)
 
     def getBounds(self):
-        """Get the bounds for the buttons."""
-
-        field    = self.mainwindow.field
-        
-        fx1      = field.x()
-        fx2      = fx1 + field.width()
-        fy1      = field.y()
-        fy2      = fy1 + field.height()
-
-        pblen    = self.pblen
-        ibw      = self.ibw
-        ibh      = self.ibh
-        bcsize   = self.bcsize
-
-        cols, rows, size = self.modeGrid()
-        mode_width = (size + 10) * cols - 10
-        mode_height = (size + 10) * rows - 10
-        trace_width, trace_height = self.traceGridSize(*self.traceGrid())
-        trace_field = self.traceRegion()
-        label_size = self.label.sizeHint() if hasattr(self, "label") else QSize(0, 30)
-        trace_left = max(trace_width // 2, math.ceil(label_size.width() / 2))
-        trace_right = max(trace_width - trace_width // 2 + pblen + 3,
-                          math.ceil(label_size.width() / 2))
-        trace_top = trace_height // 2
-        trace_bottom = max(trace_height, pblen * 2 + 1) - trace_height // 2
-        if self.trace_y > 0.5:
-            trace_top += label_size.height() + 4
-        else:
-            trace_bottom += label_size.height() + 4
-
-        return {
-            "mode": (fx1, fx2 - mode_width, fy1, fy2 - mode_height),
-            "trace": (trace_field.left() + trace_left, trace_field.right() - trace_right,
-                      trace_field.top() + trace_top, trace_field.bottom() - trace_bottom),
-            "inc": (fx1, fx2 - ibw, fy1, fy2 - ibh*2 - 15),
-            "bc": (fx1, fx2 - 6*bcsize - 5, fy1, fy2 - 2*bcsize - 20),
-            # the bar's height follows its thickness option
-            "sb": (fx1, fx2 - 10, fy1, fy2 - (self.sb.height() if "sb" in dir(self) else 50))
-        }
+        """Where each group's saved fraction of 0..1 maps to: (x1, x2, y1, y2)."""
+        field = QRectF(self.mainwindow.field.geometry())
+        bounds = {}
+        for group in ("mode", "inc", "bc", "sb"):
+            w, h = self.groupSize(group)
+            # the bar's saved spot may leave less room than its width
+            bounds[group] = spanOf(field, 0, 10 if group == "sb" else w, 0, h)
+        bounds["trace"] = spanOf(field, *self.traceExtents(*self.traceGrid()))
+        return bounds
 
     def loadVisibilityState(self):
         """Restore palette-visibility flags from the persisted preferences."""

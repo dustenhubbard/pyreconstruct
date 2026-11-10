@@ -4,9 +4,10 @@ The tool column, the brightness/contrast sliders and the section buttons all
 default to the field's right edge, stacked top to bottom. In a short window
 the column reached down into the other two: the sliders lay over the last
 tools, and the section buttons covered the bottom of the column, so clicks
-there went to the wrong widget. A group at its default spot now moves left
-of the column when it would touch it. Field sizes are the ones measured on
-macOS for 1280 x 720 and 1280 x 668 windows.
+there went to the wrong widget. A group that would touch the column is now
+drawn beside it, and a dragged group is drawn where it was left whenever it
+fits. Field sizes are the ones measured on macOS for 1280 x 720 and
+1280 x 668 windows.
 """
 import pytest
 from PySide6.QtCore import QRect
@@ -67,12 +68,21 @@ def test_tall_window_keeps_the_default_layout(main_window, palette):
 
 def test_a_dragged_group_stays_where_it_was_put(main_window, palette):
     _fit(main_window, palette, 1280, 662)
+    palette.bc_x, palette.bc_y = 0.5, 0.3
+    palette.resize()
+    x1, x2, y1, y2 = palette.getBounds()["bc"]
+    _, sliders, _ = _groups(palette)
+    assert (sliders.x(), sliders.y()) == (int(0.5 * (x2 - x1) + x1), int(0.3 * (y2 - y1) + y1))
+
+
+def test_a_group_dragged_onto_the_tools_is_drawn_beside_them(main_window, palette):
+    _fit(main_window, palette, 1280, 662)
     # dragged to just under its default spot, still against the column
     palette.bc_y = 0.79
     palette.resize()
-    x1, x2, _, _ = palette.getBounds()["bc"]
-    _, sliders, _ = _groups(palette)
-    assert sliders.x() == int(0.99 * (x2 - x1) + x1)
+    tools, sliders, _ = _groups(palette)
+    assert not tools.intersects(sliders), (tools, sliders)
+    assert palette.bc_y == 0.79
 
 
 def test_a_drag_starts_from_where_the_group_is_drawn(main_window, palette):
