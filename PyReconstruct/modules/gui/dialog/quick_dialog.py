@@ -294,7 +294,7 @@ class QuickTabDialog(QuickDialog):
 
     def accept(self):
         """Overwritten from parent class."""
-        self.responses = {"current_tab_text": self.tab_widget.tabText(self.tab_widget.currentIndex())}
+        self.responses = {}
 
         for tab_name, inputs in self.inputs.items():
             self.responses[tab_name] = []

@@ -304,6 +304,7 @@ class FieldWidget(QWidget, FieldWidgetView):
             self.clicked_y = self.mouse_y
         self.click_time = time.time()
         self.single_click = True
+        self.click_travel = 0
 
         # if any finger touch
         #
@@ -414,6 +415,8 @@ class FieldWidget(QWidget, FieldWidgetView):
         # if any finger touch
         if self.is_gesturing:
             return
+
+        self.trackClickTravel(event)
         
         # check if user is zooming with the mouse wheel
         if self.mainwindow.is_zooming:
@@ -494,6 +497,8 @@ class FieldWidget(QWidget, FieldWidgetView):
         # if any finger touch
         if self.is_gesturing:
             return
+
+        self.trackClickTravel(event)
         
         # panzoom if middle button
         if self.mclick:
@@ -515,6 +520,8 @@ class FieldWidget(QWidget, FieldWidgetView):
             return
 
         if self.mouse_mode == POINTER:
+            # The release can be the first position beyond the click tolerance.
+            self.pointerMove(event)
             self.pointerRelease(event)
         elif self.mouse_mode == PANZOOM:
             self.mousePanzoomRelease(event)
@@ -534,6 +541,7 @@ class FieldWidget(QWidget, FieldWidgetView):
         ):
             self.traceRelease(event)
         elif self.mouse_mode == STAMP:
+            self.stampMove(event)
             self.stampRelease(event)
         elif self.mouse_mode == GRID:
             self.gridRelease(event)
