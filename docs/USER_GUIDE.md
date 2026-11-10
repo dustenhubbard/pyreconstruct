@@ -633,9 +633,10 @@ its dialog, where you can edit its name/color, add comments, and mark it
 
 Sets host (parent) relationships between objects. **Click a first trace** (the
 object that will be hosted), then **click a second trace** (its host); a line is
-drawn between them while you choose. **Right-click** to cancel. An object can't host
-itself, and two objects can't host each other. Hosts also appear as a column in the
-object list and can be set from the object list's context menu.
+drawn between them while you choose. **Right-click** to cancel. Changing tools also
+cancels an unfinished host link. An object can't host itself, and two objects can't
+host each other. Hosts also appear as a column in the object list and can be set
+from the object list's context menu.
 
 ### Z-trace tool
 
