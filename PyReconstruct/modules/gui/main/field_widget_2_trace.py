@@ -1512,6 +1512,12 @@ class FieldWidgetTrace(FieldWidgetBase):
                 if trace.closed == False:
                     notify("Please merge only closed traces.")
                     return False
+                if trace.negative != first_trace.negative:
+                    notify(
+                        "Cannot merge positive and negative traces together. "
+                        "Please select traces with the same sign."
+                    )
+                    return False
                 # field units, not screen pixels: the merge grid is tied to
                 # the image so the result no longer changes with the zoom
                 # (fork issue #423)
