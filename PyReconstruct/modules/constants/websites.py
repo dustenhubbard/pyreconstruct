@@ -1,5 +1,6 @@
 kh_web = "https://synapseweb.clm.utexas.edu/harrislab"
-kh_wiki = "https://wikis.utexas.edu/display/khlab/PyReconstruct+user+guide"
+kh_wiki = "https://pyreconstruct.org/harrislabwiki/"
+kh_user_guide = "https://cloud.wikis.utexas.edu/wiki/spaces/khlab/pages/53543200/PyReconstruct+user+guide"
 kh_atlas = "https://synapseweb.clm.utexas.edu/atlas"
 # This fork, where all in-app menu links (source code, issues, feature requests)
 # point. Upstream provenance is credited in the README and the About dialog.
