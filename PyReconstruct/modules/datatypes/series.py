@@ -3581,13 +3581,28 @@ class Series():
 
     #### Series-wide trace functions ###############################################################
     
-    def deleteObjects(self, obj_names : list, series_states=None):
+    def deleteObjects(self, obj_names : list, series_states=None) -> dict:
         """Delete object(s) from the series.
-        
+
+        An object with traces is deleted by the save of its last section
+        (SeriesData.updateSection). One with no traces that the series still
+        keeps (its sections were deleted, an import emptied it) has no
+        section to save, so it is deleted here: its attributes, groups and
+        host links go, and the name's next traces are a new object.
+
             Params:
                 obj_names (list): the objects to delete
                 series_states (dict): for use with GUI states
+            Returns:
+                (dict): group -> its visibility, for each group the delete
+                    emptied and dropped (the caller rebuilds the Groups menu)
         """
+        traceless = [
+            name for name in obj_names
+            if name not in self.data["objects"] and self._keepsObject(name)
+        ]
+        groups_before = set(self.object_groups.getGroupList())
+
         def edit(section):
             modified = False
             for obj_name in obj_names:
@@ -3609,8 +3624,50 @@ class Series():
             return modified  # deleting object will automatically be logged
 
         self._forEachObjectSection(
-            obj_names, "Deleting object(s)...", edit, series_states
+            obj_names, "Deleting object(s)...", edit, series_states,
+            writes_after=bool(traceless),
         )
+
+        for name in traceless:
+            self.addLog(name, None, "Delete object")
+            self.host_tree.deleteKept(name)
+            self.removeObjAttrs(name)
+        if traceless:
+            self.modified = True
+
+        return self._dropEmptiedGroupViz(groups_before)
+
+    def _keepsObject(self, name : str) -> bool:
+        """True if the series keeps anything for an object name: attributes,
+        a group, or host links."""
+        return bool(
+            name in self.obj_attrs
+            or self.object_groups.getObjectGroups(name)
+            or self.host_tree.keptIds(name)
+        )
+
+    def _dropEmptiedGroupViz(self, groups_before) -> dict:
+        """Drop the visibility entry of each group an action emptied.
+
+        `View` > `Groups` lists groups from these entries, so an emptied group
+        kept its row. A series undo of the action gives the group back the
+        value it had (SeriesState.applySeriesAttributes), and
+        `emptied_group_viz` keeps it for a section undo that brings the group
+        back (dropEmptiedGroups in state_manager does the same for section
+        steps).
+
+            Params:
+                groups_before (iterable): the groups before the action
+            Returns:
+                (dict): group -> its visibility, for each entry dropped
+        """
+        emptied = set(groups_before) - set(self.object_groups.getGroupList())
+        dropped = {
+            group: self.groups_visibility.pop(group)
+            for group in emptied if group in self.groups_visibility
+        }
+        self.emptied_group_viz.update(dropped)
+        return dropped
 
         self.modified = True
 
@@ -3900,6 +3957,18 @@ class Series():
                 if self.getObjectSections([obj_name]) - set(sections):
                     kept.add(obj_name)
 
+        ## An object renamed off its last trace loses its old name's
+        ## attributes and groups when that section is saved
+        ## (SeriesData.updateSection). One with no traces has no section to
+        ## save, so the full rename clears the old name after the move.
+        traceless = []
+        if name:
+            traceless = [
+                obj_name for obj_name in obj_names
+                if obj_name != name and obj_name not in kept
+                and obj_name not in self.data["objects"]
+            ]
+
         ## Modify object on every section
         attrs_migrated = False
         section_numbers = self.getObjectSections(obj_names)
@@ -3970,6 +4039,9 @@ class Series():
                         obj_name, name, keep_old=obj_name in kept
                     )
             attrs_migrated = True
+
+        for obj_name in traceless:
+            self.removeObjAttrs(obj_name)
 
         self.modified = True
 
@@ -6269,8 +6341,9 @@ class Series():
         #
         # The invariant that made the del safe is still an invariant, and
         # tests/test_remove_obj_attrs_guard.py pins it rather than leaving it to
-        # an incidental KeyError. The only caller, SeriesData.updateSection,
-        # calls addLog(obj_name, None, "Delete object") on the line above, and
+        # an incidental KeyError. The caller for an object with traces,
+        # SeriesData.updateSection, calls addLog(obj_name, None, "Delete
+        # object") on the line above, and
         # addLog writes setAttr(obj_name, "last_user", self.user), which creates
         # obj_attrs[obj_name]. That holds only while obj_name is truthy and
         # series.user is not None; neither is checked at the call site.
