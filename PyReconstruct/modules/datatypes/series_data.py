@@ -1,6 +1,8 @@
 """Collect data to pass to table manager."""
 
 import contextlib
+import csv
+import io
 from typing import Optional, Union
 
 from PyReconstruct.modules.calc import traceGeometry
@@ -1064,7 +1066,10 @@ class SeriesData():
             Params:
                 out_fp (str): filepath of exported CSV (str returned if no filepath provided)
         """
-        out_rows = ["Name,Section,Index,Hidden,Closed,Tags,Length,Area,Radius,Centroid-x,Centroid-y,Feret-Max,Feret-Min"]
+        out_rows = [[
+            "Name", "Section", "Index", "Hidden", "Closed", "Tags", "Length",
+            "Area", "Radius", "Centroid-x", "Centroid-y", "Feret-Max", "Feret-Min",
+        ]]
 
         ## Iterate through all traces
         objs = self.data["objects"]
@@ -1133,7 +1138,7 @@ class SeriesData():
 
                     vals = list(map(str, vals))
 
-                    rows_by_name[name].append(','.join(vals))
+                    rows_by_name[name].append(vals)
 
         ## Objects in name order; within an object the rows are already in
         ## ascending section then ascending index order
@@ -1141,11 +1146,13 @@ class SeriesData():
 
             out_rows += rows_by_name[name]
 
-        out_str = "\n".join(out_rows) + "\n"
+        output = io.StringIO(newline="")
+        csv.writer(output).writerows(out_rows)
+        out_str = output.getvalue()
 
         # export the csv file
         if out_fp:
-            with open(out_fp, "w", errors=EXPORT_ERRORS) as f:
+            with open(out_fp, "w", errors=EXPORT_ERRORS, newline="") as f:
                 f.write(out_str)
         else:
             return out_str
