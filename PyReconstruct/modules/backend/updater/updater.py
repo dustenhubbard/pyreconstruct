@@ -355,6 +355,25 @@ def is_newer_than(version_text, local):
     return compare_versions(remote, local) == "newer"
 
 
+def nightly_releases_since(releases, offered, remote, local):
+    """The offered release and published nightlies skipped since ``local``.
+
+    Keep the offer even for a reinstall or downgrade. An unknown local
+    version has no catch-up interval, so only the offer is shown.
+    """
+    if not offered or remote is None:
+        return []
+    selected = {remote: offered}
+    if local is not None:
+        for release in releases:
+            version = _tag_version(release)
+            if (not release.get("draft") and release.get("prerelease")
+                    and version is not None and version.is_devrelease
+                    and local < version < remote):
+                selected[version] = release
+    return [selected[version] for version in sorted(selected, reverse=True)]
+
+
 # --- High-level check (needs platform/version) --------------------------------
 
 def check_for_update(channel, releases=None):
@@ -386,6 +405,8 @@ def check_for_update(channel, releases=None):
         "remote_version": str(remote_v) if remote_v else None,
         "local_version": str(local_v) if local_v else None,
         "status": compare_versions(remote_v, local_v),
+        "nightly_releases": nightly_releases_since(releases, release, remote_v, local_v)
+        if channel == "prerelease" else [],
     }
 
 
@@ -497,6 +518,8 @@ def check_for_reinstall(channel, kind, releases=None):
         "remote_version": str(remote_v) if remote_v else None,
         "local_version": str(local_v) if local_v else None,
         "status": compare_versions(remote_v, local_v),
+        "nightly_releases": nightly_releases_since(releases, release, remote_v, local_v)
+        if channel == "prerelease" else [],
         "command": reinstall_command(kind, dev=dev, ref=ref),
     }
 

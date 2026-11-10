@@ -432,7 +432,7 @@ def posix_paths(monkeypatch):
 
     from PyReconstruct.modules.datatypes import series as series_module
 
-    monkeypatch.setattr(series_module, "os", SimpleNamespace(path=posixpath))
+    monkeypatch.setattr(series_module, "os", SimpleNamespace(path=posixpath, scandir=os.scandir))
     return posixpath
 
 

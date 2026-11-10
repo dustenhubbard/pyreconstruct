@@ -468,7 +468,30 @@ class SeriesData():
             for snum in obj_data.traces
         )
     
-    def updateSection(self, section : Section, update_traces=False, all_traces=True, log_events=True, read_store=False):
+    def refreshObjects(self, names):
+        """Reload only named objects on the sections containing their traces.
+
+        Unmatched objects keep their cached measurements. As with a full
+        refresh, removed traces retain object attributes and host links.
+        """
+        section_names = {}
+        for name in set(names):
+            obj = self.objects.get(name)
+            if obj is not None:
+                for snum in obj.traces:
+                    section_names.setdefault(snum, set()).add(name)
+        if not section_names:
+            return
+        for snum, section in self.series.enumerateSections(
+            section_numbers=section_names,
+            message="Refreshing object data...",
+        ):
+            self.updateSection(
+                section, update_traces=True, log_events=False,
+                read_store=True, trace_names=section_names[snum],
+            )
+
+    def updateSection(self, section : Section, update_traces=False, all_traces=True, log_events=True, read_store=False, trace_names=None):
         """Update the existing section data.
         
             Params:
@@ -483,6 +506,8 @@ class SeriesData():
                     earlier. `Section.save` reads the contours: an edit made
                     outside `Section` can make the store stale until the save
                     rebuilds it, and the save updates the series data first.
+                trace_names (iterable): explicit names to update, overriding
+                    section tracking and all_traces when provided
         """
         # create/update the data for a section
         if section.n not in self.data["sections"]:
@@ -514,10 +539,13 @@ class SeriesData():
         if update_traces:
             
             ## Check if there are specific traces to be updated
-            trace_names = section.getAllModifiedNames()
+            if trace_names is None:
+                trace_names = section.getAllModifiedNames()
 
-            if section.tformsModified(scaling_only=True) or (all_traces and not trace_names):
-                trace_names = section.contours.keys()
+                if section.tformsModified(scaling_only=True) or (all_traces and not trace_names):
+                    trace_names = section.contours.keys()
+            else:
+                trace_names = tuple(trace_names)
 
             ## Keep track of objects that are newly created/destroyed
             added_objects = set()

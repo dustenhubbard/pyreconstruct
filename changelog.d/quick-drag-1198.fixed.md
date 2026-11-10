@@ -1,0 +1,1 @@
+- **Quick drags work for drawing, trace movement, selection and stamp sizing.**
