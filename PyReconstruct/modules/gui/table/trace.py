@@ -496,14 +496,14 @@ class TraceTableWidget(DataTable):
         if not confirmed:
             return
         
-        filters = {s.replace("#", "[0-9]") for s in (response[0] or [".*"])}
+        re_filters = {s.replace("#", "[0-9]") for s in (response[0] or [".*"])}
         try:
-            for pattern in filters:
+            for pattern in re_filters:
                 re.compile(pattern)
         except (re.error, OverflowError, RecursionError) as error:
-            notify(f"Invalid regex filter: {error}")
+            notify(f"Invalid regex filter {pattern!r}: {error}")
             return
-        self.re_filters = filters
+        self.re_filters = re_filters
 
         # call through manager to update self
         self.manager.recreateTable(self)
