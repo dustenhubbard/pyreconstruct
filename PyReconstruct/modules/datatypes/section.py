@@ -1729,6 +1729,7 @@ class Section():
         self.added_traces = []
         self.removed_traces = []
         self.modified_contours = set()
+        self.ztraces_before = {}
         self.tforms_values_copy = [t.copy() for t in self.tforms.values()]
         self.tforms_names_copy = list(self.tforms)
         self.flags_modified = False
@@ -3200,6 +3201,10 @@ class Section():
                 self.series.addLog(trace.name, self.n, "Modify trace(s)")
         
         for ztrace, i in self.selected_ztraces:
+            # A series action may have regenerated this z-trace since the
+            # section's last snapshot. Record the actual pre-move points.
+            if ztrace.name not in self.ztraces_before:
+                self.ztraces_before[ztrace.name] = ztrace.copy()
             x, y, snum = ztrace.points[i]
             # apply forward tform
             x, y = tform.map(x, y)
