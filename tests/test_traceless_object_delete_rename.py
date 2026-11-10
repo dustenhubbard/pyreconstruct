@@ -80,11 +80,14 @@ def saved(series, path):
     series.saveJser(str(path))
     data = json.loads(path.read_bytes())["series"]
     names = (H, T, K, X)
+    # the comment and pin only: a rename logs before its undo state is
+    # taken, so an undone rename leaves the new name its last_user
+    attrs = {
+        name: {a: v for a, v in attrs.items() if a in ("comment", "alignment")}
+        for name, attrs in data["obj_attrs"].items() if name in (H, X)
+    }
     return {
-        "attrs": {
-            name: {a: v for a, v in attrs.items() if a in ("comment", "alignment")}
-            for name, attrs in data["obj_attrs"].items() if name in (H, X)
-        },
+        "attrs": {name: values for name, values in attrs.items() if values},
         "groups": {
             group: members for group, members in data["object_groups"].items()
             if group == GROUP
@@ -112,6 +115,7 @@ def test_deleting_a_traceless_object_removes_its_metadata_and_links(
     series.deleteObjects([H], series_states=states)
     deleted = {"attrs": {}, "groups": {}, "links": {}}
     assert saved(series, tmp_path / "deleted.jser") == deleted
+    assert H not in series.obj_attrs
     assert series.object_groups.getObjectGroups(H) == set()
     assert GROUP not in series.groups_visibility
     assert series.host_tree.getHosts(T) == []
@@ -123,6 +127,7 @@ def test_deleting_a_traceless_object_removes_its_metadata_and_links(
         assert series.host_tree.keptId(H) == old_id
         states.undoState(redo=True)
         assert saved(series, tmp_path / f"redo-{step}.jser") == deleted
+        assert H not in series.obj_attrs
         assert GROUP not in series.groups_visibility
 
     # a new H is a new object: it has a new id and none of the old links
@@ -152,6 +157,7 @@ def test_a_full_rename_of_a_traceless_object_leaves_nothing_on_the_old_name(
         assert series.groups_visibility[GROUP] is False
         states.undoState(redo=True)
         assert saved(series, tmp_path / f"redo-{step}.jser") == renamed
+        assert H not in series.obj_attrs
         assert series.groups_visibility[GROUP] is False
 
 
