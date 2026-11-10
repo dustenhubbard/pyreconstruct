@@ -940,7 +940,7 @@ _TESTS_DIR = os.path.dirname(os.path.abspath(__file__)) + os.sep
 
 
 @pytest.fixture(autouse=True)
-def _series_option_writes_stay_local(request, monkeypatch):
+def _series_option_writes_stay_local(request):
     """Fail a test that writes a `Series` option into the session's shared store.
 
     The suite redirects `QSettings` once per worker session
@@ -990,8 +990,12 @@ def _series_option_writes_stay_local(request, monkeypatch):
             )
         return real(self, option_name, value)
 
-    monkeypatch.setattr(Series, "setOption", setOption)
-    yield
+    # its own patcher, not the `monkeypatch` fixture: an autouse fixture that
+    # requested that one would set it up first and so undo every test's own
+    # patches after the test's other fixtures had torn down
+    with pytest.MonkeyPatch.context() as patcher:
+        patcher.setattr(Series, "setOption", setOption)
+        yield
 
 
 @pytest.fixture
