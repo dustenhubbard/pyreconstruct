@@ -320,3 +320,76 @@ def test_fresh_pointer_lasso_selects_only_what_it_encloses(
     field.mouseReleaseEvent(FakeMouseEvent(400, 350))
 
     assert [trace.name for trace in field.section.selected_traces] == ["inside"]
+
+
+@pytest.mark.parametrize("points", [1, 2])
+def test_unfinished_ztrace_stays_out_of_a_fresh_pointer_lasso(
+    main_window, local_series_settings, points
+):
+    local_series_settings(main_window)
+    field = main_window.field
+    palette = main_window.mouse_palette
+    field.series.setOption("pointer", ["rect", "inc"])
+    field.tracing_trace = Trace("kept_ztrace", (255, 0, 255))
+    _add_square(field, "outside", 240, 180, 280, 220)
+    _add_square(field, "inside", 360, 310, 390, 340)
+    field.section.selected_traces.clear()
+    palette.activateModeButton("Ztool")
+    for i in range(points):
+        field.mousePressEvent(FakeMouseEvent(150 + 20 * i, 150 + 20 * i, HELD))
+        if i < points - 1:
+            field.mouseReleaseEvent(FakeMouseEvent(150 + 20 * i, 150 + 20 * i))
+    kept = list(field.current_ztrace)
+
+    # The last Ztool press is still held when the tool changes.
+    palette.activateModeButton("Pointer")
+    field.mouseReleaseEvent(FakeMouseEvent(170, 170))
+    assert field.current_trace == []
+    field.mousePressEvent(FakeMouseEvent(350, 300, HELD))
+    field.mouseMoveEvent(FakeMouseEvent(351, 300, HELD))
+    field.click_time = 0
+    field.mouseMoveEvent(FakeMouseEvent(400, 350, HELD))
+    field.mouseReleaseEvent(FakeMouseEvent(400, 350))
+    assert [trace.name for trace in field.section.selected_traces] == ["inside"]
+
+    # Back in Ztool, the z-trace goes on from its own points.
+    palette.activateModeButton("Ztool")
+    assert field.current_ztrace == kept
+    field.mousePressEvent(FakeMouseEvent(200, 200, HELD))
+    field.mouseReleaseEvent(FakeMouseEvent(200, 200))
+    field.mousePressEvent(FakeMouseEvent(200, 200, Qt.RightButton))
+    field.mouseReleaseEvent(FakeMouseEvent(200, 200))
+    saved = field.series.ztraces["kept_ztrace"].points
+    assert saved[:points] == kept
+    assert len(saved) == points + 1
+    assert not field.is_z_tracing
+
+
+@pytest.mark.parametrize("held", [False, True])
+def test_tool_change_ends_a_host_link_under_way(
+    main_window, local_series_settings, held
+):
+    local_series_settings(main_window)
+    field = main_window.field
+    palette = main_window.mouse_palette
+    _add_square(field, "old_hosted", 240, 180, 280, 220)
+    _add_square(field, "new_hosted", 360, 310, 390, 340)
+    field.section.selected_traces.clear()
+    palette.activateModeButton("Host")
+    field.mousePressEvent(FakeMouseEvent(260, 180, HELD))
+    field.mouseReleaseEvent(FakeMouseEvent(260, 180))
+    assert field.hosted_trace.name == "old_hosted"
+    hosts = field.series.host_tree.getDict()
+
+    if held:
+        field.mousePressEvent(FakeMouseEvent(350, 300, HELD))
+    palette.activateModeButton("Pointer")
+    if held:
+        field.mouseReleaseEvent(FakeMouseEvent(350, 300))
+    palette.activateModeButton("Host")
+    # This click starts a new link instead of finishing the old one.
+    field.mousePressEvent(FakeMouseEvent(375, 310, HELD))
+    field.mouseReleaseEvent(FakeMouseEvent(375, 310))
+
+    assert field.hosted_trace.name == "new_hosted"
+    assert field.series.host_tree.getDict() == hosts

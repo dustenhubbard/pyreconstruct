@@ -55,10 +55,12 @@ class FieldWidgetMouse(FieldWidgetData):
             self.dropPress()
             # The dropped release cannot clear the old stroke's points, and
             # the next pointer lasso would start from them. A host link under
-            # way ends with its line.
-            if not self.is_z_tracing:
-                self.current_trace = []
+            # way ends with its line. An unfinished z-trace keeps its points
+            # in current_ztrace, so Ztool gets them back below.
+            self.current_trace = []
             self.hosted_trace = None
+            if mode == ZTOOL and self.is_z_tracing:
+                self.current_trace = [(x, y) for x, y, _ in self.current_ztrace]
 
         self.mouse_mode = mode
 
