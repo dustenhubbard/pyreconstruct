@@ -8,7 +8,21 @@ class TransformImportError(Exception):
     """A transforms file that cannot be imported. The message is for the user."""
 
 
-def importTransforms(series : Series, tforms_fp : str, series_states=None, log_event=True):
+class AlignmentExistsError(TransformImportError):
+    """Importing would replace an existing alignment without permission."""
+
+
+def transformImportAlignment(series, path, overwrite=False):
+    """Name an imported alignment, requiring permission to replace one."""
+    fname = os.path.splitext(os.path.basename(path))[0]
+    date, _ = getDateTime()
+    name = f"{fname}-{date}"
+    if name in series.alignments and not overwrite:
+        raise AlignmentExistsError(f"Alignment '{name}' already exists.")
+    return name
+
+
+def importTransforms(series : Series, tforms_fp : str, series_states=None, log_event=True, *, overwrite=False):
         """Import transforms from a text file.
         
             Params:
@@ -39,15 +53,21 @@ def importTransforms(series : Series, tforms_fp : str, series_states=None, log_e
                     f"Line {line_num} is for section {section_num}, "
                     "which is not in this series."
                 )
-            tforms[section_num] = tform
+            # Validate in series units before saving any section.
+            mag = series.loadSection(section_num).mag
+            tform[2] *= mag
+            tform[5] *= mag
+            transform = Transform(tform)
+            if not transform.isInvertible():
+                raise TransformImportError(
+                    f"Line {line_num} does not contain a finite, invertible transform."
+                )
+            tforms[section_num] = transform
         if not tforms:
             raise TransformImportError("The file has no transforms.")
         
         # set tforms
-        fname = os.path.basename(tforms_fp)
-        fname = fname[:fname.rfind(".")]
-        d, t = getDateTime()
-        new_alignment_name = f"{fname}-{d}"
+        new_alignment_name = transformImportAlignment(series, tforms_fp, overwrite)
         for section_num, section in series.enumerateSections(
             message="Importing transforms...",
             series_states=series_states,
@@ -56,12 +76,9 @@ def importTransforms(series : Series, tforms_fp : str, series_states=None, log_e
         ):
             if section_num in tforms:
                 tform = tforms[section_num]
-                # multiply pixel translations by magnification of section
-                tform[2] *= section.mag
-                tform[5] *= section.mag
             else:
-                tform = section.tform.getList()
-            section.tforms[new_alignment_name] = Transform(tform)
+                tform = section.tform.copy()
+            section.tforms[new_alignment_name] = tform
             section.save()
         series.alignment = new_alignment_name
         series.save()

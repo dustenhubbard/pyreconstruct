@@ -2792,7 +2792,8 @@ class Section():
                 field_y,
                 points,
                 factor=1/self.mag,
-                absolute=False
+                absolute=False,
+                closed=trace.closed,
             )
             if closest is None or abs(dist) < min_distance:
                 min_distance = abs(dist)
