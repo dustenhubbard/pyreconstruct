@@ -2591,18 +2591,29 @@ class MainWindow(QMainWindow):
             )
         if not tforms_fp: return
 
-        alignments_before = set(self.series.alignments)
+        self._importTransformFile(importTransforms, tforms_fp)
 
-        # import the transforms
+    def _importTransformFile(self, importer, path, *args):
+        """Import an alignment, confirming replacement before changing sections."""
+        alignments_before = set(self.series.alignments)
+        kwargs = {"series_states": self.field.series_states}
         try:
-            importTransforms(self.series, tforms_fp, series_states=self.field.series_states)
+            try:
+                note = importer(self.series, path, *args, **kwargs)
+            except AlignmentExistsError as e:
+                if not notifyConfirm(f"{e} Replace its transforms?", yn=True):
+                    return
+                note = importer(self.series, path, *args, overwrite=True, **kwargs)
         except TransformImportError as e:
             notify(f"No transforms were imported. {e}")
             return
 
         self._finishTransformImport(alignments_before)
 
-        notify("Transforms imported successfully.")
+        if note:
+            notify(f"Transforms imported successfully. {note}")
+        else:
+            notify("Transforms imported successfully.")
 
     def _finishTransformImport(self, alignments_before):
         """Refresh the window after a transform import succeeds.
@@ -2660,23 +2671,10 @@ class MainWindow(QMainWindow):
         scale = response[0]
         cal_grid = response[1][0][1]
 
-        alignments_before = set(self.series.alignments)
-
         # import transforms
         print(f'Importing SWiFT transforms at scale {scale}...')
         if cal_grid: print('Cal grid included in series')
-        try:
-            note = importSwiftTransforms(self.series, swift_fp, scale, cal_grid, series_states=self.field.series_states)
-        except TransformImportError as e:
-            notify(f"No transforms were imported. {e}")
-            return
-
-        self._finishTransformImport(alignments_before)
-
-        if note:
-            notify(f"Transforms imported successfully. {note}")
-        else:
-            notify("Transforms imported successfully.")
+        self._importTransformFile(importSwiftTransforms, swift_fp, scale, cal_grid)
     
     def editImage(self, option : str, direction : str, log_event=True):
         """Edit the brightness or contrast of the image.
@@ -3311,23 +3309,39 @@ class MainWindow(QMainWindow):
 
         # double check if user entered a valid backup directory
         if os.path.isdir(self.series.backupFolder(create=True)):
-            fp = self.series.getBackupPath(comment)
+            fp = self.series.getBackupPath(comment, check_existing=False)
             if "\0" in fp:
                 # a NUL in the series code, the user name, the comment or a
                 # name part in Backup Settings: the copy would raise
                 # ValueError on the path
                 self._refuseNulBackup("file", from_saved)
                 return
-            if (
-                from_saved
-                and self.series.jser_fp
-                and os.path.isfile(self.series.jser_fp)
-            ):
-                # the series was just saved -- copy those bytes instead of
-                # re-dumping the entire (potentially very large) jser again
-                shutil.copyfile(self.series.jser_fp, fp)
-            else:
-                self.series.saveJser(fp)
+            # Claim the name before either writer can replace it. Another
+            # window or process may be backing up the same series code here.
+            stem = fp.removesuffix(".jser")
+            n = 0
+            while True:
+                try:
+                    with open(fp, "xb"):
+                        pass
+                    break
+                except FileExistsError:
+                    n += 1
+                    fp = f"{stem}-{n:02d}.jser"
+            try:
+                if (
+                    from_saved
+                    and self.series.jser_fp
+                    and os.path.isfile(self.series.jser_fp)
+                ):
+                    # the series was just saved -- copy those bytes instead of
+                    # re-dumping the entire (potentially very large) jser again
+                    shutil.copyfile(self.series.jser_fp, fp)
+                else:
+                    self.series.saveJser(fp)
+            except BaseException:
+                os.remove(fp)
+                raise
             return fp
         else:
             notify(
@@ -5712,6 +5726,9 @@ class MainWindow(QMainWindow):
         
         if sections is None:
             sections = list(self.series.sections.keys())
+
+        if not sections or not self.field.prepareProfileAdjustment("bc"):
+            return
 
         # optimizeSeriesBC loads each section from disk and saves it, and the
         # reload below puts those copies in the field, so anything drawn

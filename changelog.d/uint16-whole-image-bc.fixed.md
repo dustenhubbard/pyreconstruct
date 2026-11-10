@@ -1,0 +1,1 @@
+- **Brightness optimization uses the displayed levels of 16-bit Zarr images.**
