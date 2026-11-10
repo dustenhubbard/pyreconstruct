@@ -125,16 +125,26 @@ def test_trace_tool_change_does_not_reuse_a_still_or_line_press(
     assert _state(field) == before
 
 
+@pytest.fixture
+def isolated_field_menu(main_window, local_series_settings, monkeypatch):
+    """`field_menu` after the settings swap, which rebuilds the context menus."""
+    local_series_settings(main_window)
+    shown = []
+    monkeypatch.setattr(
+        main_window.field_menu, "exec", lambda *a, **kw: shown.append(a)
+    )
+    return shown
+
+
 @pytest.mark.parametrize("mode", [CLOSEDTRACE, OPENTRACE])
 def test_combo_menu_release_does_not_start_a_trace(
-    main_window, field_menu, local_series_settings, mode  # noqa: F811
+    main_window, isolated_field_menu, mode
 ):
-    local_series_settings(main_window)
     field = main_window.field
     field.series.setOption("trace_mode", "combo")
     field.setMouseMode(mode)
     field.mousePressEvent(FakeMouseEvent(200, 200, Qt.RightButton))
-    assert len(field_menu) == 1
+    assert len(isolated_field_menu) == 1
     field.mouseReleaseEvent(FakeMouseEvent(200, 200))
     assert not field.is_line_tracing
     assert field.current_trace == []
