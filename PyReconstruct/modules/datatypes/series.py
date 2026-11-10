@@ -6067,12 +6067,13 @@ class Series():
                 g = group
         return g
     
-    def addLog(self, obj_name : str, snum : int, event : str):
+    def addLog(self, obj_name : str, snum : Optional[int], event : str):
         """Add a log to the log set.
-        
+
             Params:
                 obj_name (str): the name of the modified object
-                snum (int): the section number of the event
+                snum (int): the section number of the event, or None for
+                    an event on the whole series
                 event (str): the description of the event
         """
         self.log_set.addLog(self.user, obj_name, snum, event)
