@@ -11,10 +11,9 @@ and macOS, the Dev build for now) stages the update next to the install instead,
 dialog says it goes in when the user quits, with a Restart Now button. If it
 cannot, the same download step fetches the installer, as before.
 
-It deliberately does *not* render the release notes. Those belong to the version
-the user is running, and are shown once, on the first launch after the update
-lands (``gui.dialog.whats_new``). This dialog links to them instead, for anyone
-who wants to read them before deciding.
+Dev builds show the offered and skipped nightly change lists before installation,
+followed by earlier Stable notes. Stable builds link to the release notes and
+show their bundled notes once after an update.
 """
 import threading
 import tempfile
@@ -25,14 +24,15 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar,
     QPushButton, QLineEdit, QApplication,
 )
-from PySide6.QtGui import QFontDatabase
+from PySide6.QtGui import QFontDatabase, QPalette, QTextCursor
 from PySide6.QtCore import Qt
 
 from PyReconstruct.modules.backend.threading import ThreadPool
 from PyReconstruct.modules.backend.updater.updater import (
     download_asset, verified_checksum, channel_display_name, UpdateCancelled,
 )
-from PyReconstruct.modules.gui.main.first_launch import github_release_url
+from PyReconstruct.modules.gui.main.first_launch import github_release_url, dev_update_notes
+from PyReconstruct.modules.gui.dialog.whats_new import LinkLabel, NotesBrowser
 
 
 def human_size(n):
@@ -43,6 +43,47 @@ def human_size(n):
         n /= 1024
 
 
+class UpdateNotesBrowser(NotesBrowser):
+    """Keep the nightly PR and changelog links visible in either theme."""
+
+    def render(self):
+        super().render()
+        cursor = QTextCursor(self.document())
+        block = self.document().begin()
+        while block.isValid():
+            fragments = block.begin()
+            while not fragments.atEnd():
+                fragment = fragments.fragment()
+                fmt = fragment.charFormat()
+                if fmt.isAnchor():
+                    fmt.setForeground(self.palette().color(QPalette.Link))
+                    fmt.setFontUnderline(True)
+                    cursor.setPosition(fragment.position())
+                    cursor.setPosition(fragment.position() + fragment.length(), QTextCursor.KeepAnchor)
+                    cursor.setCharFormat(fmt)
+                fragments += 1
+            block = block.next()
+
+
+def _add_release_notes(layout, info, *, after_update=False):
+    remote = info["remote_version"]
+    nightlies = info.get("nightly_releases")
+    if nightlies:
+        browser = UpdateNotesBrowser(dev_update_notes(nightlies, remote))
+        browser.setMinimumHeight(300)
+        layout.addWidget(browser)
+        label = "View release on GitHub"
+    else:
+        if after_update and info["status"] == "newer":
+            layout.addWidget(QLabel(f"See what's new the first time you open {remote}."))
+        label = f"Release notes for {remote} ↗"
+    label_class = LinkLabel if nightlies else QLabel
+    link = label_class(f'<a href="{github_release_url(remote)}">{label}</a>')
+    link.setTextFormat(Qt.RichText)
+    link.setOpenExternalLinks(True)
+    layout.addWidget(link)
+
+
 class UpdateDialog(QDialog):
     """Presents an available update and performs the download/verify in place.
 
@@ -51,8 +92,6 @@ class UpdateDialog(QDialog):
     the installer. An update staged in place sets ``parent._pending_inplace``
     instead and waits: Later keeps it for the next quit, Restart Now sets
     ``restart_now`` and accepts. The dialog never launches anything itself.
-
-    The release notes are linked, not rendered: see the module docstring.
     """
 
     def __init__(self, parent, info, channel):
@@ -88,20 +127,9 @@ class UpdateDialog(QDialog):
         sub = f"You have {local}  ·  channel: {self._channel_name}  ·  download: {human_size(self._asset.get('size'))}"
         lay.addWidget(QLabel(sub))
 
-        # No notes body here. Rendering them at this point showed the user the
-        # notes for a version they have not installed and may decline, then
-        # showed the same notes again on the first launch after the update
-        # landed. The post-update showing is the one that matches what is in
-        # front of the reader, so this dialog links to the notes and says when
-        # they will appear.
-        if status == "newer":
-            lay.addWidget(QLabel(f"See what's new the first time you open {remote}."))
-        link = QLabel(
-            f'<a href="{github_release_url(remote)}">Release notes for {remote} ↗</a>'
-        )
-        link.setTextFormat(Qt.RichText)
-        link.setOpenExternalLinks(True)
-        lay.addWidget(link)
+        _add_release_notes(lay, info, after_update=True)
+        if info.get("nightly_releases"):
+            self.resize(760, 600)
 
         from PyReconstruct.modules.backend.updater import inplace
         from PyReconstruct.modules.backend.updater.install_info import os_key
@@ -355,12 +383,9 @@ class ReinstallDialog(QDialog):
         row.addWidget(self.copy_btn)
         lay.addLayout(row)
 
-        link = QLabel(
-            f'<a href="{github_release_url(remote)}">Release notes for {remote} ↗</a>'
-        )
-        link.setTextFormat(Qt.RichText)
-        link.setOpenExternalLinks(True)
-        lay.addWidget(link)
+        _add_release_notes(lay, info)
+        if info.get("nightly_releases"):
+            self.resize(760, 600)
 
         buttons = QHBoxLayout()
         buttons.addStretch(1)

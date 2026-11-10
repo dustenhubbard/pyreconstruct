@@ -182,6 +182,7 @@ class _OptimizeBCStub:
             window=[0, 0, 10, 10],
         )
         self.field = types.SimpleNamespace(
+            prepareProfileAdjustment=lambda kind: True,
             reload=lambda: None,
             table_manager=types.SimpleNamespace(
                 updateSections=lambda *a, **k: None
