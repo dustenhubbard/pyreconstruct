@@ -127,10 +127,9 @@ def test_tab_dialog_validates_other_tabs_before_accepting(qtbot, notices):
     assert notices == ["Please enter an integer."]
 
     dialog.inputs["Count"][0].widget.setText("2")
-    dialog.tab_widget.setCurrentIndex(1)
     button.click()
     assert dialog.result() == QDialog.Accepted
-    assert dialog.responses == {"current_tab_text": "Count", "Name": ["cell2"], "Count": [2]}
+    assert dialog.responses == {"Name": ["cell2"], "Count": [2]}
 
 
 def test_cancel_returns_no_response_even_with_edited_fields(qtbot):
