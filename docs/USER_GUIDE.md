@@ -222,12 +222,13 @@ The picture shows an example offer. Version 9.9.9 does not exist.
 Under **Help ▸ Automatically check for updates** you can turn the startup
 check on or off. It is **on by default**. When enabled, an installed build does a quiet
 background check at most **once per day**; if an upgrade is available,
-**Update available** and the version appear on the right of the status bar. The
-notice stays, across launches too, until you click it; clicking it opens the
-update just like **Help ▸ Check for updates…**. Turning the automatic check off
-also removes the notice.
+a download icon appears on the right of the status bar. Hover over the icon
+to see **Update available** and the version. The notice stays across launches
+until you click it. Clicking opens the update just like
+**Help ▸ Check for updates…**. Turning the automatic check off also removes
+the notice.
 
-![The Update available notice on the right of the status bar, for the example version 9.9.9.](assets/images/user-guide/02-update-notice.png)
+![The update icon on the right of the status bar, with an example version shown on hover.](assets/images/user-guide/02-update-notice.png)
 
 ### Source / `pip` installs
 

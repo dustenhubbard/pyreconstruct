@@ -1,8 +1,9 @@
 """The launch check shows a quiet status bar notice, not a dialog (#430).
 
 A newer build found at launch used to raise "PyReconstruct X is available.
-View the update now?". Now it puts "Update available: X" on the right of the
-status bar, and the notice stays until it is clicked, across launches too:
+View the update now?". Now it puts an update icon on the right of the
+status bar, with "Update available: X" in its tooltip. The notice stays until
+it is clicked, across launches too:
 the version is kept per app, so on the days the 24h throttle skips the check
 the notice still comes back. Clicking it runs Help > Check for updates.
 
@@ -108,7 +109,8 @@ def test_a_newer_build_shows_the_notice_and_no_dialog(launch):
     notice = launch(_newer())
 
     assert not notice.isHidden()
-    assert notice.text() == "Update available: 1.24.0"
+    assert notice.text() == ""
+    assert notice.toolTip() == "Update available: 1.24.0"
     assert _settings(KEY).value(KEY) == "1.24.0"
 
 
@@ -128,7 +130,8 @@ def test_the_notice_comes_back_at_the_next_launch_without_a_check(launch):
 
     assert launch.checks == ["release"]
     assert not notice.isHidden()
-    assert notice.text() == "Update available: 1.24.0"
+    assert notice.text() == ""
+    assert notice.toolTip() == "Update available: 1.24.0"
 
 
 def test_a_stored_version_this_build_already_has_is_dropped(launch, main_window):
@@ -366,3 +369,70 @@ def test_a_reinstall_result_after_the_check_is_off_shows_no_notice(
 ])
 def test_is_newer_than_with_dev_versions(text, local, newer):
     assert U.is_newer_than(text, Version(local)) is newer
+
+
+@pytest.fixture(params=["PyReconstruct", "PyReconstruct Dev"])
+def notice_build(request, monkeypatch):
+    from PyReconstruct.modules.constants import build_flavor
+
+    monkeypatch.setenv("PYRECON_APP_NAME", request.param)
+    version = "1.23.0.dev1" if request.param.endswith(" Dev") else "1.23.0"
+    monkeypatch.setattr(build_flavor, "running_version", lambda: version)
+    return request.param
+
+
+@pytest.fixture
+def notice_window(notice_build, main_window):
+    return main_window
+
+
+@pytest.mark.parametrize("theme", ["default", "qdark"])
+def test_icon_tooltip_and_click_in_both_builds_and_themes(
+    notice_window, launch, theme, qtbot, monkeypatch
+):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+    from PyReconstruct.modules.gui.utils import appearance
+
+    app = QApplication.instance()
+    sheet, palette = app.styleSheet(), app.palette()
+    dark = app.property(appearance.QDARKSTYLE_PROPERTY)
+    try:
+        assert notice_window.applyTheme(theme)
+        notice = launch(_newer())
+        notice_window.show()
+        qtbot.waitExposed(notice_window)
+        qtbot.waitUntil(lambda: notice.width() > 0)
+
+        assert notice.text() == ""
+        assert notice.toolTip() == "Update available: 1.24.0"
+        assert notice.accessibleName() == "Update available: 1.24.0"
+        assert notice.width() < notice.fontMetrics().horizontalAdvance(
+            "Update available: 1.24.0"
+        )
+        assert notice.height() <= notice_window.status_readout.height()
+        image = notice.grab().toImage()
+        foreground = notice.palette().windowText().color()
+        background = image.pixelColor(0, 0)
+        assert abs(foreground.lightness() - background.lightness()) > 100
+        assert sum(
+            abs(image.pixelColor(x, y).lightness() - foreground.lightness()) < 40
+            for x in range(image.width()) for y in range(image.height())
+        ) > 10
+
+        width = notice.width()
+        notice_window.showUpdateNotice("1.24.0.dev20261101")
+        assert notice.toolTip() == "Update available: 1.24.0.dev20261101"
+        assert notice.accessibleName() == notice.toolTip()
+        app.processEvents()
+        assert notice.width() == width
+
+        manual = []
+        monkeypatch.setattr(notice_window, "checkForUpdates", lambda: manual.append(True))
+        qtbot.mouseClick(notice, Qt.LeftButton)
+        assert manual == [True]
+        assert notice.isHidden()
+    finally:
+        app.setStyleSheet(sheet)
+        app.setPalette(palette)
+        app.setProperty(appearance.QDARKSTYLE_PROPERTY, dark)
