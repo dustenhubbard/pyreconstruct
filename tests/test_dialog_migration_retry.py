@@ -212,3 +212,105 @@ def test_shortcuts_reset_defaults_is_stored(legacy, monkeypatch, request, pendin
     values = legacy.finish(window.series, "undo_act")
     print(f"shortcuts reset pending={pending} {values}")
     assert values == {"undo_act": Series.qsettings_defaults["undo_act"]}
+
+
+@pytest.mark.parametrize("transient", [False, True])
+def test_scale_bar_recovery_during_open_keeps_the_untouched_mode(
+    series, legacy, monkeypatch, transient
+):
+    from PySide6.QtCore import QSettings
+    from PyReconstruct.modules.gui.dialog.scale_bar_settings import (
+        ScaleBarSettingsDialog,
+    )
+
+    legacy.seed(False, scale_bar_mode="micron_pinned")
+    app = series._settingsStore().APP
+    status = QSettings.status
+    remaining = [int(transient)]
+
+    def fail_once(self):
+        # only the first read of the old store fails
+        if (remaining[0] and self.organizationName() == "KHLab"
+                and self.applicationName() == app):
+            remaining[0] -= 1
+            return QSettings.AccessError
+        return status(self)
+
+    monkeypatch.setattr(QSettings, "status", fail_once)
+    dialog = ScaleBarSettingsDialog(None, series)
+    try:
+        dialog.inputs[2].widget.setValue(61)
+        assert dialog.accept()
+    finally:
+        dialog.close()
+    values = legacy.finish(series, "scale_bar_mode", "scale_bar_width")
+    print(f"scale bar transient={transient} {values}")
+    assert values == {"scale_bar_mode": "micron_pinned", "scale_bar_width": 61}
+
+
+def _open_main_window_dialog(request, monkeypatch, method):
+    window = request.getfixturevalue("main_window")
+    accept_quick_dialog(monkeypatch, lambda d: None)
+    accept_dialog(monkeypatch, lambda d: None)
+    return lambda: method(window)
+
+
+def _open_with_stub(series, monkeypatch, method):
+    accept_quick_dialog(monkeypatch, lambda d: None)
+    accept_dialog(monkeypatch, lambda d: None)
+    return lambda: method(StubWindow(series))
+
+
+def _dialogs():
+    from PyReconstruct.modules.gui.dialog.all_options import AllOptionsDialog
+    from PyReconstruct.modules.gui.dialog.backup import BackupDialog
+    from PyReconstruct.modules.gui.dialog.scale_bar_settings import (
+        ScaleBarSettingsDialog,
+    )
+    from PyReconstruct.modules.gui.main.main_window import MainWindow
+    from PyReconstruct.modules.gui.popup.custom_plotter import CustomPlotter
+
+    return {
+        "scale bar": lambda s, r, m: lambda: ScaleBarSettingsDialog(None, s).close(),
+        "options": lambda s, r, m: lambda: AllOptionsDialog(None, s).close(),
+        "backup": lambda s, r, m: lambda: BackupDialog(None, s).close(),
+        "pointer": lambda s, r, m: _open_with_stub(s, m, MainWindow.modifyPointer),
+        "grid": lambda s, r, m: _open_with_stub(s, m, MainWindow.modifyGrid),
+        "knife": lambda s, r, m: _open_with_stub(s, m, MainWindow.modifyKnife),
+        "trace mode": lambda s, r, m: _open_with_stub(s, m, MainWindow.changeTraceMode),
+        "3D step": lambda s, r, m: _open_with_stub(s, m, CustomPlotter.setStep),
+        "flag": lambda s, r, m: _open_main_window_dialog(
+            r, m, lambda w: w.mouse_palette.modifyFlag()),
+        "shortcuts": lambda s, r, m: _open_main_window_dialog(
+            r, m, lambda w: w.displayShortcuts()),
+    }
+
+
+@pytest.mark.parametrize("name", [
+    "scale bar", "options", "backup", "pointer", "grid", "knife", "trace mode",
+    "3D step", "flag", "shortcuts",
+])
+def test_dialogs_check_for_a_pending_copy_before_reading_options(
+    domain, series, monkeypatch, request, name  # noqa: F811  (fixture)
+):
+    """A copy that finishes during the opening reads leaves the earlier ones at
+    their defaults, so each dialog checks for a pending copy first."""
+    from PyReconstruct.modules.gui.dialog import all_options, backup, chosen_options
+
+    open_dialog = _dialogs()[name](series, request, monkeypatch)
+    events = []
+    get_option = Series.getOption
+
+    def read(self, *args, **kwargs):
+        events.append("read")
+        return get_option(self, *args, **kwargs)
+
+    for module in (all_options, backup, chosen_options):
+        def check(series, _check=module.settings_copy_pending):
+            events.append("check")
+            return _check(series)
+        monkeypatch.setattr(module, "settings_copy_pending", check)
+    monkeypatch.setattr(Series, "getOption", read)
+    open_dialog()
+    print(f"{name}: {events[:4]}")
+    assert events[:1] == ["check"]

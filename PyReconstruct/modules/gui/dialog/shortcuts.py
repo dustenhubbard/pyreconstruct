@@ -157,6 +157,8 @@ class ShortcutsDialog(QDialog):
         super().__init__(mainwindow)
         self.mainwindow = mainwindow
         self.series = series
+        # before the rows read the bindings they show
+        chosen = ChosenOptions(series)
 
         grid = QGridLayout()
         self.act_widgets = {}
@@ -207,7 +209,7 @@ class ShortcutsDialog(QDialog):
         vlayout.addWidget(buttonbox)
 
         self.setLayout(vlayout)
-        self.chosen = ChosenOptions(series, self.bindings())
+        self.chosen = chosen.shown(self.bindings())
 
     def effectiveBinding(self, name) -> str:
         """The modifier binding the user is actually getting, canonical form.

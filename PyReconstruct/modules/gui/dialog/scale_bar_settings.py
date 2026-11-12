@@ -192,12 +192,14 @@ class ScaleBarSettingsDialog(QuickDialog):
     """
 
     def __init__(self, parent, series, palette=None):
+        # before scaleBarStructure reads the values the dialog shows
+        chosen = ChosenOptions(series)
         super().__init__(parent, scaleBarStructure(series), TITLE)
         self.series = series
         self.palette = palette
         self.previewed = False
         opening = [field.getResponse()[0] for field in self.inputs]
-        self.chosen = ChosenOptions(series, scaleBarOptions(opening))
+        self.chosen = chosen.shown(scaleBarOptions(opening))
         wireScaleBarControls(self, series, self._preview)
 
     def _preview(self, settings):

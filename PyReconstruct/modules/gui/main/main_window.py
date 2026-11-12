@@ -2714,9 +2714,10 @@ class MainWindow(QMainWindow):
     def changeTraceMode(self):
         """Change the trace mode and shape."""
 
+        chosen = ChosenOptions(self.series)
         current_shape = self.field.closed_trace_shape
         current_mode = self.series.getOption("trace_mode")
-        chosen = ChosenOptions(self.series, {
+        chosen.shown({
             key: self.series.getOption(key)
             for key in ("trace_mode", "auto_merge", "auto_merge_selected_only",
                         "roll_average", "roll_window")
@@ -4186,8 +4187,9 @@ class MainWindow(QMainWindow):
     
     def modifyPointer(self, event=None):
         """Modify the pointer properties."""
+        chosen = ChosenOptions(self.series)
         s, t = tuple(self.series.getOption("pointer"))
-        chosen = ChosenOptions(self.series, {
+        chosen.shown({
             "pointer": [s, t],
             "display_closest": self.series.getOption("display_closest"),
         })
@@ -4209,7 +4211,7 @@ class MainWindow(QMainWindow):
     
     def modifyGrid(self, event=None):
         """Modify the grid properties."""
-        chosen = ChosenOptions(self.series, {
+        chosen = ChosenOptions(self.series).shown({
             key: self.series.getOption(key)
             for key in ("grid", "sampling_frame_grid")
         })
@@ -4229,8 +4231,8 @@ class MainWindow(QMainWindow):
         """Modify the knife properties."""
         keys = ("knife_del_threshold", "roll_knife_average", "roll_knife_window",
                 "knife_ignore_secondary_click")
-        chosen = ChosenOptions(
-            self.series, {key: self.series.getOption(key) for key in keys}
+        chosen = ChosenOptions(self.series).shown(
+            {key: self.series.getOption(key) for key in keys}
         )
         structure = [
             [
@@ -5804,7 +5806,7 @@ class MainWindow(QMainWindow):
         # rather than a key sequence. Those are stored the same way and have
         # nothing to apply to a menu entry.
         if chosen is None:
-            chosen = ChosenOptions(self.series, {})
+            chosen = ChosenOptions(self.series)
         chosen.store(shortcuts_dict)
         for act_name in shortcuts_dict:
             if act_name.endswith("_act"):

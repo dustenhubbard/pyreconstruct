@@ -44,12 +44,22 @@ def store_chosen_options(series, options, opening, copy_pending):
 
 
 class ChosenOptions:
-    """The options a dialog shows when it opens, kept to compare on OK."""
+    """The options a dialog shows when it opens, kept to compare on OK.
 
-    def __init__(self, series, opening):
+    Make it before the dialog reads the values it shows. A copy that
+    finishes during those reads leaves the values read before it at their
+    defaults, so the copy counts as pending for the whole dialog.
+    """
+
+    def __init__(self, series):
         self.series = series
         self.copy_pending = settings_copy_pending(series)
+        self.opening = {}
+
+    def shown(self, opening):
+        """Keep `opening`, the values the dialog shows; return self."""
         self.opening = deepcopy(dict(opening))
+        return self
 
     def store(self, options):
         """Store the accepted `options`; they become the new opening values."""
