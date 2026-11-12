@@ -383,8 +383,10 @@ def test_invalid_dimensions_do_not_save(main_window, palette, qtbot, monkeypatch
 SWEEP_ROWS = (1, 2, 7, 20, 100)
 SWEEP_COLS = (1, 3, 5, 6, 12)
 SWEEP_SPOTS = ((0.001, 0.001), (0.999, 0.001), (0.5, 0.5), (0.001, 0.999), (0.999, 0.999))
+# the selected preset's name, short and longer than the label is drawn
+SWEEP_NAMES = ("d03", "a_long_trace_name")
 # the smallest window first: a smaller request gets the minimum size
-SWEEP_WINDOWS = [(100, 100), (321, 363), (330, 370), (360, 400), (450, 362),
+SWEEP_WINDOWS = [(100, 100), (321, 383), (330, 390), (360, 400), (450, 382),
                  (500, 400), (600, 400), (800, 600), (1280, 800)]
 
 
@@ -412,7 +414,7 @@ def test_the_window_cannot_shrink_below_the_palette_minimum(main_window, qapp):
     main_window.show()
     qapp.processEvents()
     field = main_window.field.size().toTuple()
-    assert field == main_window.field.minimumSize().toTuple() == (320, 320)
+    assert field == main_window.field.minimumSize().toTuple() == (320, 340)
     assert main_window.size().toTuple() == main_window.minimumSize().toTuple()
 
 
@@ -430,27 +432,105 @@ def test_every_control_is_reachable_across_layouts(
     expected = (max(window[0], main_window.minimumWidth()), max(window[1], main_window.minimumHeight()))
     assert main_window.size().toTuple() == expected
     series = main_window.series
+    groups = mouse_palette.DEFAULT_POSITIONS
+    # each group alone at each spot, then every group together at it
     saved = [{}] + [
-        {f"{group}_x": x, f"{group}_y": y}
-        for group in mouse_palette.DEFAULT_POSITIONS for x, y in SWEEP_SPOTS
+        {f"{group}_x": x, f"{group}_y": y} for group in groups for x, y in SWEEP_SPOTS
+    ] + [
+        {f"{group}_{axis}": v for group in groups for axis, v in (("x", x), ("y", y))}
+        for x, y in SWEEP_SPOTS
     ]
+    selected = series.palette_traces[series.palette_index[0]][series.palette_index[1]]
     failures = []
-    for rows in SWEEP_ROWS:
-        for cols in SWEEP_COLS:
-            series.setOption("trace_palette_per_row", rows)
-            series.setOption("tool_palette_cols", cols)
-            palette = main_window.mouse_palette
-            palette.reset()
-            for positions in saved:
-                mouse_palette.save_palette_positions(settings, positions)
-                mouse_palette.set_default_positions(palette)
-                palette.loadPositionState()
-                palette.resize()
-                missed = missed_controls(main_window, palette)
-                if missed:
-                    failures.append((rows, cols, positions, missed))
-                assert mouse_palette.load_palette_positions(settings) == positions
-                assert {key: getattr(palette, key) for key in positions} == positions
-                for key in mouse_palette.PALETTE_POS_KEYS:
-                    settings.remove(key)
-    assert not failures, f"{window}: {len(failures)} of {len(SWEEP_ROWS) * len(SWEEP_COLS) * len(saved)}: {failures[:5]}"
+    for name in SWEEP_NAMES:
+        selected.name = name
+        for rows in SWEEP_ROWS:
+            for cols in SWEEP_COLS:
+                series.setOption("trace_palette_per_row", rows)
+                series.setOption("tool_palette_cols", cols)
+                palette = main_window.mouse_palette
+                palette.reset()
+                for positions in saved:
+                    mouse_palette.save_palette_positions(settings, positions)
+                    mouse_palette.set_default_positions(palette)
+                    palette.loadPositionState()
+                    palette.resize()
+                    missed = missed_controls(main_window, palette)
+                    if missed:
+                        failures.append((name, rows, cols, positions, missed))
+                    assert mouse_palette.load_palette_positions(settings) == positions
+                    assert {key: getattr(palette, key) for key in positions} == positions
+                    for key in mouse_palette.PALETTE_POS_KEYS:
+                        settings.remove(key)
+    total = len(SWEEP_NAMES) * len(SWEEP_ROWS) * len(SWEEP_COLS) * len(saved)
+    assert not failures, f"{window}: {len(failures)} of {total}: {failures[:5]}"
+
+
+@pytest.mark.parametrize("window", [(320, 362), (340, 362), (360, 400), (450, 362)])
+def test_a_fallback_layout_draws_the_label_where_it_left_room(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path, window):
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    local_series_settings(main_window)
+    settings = QSettings(str(tmp_path / "positions.ini"), QSettings.IniFormat)
+    monkeypatch.setattr(mouse_palette, "_position_settings", lambda: settings)
+    # every group saved at the center: they cannot all go there, so the
+    # default arrangement is drawn, with the label above the buttons
+    saved = {f"{group}_{axis}": 0.5 for group in mouse_palette.DEFAULT_POSITIONS for axis in "xy"}
+    mouse_palette.save_palette_positions(settings, saved)
+    main_window.resize(*window)
+    main_window.show()
+    qapp.processEvents()
+    series = main_window.series
+    series.setOption("trace_palette_per_row", 1)
+    series.setOption("tool_palette_cols", 1)
+    palette = main_window.mouse_palette
+    palette.reset()
+    palette.resize()
+    qapp.processEvents()
+    assert palette.arrange(palette.savedFractions()) is None
+    assert palette.label.geometry().bottom() < palette.palette_buttons[0].geometry().top()
+    assert missed_controls(main_window, palette) == []
+    assert mouse_palette.load_palette_positions(settings) == saved
+
+
+def test_selecting_a_preset_with_a_longer_name_keeps_every_control_reachable(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path):
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    local_series_settings(main_window)
+    settings = QSettings(str(tmp_path / "positions.ini"), QSettings.IniFormat)
+    monkeypatch.setattr(mouse_palette, "_position_settings", lambda: settings)
+    main_window.resize(340, 362)
+    main_window.show()
+    qapp.processEvents()
+    series = main_window.series
+    series.setOption("trace_palette_per_row", 1)
+    series.setOption("tool_palette_cols", 5)
+    palette = main_window.mouse_palette
+    palette.reset()
+    palette.resize()
+    qapp.processEvents()
+    assert missed_controls(main_window, palette) == []
+    for i, button in enumerate(palette.palette_buttons):
+        QTest.mouseClick(button, Qt.LeftButton, Qt.NoModifier, button.rect().center())
+        qapp.processEvents()
+        assert series.palette_index[1] == i
+        assert missed_controls(main_window, palette) == [], button.trace.name
+    assert mouse_palette.load_palette_positions(settings) == {}
+
+
+def test_a_long_name_is_shortened_and_shown_in_full_as_the_tip(main_window, palette):
+    from PyReconstruct.modules.gui.palette.mouse_palette import LABEL_MAX_WIDTH
+
+    series = main_window.series
+    selected = series.palette_traces[series.palette_index[0]][series.palette_index[1]]
+    selected.name = "dendrite_shaft_with_spines"
+    palette.reset()
+    assert palette.label.width() <= LABEL_MAX_WIDTH
+    assert palette.label.text().endswith("…")
+    assert palette.label.toolTip() == "dendrite_shaft_with_spines"
+    selected.name = "d03"
+    palette.reset()
+    assert palette.label.text() == "d03"
+    assert palette.label.toolTip() == ""

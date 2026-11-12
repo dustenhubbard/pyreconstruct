@@ -3,7 +3,7 @@ import re
 import math
 
 from PySide6.QtWidgets import QWidget, QSlider
-from PySide6.QtGui import QIcon, QPixmap, QFont
+from PySide6.QtGui import QIcon, QPixmap, QFont, QFontMetrics
 from PySide6.QtCore import QSize, Qt, QSettings, QRectF
 from PyReconstruct.modules.constants.settings_domain import domain_for
 
@@ -49,6 +49,12 @@ DEFAULT_POSITIONS = {
     "bc":    (0.99, 0.8),
     "sb":    (0.01, 0.99),
 }
+
+# The widest the trace palette's name label is drawn, in pixels. A longer
+# name ends in an ellipsis and shows in full as the label's tool tip. The
+# field's minimum size (MousePalette.__init__) was measured with a label
+# this wide, so no name can make the palette need more room than that.
+LABEL_MAX_WIDTH = 130
 
 
 def set_default_positions(palette) -> None:
@@ -219,6 +225,12 @@ def largestFit(low, high, fit):
     return best
 
 
+def labelAbove(fraction):
+    """True if the trace label goes above the buttons: a group saved in
+    the lower half of the field has its label on top."""
+    return fraction[1] > 0.5
+
+
 def spanOf(area, left, right, top, bottom):
     """The (x1, x2, y1, y2) a saved fraction maps onto: area less the
     group's reach on each side of its anchor."""
@@ -242,12 +254,13 @@ class MousePalette():
 
         # The smallest field where every palette control can still be
         # clicked, for every trace row length, tool column count and saved
-        # spot: found by sweeping window sizes, then rounded up a little for
-        # font differences between platforms. In a smaller field some
-        # controls would have to cover others. Set on the field rather than
-        # the window, so the window's minimum follows from it with each
-        # platform's own menu bar and status bar added on top.
-        mainwindow.field.setMinimumSize(320, 320)
+        # spot, with a name label up to LABEL_MAX_WIDTH: found by sweeping
+        # window sizes, then rounded up a little for font differences
+        # between platforms. In a smaller field some controls would have to
+        # cover others. Set on the field rather than the window, so the
+        # window's minimum follows from it with each platform's own menu bar
+        # and status bar added on top.
+        mainwindow.field.setMinimumSize(320, 340)
 
         self.mblen = 40  # mode button size
         self.pblen = 40  # palette button size
@@ -543,7 +556,7 @@ class MousePalette():
         self.label.resize(self.label.sizeHint())
         x -= self.label.width() / 2
         _, height = self.traceGridSize(*self.traceGrid())
-        if self.trace_y > 0.5:
+        if self.layout()["label above"]:
             y -= height // 2 + self.label.height() + 4
         else:
             y += max(height, self.pblen * 2 + 1) - height // 2 + 4
@@ -575,6 +588,11 @@ class MousePalette():
         for c in "{}<>":
             n = n.replace(c, "")
         self.label.setText(n)
+        if self.label.sizeHint().width() > LABEL_MAX_WIDTH:
+            metrics = QFontMetrics(self.label.font())
+            room = LABEL_MAX_WIDTH - (self.label.sizeHint().width() - metrics.horizontalAdvance(n))
+            self.label.setText(metrics.elidedText(n, Qt.ElideRight, room))
+        self.label.setToolTip(n if self.label.text() != n else "")
 
         c = selected_trace.color
         self.label.setTextColor(c)
@@ -583,7 +601,11 @@ class MousePalette():
             self.label.setOutlineColor((0,0,0))
         else:
             self.label.setOutlineColor((255,255,255))
-        self.placeLabel()
+        if hasattr(self, "sb"):
+            # a name of another width can move every group, not only the label
+            self.resize()
+        else:
+            self.placeLabel()
     
     def activateModeButton(self, bname : str):
         """Executed when any mouse mode button is clicked: changes mouse mode.
@@ -899,6 +921,9 @@ class MousePalette():
                 return None
             trace = self.coverTrace(fractions["trace"], boxes, field)
         placed["trace"], placed["trace grid"] = trace
+        # the side the label is drawn on goes with the arrangement: a
+        # fallback to the defaults draws it where the defaults left room
+        placed["label above"] = labelAbove(fractions["trace"])
         return placed
 
     def traceAnchor(self, fraction, shape, obstacles, field, find):
@@ -906,7 +931,7 @@ class MousePalette():
         None if clearSpot finds no room."""
         if find is clearSpot and not self.traceFits(shape, fraction, field):
             return None
-        left, right, top, bottom = self.traceExtents(*shape, fraction[1])
+        left, right, top, bottom = self.traceExtents(*shape, labelAbove(fraction))
         x, y = self.spotIn(fraction, spanOf(field, left, right, top, bottom))
         found = find(x - left, y - top, left + right, top + bottom, obstacles, field)
         return None if found is None else (found[0] + left, found[1] + top)
@@ -951,19 +976,20 @@ class MousePalette():
 
     def traceFits(self, shape, fraction, field):
         """True if the trace group with this grid fits inside the field."""
-        left, right, top, bottom = self.traceExtents(*shape, fraction[1])
+        left, right, top, bottom = self.traceExtents(*shape, labelAbove(fraction))
         return left + right <= field.width() and top + bottom <= field.height()
 
-    def traceExtents(self, cols, rows, size, trace_y=None):
+    def traceExtents(self, cols, rows, size, above):
         """How far the trace group reaches left, right, up and down from its
-        anchor: the buttons, the side buttons and the label."""
+        anchor: the buttons, the side buttons and the label, drawn above
+        the buttons or below them."""
         width, height = self.traceGridSize(cols, rows, size)
         label = self.label.sizeHint() if hasattr(self, "label") else QSize(0, 30)
         left = max(width // 2, math.ceil(label.width() / 2))
         right = max(width - width // 2 + self.pblen + 3, math.ceil(label.width() / 2))
         top = height // 2
         bottom = max(height, self.pblen * 2 + 1) - height // 2
-        if (self.trace_y if trace_y is None else trace_y) > 0.5:
+        if above:
             top += label.height() + 4
         else:
             bottom += label.height() + 4
@@ -1019,7 +1045,7 @@ class MousePalette():
             w, h = self.groupSize(group)
             # the bar's saved spot may leave less room than its width
             bounds[group] = spanOf(field, 0, 10 if group == "sb" else w, 0, h)
-        bounds["trace"] = spanOf(field, *self.traceExtents(*self.traceGrid()))
+        bounds["trace"] = spanOf(field, *self.traceExtents(*self.traceGrid(), self.layout()["label above"]))
         return bounds
 
     def loadVisibilityState(self):
