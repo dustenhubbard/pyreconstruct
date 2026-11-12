@@ -352,3 +352,59 @@ def test_failed_rebuild_keeps_displayed_meshes(
         assert attrs == old_attrs
     assert viewer.plt.objs[cube.id] is cube
     assert len(list(viewer.plt.objs.values())) == 5
+
+
+def test_reload_keeps_selected_mesh_that_cannot_regenerate(main_window, monkeypatch):
+    from types import SimpleNamespace
+    from PyReconstruct.modules.datatypes import Trace
+    from PyReconstruct.modules.gui.popup import custom_plotter as cp
+
+    viewer, _, objects, cube = populate(main_window, monkeypatch)
+    viewer.plt.objs.remove(cube)
+    series = main_window.series
+    series.setOption("3D_auto_refresh", False)
+    for obj in objects:
+        series.setAttr(obj.name, "3D_mode", "contours")
+        obj.translate(2, 3, 4)
+    trace = Trace("negative_only", (255, 0, 0), True)
+    trace.points = [(0, 0), (2, 0), (2, 2), (0, 2)]
+    trace.negative = True
+    section = main_window.field.section
+    section.addTrace(trace, log_event=False)
+    series.data.updateSection(section, update_traces=True, log_events=False)
+    assert "negative_only" in series.data["objects"]
+    failed = viewer.plt.objs.add(
+        _mesh(), series, "negative_only", "object", (12, 34, 56), .4
+    )
+    failed.translate(5, 6, 7)
+    expected = {obj.id: obj.getExportDict() for obj in [*objects, failed]}
+    viewer.plt.selected = [*objects, failed]
+    notices = []
+    monkeypatch.setattr(cp, "notify", notices.append)
+
+    class Pool:
+        def createWorker(self, fn, source, objs, ztraces, **kwargs):
+            self.run = lambda: fn(source, objs, ztraces)
+            return SimpleNamespace(signals=SimpleNamespace(
+                result=SimpleNamespace(connect=lambda slot: setattr(self, "place", slot))
+            ))
+
+        def startAll(self, **kwargs):
+            self.place(self.run())
+
+    monkeypatch.setattr(cp, "ThreadPoolProgBar", Pool)
+    viewer.reload()
+
+    assert viewer.plt.objs.search("negative_only", "object", series.jser_fp) is failed
+    assert failed.getExportDict() == expected[failed.id]
+    assert failed in viewer.plt.selected
+    assert len(notices) == 1 and "negative_only" in notices[0]
+    for old in objects:
+        rebuilt = viewer.plt.objs.search(old.name, "object", series.jser_fp)
+        assert rebuilt is not None and rebuilt is not old
+        attrs = rebuilt.getExportDict()
+        attrs.pop("id")
+        old_attrs = expected[old.id].copy()
+        old_attrs.pop("id")
+        assert attrs == old_attrs
+    assert len(list(viewer.plt.objs.values())) == 3
