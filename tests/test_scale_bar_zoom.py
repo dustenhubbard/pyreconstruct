@@ -748,6 +748,8 @@ def test_no_dialog_when_no_length_can_be_drawn(
     palette.reset()
     if narrow:
         _set_window(main_window, 0.01)
+        # below the palette's minimum field size, which a window cannot reach
+        main_window.field.setMinimumSize(0, 0)
         main_window.field.resize(30, main_window.field.height())
     else:
         _set_window(main_window, 1e-9)

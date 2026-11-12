@@ -233,30 +233,6 @@ def test_saved_controls_leave_presets_reachable_in_a_small_window(
     assert {key: getattr(palette, key) for key in saved} == saved
 
 
-@pytest.mark.parametrize("window", [(400, 300), (520, 380)])
-def test_controls_without_room_still_leave_presets_reachable(
-        main_window, local_series_settings, monkeypatch, qapp, tmp_path, window):
-    from PyReconstruct.modules.gui.palette import mouse_palette
-
-    local_series_settings(main_window)
-    settings = QSettings(str(tmp_path / "positions.ini"), QSettings.IniFormat)
-    monkeypatch.setattr(mouse_palette, "_position_settings", lambda: settings)
-    main_window.resize(*window)
-    main_window.show()
-    qapp.processEvents()
-    main_window.series.setOption("trace_palette_per_row", 1)
-    palette = main_window.mouse_palette
-    palette.reset()
-    palette.resize()
-    qapp.processEvents()
-    buttons = [
-        *palette.palette_buttons, *palette.palette_side_buttons,
-        *(b for b, _, _ in palette.mode_buttons.values()),
-    ]
-    for button in buttons:
-        assert main_window.childAt(button.geometry().center()) is button
-
-
 def test_the_scale_bar_leaves_the_contrast_control_reachable(
         main_window, local_series_settings, monkeypatch, qapp, tmp_path):
     from PyReconstruct.modules.gui.palette import mouse_palette
@@ -268,7 +244,7 @@ def test_the_scale_bar_leaves_the_contrast_control_reachable(
     main_window.show()
     qapp.processEvents()
     main_window.series.setOption("tool_palette_cols", 12)
-    main_window.resize(500, 300)
+    main_window.resize(500, 360)
     qapp.processEvents()
     palette = main_window.mouse_palette
     palette.reset()
@@ -404,29 +380,43 @@ def test_invalid_dimensions_do_not_save(main_window, palette, qtbot, monkeypatch
     dialog.reject()
 
 
-SWEEP_ROWS = (1, 10, 20, 100)
-SWEEP_COLS = (1, 3, 12)
-SWEEP_SPOTS = ((0.01, 0.01), (0.99, 0.01), (0.5, 0.5), (0.01, 0.99), (0.99, 0.99))
-TIGHT_WINDOWS = {(450, 300), (400, 300)}
+SWEEP_ROWS = (1, 2, 7, 20, 100)
+SWEEP_COLS = (1, 3, 6, 12)
+SWEEP_SPOTS = ((0.001, 0.001), (0.999, 0.001), (0.5, 0.5), (0.001, 0.999), (0.999, 0.999))
+# the smallest window first: a smaller request gets the minimum size
+SWEEP_WINDOWS = [(100, 100), (300, 352), (301, 353), (330, 360), (450, 352),
+                 (500, 400), (600, 400), (800, 600), (1280, 800)]
 
 
 def missed_controls(main_window, palette):
     """Names of the clickable controls whose center does not hit them."""
     field = main_window.field.geometry()
-    targets = [("trace", b) for b in [*palette.palette_buttons, *palette.palette_side_buttons]]
-    targets += [("tool", b) for b, _, _ in palette.mode_buttons.values()]
-    targets += [("inc", b) for b in palette.inc_buttons]
-    targets += [("bc", w) for pair in palette.bc_widgets for w in pair]
-    targets += [("sb", palette.sb)]
-    missed = set()
+    targets = [(f"preset {i}", b) for i, b in enumerate(palette.palette_buttons)]
+    targets += [(f"side {i}", b) for i, b in enumerate(palette.palette_side_buttons)]
+    targets += [("label", palette.label)]
+    targets += [(f"tool {name}", b) for name, (b, _, _) in palette.mode_buttons.items()]
+    targets += [(f"section {i}", b) for i, b in enumerate(palette.inc_buttons)]
+    targets += [(f"bc {i}", w) for i, w in enumerate(w for pair in palette.bc_widgets for w in pair)]
+    targets += [("scale bar", palette.sb)]
+    missed = []
     for name, widget in targets:
-        center = widget.geometry().center()
-        if not field.contains(center) or main_window.childAt(center) is not widget:
-            missed.add(name)
-    return sorted(missed)
+        center = widget.mapTo(main_window, widget.rect().center())
+        if (widget.isHidden() or not field.contains(center)
+                or main_window.childAt(center) is not widget):
+            missed.append(name)
+    return missed
 
 
-@pytest.mark.parametrize("window", [(1280, 800), (800, 600), (600, 400), (500, 300), (450, 300), (400, 300)])
+def test_the_window_cannot_shrink_below_the_palette_minimum(main_window, qapp):
+    main_window.resize(100, 100)
+    main_window.show()
+    qapp.processEvents()
+    field = main_window.field.size().toTuple()
+    assert field == main_window.field.minimumSize().toTuple() == (300, 310)
+    assert main_window.size().toTuple() == main_window.minimumSize().toTuple()
+
+
+@pytest.mark.parametrize("window", SWEEP_WINDOWS)
 def test_every_control_is_reachable_across_layouts(
         main_window, local_series_settings, monkeypatch, qapp, tmp_path, window):
     from PyReconstruct.modules.gui.palette import mouse_palette
@@ -437,6 +427,8 @@ def test_every_control_is_reachable_across_layouts(
     main_window.resize(*window)
     main_window.show()
     qapp.processEvents()
+    expected = (max(window[0], main_window.minimumWidth()), max(window[1], main_window.minimumHeight()))
+    assert main_window.size().toTuple() == expected
     series = main_window.series
     saved = [{}] + [
         {f"{group}_x": x, f"{group}_y": y}
@@ -450,15 +442,15 @@ def test_every_control_is_reachable_across_layouts(
             palette = main_window.mouse_palette
             palette.reset()
             for positions in saved:
+                mouse_palette.save_palette_positions(settings, positions)
                 mouse_palette.set_default_positions(palette)
-                for key, value in positions.items():
-                    setattr(palette, key, value)
+                palette.loadPositionState()
                 palette.resize()
                 missed = missed_controls(main_window, palette)
-                if window in TIGHT_WINDOWS:
-                    missed = [name for name in missed if name in ("trace", "tool")]
                 if missed:
                     failures.append((rows, cols, positions, missed))
+                assert mouse_palette.load_palette_positions(settings) == positions
                 assert {key: getattr(palette, key) for key in positions} == positions
-    assert mouse_palette.load_palette_positions(settings) == {}
+                for key in mouse_palette.PALETTE_POS_KEYS:
+                    settings.remove(key)
     assert not failures, f"{window}: {len(failures)} of {len(SWEEP_ROWS) * len(SWEEP_COLS) * len(saved)}: {failures[:5]}"

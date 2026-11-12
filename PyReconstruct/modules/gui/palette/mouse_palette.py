@@ -239,7 +239,16 @@ class MousePalette():
         self.mainwindow = mainwindow
         self.series = self.mainwindow.series
         self.series : Series
-        
+
+        # The smallest field where every palette control can still be
+        # clicked, for every trace row length, tool column count and saved
+        # spot: found by sweeping window sizes, then rounded up a little for
+        # font differences between platforms. In a smaller field some
+        # controls would have to cover others. Set on the field rather than
+        # the window, so the window's minimum follows from it with each
+        # platform's own menu bar and status bar added on top.
+        mainwindow.field.setMinimumSize(300, 310)
+
         self.mblen = 40  # mode button size
         self.pblen = 40  # palette button size
         self.ibw = 90  # inc button width
@@ -853,47 +862,42 @@ class MousePalette():
         palette, the one group that can wrap and shrink. Each goes to the
         spot nearest where it was left that is clear of every group placed
         before it. When a group has no clear spot, the default arrangement
-        is tried. In a window too small for either, the controls keep clear
-        of the tools only, so they may cover each other, and the trace
-        buttons take the room that is left; failing that too, each group
-        covers as little as it can. Saved positions are never changed.
+        is tried. The field's minimum size leaves room for one of the two;
+        should neither fit anyway, each group covers as little of the
+        others as it can. Saved positions are never changed.
         """
         key = self.layoutKey()
         if key != getattr(self, "_layout_key", None):
             saved = self.savedFractions()
-            attempts = ((saved, False), (DEFAULT_POSITIONS, False),
-                        (saved, True), (DEFAULT_POSITIONS, True))
-            placed = next(filter(None, (self.arrange(f, tight) for f, tight in attempts)), None)
             self._layout_key = key
-            self._layout = placed or self.arrange(saved, tight=True, force=True)
+            self._layout = (self.arrange(saved) or self.arrange(DEFAULT_POSITIONS)
+                            or self.arrange(saved, force=True))
         return self._layout
 
-    def arrange(self, fractions, tight=False, force=False):
+    def arrange(self, fractions, force=False):
         """Every group placed from these fractions clear of the ones before
-        it, the controls only of the tools when tight. None if a group has
-        no clear spot, unless forced."""
+        it. None if a group has no clear spot, unless forced: then it goes
+        where it covers the least of them."""
         field = QRectF(self.mainwindow.field.geometry())
         w, h = self.groupSize("mode")
         placed = {"mode": self.spotIn(fractions["mode"], spanOf(field, 0, w, 0, h))}
-        tools = [QRectF(*placed["mode"], w, h)]
-        boxes = list(tools)
+        boxes = [QRectF(*placed["mode"], w, h)]
         for group in ("inc", "bc", "sb"):
             w, h = self.groupSize(group)
             # a bar wider than its room is drawn as far left as it must be
             x, y = self.spotIn(fractions[group], spanOf(field, 0, 10 if group == "sb" else w, 0, h))
-            spot = clearSpot(x, y, w, h, tools if tight else boxes, field)
+            spot = clearSpot(x, y, w, h, boxes, field)
             if spot is None:
                 if not force:
                     return None
-                spot = leastCoveringSpot(x, y, w, h, tools, field)
+                spot = leastCoveringSpot(x, y, w, h, boxes, field)
             placed[group] = spot
             boxes.append(QRectF(*spot, w, h))
         trace = self.placeTrace(fractions["trace"], boxes, field)
         if trace is None:
             if not force:
                 return None
-            trace = (self.placeTrace(fractions["trace"], tools, field) or
-                     self.coverTrace(fractions["trace"], tools, field))
+            trace = self.coverTrace(fractions["trace"], boxes, field)
         placed["trace"], placed["trace grid"] = trace
         return placed
 

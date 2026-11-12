@@ -656,7 +656,8 @@ near the palette.
 - In **Series ▸ Options ▸ View**, set **Trace buttons per row** and **Tool
   columns** to change their arrangement. PyReconstruct remembers both settings
   for your user across series and restarts. Buttons wrap or shrink when needed
-  to fit the window.
+  to fit the window, and the window does not get smaller than the size where
+  every palette button and control can still be clicked.
 - Select a preset with the number keys: **`1` through `9`, `0`** for the first ten,
   and **`Shift+1` through `Shift+9`, `Shift+0`** for the next ten, regardless of the
   arrangement.
