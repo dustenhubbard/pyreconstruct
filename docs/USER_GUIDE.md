@@ -5,10 +5,11 @@ PyReconstruct is a desktop application for tracing, annotating, and
 guide covers installing the app, opening and building a series, the tracing
 tools, the data lists, alignment, 3D reconstruction, and backups.
 
-This guide describes the application as it currently behaves in this
+This guide describes PyReconstruct as it currently behaves in this
 distribution. **Help ▸ Online resources ▸ PyReconstruct user guide** opens
-this guide. **Help ▸ Online resources** also links to the Harris lab wiki,
-and **Help ▸ Shortcuts list** lists the keyboard shortcuts.
+[this guide](https://pyreconstruct.org/USER_GUIDE/). **Help ▸ Online resources**
+also links to the Harris lab wiki, and **Help ▸ Shortcuts list** lists the
+current key bindings.
 
 > **About screenshots.** The screenshots and clips show PyReconstruct on macOS
 > with a small test series. They are shot from PyReconstruct itself, and shot
@@ -60,13 +61,21 @@ versions are on the
 
 - **Windows**:
   [`PyReconstruct-1.25.0-Windows-x86_64-Setup.exe`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.25.0/PyReconstruct-1.25.0-Windows-x86_64-Setup.exe).
-  This is a per-user installer (no administrator rights required). Builds are
-  unsigned for now, so Windows SmartScreen may warn that the publisher is
-  unknown; choose **More info ▸ Run anyway**. Re-running a newer installer
-  upgrades the existing installation in place.
+  Choose **Install for me only** for a per-user install without administrator
+  rights, or **Install for all users** for a shared install with an administrator
+  prompt. From a terminal, `/CURRENTUSER` and `/ALLUSERS` select the same modes.
+  In builds after 1.25.0, the installer adds the terminal commands to your PATH
+  for a per-user install or the system PATH for all users. Open a new terminal
+  to use them. Builds are unsigned for now, so Windows SmartScreen may warn that
+  the publisher is unknown; choose **More info ▸ Run anyway**. Re-running a newer
+  installer upgrades the existing installation. Choose the same mode and folder
+  when upgrading.
 - **macOS**: open the `.dmg` and drag **PyReconstruct** onto the **Applications**
   shortcut. PyReconstruct is signed and notarized by Apple, so the first launch
   shows the usual question for an app downloaded from the internet. Click **Open**.
+  `/Applications` makes PyReconstruct available to all users. For a per-user
+  install, drag PyReconstruct into `~/Applications` instead. Replacing a shared
+  copy may require an administrator's approval.
 
   Versions before 1.24.0 were not signed. To open one of those, clear the
   quarantine flag once in Terminal:
@@ -202,6 +211,15 @@ version, the download size, and a link to the release notes, with a
 asks to save any unsaved work, closes, and opens the installer. Complete
 installation, then launch the app again. Canceling the close also cancels
 the installation.
+
+For an all-users Windows install, an administrator must run the downloaded
+installer, choose **Install for all users**, and select the existing installation
+folder. A per-user install updates without administrator rights. On macOS, open
+the downloaded disk image and replace the existing copy in `/Applications` or
+`~/Applications`. If you cannot write to that folder, an administrator must
+complete the replacement. In builds after 1.25.0, the update dialog explains when
+an administrator is needed. Eligible PyReconstruct Dev installs instead stage
+the update for the next quit and offer **Restart Now**.
 
 PyReconstruct Dev also shows the offered nightly and each skipped nightly in
 newest-first order under **Changes in &lt;version&gt;**. Each list includes its pull
@@ -377,7 +395,12 @@ Under **Series ▸ Images**:
 - **Find/change image directory** points the series at the folder containing its
   images. The chosen directory is remembered with the series.
 - **Convert to scaled images** converts the series' images into a scaled
-  (`.zarr`) store for faster loading of large images.
+  (`.zarr`) store for faster loading of large images. Choose an output path
+  that does not exist. PyReconstruct adds `.zarr` if the name does not end in
+  `zarr`, then checks the final path. If that path already exists,
+  PyReconstruct shows "The output path already exists" and leaves it unchanged
+  without starting conversion. Run **Convert to scaled images** again and
+  choose an unused path.
 - **Update image scales** adds or refreshes scale levels on an existing Zarr.
 
 ### When a Zarr names its images differently
@@ -429,7 +452,7 @@ The main window shows the current section's image with its traces drawn on top
 (the column of mode buttons, top-right by default), the **trace palette** (the row
 of preset traces, bottom-center), section-increment buttons, brightness/contrast
 sliders, and a scale bar. Each overlay group can be dragged to reposition it, and
-**View ▸ Reset palette position** restores the defaults.
+**View ▸ Palette ▸ Reset palette position** restores the defaults.
 
 ![The main window with its parts labeled: the field, the tool palette at the top right, the brightness and contrast sliders, the section buttons at the bottom right, the trace palette at the bottom center, and the scale bar at the bottom left.](assets/images/user-guide/05-main-window-labeled.png)
 
@@ -438,6 +461,11 @@ sliders, and a scale bar. Each overlay group can be dragged to reposition it, an
 - **Page Up** / **Page Down**: next / previous section.
 - **Mouse wheel** over the field: scroll up for the next section, down for the
   previous (works in any tool mode).
+- **Trackpad** over the field: swipe with two fingers to change sections.
+  macOS reverses the section direction by default. Change **Reverse trackpad
+  section scrolling** under **Series ▸ Options ▸ User/Series** to use the other
+  direction. The choice is saved on this computer and does not affect mouse
+  wheels or zoom.
 - **Go to section** (`Ctrl+G`): jump to a section number.
 - The section-increment buttons (▲/▼) in the corner do the same as PgUp/PgDown
   (handy on tablets).
@@ -470,9 +498,9 @@ profiles…**.
 
 ### Showing and hiding interface elements
 
-Under **View ▸ Palette ▸ Visibility** you can independently toggle the trace
-palette, the section-increment buttons, the brightness/contrast sliders, and the
-scale bar. **View ▸ Left handed** swaps the tracing-pencil cursor side.
+Under **View** you can independently toggle **Trace palette**, **Section
+increment buttons**, **Brightness/contrast sliders**, and **Scale bar**.
+**View ▸ Left handed** swaps the tracing-pencil cursor side.
 
 ### Theme
 
@@ -584,9 +612,12 @@ Right-click either button to choose the drawing **mode**:
 ![The Closed Trace settings dialog: Mode (Scribble, Poly or Combo), Closed Trace Shape (Trace, Rectangle or Ellipse), Automatically merge overlapping traces, and Apply rolling average while scribbling.](assets/images/user-guide/06-closed-trace-mode-dialog.png)
 
 For **Closed Trace** you can also pick a fixed **shape** (freehand **Trace**,
-**Rectangle**, or **Ellipse**; drag to size) and optionally auto-merge new traces
-into selected same-named traces with the same sign, or apply a rolling-average
-smooth while scribbling.
+**Rectangle**, or **Ellipse**; drag to size). **Automatically merge overlapping
+traces** merges a new closed trace with the overlapping closed traces of the same
+name and sign. **Only merge selected traces** is checked by default, so only
+selected traces merge; clear it to include unselected traces. While the ROI box
+is on, only selected traces merge either way. You can also apply a
+rolling-average smooth while scribbling.
 
 ![A new closed trace, drawn freehand in orange beside the star with the Closed Trace tool.](assets/images/user-guide/06-closed-trace-drawn.png)
 
@@ -674,8 +705,10 @@ objects.
 
 You can reset the palette (**Series ▸ Trace palette ▸ Reset current palette**) and
 export/import palettes as CSV (**Series ▸ Trace palette ▸ Export as CSV… / Import
-from CSV…**). **Edit ▸ Paste attributes to palette** (`Shift+G`) sets the current
-preset from a copied trace.
+from CSV…**). **Edit ▸ Paste attributes to palette** (`Shift+G`) uses the first
+copied trace, or the first selected trace if the trace clipboard is empty.
+**Paste attributes to palette (+shape)** (`Cmd+Shift+G`, or `Ctrl+Shift+G` on
+Windows/Linux) also copies its shape.
 
 Stamp radii must be finite, positive numbers in both palette editors. Renaming a
 palette preserves its buttons and selection.
@@ -697,17 +730,17 @@ An invalid row cancels the import without changing any palette.
 
 Most trace editing is on the **field context menu** (right-click selected traces),
 with keyboard shortcuts for the common actions. Selected-trace actions affect *all*
-selected traces. The top of that menu carries a single **Edit ... attributes...**
-shortcut that follows your selection: it reads **Edit trace attributes...** when
-traces are selected and **Edit z-trace attributes...** when z-traces are, so the
-most-used edit is one click away above the per-entity submenus.
+selected traces. Choose **Trace ▸ Edit attributes…** to edit selected traces,
+or **Ztrace ▸ Edit z-trace attributes…** to edit selected z-traces.
 
 - **Edit attributes** (`Ctrl+E`): change name, color, tags, and fill mode.
 - **Merge traces** (`Shift+M`): merge the exteriors of selected closed traces
   with the same name and sign. A selection containing both positive and negative
   traces is left unchanged.
-- **Hide** (`Shift+H`) / **Unhide all** (`Ctrl+U`). Hidden traces can't be edited
-  until unhidden.
+- **Hide** (`Shift+H`) / **Unhide all** (`Cmd+U`, or `Ctrl+U` on
+  Windows/Linux). **Unhide all** clears the hidden state of every trace on the
+  current section. **Toggle show all** (`A`) displays hidden traces temporarily
+  without changing their hidden state.
 - **Make negative / positive**. Negative traces subtract from (cut into) the area
   of same-named traces, e.g. to carve a hole; this matters for area and 3D volume.
 - **Cut / Copy / Paste** (`Ctrl+X` / `Ctrl+C` / `Ctrl+V`) and **Paste attributes**
@@ -720,15 +753,14 @@ most-used edit is one click away above the per-entity submenus.
 On the field (right-click empty space, or use the shortcuts):
 
 - **Select all** (`Ctrl+A`) / **Deselect** (`Ctrl+D`).
-- The **View** submenu items are checkboxes that show their current on/off state;
-  each also has a keyboard shortcut that toggles it:
-  - **Hide trace layer** (`H`) and **Show all traces (ignore hidden)** (`A`)
+- The **View** submenu has toggles with keyboard shortcuts:
+  - **Toggle hide all** (`H`) and **Toggle show all** (`A`)
     temporarily hide or show every trace regardless of individual hidden state
     (the field border turns red when all are force-hidden, green when all are
     force-shown). These differ from per-trace Hide/Unhide.
-  - **Section blend** (`Space`) blends the current and last-viewed section, to
-    compare them.
-  - **Hide image** (`I`), **Focus mode** (`X`).
+  - **Toggle section blend** (`Space`) blends the current and last-viewed section
+    to compare them.
+  - **Toggle hide image** (`I`), **Toggle focus mode** (`X`).
 
 In **Focus mode**, a **Ctrl-click** (`Cmd`-click on macOS) on a trace edits which
 object it belongs to: clicking a trace of the focused object splits that trace out
@@ -806,7 +838,7 @@ it to the 3D scene. Columns include **Name**, **Start/End** (first/last section)
 columns you define.
 
 - **Flat area** = the summed closed-trace areas plus open-trace lengths × section
-  thickness; **Volume** = summed closed-trace areas × section thickness.
+  thickness ([how flat area is calculated](flat-area.md)); **Volume** = summed closed-trace areas × section thickness.
 - The context menu edits the object across the whole series: edit attributes, set
   comments/hosts/groups/alignment, lock/unlock, create a copy, edit radius/shape,
   smooth, split into individual objects, set curation, manage the object in 3D
@@ -847,7 +879,7 @@ Lists all sections. Columns: **Section** (number; calibration-grid sections are
 marked), **Thickness**, **Locked**, **Brightness**, **Contrast**, **Image Source**.
 The context menu locks/unlocks sections, sets brightness/contrast (set, increment,
 match to the in-view section, or optimize), edits thickness, edits the image source,
-inserts a section above/below, copies, and deletes. **Modify ▸ Section image
+inserts a section above/below, copies, and deletes. **Modify ▸ Edit all image
 sources…** bulk-renames image sources, and **Reorder sections** renumbers them
 sequentially.
 
@@ -907,7 +939,8 @@ active. Switch to a real alignment first.
 - **Alignments ▸ Edit alignments…** (`Ctrl+Shift+A`) opens the alignment dialog,
   where you can create a **New** alignment (created as a copy of the current one),
   **Rename**, or **Remove** alignments. Objects can also carry a per-object
-  alignment override (**Edit alignment…** in the object list).
+  alignment override (**Object attributes ▸ Change object alignment…** in the
+  object list's context menu).
 
 ![The alignment dialog: a list of the alignments, default and no-alignment, with Remove, Rename and New buttons.](assets/images/user-guide/10-edit-alignments.png)
 
@@ -934,8 +967,10 @@ active. Switch to a real alignment first.
   all lie on one straight line on either section. If the landmarks cannot produce
   a usable affine transform, PyReconstruct shows a notice and keeps the current
   transform.
-- **Align by correlation** (`Ctrl+\`) automatically registers the current image to
-  the section beneath it by image cross-correlation (a translation-only adjustment).
+- **Align by correlation** (`Cmd+\`, or `Ctrl+\` on Windows/Linux) registers
+  the current image to the last-viewed comparison ("B") section by image
+  cross-correlation, using a translation-only adjustment. Visit the reference
+  section, then the section you want to align.
 - **Propagate transform** records a transform adjustment and applies it across many
   sections: **Start propagation recording**, make your adjustment, then **Propagate
   to start** / **Propagate to end** (or simply navigate; while recording, moving to
@@ -944,22 +979,22 @@ active. Switch to a real alignment first.
 
 ### Align by correlation, then propagate across a range
 
-The `Ctrl+\` correlation shift can be recorded and propagated across a range of
-sections, exactly like a manual transform, but **you must start recording before
-you correlate**:
+The correlation shift can be propagated across a range of sections. You can
+start recording before the alignment or include changes already made on the
+current section:
 
-1. Navigate to the section you want to align.
-2. **Alignments ▸ Propagate transform ▸ Start propagation recording**.
-3. Press `Ctrl+\` (**Align by correlation**). This aligns the current section and
-   records the shift.
+1. Visit the reference section, then the section you want to align.
+2. Press `Cmd+\` (`Ctrl+\` on Windows/Linux) for **Align by correlation**.
+3. Choose **Alignments ▸ Propagate transform ▸ Start propagation recording**
+   before leaving this section. Recording includes the transform changes already
+   made here. If you undid those changes, there is no change to include.
 4. Either navigate through the sections (each unlocked section you visit receives
    the recorded shift) or use **Propagate to start** / **Propagate to end** to apply
    it across a bulk range at once.
-5. **Alignments ▸ Propagate transform ▸ End propagation recording**.
+5. Choose **Alignments ▸ Propagate transform ▸ End propagation recording**.
 
-Order matters: starting recording resets the accumulator, so pressing `Ctrl+\`
-*before* you start recording will not capture that alignment. Always start
-recording first. As with manual transforms, locked sections are skipped during
+Starting recording first also works. Further transform changes made while
+recording are added to the recorded change. Locked sections are skipped during
 propagation.
 
 ### Importing transforms
@@ -1074,6 +1109,9 @@ The 3D window has its own menu bar:
   (X/Y) and `Ctrl`+Up/Down (Z). Edit its **edge length (µm)**, color, opacity, and
   outline width via **Edit ▸ Edit attributes…** (`Ctrl+E`). It's a physical
   measuring reference.
+- **Scene ▸ View ▸ Orthographic** is on in every new scene, so an object keeps
+  the same size at any depth. Turn it off for perspective, where nearer objects
+  look larger.
 - **Scene ▸ Change background** sets the background color.
 - **Scene ▸ Organize scene…** (`Ctrl+Shift+H`) lines objects up side by side, by
   host group or individually.
@@ -1081,7 +1119,9 @@ The 3D window has its own menu bar:
   0.1 µm and 10°).
 - **File ▸ Save scene… / Load scene…** save the scene (objects, colors, camera) to
   a JSON file and reload it later (also **Series ▸ 3D ▸ Load 3D scene…** from the
-  main window). **Add to scene** can also pull objects from another series.
+  main window). **Add to scene** can also pull objects from another series. The
+  saved camera includes the projection and the orthographic zoom. A scene saved
+  by an older version, without a projection, reopens in perspective.
 
 ### Saving images and exporting meshes
 
@@ -1090,11 +1130,11 @@ The 3D window has its own menu bar:
 - **Scene ▸ Export scene…** exports the whole scene as a single Wavefront `.obj`
   (with a `.mtl` material file). If either file already exists, PyReconstruct
   asks once before it replaces both; **Cancel** writes nothing.
-- From the **Object list ▸ 3D ▸ Export mesh as**, export individual objects as
+- From the **Object list ▸ 3D ▸ Export meshes**, export individual objects as
   **Wavefront (.obj)**, **OFF (.off)**, **Stanford PLY (.ply)**, **STL (.stl)**, or
   **Collada (.dae)**. (Surface and Spheres objects export; contour and tube types do
   not. Collada export additionally requires the optional `pycollada` package; if it
-  is missing you'll be told, rather than seeing an error.)
+  is missing, the Collada item is disabled and labeled **(not installed)**.)
 - **Object list ▸ 3D ▸ Export quantitative data** writes per-object surface area
   and volume to CSV. (Note these depend on the meshing settings; verify mesh quality
   before relying on the numbers.)
@@ -1126,10 +1166,15 @@ template. The template is assembled from optional parts joined by a delimiter: a
 prefix, the series code, the series name, the date and time (with customizable
 strftime patterns), the username, and a suffix. A live preview shows the
 resulting filename, and
-name collisions get a numeric suffix (`-01`, `-02`, …). The folder and the
-auto-backup toggle are remembered **per series**; the naming template is shared
-across all series. (The backup folder and naming are also available under **Series ▸
-Options ▸ Backup**.)
+name collisions get a numeric suffix (`-01`, `-02`, …).
+
+Under **My Defaults (all series)**, set a shared backup folder and auto-backup
+choice. **Use my defaults for this series** applies them to the current series;
+clear it to set that series' own folder and auto-backup choice under **This
+Series**. A series with no backup settings uses your defaults. A series with an
+existing backup folder or auto-backup enabled keeps its own settings until you
+choose otherwise. The naming template is shared across all series. These
+settings are also available under **Series ▸ Options ▸ Backup**.
 
 When backups go in a subfolder named by the series code (the checkbox in **File ▸
 Backup ▸ Settings…**, or `{series}` in the folder), codes that differ only by `/`,
@@ -1301,7 +1346,7 @@ on Windows and Linux it is `Ctrl` or `Alt`, shown after it.
 
 **Help ▸ Online resources** links to:
 
-- the [PyReconstruct user guide](https://pyreconstruct.org/USER_GUIDE/),
+- this [PyReconstruct user guide](https://pyreconstruct.org/USER_GUIDE/),
 - [class documents](https://pyreconstruct.org/class/),
 - the [Harris lab wiki](https://pyreconstruct.org/harrislabwiki/) and its
   [PyReconstruct guide](https://cloud.wikis.utexas.edu/wiki/spaces/khlab/pages/53543200/PyReconstruct+user+guide),

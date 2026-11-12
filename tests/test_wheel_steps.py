@@ -41,7 +41,10 @@ ORDERS = pytest.mark.parametrize("busy", [True, False], ids=["busy", "idle"])
 
 
 @pytest.fixture
-def window(main_window, qtbot):
+def window(main_window, qtbot, local_series_settings):
+    local_series_settings(main_window)
+    # These distance and momentum tests use the original direction on every OS.
+    main_window.series.setOption("reverse_trackpad_scroll", False)
     main_window.show()
     qtbot.waitExposed(main_window)
     assert main_window.series.current_section == START
@@ -71,12 +74,14 @@ class Replayed:
 
 
 @pytest.fixture
-def production(main_window, qtbot, monkeypatch):
+def production(main_window, qtbot, monkeypatch, local_series_settings):
     """A window that reads through `native_scroll.read`, as it ships.
 
     Only the Objective-C runtime under it is replayed: a wheel event made in
     Python has no NSEvent behind it.
     """
+    local_series_settings(main_window)
+    main_window.series.setOption("reverse_trackpad_scroll", False)
     main_window.show()
     qtbot.waitExposed(main_window)
     assert main_window.wheel_steps.read_native is native_scroll.read
