@@ -146,6 +146,22 @@ class HostTree():
         if self._kept.pop(name, None):
             self._stale = True
 
+    def deleteKept(self, name : str):
+        """The object under the name is deleted while it has no traces
+        (Series.deleteObjects): the ids kept for it go out of sight, as they
+        do when a delete takes an object's last trace. No section step
+        replays this, so the ids are numbered as a rename's are (renames):
+        a series undo of the delete keeps them again, and its redo leaves
+        them out (SeriesState.applySeriesAttributes). Their links stay,
+        dormant, for that undo."""
+        kept = self._kept.get(name)
+        if not kept:
+            return
+        HostTree.renames += 1
+        for oid in kept:
+            self._renamed[oid] = HostTree.renames
+        self._release(name)
+
     def restoreKept(self, kept : dict):
         """Keep again the ids a section undo or redo puts back
         (FieldState.kept_before, kept_after), for the names its action

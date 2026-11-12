@@ -1,6 +1,8 @@
 """Collect data to pass to table manager."""
 
 import contextlib
+import csv
+import io
 from typing import Optional, Union
 
 from PyReconstruct.modules.calc import traceGeometry
@@ -468,7 +470,30 @@ class SeriesData():
             for snum in obj_data.traces
         )
     
-    def updateSection(self, section : Section, update_traces=False, all_traces=True, log_events=True, read_store=False):
+    def refreshObjects(self, names):
+        """Reload only named objects on the sections containing their traces.
+
+        Unmatched objects keep their cached measurements. As with a full
+        refresh, removed traces retain object attributes and host links.
+        """
+        section_names = {}
+        for name in set(names):
+            obj = self.objects.get(name)
+            if obj is not None:
+                for snum in obj.traces:
+                    section_names.setdefault(snum, set()).add(name)
+        if not section_names:
+            return
+        for snum, section in self.series.enumerateSections(
+            section_numbers=section_names,
+            message="Refreshing object data...",
+        ):
+            self.updateSection(
+                section, update_traces=True, log_events=False,
+                read_store=True, trace_names=section_names[snum],
+            )
+
+    def updateSection(self, section : Section, update_traces=False, all_traces=True, log_events=True, read_store=False, trace_names=None):
         """Update the existing section data.
         
             Params:
@@ -483,6 +508,8 @@ class SeriesData():
                     earlier. `Section.save` reads the contours: an edit made
                     outside `Section` can make the store stale until the save
                     rebuilds it, and the save updates the series data first.
+                trace_names (iterable): explicit names to update, overriding
+                    section tracking and all_traces when provided
         """
         # create/update the data for a section
         if section.n not in self.data["sections"]:
@@ -514,10 +541,13 @@ class SeriesData():
         if update_traces:
             
             ## Check if there are specific traces to be updated
-            trace_names = section.getAllModifiedNames()
+            if trace_names is None:
+                trace_names = section.getAllModifiedNames()
 
-            if section.tformsModified(scaling_only=True) or (all_traces and not trace_names):
-                trace_names = section.contours.keys()
+                if section.tformsModified(scaling_only=True) or (all_traces and not trace_names):
+                    trace_names = section.contours.keys()
+            else:
+                trace_names = tuple(trace_names)
 
             ## Keep track of objects that are newly created/destroyed
             added_objects = set()
@@ -1036,7 +1066,10 @@ class SeriesData():
             Params:
                 out_fp (str): filepath of exported CSV (str returned if no filepath provided)
         """
-        out_rows = ["Name,Section,Index,Hidden,Closed,Tags,Length,Area,Radius,Centroid-x,Centroid-y,Feret-Max,Feret-Min"]
+        out_rows = [[
+            "Name", "Section", "Index", "Hidden", "Closed", "Tags", "Length",
+            "Area", "Radius", "Centroid-x", "Centroid-y", "Feret-Max", "Feret-Min",
+        ]]
 
         ## Iterate through all traces
         objs = self.data["objects"]
@@ -1105,7 +1138,7 @@ class SeriesData():
 
                     vals = list(map(str, vals))
 
-                    rows_by_name[name].append(','.join(vals))
+                    rows_by_name[name].append(vals)
 
         ## Objects in name order; within an object the rows are already in
         ## ascending section then ascending index order
@@ -1113,11 +1146,13 @@ class SeriesData():
 
             out_rows += rows_by_name[name]
 
-        out_str = "\n".join(out_rows) + "\n"
+        output = io.StringIO(newline="")
+        csv.writer(output).writerows(out_rows)
+        out_str = output.getvalue()
 
         # export the csv file
         if out_fp:
-            with open(out_fp, "w", errors=EXPORT_ERRORS) as f:
+            with open(out_fp, "w", errors=EXPORT_ERRORS, newline="") as f:
                 f.write(out_str)
         else:
             return out_str

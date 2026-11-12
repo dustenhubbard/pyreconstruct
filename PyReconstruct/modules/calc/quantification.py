@@ -372,17 +372,24 @@ def sigfigRound(n : float, sf : int) -> float:
     return round(n, sf - (greatest_place+1))
 
 
-def getDistanceFromTrace(x : float, y: float, trace : list, factor=1.0, absolute=True):
+def getDistanceFromTrace(x : float, y: float, trace : list, factor=1.0, absolute=True, closed=True):
     """Find the distance a point is from a given trace (uses opencv).
     
         Params:
             x (float): the x-coord of the point
             y (float): the y-coord of the point
             trace (list): the trace to check against the point
+            closed (bool): whether the last point connects to the first;
+                open traces have no interior, so their signed distance is negative
         Returns:
             (float) the distance of the point from the trace
     """
-    pp_test = cv2.pointPolygonTest((np.array(trace) * factor).astype(int), (x * factor, y * factor), measureDist=True)
+    points = (np.array(trace) * factor).astype(int)
+    if not closed:
+        # Retrace the segments in reverse. OpenCV closes every path, so this
+        # makes its closing edge follow the first segment, with no interior.
+        points = np.concatenate((points, points[-2:0:-1]))
+    pp_test = cv2.pointPolygonTest(points, (x * factor, y * factor), measureDist=True)
     return abs(pp_test / factor) if absolute else pp_test / factor
 
 
