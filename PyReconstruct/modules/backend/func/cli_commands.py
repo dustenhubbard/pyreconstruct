@@ -12,7 +12,7 @@ module is the part that runs at launch and makes sure they are reachable:
   A file that is not one of our links is never touched. The PATH lines are
   added once per app, and not at all when a login shell already has the
   folder on PATH. No prompt and no administrator rights.
-* Windows: the install's ``bin`` folder on the per-user PATH. The installer
+* Windows: the install's ``bin`` folder on the system or per-user PATH. The installer
   adds it; this covers an install that an in-place update brought up to a
   build with commands. Once per app, no administrator rights.
 * Linux: the short name beside the launcher install-appimage.sh wrote, for
@@ -400,9 +400,18 @@ def _broadcast_environment_change():
 
 
 def windows_add_to_path(bin_dir, winreg=None, broadcast=_broadcast_environment_change):
-    """Add ``bin_dir`` to HKCU\\Environment\\Path. True when it was added."""
+    """Add ``bin_dir`` to the user's PATH unless it is already on the system PATH."""
     if winreg is None:
         import winreg  # type: ignore[no-redef]
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment", 0,
+                            winreg.KEY_READ) as key:
+            system_path, kind = winreg.QueryValueEx(key, "Path")
+        if kind in (winreg.REG_SZ, winreg.REG_EXPAND_SZ) and path_has_entry(system_path, str(bin_dir)):
+            return False
+    except OSError:
+        pass
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0,
                         winreg.KEY_READ | winreg.KEY_SET_VALUE) as key:
         try:

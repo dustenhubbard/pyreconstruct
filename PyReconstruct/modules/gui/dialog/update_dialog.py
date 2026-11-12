@@ -131,6 +131,22 @@ class UpdateDialog(QDialog):
         if info.get("nightly_releases"):
             self.resize(760, 600)
 
+        from PyReconstruct.modules.backend.updater import inplace
+        from PyReconstruct.modules.backend.updater.install_info import os_key
+        self._admin_required = inplace.installer_admin_required()
+        if self._admin_required:
+            if os_key() == "windows":
+                text = ("PyReconstruct is installed for all users. An administrator must run "
+                        "the installer, choose Install for all users, and select the existing "
+                        "installation folder.")
+            else:
+                text = ("An administrator must complete this installation. Open the downloaded "
+                        "disk image and replace the existing PyReconstruct copy, "
+                        "then approve the administrator prompt.")
+            notice = QLabel(text)
+            notice.setWordWrap(True)
+            lay.addWidget(notice)
+
         # progress (hidden until download starts)
         self._progress = QProgressBar()
         self._progress.setRange(0, 100)
@@ -189,6 +205,8 @@ class UpdateDialog(QDialog):
     def _try_inplace(self, release, offered, progress_cb):
         """On the worker: stage the update in place, or None to fetch the installer instead."""
         from PyReconstruct.modules.backend.updater import inplace
+        if self._admin_required:
+            return None
         if inplace.running_install() is None:
             return None
         try:

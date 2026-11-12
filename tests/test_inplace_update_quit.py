@@ -368,7 +368,8 @@ def test_a_deferred_update_is_staged_again_at_launch_and_goes_in_at_the_quit(
     assert quit_calls == ["quit"]
 
 
-def test_a_third_deferral_sends_that_version_to_the_installer(main_window, dev, quit_calls, launch):  # noqa: F811
+def test_a_third_deferral_sends_that_version_to_the_installer(
+        main_window, dev, quit_calls, launch, monkeypatch):  # noqa: F811
     for count in range(1, A.MAX_DEFERRALS + 1):
         dev.stage()
         assert _quit_with_the_install_held(dev)["deferrals"] == count
@@ -377,6 +378,7 @@ def test_a_third_deferral_sends_that_version_to_the_installer(main_window, dev, 
     assert main_window._pending_inplace is None
     with pytest.raises(I.NotEligible, match="put off"):
         dev.stage()
+    monkeypatch.setattr(I, "installer_admin_required", lambda: False)  # this simulated per-user install
     dlg = _dialog(None, dev)
     assert dlg._try_inplace(dev.rel.release(), NEW_V, lambda p: None) is None  # the installer next
     assert main_window.close() is True

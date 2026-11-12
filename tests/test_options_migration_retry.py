@@ -375,3 +375,40 @@ def test_local_copy_row_reset_defaults_is_stored(
     finally:
         dialog.close()
         series.close()
+
+
+@pytest.mark.parametrize("touch", [False, True])
+@pytest.mark.parametrize("pending", [False, True])
+def test_correlation_row_keeps_or_saves_the_legacy_cutoffs(
+    qapp, series_jser, domain, monkeypatch, pending, touch  # noqa: F811  (fixture)
+):
+    app, make = domain
+    old = make("KHLab")
+    old.setValue("correlation_dark_cutoff", 25)
+    old.setValue("correlation_bright_cutoff", 215)
+    old.sync()
+    old_bytes = Path(old.fileName()).read_bytes()
+    state = fail_legacy(monkeypatch, app)
+    state["fail"] = pending
+    series = Series.openJser(str(series_jser))
+    series.setSettingsStore(QSettingsStore())
+    dialog = AllOptionsDialog(None, series)
+    try:
+        inputs = dialog.all_widgets["correlation_alignment"].inputs
+        if touch:
+            inputs[0].widget.setText("30")
+        else:
+            dialog.all_widgets["fill_opacity"].inputs[0].widget.setText("0.3")
+        assert dialog.accept() is True
+        state["fail"] = False
+        values = [series.getOption(key) for key in
+                  ("correlation_dark_cutoff", "correlation_bright_cutoff")]
+        print(f"correlation pending={pending} touch={touch} {values}")
+        assert Path(old.fileName()).read_bytes() == old_bytes
+        if touch:
+            assert values[0] == 30
+        else:
+            assert values == [25, 215]
+    finally:
+        dialog.close()
+        series.close()

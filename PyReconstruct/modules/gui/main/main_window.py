@@ -1229,6 +1229,12 @@ class MainWindow(QMainWindow):
             # is_zarr_file needs the store name to end in "zarr"; enforce it here
             # rather than rely on the save dialog's platform-dependent suffixing.
             zarr_fp = ensure_zarr_suffix(zarr_fp)
+            if os.path.lexists(zarr_fp):
+                notify(
+                    f"The output path already exists:\n{zarr_fp}\n"
+                    "Choose a new path for the scaled images."
+                )
+                return
 
         zarr_converter = Path(assets_dir) / "scripts/start_process.py"
         launch_prefix = script_launch_prefix()

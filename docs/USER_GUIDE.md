@@ -61,13 +61,21 @@ versions are on the
 
 - **Windows**:
   [`PyReconstruct-1.25.0-Windows-x86_64-Setup.exe`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.25.0/PyReconstruct-1.25.0-Windows-x86_64-Setup.exe).
-  This is a per-user installer (no administrator rights required). Builds are
-  unsigned for now, so Windows SmartScreen may warn that the publisher is
-  unknown; choose **More info ▸ Run anyway**. Re-running a newer installer
-  upgrades the existing installation in place.
+  Choose **Install for me only** for a per-user install without administrator
+  rights, or **Install for all users** for a shared install with an administrator
+  prompt. From a terminal, `/CURRENTUSER` and `/ALLUSERS` select the same modes.
+  In builds after 1.25.0, the installer adds the terminal commands to your PATH
+  for a per-user install or the system PATH for all users. Open a new terminal
+  to use them. Builds are unsigned for now, so Windows SmartScreen may warn that
+  the publisher is unknown; choose **More info ▸ Run anyway**. Re-running a newer
+  installer upgrades the existing installation. Choose the same mode and folder
+  when upgrading.
 - **macOS**: open the `.dmg` and drag **PyReconstruct** onto the **Applications**
   shortcut. PyReconstruct is signed and notarized by Apple, so the first launch
   shows the usual question for an app downloaded from the internet. Click **Open**.
+  `/Applications` makes PyReconstruct available to all users. For a per-user
+  install, drag PyReconstruct into `~/Applications` instead. Replacing a shared
+  copy may require an administrator's approval.
 
   Versions before 1.24.0 were not signed. To open one of those, clear the
   quarantine flag once in Terminal:
@@ -203,6 +211,15 @@ version, the download size, and a link to the release notes, with a
 asks to save any unsaved work, closes, and opens the installer. Complete
 installation, then launch the app again. Canceling the close also cancels
 the installation.
+
+For an all-users Windows install, an administrator must run the downloaded
+installer, choose **Install for all users**, and select the existing installation
+folder. A per-user install updates without administrator rights. On macOS, open
+the downloaded disk image and replace the existing copy in `/Applications` or
+`~/Applications`. If you cannot write to that folder, an administrator must
+complete the replacement. In builds after 1.25.0, the update dialog explains when
+an administrator is needed. Eligible PyReconstruct Dev installs instead stage
+the update for the next quit and offer **Restart Now**.
 
 PyReconstruct Dev also shows the offered nightly and each skipped nightly in
 newest-first order under **Changes in &lt;version&gt;**. Each list includes its pull
@@ -378,7 +395,12 @@ Under **Series ▸ Images**:
 - **Find/change image directory** points the series at the folder containing its
   images. The chosen directory is remembered with the series.
 - **Convert to scaled images** converts the series' images into a scaled
-  (`.zarr`) store for faster loading of large images.
+  (`.zarr`) store for faster loading of large images. Choose an output path
+  that does not exist. PyReconstruct adds `.zarr` if the name does not end in
+  `zarr`, then checks the final path. If that path already exists,
+  PyReconstruct shows "The output path already exists" and leaves it unchanged
+  without starting conversion. Run **Convert to scaled images** again and
+  choose an unused path.
 - **Update image scales** adds or refreshes scale levels on an existing Zarr.
 
 ### When a Zarr names its images differently
@@ -942,6 +964,11 @@ active. Switch to a real alignment first.
   the current image to the last-viewed comparison ("B") section by image
   cross-correlation, using a translation-only adjustment. Visit the reference
   section, then the section you want to align.
+  Pixels at or below the dark cutoff and at or above the bright cutoff are ignored,
+  including black image borders. Set the cutoffs in **Series ▸ Options ▸ User/Series**.
+  The defaults are 5 and 250 on a 0 to 255 intensity scale. Display brightness and
+  contrast do not affect alignment. A weak match displays a message and leaves the
+  section unchanged.
 - **Propagate transform** records a transform adjustment and applies it across many
   sections: **Start propagation recording**, make your adjustment, then **Propagate
   to start** / **Propagate to end** (or simply navigate; while recording, moving to

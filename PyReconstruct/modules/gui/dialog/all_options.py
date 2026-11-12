@@ -182,6 +182,7 @@ class AllOptionsDialog(QDialog):
                 ["user"],
                 ["series_code"],
                 ["2D_step"],
+                ["correlation_alignment"],
                 ["3D_step"],
                 ["left_handed"],
                 ["trackpad_scroll"],
@@ -337,6 +338,30 @@ class AllOptionsDialog(QDialog):
             }
 
         self.addOptionWidget("knife", structure, getOptions)
+
+        structure = [
+            ["Ignore image intensities at or outside these cutoffs (0 to 255)."],
+            ["Display brightness and contrast do not change these intensities."],
+            ["Dark cutoff:", (True, "int",
+                self.series.getOption("correlation_dark_cutoff", use_defaults),
+                range(0, 255))],
+            ["Bright cutoff:", (True, "int",
+                self.series.getOption("correlation_bright_cutoff", use_defaults),
+                range(1, 256))],
+        ]
+
+        def getOptions(response):
+            return {
+                "correlation_dark_cutoff": response[0],
+                "correlation_bright_cutoff": response[1],
+            }
+
+        self.addOptionWidget(
+            "correlation_alignment",
+            CorrelationOptionsWidget(
+                self, "Align by correlation", structure, self.series, getOptions,
+            ),
+        )
 
         ## 3D options
         
@@ -898,5 +923,18 @@ class SeriesCodeWidget(OptionWidget):
         code = self.responses[0]
         if "\0" in code and code != self.series.code:
             notify(SERIES_CODE_NUL)
+            return False
+        return True
+
+
+class CorrelationOptionsWidget(OptionWidget):
+    """Keep the valid intensity range nonempty."""
+
+    def accept(self, close=True):
+        if not super().accept(close):
+            return False
+        dark, bright = self.responses
+        if dark >= bright:
+            notify("The dark cutoff must be lower than the bright cutoff.")
             return False
         return True
