@@ -1,0 +1,1 @@
+- **Importing user columns now prompts to save before closing the series.**
