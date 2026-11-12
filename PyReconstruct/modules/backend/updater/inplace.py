@@ -140,6 +140,31 @@ def check_eligible(release, install, *, platform=None, trusted_keys=None):
         raise NotEligible(f"could not check the release: {e}") from e
 
 
+def installer_admin_required(install=None, *, winreg=None):
+    """Whether replacing this installed copy needs an administrator.
+
+    This is independent of the release and flavor's in-place eligibility:
+    Stable also needs the instruction when it downloads an installer.
+    """
+    install = install or running_install()
+    if install is None:
+        return False
+    if _is_macos(install):
+        real = os.path.realpath(install.folder)
+        if real.startswith("/Volumes/") or "/AppTranslocation/" in real:
+            return False
+        return not os.access(os.path.dirname(install.folder), os.W_OK)
+    if winreg is None:
+        import winreg  # type: ignore[no-redef]
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, REGISTRY_KEYS[install.flavor], 0,
+                            winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
+            location, _ = winreg.QueryValueEx(key, "InstallLocation")
+    except OSError:
+        return False
+    return isinstance(location, str) and A._norm_win(location) == A._norm_win(install.folder)
+
+
 def _check_eligible(release, install, platform, trusted_keys):
     version = U._tag_version(release)
     if version is None:

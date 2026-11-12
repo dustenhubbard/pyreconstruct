@@ -43,7 +43,7 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-; Per-user install: no admin/UAC needed, and the updater can re-run it cleanly.
+; Per-user by default; the initial dialog also offers an all-users install.
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog commandline
 ; Close a running PyReconstruct so its files aren't locked during an upgrade.
@@ -51,7 +51,7 @@ CloseApplications=yes
 RestartApplications=no
 ; The .jser association below; tells Explorer to refresh its file-type cache.
 ChangesAssociations=yes
-; {app}\bin goes on the user's PATH ([Code] below); tells Explorer so a new
+; {app}\bin goes on the selected install mode's PATH; tells Explorer so a new
 ; terminal finds the commands without a sign-out.
 ChangesEnvironment=yes
 
@@ -90,8 +90,7 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; \
     GroupDescription: "Additional shortcuts:"
 
 [Registry]
-; Associate .jser with this install. HKA is per-user here (PrivilegesRequired
-; is lowest), so stable and Dev can each hold their own ProgID without UAC.
+; HKA follows the install mode: HKCU for one user, HKLM for all users.
 ; OpenWithProgids (not a bare default value) so an existing user choice for
 ; .jser is respected; a fresh machine opens .jser with this app directly.
 Root: HKA; Subkey: "Software\Classes\.jser\OpenWithProgids"; \
@@ -152,13 +151,26 @@ begin
 end;
 
 // The terminal commands (pyrecon and pyreconstruct, or the -dev pair) are in
-// {app}\bin, and that folder alone goes on the per-user PATH. Install adds
+// {app}\bin, and that folder alone goes on the selected mode's PATH. Install adds
 // the one entry if it is missing; uninstall removes exactly that entry and
 // keeps every other one as it was. Entries compare without case and without
-// a trailing backslash. The value is never deleted: it belongs to the user.
+// a trailing backslash. The value is never deleted.
 
-const
-  EnvKey = 'Environment';
+function PathRootKey(): Integer;
+begin
+  if IsAdminInstallMode then
+    Result := HKLM
+  else
+    Result := HKCU;
+end;
+
+function PathSubkey(): String;
+begin
+  if IsAdminInstallMode then
+    Result := 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment'
+  else
+    Result := 'Environment';
+end;
 
 function CommandsDir(): String;
 begin
@@ -220,13 +232,13 @@ procedure AddCommandsToPath();
 var
   Value: String;
 begin
-  if not RegQueryStringValue(HKCU, EnvKey, 'Path', Value) then
+  if not RegQueryStringValue(PathRootKey(), PathSubkey(), 'Path', Value) then
     Value := '';
   if PathHasEntry(Value, CommandsDir()) then
     exit;
-  if (Value <> '') and (Copy(Value, Length(Value), 1) <> ';') then
+  if Value <> '' then
     Value := Value + ';';
-  RegWriteExpandStringValue(HKCU, EnvKey, 'Path', Value + CommandsDir());
+  RegWriteExpandStringValue(PathRootKey(), PathSubkey(), 'Path', Value + CommandsDir());
 end;
 
 procedure RemoveCommandsFromPath();
@@ -236,7 +248,7 @@ var
   I, N: Integer;
   First: Boolean;
 begin
-  if not RegQueryStringValue(HKCU, EnvKey, 'Path', Value) then
+  if not RegQueryStringValue(PathRootKey(), PathSubkey(), 'Path', Value) then
     exit;
   if not PathHasEntry(Value, CommandsDir()) then
     exit;
@@ -251,7 +263,7 @@ begin
       Kept := Kept + Parts[I];
       First := False;
     end;
-  RegWriteExpandStringValue(HKCU, EnvKey, 'Path', Kept);
+  RegWriteExpandStringValue(PathRootKey(), PathSubkey(), 'Path', Kept);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
