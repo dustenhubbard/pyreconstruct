@@ -599,7 +599,7 @@ class _NumericColumn():
     def append(self, value):
         if self._used == len(self._array):
             shape = list(self._array.shape)
-            shape[0] *= 2
+            shape[0] = max(self.INITIAL_CAPACITY, shape[0] * 2)
             grown = np.empty(tuple(shape), dtype=self._array.dtype)
             grown[:self._used] = self._array[:self._used]
             self._array = grown

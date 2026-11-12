@@ -1,3 +1,4 @@
+import math
 
 from PySide6.QtWidgets import (
     QInputDialog, 
@@ -187,7 +188,9 @@ class FieldWidgetView(FieldWidgetPaint):
                 new_mag = float(new_mag)
             except ValueError:
                 return
-            if new_mag <= 0:  # magnification must be positive
+            # magnification must be a positive number; float() also takes
+            # "nan", "inf" and overflow such as "1e309"
+            if not math.isfinite(new_mag) or new_mag <= 0:
                 return
         else:
             new_mag = 1 / new_mag
@@ -544,9 +547,14 @@ class FieldWidgetView(FieldWidgetPaint):
         # calculate the scaling factor for the magnification
         factor = mag * self.series.screen_mag
 
-        # reset the window
+        # reset the window; a scale that rounds to zero, or that would make
+        # the window infinite or empty, leaves it as it is
         w, h = self.series.window[2], self.series.window[3]
+        if not math.isfinite(factor) or factor <= 0:
+            return
         new_w, new_h = w / factor, h / factor
+        if not all(math.isfinite(v) and v > 0 for v in (new_w, new_h)):
+            return
         self.series.window[0] += (w - new_w) / 2
         self.series.window[1] += (h - new_h) / 2
         self.series.window[2] = new_w

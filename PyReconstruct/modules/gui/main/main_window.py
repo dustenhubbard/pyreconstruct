@@ -32,7 +32,8 @@ from PyReconstruct.modules.backend.func.window_geometry import (
     default_window_rect,
     window_geometry_is_usable,
 )
-from .status_readout import FieldStatusReadout, StatusSegment
+from .status_readout import FieldStatusReadout
+from .update_notice import UpdateNotice
 from . import mac_menubar
 from PyReconstruct.modules.gui.utils import appearance
 from PyReconstruct.modules.gui.table.history import setAsideText
@@ -462,9 +463,7 @@ class MainWindow(QMainWindow):
         ## a newer build, then it stays until clicked. A permanent widget, so a
         ## showMessage notice never hides it; clicking runs the same check as
         ## Help > Check for updates.
-        self.update_notice = StatusSegment(
-            "Opens the update, like Help ▸ Check for updates..."
-        )
+        self.update_notice = UpdateNotice()
         self.update_notice.setObjectName("update_notice")
         self.update_notice.clicked.connect(self.openUpdateNotice)
         self.update_notice.hide()
@@ -4024,7 +4023,7 @@ class MainWindow(QMainWindow):
         self.field.updateStatusBar()
 
     def refreshAlignmentActions(self, alignments_before):
-        """Rebuild the context menus if the series' alignment names changed.
+        """Refresh the alignment entries and their active checkmark.
 
         The "Series alignment" submenu and the one <name>_alignment_act per
         name are both built from series.alignments at createContextMenus()
@@ -4045,6 +4044,11 @@ class MainWindow(QMainWindow):
         # the same file on the same day reuses the alignment name
         if set(self.series.alignments) != set(alignments_before):
             self.createContextMenus()
+        else:
+            # Reimporting can select an existing alignment without adding a name.
+            for name in self.series.alignments:
+                action = getattr(self, f"{name}_alignment_act")
+                action.setChecked(name == self.series.alignment)
 
     def changeBCProfiles(self):
         """Open dialog to modify and change brightness/contrast profiles."""
@@ -5582,7 +5586,9 @@ class MainWindow(QMainWindow):
         if notice is None or not isValid(notice):
             return
         if version:
-            notice.setText(f"Update available: {version}")
+            text = f"Update available: {version}"
+            notice.setToolTip(text)
+            notice.setAccessibleName(text)
             notice.show()
         else:
             notice.hide()
@@ -5845,7 +5851,12 @@ class MainWindow(QMainWindow):
             i += 1
             name = f"{name}-{i}"
 
-        if not self.series.importTracePaletteCSV(fp, name):
+        try:
+            imported = self.series.importTracePaletteCSV(fp, name)
+        except ValueError as exc:
+            notify(f"{exc}\nNothing was imported.")
+            return
+        if not imported:
             notify("This CSV file has no palette rows. Nothing was imported.")
             return
         self.series.palette_index[0] = name

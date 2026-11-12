@@ -7,8 +7,9 @@ tools, the data lists, alignment, 3D reconstruction, and backups.
 
 This guide describes PyReconstruct as it currently behaves in this
 distribution. **Help ▸ Online resources ▸ PyReconstruct user guide** opens
-[this guide](https://pyreconstruct.org/USER_GUIDE/). The in-app
-**Help ▸ Shortcuts list** lists the current key bindings.
+[this guide](https://pyreconstruct.org/USER_GUIDE/). **Help ▸ Online resources**
+also links to the Harris lab wiki, and **Help ▸ Shortcuts list** lists the
+current key bindings.
 
 > **About screenshots.** The screenshots and clips show PyReconstruct on macOS
 > with a small test series. They are shot from PyReconstruct itself, and shot
@@ -203,6 +204,12 @@ asks to save any unsaved work, closes, and opens the installer. Complete
 installation, then launch the app again. Canceling the close also cancels
 the installation.
 
+PyReconstruct Dev also shows the offered nightly and each skipped nightly in
+newest-first order under **Changes in &lt;version&gt;**. Each list includes its pull
+requests and **Full Changelog** link, followed by earlier Stable notes. Use
+**View release on GitHub** to open the offered release. Stable keeps the
+link-only update dialog and shows What's New once after an update.
+
 If you are already current, you'll see a brief "You're already up to date"
 message; if no installer exists for your platform on that channel, it tells you so.
 
@@ -215,12 +222,13 @@ The picture shows an example offer. Version 9.9.9 does not exist.
 Under **Help ▸ Automatically check for updates** you can turn the startup
 check on or off. It is **on by default**. When enabled, an installed build does a quiet
 background check at most **once per day**; if an upgrade is available,
-**Update available** and the version appear on the right of the status bar. The
-notice stays, across launches too, until you click it; clicking it opens the
-update just like **Help ▸ Check for updates…**. Turning the automatic check off
-also removes the notice.
+a download icon appears on the right of the status bar. Hover over the icon
+to see **Update available** and the version. The notice stays across launches
+until you click it. Clicking opens the update just like
+**Help ▸ Check for updates…**. Turning the automatic check off also removes
+the notice.
 
-![The Update available notice on the right of the status bar, for the example version 9.9.9.](assets/images/user-guide/02-update-notice.png)
+![The update icon on the right of the status bar, with an example version shown on hover.](assets/images/user-guide/02-update-notice.png)
 
 ### Source / `pip` installs
 
@@ -668,6 +676,18 @@ copied trace, or the first selected trace if the trace clipboard is empty.
 **Paste attributes to palette (+shape)** (`Cmd+Shift+G`, or `Ctrl+Shift+G` on
 Windows/Linux) also copies its shape.
 
+Stamp radii must be finite, positive numbers in both palette editors. Renaming a
+palette preserves its buttons and selection.
+
+Palette CSV exports preserve tags containing spaces, commas, or quotes. The
+`TagsJSON` column stores a JSON list of tag strings, such as `["axon,1", "two words"]`.
+CSV imports also accept older files with space-separated tags in a `Tags` column.
+Each row needs six columns and equal numbers of finite X and Y coordinates.
+The points must not all be the same, so the shape has a stamp radius.
+The `Fill` column needs a style (`none`, `transparent`, or `solid`) and a condition
+(`none`, `selected`, `unselected`, or `always`), separated by a space.
+An invalid row cancels the import without changing any palette.
+
 ![The dialog a right-click on a preset opens: Name, Color, Shape, Fill, Stamp radius (microns), Trace Tags and Object Groups.](assets/images/user-guide/07-trace-palette-edit.png)
 
 ---
@@ -1069,7 +1089,8 @@ The 3D window has its own menu bar:
 - **Scene ▸ Save scene screenshot…** saves a rendered image (PNG, JPG, TIF, or BMP)
   at the configured DPI.
 - **Scene ▸ Export scene…** exports the whole scene as a single Wavefront `.obj`
-  (with a `.mtl` material file).
+  (with a `.mtl` material file). If either file already exists, PyReconstruct
+  asks once before it replaces both; **Cancel** writes nothing.
 - From the **Object list ▸ 3D ▸ Export meshes**, export individual objects as
   **Wavefront (.obj)**, **OFF (.off)**, **Stanford PLY (.ply)**, **STL (.stl)**, or
   **Collada (.dae)**. (Surface and Spheres objects export; contour and tube types do
@@ -1284,9 +1305,12 @@ on Windows and Linux it is `Ctrl` or `Alt`, shown after it.
 
 ## 14. Getting help
 
-In the app, **Help ▸ Online resources** links to:
+**Help ▸ Online resources** links to:
 
 - this [PyReconstruct user guide](https://pyreconstruct.org/USER_GUIDE/),
+- [class documents](https://pyreconstruct.org/class/),
+- the [Harris lab wiki](https://pyreconstruct.org/harrislabwiki/) and its
+  [PyReconstruct guide](https://cloud.wikis.utexas.edu/wiki/spaces/khlab/pages/53543200/PyReconstruct+user+guide),
 - this distribution's [source code](https://github.com/dustenhubbard/PyReconstruct),
 - the [Kristen Harris Lab website](https://synapseweb.clm.utexas.edu/harrislab) and
   the [Atlas of Ultrastructural Neurocytology](https://synapseweb.clm.utexas.edu/atlas).
@@ -1294,11 +1318,11 @@ In the app, **Help ▸ Online resources** links to:
 Found a bug, have a feature idea, or want to improve the docs? Please open an issue
 on this distribution's
 **[GitHub Issues](https://github.com/dustenhubbard/PyReconstruct/issues)**. The
-in-app **Help ▸ Report a bug...** and **Help ▸ Request a feature...** items open the
+in-app **Help ▸ Diagnostics ▸ Report a bug...** and **Help ▸ Diagnostics ▸ Request a feature...** items open the
 same place with your version and OS already filled in. If you file another way,
-**Help ▸ Copy diagnostic report** gathers that in one paste, or click the
+**Help ▸ Diagnostics ▸ Copy diagnostic report** gathers that in one paste, or click the
 version/commit shown at the top of the **Help** menu to copy the commit to your
-clipboard. **Help ▸ Email developers** writes to the same team.
+clipboard. **Help ▸ Diagnostics ▸ Email developers** writes to the same team.
 
 ---
 

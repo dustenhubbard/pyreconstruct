@@ -1161,7 +1161,10 @@ class FieldWidgetTrace(FieldWidgetBase):
                 points_as_pix=False,
                 closed=trace.closed,
                 reduce_points=False,
+                log_event=False,
             )
+            self.series.addLog(trace.name, self.section.n, "Create trace(s)")
+            self.mainwindow.mouse_palette.incrementButton()
         
         return True
     
