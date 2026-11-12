@@ -15,9 +15,10 @@ from PyReconstruct.modules.datatypes import Series, Trace, Transform
 
 
 @pytest.fixture
-def mesh_series(qapp, tmp_path):
+def mesh_series(qapp, tmp_path, local_series_settings):
     images = [str(tmp_path / f"section{i}.tif") for i in range(3)]
     series = Series.new(images, "mesh", 0.25, 0.5)
+    local_series_settings(series)
     series.setProgressReporter(NullProgressReporter)
     series.setNotifier(NullNotifier())
     series.setOption("3D_xy_res", 0)

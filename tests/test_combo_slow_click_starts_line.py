@@ -46,6 +46,13 @@ EXCURSION = [(20, 20), (0, 1)]
 DRAG = [(10, 0), (20, 5), (30, 10)]
 
 
+@pytest.fixture
+def main_window(main_window, local_series_settings):
+    """The shared fixture window, its option writes kept to this test."""
+    local_series_settings(main_window)
+    return main_window
+
+
 def _field(window, mode, trace_mode):
     field = window.field
     field.series.setOption("trace_mode", trace_mode)

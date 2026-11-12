@@ -62,10 +62,12 @@ def test_ok_keeps_the_previewed_size(main_window, qapp):
     assert main_window.mouse_palette.sb.width() == _expected(main_window, target)
 
 
-def test_a_pinned_bar_takes_the_width_preview_as_its_cap(main_window, qapp):
+def test_a_pinned_bar_takes_the_width_preview_as_its_cap(
+    main_window, qapp, local_series_settings
+):
     """A pinned bar is the size of its length, but never wider than the size
     the slider sets, so the preview narrows it and steps it a decade."""
-    series = main_window.series
+    series = local_series_settings(main_window)
     series.setOption("scale_bar_mode", "micron_pinned")
     series.setOption("scale_bar_length_um", 5.0)
     palette = main_window.mouse_palette
@@ -91,15 +93,18 @@ def test_a_dialog_with_no_window_behind_it_does_not_mind(qapp, main_window):
 
 @pytest.mark.parametrize("hidden", [False, True])
 @pytest.mark.parametrize("pinned", [False, True])
-def test_cancel_preserves_scale_bar_and_visibility(main_window, qapp, qtbot, hidden, pinned):
+def test_cancel_preserves_scale_bar_and_visibility(
+    main_window, qapp, qtbot, hidden, pinned, local_series_settings
+):
     """Cancel restores size without replacing the bar or losing its hide menu."""
     from PySide6.QtCore import QCoreApplication, QEvent
 
-    series = main_window.series
+    series = local_series_settings(main_window)
     if pinned:
         series.setOption("scale_bar_mode", "micron_pinned")
         series.setOption("scale_bar_length_um", 5.0)
-        main_window.mouse_palette.reset()
+    # the bar was built from the shared store; build it again from this one
+    main_window.mouse_palette.reset()
     palette = main_window.mouse_palette
     if palette.sb_hidden != hidden:
         palette.toggleSB()

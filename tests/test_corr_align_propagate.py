@@ -36,13 +36,17 @@ def _corr_stub(tform_list, *, mag, scaling, locked=False, b_layer=True):
         section=section,
         section_layer=types.SimpleNamespace(
             section=section,
-            generateImageArray=lambda dim, window: None,
+            generateImageArray=lambda dim, window, **kwargs: None,
         ),
         b_section_layer=(
-            types.SimpleNamespace(generateImageArray=lambda dim, window: None)
+            types.SimpleNamespace(generateImageArray=lambda dim, window, **kwargs: None)
             if b_layer else None
         ),
-        series=types.SimpleNamespace(window=(0, 0, 1, 1)),
+        series=types.SimpleNamespace(
+            window=(0, 0, 1, 1),
+            getOption=lambda name: {"correlation_dark_cutoff": 5,
+                                    "correlation_bright_cutoff": 250}[name],
+        ),
         pixmap_dim=(4, 4),
         scaling=scaling,
         changeTform_calls=[],
@@ -54,11 +58,7 @@ def _corr_stub(tform_list, *, mag, scaling, locked=False, b_layer=True):
 def _patch_corr(monkeypatch, offset):
     notified = []
     monkeypatch.setattr(fw, "notify", lambda *a, **k: notified.append(a))
-    monkeypatch.setattr(
-        fw, "cv2",
-        types.SimpleNamespace(cvtColor=lambda a, code: a, COLOR_RGB2BGR=0),
-    )
-    monkeypatch.setattr(fw, "correlate", lambda a, b: offset)
+    monkeypatch.setattr(fw, "correlate", lambda a, b, **kwargs: offset)
     return notified
 
 

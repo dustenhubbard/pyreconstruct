@@ -117,7 +117,11 @@ default_settings = {
     "autoseg_color_palette": [],  # list of [R, G, B]; [] = built-in default
     "autoseg_color_seed": 0,
 
-    # shortcuts 
+    # correlation alignment
+    "correlation_dark_cutoff": 5,  # MFO
+    "correlation_bright_cutoff": 250,  # MFO
+
+    # shortcuts
     "alloptions_act": "Ctrl+,",
     "flicker_act": "/",
     "focus_act": "X",

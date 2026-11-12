@@ -33,10 +33,9 @@ name: nightly
 
 on:
   schedule:
-    # Due 02:17 UTC, after the US workday. GitHub starts scheduled runs late
-    # under load, often by hours, and the top of the hour is the busiest, so
-    # the odd minute and the early hour leave room to land before the EU day.
-    - cron: "17 2 * * *"
+    # Due 00:17 UTC, after the US workday. Keep an odd minute to avoid
+    # the busy top of the hour. GitHub may start scheduled runs hours late.
+    - cron: "17 0 * * *"
   workflow_dispatch:
     inputs:
       version:
