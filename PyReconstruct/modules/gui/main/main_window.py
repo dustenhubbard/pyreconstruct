@@ -5708,10 +5708,19 @@ class MainWindow(QMainWindow):
         self.field.table_manager.recreateTables()
         self.seriesModified()
     
-    def allOptions(self):
+    def allOptions(self, *, show_3d=False):
         """Display the series options dialog."""
-        confirmed = AllOptionsDialog(self, self.series).exec()
+        mesh_options = ("3D_xy_res", "3D_smoothing", "smoothing_iterations")
+        before = tuple(self.series.getOption(key) for key in mesh_options)
+        dialog = AllOptionsDialog(self, self.series)
+        if show_3d:
+            dialog.showOption("smoothing_3D")
+        confirmed = dialog.exec()
         if confirmed:
+            viewer = self.viewer
+            if viewer is not None and not viewer.is_closed:
+                if before != tuple(self.series.getOption(key) for key in mesh_options):
+                    viewer.rebuildObjects(list(viewer.plt.objs.values()))
             self.field.generateView()
             self.mouse_palette.reset()
             # the dialog stored the choice; draw it
