@@ -125,7 +125,7 @@ def test_generate_volumes_reports_percent_from_zero_to_a_hundred(tmp_path):
         s.setProgressReporter(NullProgressReporter)
         name = sorted(s.data["objects"].keys())[0]
         reports = []
-        meshes, _ = generateVolumes(
+        meshes, _, _failures = generateVolumes(
             s, [{"name": name}], [], progress=reports.append
         )
         assert len(meshes) == 1
@@ -145,7 +145,7 @@ def test_generate_volumes_without_a_callback_is_unchanged(tmp_path):
     try:
         s.setProgressReporter(NullProgressReporter)
         name = sorted(s.data["objects"].keys())[0]
-        meshes, _ = generateVolumes(s, [{"name": name}], [])
+        meshes, _, _failures = generateVolumes(s, [{"name": name}], [])
         assert len(meshes) == 1
     finally:
         s.close()

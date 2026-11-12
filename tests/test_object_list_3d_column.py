@@ -157,6 +157,7 @@ def test_placing_meshes_notifies_the_list():
     plt.placeInScene((
         [dict(triangle, name="d001", type="object")],
         plt.series,
+        [],
     ))
     plt.qt_parent.updateObjectList.assert_called_once()
     (placed,), _ = plt.qt_parent.updateObjectList.call_args

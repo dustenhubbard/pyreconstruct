@@ -5,11 +5,8 @@ after an update that may span several versions -- and can be reopened on demand
 from Help -> What's new. It is a normal, dismissible, *modeless* dialog: it never
 blocks startup or steals focus the way a prompt would.
 
-This is the *only* place the app puts release notes in front of the user
-unasked, and it does so once per version. The updater dialog deliberately does
-not render them: at that point the notes describe a version the user has not
-installed, so showing them there meant the same notes appeared twice around
-every update.
+Stable builds show these notes once per version after installation. Dev builds
+also show nightly change lists and earlier Stable notes in the update dialog.
 """
 
 import re

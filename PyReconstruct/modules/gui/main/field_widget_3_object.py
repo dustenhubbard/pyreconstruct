@@ -1074,10 +1074,14 @@ class FieldWidgetObject(FieldWidgetTrace):
         modified_objs = self.series.host_tree.getObjToUpdate(obj_names)
 
         # delete the object on every section
-        self.series.deleteObjects(obj_names, self.series_states)
+        emptied_groups = self.series.deleteObjects(obj_names, self.series_states)
 
         # update the dictionary data and tables
         self.table_manager.updateObjects(modified_objs)
+
+        # the Groups menu lists groups from createMenuBar
+        if emptied_groups:
+            self.mainwindow.createMenuBar()
 
         return True
     

@@ -253,13 +253,23 @@ class ImageLayer():
         tform = self.section.tform
         mag = self.section.mag
         wx, wy, ww, wh = tuple(self.series.window)
+        if ww <= 0 or wh <= 0:
+            return _blank(pmw, pmh)
+
         self.scaling = pmw / (ww / mag)
 
         # get the applicable zarr scale if using zarr file for images
         if self.is_zarr_file:
+            a, b, _, d, e, _ = tform._affine()
+            sx, sy = self.scaling, pmh * mag / wh
+            # The largest singular value is the most screen pixels per source
+            # pixel in any direction, including rotated or sheared alignments.
+            screen_scale = np.linalg.svd(
+                [[sx * a, sx * b], [sy * d, sy * e]], compute_uv=False
+            )[0]
             scale_level = self.scales[-1]
             for scale in self.scales[:-1]:
-                if (1/self.scaling) > scale:
+                if screen_scale * scale < 1:
                     scale_level = scale
                     break
             if self.selected_scale != scale_level:
@@ -271,7 +281,7 @@ class ImageLayer():
         if get_crop_only:  # only for use with brightness/contrast functions
             return self._cropWindow(tform, mag, scale_level)
 
-        if pmw <= 0 or pmh <= 0 or ww <= 0 or wh <= 0:
+        if pmw <= 0 or pmh <= 0:
             return _blank(pmw, pmh)
 
         image_layer = self._sampleWindow(pmw, pmh, tform, mag, scale_level)
