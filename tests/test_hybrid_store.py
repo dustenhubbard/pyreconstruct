@@ -1118,13 +1118,21 @@ def test_a_local_folder_s_file_system_is_read_and_allowed(tmp_path):
 
 
 @pytest.fixture
-def mount_table(monkeypatch):
+def mount_table(monkeypatch, tmp_path):
     """Btrfs subvolume device IDs need not appear in mountinfo."""
     if os.name == "nt":
         pytest.skip("Linux mount paths need POSIX path and device rules")
+
+    def realpath(path):
+        # Links on this host, such as macOS /home, are not in the Linux table.
+        if os.path.commonpath([path, str(tmp_path)]) == str(tmp_path):
+            return os.path.realpath(path)
+        return os.path.normpath(path)
+
     monkeypatch.setattr(hybrid_store, "sys", SimpleNamespace(platform="linux"))
     monkeypatch.setattr(hybrid_store, "os", SimpleNamespace(
-        path=os.path, stat=lambda path: SimpleNamespace(st_dev=os.makedev(0, 61)),
+        path=SimpleNamespace(realpath=realpath),
+        stat=lambda path: SimpleNamespace(st_dev=os.makedev(0, 61)),
         makedev=os.makedev,
     ))
 
