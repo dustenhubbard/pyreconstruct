@@ -1083,9 +1083,8 @@ class MousePalette():
             self.reset()
             self.mainwindow.changeTracingTrace(self.selectedTrace())
     
-    def setFlag(self, name : str = None, color : tuple = None, font_size : int = None, display_flags : str = None):
+    def setFlag(self, name : str = None, color : tuple = None):
         """Set the default flag in the palette."""
-        regenerate_view = False
         if name is not None:
             with user_action():
                 self.series.setOption("flag_name", name)
@@ -1095,22 +1094,6 @@ class MousePalette():
         else:
             with user_action():
                 self.series.setOption("flag_color", color)
-        
-        if font_size is None:
-            font_size = self.series.getOption("flag_size")
-        elif font_size != self.series.getOption("flag_size"):
-            with user_action():
-                self.series.setOption("flag_size", font_size)
-            regenerate_view = True
-        
-        if display_flags is not None and display_flags != self.series.getOption("show_flags"):
-            with user_action():
-                self.series.setOption("show_flags", display_flags)
-            self.mainwindow.field.section.selected_flags = []
-            regenerate_view = True
-        
-        if regenerate_view:
-            self.mainwindow.field.generateView(generate_image=False)
         
         button = self.mode_buttons["Flag"][0]
         button.setFont(QFont("Courier New", 25, QFont.Bold))
@@ -1126,11 +1109,11 @@ class MousePalette():
     
     def modifyFlag(self):
         """Modify the default flag."""
-        chosen = ChosenOptions(self.series)
-        show_flags = self.series.getOption("show_flags")
-        chosen.shown({
-            key: self.series.getOption(key) for key in ("flag_name", "flag_color")
+        chosen = ChosenOptions(self.series).shown({
+            key: self.series.getOption(key)
+            for key in ("flag_name", "flag_color", "flag_size", "show_flags")
         })
+        show_flags = chosen.opening["show_flags"]
         structure = [
             ["Default name:", ("text", self.series.getOption("flag_name"))],
             ["Default color:", ("color", self.series.getOption("flag_color"))],
@@ -1150,9 +1133,21 @@ class MousePalette():
         elif response[3][2][1]: show_flags = "none"
         else: show_flags = "unresolved"
         
-        chosen.store({"flag_name": response[0], "flag_color": response[1]})
-        # size and display are stored by setFlag, and only when changed
-        self.setFlag(font_size=response[2], display_flags=show_flags)
+        shown = {key: chosen.opening[key] for key in ("flag_size", "show_flags")}
+        chosen.store({
+            "flag_name": response[0],
+            "flag_color": response[1],
+            "flag_size": response[2],
+            "show_flags": show_flags,
+        })
+        # draw what is stored: a copy that finished while the dialog was
+        # open keeps the values the dialog showed as defaults
+        stored = {key: self.series.getOption(key) for key in shown}
+        if stored["show_flags"] != shown["show_flags"]:
+            self.mainwindow.field.section.selected_flags = []
+        self.setFlag()
+        if stored != shown:
+            self.mainwindow.field.generateView(generate_image=False)
     
     def displayHelp(self):
         """Display the help associated with the trace palette."""

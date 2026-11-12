@@ -248,6 +248,25 @@ def test_scale_bar_recovery_during_open_keeps_the_untouched_mode(
     assert values == {"scale_bar_mode": "micron_pinned", "scale_bar_width": 61}
 
 
+@pytest.mark.parametrize("pending", [False, True])
+def test_flag_recovery_while_open_keeps_the_untouched_size_and_display(
+    legacy, monkeypatch, request, pending
+):
+    legacy.seed(pending, flag_size=42, show_flags="none")
+    window = request.getfixturevalue("main_window")
+
+    def edit(dialog):
+        dialog.inputs[0].widget.setText("edited-flag")
+        # the old store reads again before OK
+        legacy.finish(window.series)
+
+    accept_quick_dialog(monkeypatch, edit)
+    window.mouse_palette.modifyFlag()
+    values = legacy.finish(window.series, "flag_name", "flag_size", "show_flags")
+    print(f"flag recovery pending={pending} {values}")
+    assert values == {"flag_name": "edited-flag", "flag_size": 42, "show_flags": "none"}
+
+
 def _open_main_window_dialog(request, monkeypatch, method):
     window = request.getfixturevalue("main_window")
     accept_quick_dialog(monkeypatch, lambda d: None)
