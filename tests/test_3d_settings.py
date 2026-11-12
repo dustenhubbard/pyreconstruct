@@ -393,9 +393,11 @@ def test_reload_keeps_selected_mesh_that_cannot_regenerate(main_window, monkeypa
             self.place(self.run())
 
     monkeypatch.setattr(cp, "ThreadPoolProgBar", Pool)
+    assert failed.id not in viewer.plt.objs.stale_ids
     viewer.reload()
 
     assert viewer.plt.objs.search("negative_only", "object", series.jser_fp) is failed
+    assert failed.id in viewer.plt.objs.stale_ids
     assert failed.getExportDict() == expected[failed.id]
     assert failed in viewer.plt.selected
     assert len(notices) == 1 and "negative_only" in notices[0]
