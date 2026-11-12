@@ -26,6 +26,7 @@ SQLite is not safe on a network share, where lab series often live.
 """
 
 import os
+import re
 import sys
 import json
 import hashlib
@@ -197,15 +198,24 @@ def fsType(path : str):
         return None
     try:
         dev = os.stat(path).st_dev
+        real = os.path.realpath(path)
+        best_mount, fallback = "", None
         with open("/proc/self/mountinfo") as f:
             for line in f:
                 left, _, right = line.partition(" - ")
-                major, minor = left.split()[2].split(":")
+                fields = left.split()
+                major, minor = fields[2].split(":")
+                fstype = right.split()[0]
                 if os.makedev(int(major), int(minor)) == dev:
-                    return right.split()[0]
+                    return fstype
+                # Btrfs subvolumes can have st_dev values absent from mountinfo.
+                mount = re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), fields[4])
+                contains_path = real == mount or real.startswith(mount.rstrip("/") + "/")
+                if contains_path and len(mount) > len(best_mount):
+                    best_mount, fallback = mount, fstype
+        return fallback
     except (OSError, ValueError, IndexError):
         return None
-    return None
 
 
 def refuseNetworkFolder(folder : str):
