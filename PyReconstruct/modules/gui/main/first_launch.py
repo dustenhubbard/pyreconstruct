@@ -605,6 +605,40 @@ def _render_sections(sections, truncated):
     return body
 
 
+def dev_update_notes(releases, offered, text=None):
+    """Nightly PR lists followed by bundled notes for earlier Stable releases."""
+    blocks = []
+    for release in releases:
+        version = _safe_version(release.get("tag_name"))
+        if version is None:
+            continue
+        body = release.get("body") or ""
+        # Nightly releases prepend cumulative highlights to GitHub's generated
+        # PR list. Only the generated list describes this nightly's interval.
+        changed = re.search(r"^## What's Changed\s*$", body, re.MULTILINE)
+        changes = body[changed.end():].strip() if changed else ""
+        if not changes:
+            changelog = re.search(r"^\*\*Full Changelog\*\*:[^\n]+", body, re.MULTILINE)
+            changes = "*No nightly change list was published.*"
+            if changelog:
+                changes += "\n\n" + changelog.group()
+        changes = re.sub(r"\*\*Full Changelog\*\*:\s*(https://\S+)",
+                         r"[Full Changelog](\1)", changes)
+        changes = re.sub(r"\bin (https://github\.com/[^/\s]+/[^/\s]+/pull/(\d+))",
+                         r"in [#\2](\1)", changes)
+        blocks.append(f"### Changes in {version}\n\n{changes}")
+    current = _safe_version(offered)
+    sections = parse_all_sections(_read_whats_new() if text is None else text)
+    stable = [s for s in sections
+              if (version := _safe_version(s["version"])) is not None
+              and not version.is_prerelease and current is not None
+              and version < current]
+    stable.sort(key=lambda s: _safe_version(s["version"]), reverse=True)
+    if stable:
+        blocks.append("## Earlier Stable notes\n\n" + _render_sections(stable, False))
+    return "\n\n".join(blocks)
+
+
 def whats_new_content(current, last_seen=None, cap=3, text=None, on_demand=False,
                       installed_app=None):
     """Build what the What's-new dialog renders (offline-safe, never raises).

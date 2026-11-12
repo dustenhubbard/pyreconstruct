@@ -1,0 +1,32 @@
+{"sections": 125, "traces": 4400, "points": 80, "section_bytes": 1620229515, "side": "current", "python": "3.11.17", "idle_ms": 350, "median_ms": 260.5543889803812, "samples_ms": [261.4242120180279, 260.5543889803812, 253.95327300066128], "phases_ms": {"section_load": [109.88361900672317, 108.32298500463367, 102.57788997841999], "image_load": [0.14677003491669893, 0.16091001452878118, 0.12532004620879889], "undo_baseline": [14.30703600635752, 15.01028798520565, 14.750227041076869], "image": [6.297136016655713, 6.696166994515806, 6.611295975744724], "traces": [110.01189902890474, 108.58519497560337, 107.37745196092874], "view": [117.49040795257315, 116.67858500732109, 115.12271198444068], "paint": [6.823497009463608, 7.219507999252528, 7.4023790075443685]}, "pixels_sha256": ["222dad55819f1a4aab69b6e1667e24b054186f22b477f09f67c58213520e3db3", "222dad55819f1a4aab69b6e1667e24b054186f22b477f09f67c58213520e3db3", "222dad55819f1a4aab69b6e1667e24b054186f22b477f09f67c58213520e3db3"], "traces_in_view": [4400, 4400, 4400], "prepared_hits": [true, true, true], "errors": 0, "idle_gap_max_ms": 63.093859993387014, "idle_gap_p95_ms": 10.170784953515977, "rss_idle_bytes": [2726518784, 2750394368, 2761203712], "rss_paging_peak_bytes": 2761445376, "process_peak_bytes": 2783264768}
+         1565795 function calls (1512944 primitive calls) in 1.825 seconds
+
+   Ordered by: cumulative time
+   List reduced from 430 to 25 due to restriction <25>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        3    1.028    0.343    1.030    0.343 {method 'exec' of 'PySide6.QtCore.QEventLoop' objects}
+        3    0.039    0.013    0.754    0.251 field_widget_1_base.py:610(changeSection)
+    18/12    0.004    0.000    0.715    0.060 bench_section_paging.py:240(timed)
+        3    0.000    0.000    0.349    0.116 field_widget_1_base.py:335(generateView)
+        3    0.000    0.000    0.349    0.116 section_layer.py:27(generateView)
+        3    0.015    0.005    0.322    0.107 trace_layer.py:895(generateTraceLayer)
+        3    0.007    0.002    0.321    0.107 series.py:2981(loadSection)
+        3    0.000    0.000    0.314    0.105 section.py:623(__init__)
+        3    0.000    0.000    0.291    0.097 section.py:1799(resyncColumnarStore)
+        3    0.014    0.005    0.291    0.097 section.py:1840(_rebuildColumnarStore)
+        3    0.029    0.010    0.253    0.084 columnar_store.py:727(fromSection)
+    13200    0.058    0.000    0.182    0.000 columnar_store.py:1095(appendRow)
+    13200    0.069    0.000    0.148    0.000 trace_layer.py:338(_drawTrace)
+        3    0.051    0.017    0.102    0.034 trace_layer.py:820(_screenPolygons)
+    13203    0.061    0.000    0.061    0.000 {method 'drawPolygon' of 'PySide6.QtGui.QPainter' objects}
+        6    0.001    0.000    0.045    0.008 trace_layer.py:704(_rawBounds)
+        3    0.000    0.000    0.044    0.015 state_manager.py:685(initialize)
+    66000    0.036    0.000    0.040    0.000 columnar_store.py:599(append)
+    13200    0.008    0.000    0.035    0.000 columnar_store.py:405(append)
+       18    0.005    0.000    0.034    0.002 {built-in method numpy.fromiter}
+        3    0.000    0.000    0.033    0.011 trace_layer.py:738(_cullMask)
+    39600    0.021    0.000    0.031    0.000 trace.py:58(normalizeObjectName)
+277327/224527    0.018    0.000    0.030    0.000 {built-in method builtins.len}
+   102/57    0.014    0.000    0.028    0.000 {built-in method numpy.core._multiarray_umath.implement_array_function}
+    13200    0.010    0.000    0.025    0.000 columnar_store.py:432(_asCoordinateArray)

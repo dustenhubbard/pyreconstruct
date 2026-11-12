@@ -391,7 +391,7 @@ def test_the_startup_check_shows_a_notice_that_opens_the_command(
         assert routes.shown == []
         notice = routes.window.update_notice
         assert not notice.isHidden()
-        assert notice.text().startswith("Update available: ")
+        assert notice.toolTip().startswith("Update available: ")
 
         routes.window.openUpdateNotice()
 

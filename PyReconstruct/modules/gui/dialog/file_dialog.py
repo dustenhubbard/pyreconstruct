@@ -1,5 +1,6 @@
 from PyReconstruct.modules.constants.settings_domain import user_action
 import os
+import sys
 
 from PySide6.QtCore import QDir
 from PySide6.QtWidgets import QFileDialog
@@ -42,7 +43,8 @@ class FileDialog(QFileDialog):
                 settings.setValue("last_folder", new_dir)
 
     @staticmethod
-    def get(file_mode: str, parent=None, caption="", filter=None, file_name=""):
+    def get(file_mode: str, parent=None, caption="", filter=None, file_name="",
+            *, confirm_overwrite: bool = True):
         """One gesture, one native dialog, nothing left behind.
 
         The static QFileDialog functions run the native dialog themselves.
@@ -52,6 +54,9 @@ class FileDialog(QFileDialog):
         never reached the static dialogs, so the remembered last folder was
         silently dead for the open modes (found 2026-08-28). The remembered
         folder now rides the dir argument, which the statics honor.
+
+        A save that confirms multiple output files together can disable the
+        native overwrite prompt with confirm_overwrite=False.
         """
         settings = settings_for("last_folder")
         last_folder = settings.value("last_folder", QDir.homePath())
@@ -68,7 +73,15 @@ class FileDialog(QFileDialog):
         elif file_mode == "save":
             if not caption: caption = "Save File"
             d = os.path.join(last_folder, file_name)
-            response = QFileDialog.getSaveFileName(parent, caption, dir=d, filter=filter)[0]
+            options = QFileDialog.Option(0)
+            if not confirm_overwrite:
+                options |= QFileDialog.DontConfirmOverwrite
+                # Native macOS dialogs ignore DontConfirmOverwrite.
+                if sys.platform == "darwin":
+                    options |= QFileDialog.DontUseNativeDialog
+            response = QFileDialog.getSaveFileName(
+                parent, caption, dir=d, filter=filter, options=options
+            )[0]
 
         FileDialog.updateSettings(response)
         return response

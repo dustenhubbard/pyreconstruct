@@ -12,15 +12,31 @@ and for its drift and mutation checks. The
 readers that build user-facing data are:
 
   * SVG export, `svg_conversion.py`, through `ContourView`;
-  * `SeriesData.refresh`, which passes `read_store=True` to
-    `SeriesData.updateSection`, so the series pass reads each section's traces
-    through `TraceView` and `SectionColumns.getCoordinates`;
-  * `Series.openJser`, which does the same on the first `.jser` unpack.
+  * `SeriesData.addOpenedSection`, for a section given as a `Section`, which
+    passes `read_store=True` to `SeriesData.updateSection`, so the series pass
+    reads its traces through `TraceView` and `SectionColumns.getCoordinates`.
+    `SeriesData.refresh` and `Series.openJser` both go through it;
+  * the trace layer, `backend/view/trace_layer.py`: `_rawBounds` reads each
+    trace's bounds for the draw's culling and for hover (`findClosest`), and
+    `_fieldPoints` reads the points it draws. `_rawBounds` caches the bounds
+    for one store `generation`; `_fieldPoints` keeps no cache and reads the
+    row map and coordinates on every draw. Both take a trace's own points
+    when its row is missing or has another point count.
+
+An open does not always build a store. Both first open and resume read most
+sections as `SectionRows` (`section_rows.py`): raw rows measured straight into
+the series data, with no `Section` and no `SectionColumns`. Only a section
+with a row the store reads its own way is built as a `Section` there.
 
 The `SeriesData.updateSection` calls that leave `read_store` at its default of
 False read `self.contours` when they read traces at all; the ones in
 `field_widget_4_data.py` pass no traces. The parity tests keep the layout, the
 tracking and the identity plumbing argued against running code.
+
+The drawing and hover readers read the store between saves. A trace edited
+outside `Section` and not yet repaired with `Section.resyncColumnarStore` can
+draw or hover from a stale row, and a later save does not change what was
+read before it.
 
 WHAT PARITY MEANS HERE, AND WHICH SIDE OF THE ROUNDING THIS SITS ON
 -------------------------------------------------------------------
@@ -599,7 +615,7 @@ class _NumericColumn():
     def append(self, value):
         if self._used == len(self._array):
             shape = list(self._array.shape)
-            shape[0] *= 2
+            shape[0] = max(self.INITIAL_CAPACITY, shape[0] * 2)
             grown = np.empty(tuple(shape), dtype=self._array.dtype)
             grown[:self._used] = self._array[:self._used]
             self._array = grown

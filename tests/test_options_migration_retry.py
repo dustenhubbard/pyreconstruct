@@ -247,3 +247,36 @@ def test_first_use_copies_backup_preferences_before_series_code_changes(
     finally:
         dialog.close()
         series.close()
+
+
+@pytest.mark.parametrize("touch", [False, True])
+@pytest.mark.parametrize("pending", [False, True])
+def test_trackpad_row_keeps_or_saves_the_legacy_choice(
+    qapp, series_jser, domain, monkeypatch, pending, touch  # noqa: F811  (fixture)
+):
+    app, make = domain
+    legacy = not Series.qsettings_defaults["reverse_trackpad_scroll"]
+    old = make("KHLab")
+    old.setValue("reverse_trackpad_scroll", legacy)
+    old.sync()
+    old_bytes = Path(old.fileName()).read_bytes()
+    state = fail_legacy(monkeypatch, app)
+    state["fail"] = pending
+    series = Series.openJser(str(series_jser))
+    series.setSettingsStore(QSettingsStore())
+    dialog = AllOptionsDialog(None, series)
+    try:
+        box = dialog.all_widgets["trackpad_scroll"].inputs[0].widget.layout().itemAt(0).widget()
+        if touch:
+            box.setChecked(not box.isChecked())
+        else:
+            dialog.all_widgets["fill_opacity"].inputs[0].widget.setText("0.3")
+        assert dialog.accept() is True
+        state["fail"] = False
+        SD.settings_for("reverse_trackpad_scroll")
+        actual = make("PyReconstruct").value("reverse_trackpad_scroll", type=bool)
+        assert Path(old.fileName()).read_bytes() == old_bytes
+        assert actual is (box.isChecked() if touch else legacy)
+    finally:
+        dialog.close()
+        series.close()

@@ -10,6 +10,7 @@ import errno
 import os
 import shutil
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 
@@ -477,6 +478,11 @@ def _save_as_target(tmp_path, main_window_dialogs):
     return new_fp
 
 
+def _working_names(folder):
+    # Numeric filenames are the live heartbeat, not series data.
+    return sorted(name for name in os.listdir(folder) if not name.isnumeric())
+
+
 class _AsItWas:
     """The open series, its .jser, working folder and store, before a Save As."""
 
@@ -487,7 +493,7 @@ class _AsItWas:
         self.jser = kept.read_bytes()
         self.hidden_dir = series.hidden_dir
         # less the stub marker, which Save As removes once it fills every stub
-        self.names = sorted(set(os.listdir(series.hidden_dir)) - {lazy_sections.MARKER})
+        self.names = sorted(set(_working_names(series.hidden_dir)) - {lazy_sections.MARKER})
         self.store_fp = hybrid_store.storePaths(str(kept))[0]
 
     def check(self, new_fp):
@@ -495,7 +501,7 @@ class _AsItWas:
         assert window.series is series and not series.closed
         assert series.jser_fp == str(self.kept) and series.hidden_dir == self.hidden_dir
         assert self.kept.read_bytes() == self.jser
-        assert sorted(os.listdir(self.hidden_dir)) == self.names
+        assert _working_names(self.hidden_dir) == self.names
         assert store_save.heldStore(series) is not None and os.path.isfile(self.store_fp)
         assert os.listdir(new_fp.parent) == []
         for snum in sorted(series.sections):
@@ -504,11 +510,24 @@ class _AsItWas:
         window.changeSection(snum)
         assert window.field.section.n == snum
         # a section shown writes files of its own
-        self.names = sorted(os.listdir(self.hidden_dir))
+        self.names = _working_names(self.hidden_dir)
 
 
+def _refresh_heartbeat(window, monkeypatch):
+    from PyReconstruct.modules.gui.main import field_widget_4_data
+
+    old = window.field.time
+    now = int(old) + 5
+    with monkeypatch.context() as m:
+        m.setattr(field_widget_4_data, "time", SimpleNamespace(time=lambda: now))
+        window.field.timer.timeout.emit()
+    assert not os.path.exists(os.path.join(window.series.hidden_dir, old))
+    assert os.path.isfile(os.path.join(window.series.hidden_dir, str(now)))
+
+
+@pytest.mark.parametrize("refresh_heartbeat", [False, True])
 def test_save_as_that_cannot_write_the_old_jser_keeps_the_series_and_its_save(
-    kept, tmp_path, main_window_dialogs, monkeypatch,
+    kept, tmp_path, main_window_dialogs, monkeypatch, refresh_heartbeat,
 ):
     _store_mode(monkeypatch)
     window = _window(kept)
@@ -532,6 +551,8 @@ def test_save_as_that_cannot_write_the_old_jser_keeps_the_series_and_its_save(
         assert os.strerror(errno.ENOSPC) in notices.messages[0]
         assert str(kept) in notices.messages[0]
         assert main_window_dialogs.notices == []
+        if refresh_heartbeat:
+            _refresh_heartbeat(window, monkeypatch)
         was.check(new_fp)
         assert store_save.ahead(window.series)
     finally:
@@ -539,8 +560,9 @@ def test_save_as_that_cannot_write_the_old_jser_keeps_the_series_and_its_save(
     _opened_as_today(kept, snum, edited, monkeypatch)
 
 
+@pytest.mark.parametrize("refresh_heartbeat", [False, True])
 def test_save_as_that_cannot_rename_a_working_file_keeps_the_series_where_it_was(
-    kept, tmp_path, main_window_dialogs, monkeypatch,
+    kept, tmp_path, main_window_dialogs, monkeypatch, refresh_heartbeat,
 ):
     _store_mode(monkeypatch)
     window = _window(kept)
@@ -572,6 +594,8 @@ def test_save_as_that_cannot_rename_a_working_file_keeps_the_series_where_it_was
             message = notices.messages[0]
             assert os.strerror(errno.EACCES) in message and str(kept) in message
             assert main_window_dialogs.notices == []
+            if refresh_heartbeat:
+                _refresh_heartbeat(window, monkeypatch)
             was.check(new_fp)
     finally:
         window.close()
