@@ -280,3 +280,98 @@ def test_trackpad_row_keeps_or_saves_the_legacy_choice(
     finally:
         dialog.close()
         series.close()
+
+
+@pytest.fixture
+def local_copy_row(monkeypatch):
+    """The Dev-only "Fast local copy" row, with turning it off recorded."""
+    from PyReconstruct.modules.constants import build_flavor
+    from PyReconstruct.modules.datatypes import local_stores
+
+    monkeypatch.setattr(build_flavor, "is_dev_build", lambda: True)
+    monkeypatch.setattr(local_stores, "folderSize", lambda: 0)
+    turned_off = []
+    monkeypatch.setattr(
+        local_stores, "turnOff",
+        lambda *a, **k: turned_off.append(True) or local_stores.TurnOffReport(),
+    )
+    return local_stores.SETTING, turned_off
+
+
+@pytest.mark.parametrize("pending", [False, True])
+def test_local_copy_row_keeps_an_untouched_recovered_choice(
+    qapp, series_jser, domain, monkeypatch, local_copy_row, pending  # noqa: F811  (fixture)
+):
+    app, make = domain
+    setting, turned_off = local_copy_row
+    old = make("KHLab")
+    old.setValue(setting, True)
+    old.sync()
+    old_bytes = Path(old.fileName()).read_bytes()
+    state = fail_legacy(monkeypatch, app)
+    state["fail"] = pending
+    series = Series.openJser(str(series_jser))
+    series.setSettingsStore(QSettingsStore())
+    dialog = AllOptionsDialog(None, series)
+    try:
+        # the row is left alone, and the old store reads again before OK
+        state["fail"] = False
+        assert dialog.accept() is True
+        actual = series.getOption(setting)
+        print(f"local copy untouched pending={pending} {actual!r}")
+        assert Path(old.fileName()).read_bytes() == old_bytes
+        assert actual is True
+        assert not turned_off
+    finally:
+        dialog.close()
+        series.close()
+
+
+@pytest.mark.parametrize("pending", [False, True])
+def test_local_copy_row_saves_an_explicit_choice(
+    qapp, series_jser, domain, monkeypatch, local_copy_row, pending  # noqa: F811  (fixture)
+):
+    app, make = domain
+    setting, _ = local_copy_row
+    old = make("KHLab")
+    old.setValue(setting, False)
+    old.sync()
+    old_bytes = Path(old.fileName()).read_bytes()
+    state = fail_legacy(monkeypatch, app)
+    state["fail"] = pending
+    series = Series.openJser(str(series_jser))
+    series.setSettingsStore(QSettingsStore())
+    dialog = AllOptionsDialog(None, series)
+    try:
+        dialog.all_widgets["local_store"].check.setChecked(True)
+        assert dialog.accept() is True
+        state["fail"] = False
+        actual = series.getOption(setting)
+        print(f"local copy chosen pending={pending} {actual!r}")
+        assert Path(old.fileName()).read_bytes() == old_bytes
+        assert actual is True
+    finally:
+        dialog.close()
+        series.close()
+
+
+def test_local_copy_row_reset_defaults_is_stored(
+    qapp, series_jser, domain, monkeypatch, local_copy_row  # noqa: F811  (fixture)
+):
+    app, make = domain
+    setting, _ = local_copy_row
+    old = make("KHLab")
+    old.setValue(setting, True)
+    old.sync()
+    state = fail_legacy(monkeypatch, app)
+    series = Series.openJser(str(series_jser))
+    series.setSettingsStore(QSettingsStore())
+    dialog = AllOptionsDialog(None, series)
+    try:
+        dialog.resetDefaults()
+        assert dialog.accept() is True
+        state["fail"] = False
+        assert series.getOption(setting) is Series.qsettings_defaults[setting]
+    finally:
+        dialog.close()
+        series.close()

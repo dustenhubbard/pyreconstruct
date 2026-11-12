@@ -185,8 +185,10 @@ def setSetting(series, on : bool, write_out=None):
             (TurnOffReport): what turning it off did, or None when it was
                 not turned off
     """
+    from PyReconstruct.modules.constants.settings_domain import user_action
     was_on = storedSetting(series)
-    series.setOption(SETTING, bool(on))
+    with user_action():
+        series.setOption(SETTING, bool(on))
     if on or switchIsSet():
         return None
     if not was_on and store_save.heldStore(series) is None:

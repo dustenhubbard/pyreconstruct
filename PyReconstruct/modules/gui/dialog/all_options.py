@@ -695,7 +695,10 @@ class AllOptionsDialog(QDialog):
         # the local store's setting and cleanup button, Dev builds only
         if build_flavor.is_dev_build():
             self.addOptionWidget(
-                "local_store", LocalStoreOptionWidget(self, self.series, use_defaults)
+                "local_store",
+                LocalStoreOptionWidget(
+                    self, self.series, use_defaults, copy_pending=self._copy_pending
+                ),
             )
     
     def addOptionWidget(self, name : str, structure : list, getOptions=None, grid=False):
