@@ -50,11 +50,13 @@ DEFAULT_POSITIONS = {
     "sb":    (0.01, 0.99),
 }
 
-# The widest the trace palette's name label is drawn, in pixels. A longer
-# name ends in an ellipsis and shows in full as the label's tool tip. The
-# field's minimum size (MousePalette.__init__) was measured with a label
-# this wide, so no name can make the palette need more room than that.
-LABEL_MAX_WIDTH = 130
+# The narrowest the trace palette's name label is cut to, in pixels. The
+# label shows the whole name where the layout has room for it; where it has
+# not, the middle of the name is cut out, down to this width, so the end and
+# its number stay in view, and the tool tip shows the whole name. The field's
+# minimum size (MousePalette.__init__) was measured with a label this wide,
+# so no name can make the palette need more room than that.
+LABEL_MIN_WIDTH = 130
 
 
 def set_default_positions(palette) -> None:
@@ -254,7 +256,7 @@ class MousePalette():
 
         # The smallest field where every palette control can still be
         # clicked, for every trace row length, tool column count and saved
-        # spot, with a name label up to LABEL_MAX_WIDTH: found by sweeping
+        # spot, with a name label cut to LABEL_MIN_WIDTH: found by sweeping
         # window sizes, then rounded up a little for font differences
         # between platforms. In a smaller field some controls would have to
         # cover others. Set on the field rather than the window, so the
@@ -553,6 +555,17 @@ class MousePalette():
     def placeLabel(self):
         """Place the trace palette label."""
         x, y = self.getButtonCoords("trace")
+        # the layout gives the label its width: the whole name where there is
+        # room, else the name with its middle cut out, so its end shows
+        width = self.layout()["label width"]
+        name = self.label_name
+        if width < self.label_hint.width():
+            metrics = QFontMetrics(self.label.font())
+            room = width - (self.label_hint.width() - metrics.horizontalAdvance(name))
+            self.label.setText(metrics.elidedText(name, Qt.ElideMiddle, room))
+        else:
+            self.label.setText(name)
+        self.label.setToolTip(name if self.label.text() != name else "")
         self.label.resize(self.label.sizeHint())
         x -= self.label.width() / 2
         _, height = self.traceGridSize(*self.traceGrid())
@@ -587,12 +600,10 @@ class MousePalette():
         n = selected_trace.name
         for c in "{}<>":
             n = n.replace(c, "")
+        # the whole name's size: the layout makes room for it where it can
+        self.label_name = n
         self.label.setText(n)
-        if self.label.sizeHint().width() > LABEL_MAX_WIDTH:
-            metrics = QFontMetrics(self.label.font())
-            room = LABEL_MAX_WIDTH - (self.label.sizeHint().width() - metrics.horizontalAdvance(n))
-            self.label.setText(metrics.elidedText(n, Qt.ElideRight, room))
-        self.label.setToolTip(n if self.label.text() != n else "")
+        self.label_hint = self.label.sizeHint()
 
         c = selected_trace.color
         self.label.setTextColor(c)
@@ -873,8 +884,12 @@ class MousePalette():
             self.trace_palette_per_row, self.tool_palette_cols,
             self.palette_button_count, len(self.mode_buttons),
             self.sb.size().toTuple() if hasattr(self, "sb") else None,
-            self.label.sizeHint().toTuple() if hasattr(self, "label") else None,
+            self.labelSize().toTuple(),
         )
+
+    def labelSize(self):
+        """The size of the label with the whole name in it."""
+        return self.label_hint if hasattr(self, "label_hint") else QSize(0, 30)
 
     def layout(self):
         """Where each group is drawn, and the trace grid's shape.
@@ -915,23 +930,34 @@ class MousePalette():
                 spot = leastCoveringSpot(x, y, w, h, boxes, field)
             placed[group] = spot
             boxes.append(QRectF(*spot, w, h))
-        trace = self.placeTrace(fractions["trace"], boxes, field)
+        # the buttons are fitted with the label cut to its narrowest, then
+        # the label is given as much more of the name as that grid leaves room for
+        full = self.labelSize().width()
+        label = min(full, LABEL_MIN_WIDTH)
+        trace = self.placeTrace(fractions["trace"], boxes, field, label)
         if trace is None:
             if not force:
                 return None
-            trace = self.coverTrace(fractions["trace"], boxes, field)
+            trace = self.coverTrace(fractions["trace"], boxes, field, label)
+        else:
+            wider = largestFit(label + 1, full, lambda width: self.traceAnchor(
+                fractions["trace"], trace[1], boxes, field, clearSpot, width))
+            if wider is not None:
+                label, anchor = wider
+                trace = anchor, trace[1]
         placed["trace"], placed["trace grid"] = trace
+        placed["label width"] = label
         # the side the label is drawn on goes with the arrangement: a
         # fallback to the defaults draws it where the defaults left room
         placed["label above"] = labelAbove(fractions["trace"])
         return placed
 
-    def traceAnchor(self, fraction, shape, obstacles, field, find):
-        """Where find puts the trace group with this grid, as its anchor;
-        None if clearSpot finds no room."""
-        if find is clearSpot and not self.traceFits(shape, fraction, field):
+    def traceAnchor(self, fraction, shape, obstacles, field, find, label):
+        """Where find puts the trace group with this grid and a label this
+        wide, as its anchor; None if clearSpot finds no room."""
+        if find is clearSpot and not self.traceFits(shape, fraction, field, label):
             return None
-        left, right, top, bottom = self.traceExtents(*shape, labelAbove(fraction))
+        left, right, top, bottom = self.traceExtents(*shape, labelAbove(fraction), label)
         x, y = self.spotIn(fraction, spanOf(field, left, right, top, bottom))
         found = find(x - left, y - top, left + right, top + bottom, obstacles, field)
         return None if found is None else (found[0] + left, found[1] + top)
@@ -947,7 +973,7 @@ class MousePalette():
         columns = sorted({*fewest.values()} - {preferred}, key=lambda c: (abs(c - preferred), c))
         return [(cols, math.ceil(count / cols)) for cols in [preferred, *columns]]
 
-    def placeTrace(self, fraction, obstacles, field):
+    def placeTrace(self, fraction, obstacles, field, label):
         """The trace palette's anchor and grid, clear of the other groups:
         the largest buttons that fit, at the requested row length if it
         fits at that size. None if no grid fits."""
@@ -956,7 +982,7 @@ class MousePalette():
             fit = largestFit(
                 best[1][2] + 1 if best else 1, self.pblen,
                 lambda size, cols=cols, rows=rows: self.traceAnchor(
-                    fraction, (cols, rows, size), obstacles, field, clearSpot),
+                    fraction, (cols, rows, size), obstacles, field, clearSpot, label),
             )
             if fit is not None:
                 size, anchor = fit
@@ -965,34 +991,34 @@ class MousePalette():
                 break
         return best
 
-    def coverTrace(self, fraction, obstacles, field):
+    def coverTrace(self, fraction, obstacles, field, label):
         """With no clear spot, the requested row length at the largest size
         that fits the field, where it covers the least of the obstacles."""
         cols, rows = self.traceColumns()[0]
         size = next((size for size in range(self.pblen, 1, -1)
-                     if self.traceFits((cols, rows, size), fraction, field)), 1)
+                     if self.traceFits((cols, rows, size), fraction, field, label)), 1)
         shape = (cols, rows, size)
-        return self.traceAnchor(fraction, shape, obstacles, field, leastCoveringSpot), shape
+        return self.traceAnchor(fraction, shape, obstacles, field, leastCoveringSpot, label), shape
 
-    def traceFits(self, shape, fraction, field):
+    def traceFits(self, shape, fraction, field, label):
         """True if the trace group with this grid fits inside the field."""
-        left, right, top, bottom = self.traceExtents(*shape, labelAbove(fraction))
+        left, right, top, bottom = self.traceExtents(*shape, labelAbove(fraction), label)
         return left + right <= field.width() and top + bottom <= field.height()
 
-    def traceExtents(self, cols, rows, size, above):
+    def traceExtents(self, cols, rows, size, above, label):
         """How far the trace group reaches left, right, up and down from its
-        anchor: the buttons, the side buttons and the label, drawn above
-        the buttons or below them."""
+        anchor: the buttons, the side buttons and a label this wide, drawn
+        above the buttons or below them."""
         width, height = self.traceGridSize(cols, rows, size)
-        label = self.label.sizeHint() if hasattr(self, "label") else QSize(0, 30)
-        left = max(width // 2, math.ceil(label.width() / 2))
-        right = max(width - width // 2 + self.pblen + 3, math.ceil(label.width() / 2))
+        label_height = self.labelSize().height()
+        left = max(width // 2, math.ceil(label / 2))
+        right = max(width - width // 2 + self.pblen + 3, math.ceil(label / 2))
         top = height // 2
         bottom = max(height, self.pblen * 2 + 1) - height // 2
         if above:
-            top += label.height() + 4
+            top += label_height + 4
         else:
-            bottom += label.height() + 4
+            bottom += label_height + 4
         return left, right, top, bottom
 
     def moveButton(self, dx, dy, group):
@@ -1045,7 +1071,9 @@ class MousePalette():
             w, h = self.groupSize(group)
             # the bar's saved spot may leave less room than its width
             bounds[group] = spanOf(field, 0, 10 if group == "sb" else w, 0, h)
-        bounds["trace"] = spanOf(field, *self.traceExtents(*self.traceGrid(), self.layout()["label above"]))
+        layout = self.layout()
+        bounds["trace"] = spanOf(field, *self.traceExtents(
+            *layout["trace grid"], layout["label above"], layout["label width"]))
         return bounds
 
     def loadVisibilityState(self):
@@ -1609,6 +1637,13 @@ class MousePalette():
         # (the trace palette on a series change, the sliders on a B/C reset)
         # gets its right-click hide menu here
         self.installHideMenus()
+        # the field may have changed width, and the bar's room is a share of
+        # it (all of it for a length you typed); a no-op when unchanged. The
+        # layout depends on the bar's size, so it is set before any group is
+        # placed: set after, the other groups would keep the old layout.
+        self.sb.setMaxPixelLength(self.sbWidth())
+        if self.sb.override_length:
+            self.sb.setOverride(self.sb.override_length, self.mainwindow.field.width())
         self.placeModeButtons()
         for i, pb in enumerate(self.palette_buttons):
             self.placePaletteButton(pb, i)
@@ -1616,11 +1651,6 @@ class MousePalette():
         self.placeLabel()
         self.placeIncrementButtons()
         self.placeBCButtons()
-        # the field may have changed width, and the bar's room is a share of
-        # it (all of it for a length you typed); a no-op when unchanged
-        self.sb.setMaxPixelLength(self.sbWidth())
-        if self.sb.override_length:
-            self.sb.setOverride(self.sb.override_length, self.mainwindow.field.width())
         self.placeSB()
 
     def reset(self):

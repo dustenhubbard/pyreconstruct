@@ -383,7 +383,7 @@ def test_invalid_dimensions_do_not_save(main_window, palette, qtbot, monkeypatch
 SWEEP_ROWS = (1, 2, 7, 20, 100)
 SWEEP_COLS = (1, 3, 5, 6, 12)
 SWEEP_SPOTS = ((0.001, 0.001), (0.999, 0.001), (0.5, 0.5), (0.001, 0.999), (0.999, 0.999))
-# the selected preset's name, short and longer than the label is drawn
+# the selected preset's name: short, and long enough that small windows cut it
 SWEEP_NAMES = ("d03", "a_long_trace_name")
 # the smallest window first: a smaller request gets the minimum size
 SWEEP_WINDOWS = [(100, 100), (321, 383), (330, 390), (360, 400), (450, 382),
@@ -441,6 +441,9 @@ def test_every_control_is_reachable_across_layouts(
         for x, y in SWEEP_SPOTS
     ]
     selected = series.palette_traces[series.palette_index[0]][series.palette_index[1]]
+    # each layout is reached by resizing the window from another size, as a
+    # user does, with nothing else asking the palette to place itself
+    away = (600, 400) if window == (1280, 800) else (1280, 800)
     failures = []
     for name in SWEEP_NAMES:
         selected.name = name
@@ -454,7 +457,10 @@ def test_every_control_is_reachable_across_layouts(
                     mouse_palette.save_palette_positions(settings, positions)
                     mouse_palette.set_default_positions(palette)
                     palette.loadPositionState()
-                    palette.resize()
+                    main_window.resize(*away)
+                    qapp.processEvents()
+                    main_window.resize(*window)
+                    qapp.processEvents()
                     missed = missed_controls(main_window, palette)
                     if missed:
                         failures.append((name, rows, cols, positions, missed))
@@ -520,17 +526,78 @@ def test_selecting_a_preset_with_a_longer_name_keeps_every_control_reachable(
     assert mouse_palette.load_palette_positions(settings) == {}
 
 
-def test_a_long_name_is_shortened_and_shown_in_full_as_the_tip(main_window, palette):
-    from PyReconstruct.modules.gui.palette.mouse_palette import LABEL_MAX_WIDTH
+@pytest.mark.parametrize("window, shortened", [((1280, 800), False), ((320, 382), True)])
+def test_a_long_name_keeps_its_number_in_view(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path, window, shortened):
+    from PyReconstruct.modules.gui.palette import mouse_palette
 
+    local_series_settings(main_window)
+    settings = QSettings(str(tmp_path / "positions.ini"), QSettings.IniFormat)
+    monkeypatch.setattr(mouse_palette, "_position_settings", lambda: settings)
+    main_window.resize(*window)
+    main_window.show()
+    qapp.processEvents()
+    main_window.series.setOption("trace_palette_per_row", 1)
+    main_window.series.setOption("tool_palette_cols", 5)
+    palette = main_window.mouse_palette
+    palette.reset()
+    trace = palette.selectedTrace().copy()
+    trace.name = "dendrite_shaft_spine_{01}"
+    palette.modifyPaletteButton(palette.selectedPos(), trace)
+    shown = []
+    for number in ("01", "02"):
+        if number == "02":
+            palette.incrementPalette(True)
+        qapp.processEvents()
+        name = f"dendrite_shaft_spine_{number}"
+        assert main_window.field.tracing_trace.name == name
+        if shortened:
+            # cut in the middle: the start and the number both show
+            assert palette.label.text() != name
+            assert palette.label.text().startswith("dend")
+            assert palette.label.text().endswith(f"_{number}")
+            assert palette.label.toolTip() == name
+        else:
+            assert palette.label.text() == name
+            assert palette.label.toolTip() == ""
+        assert missed_controls(main_window, palette) == []
+        shown.append(palette.label.text())
+    assert shown[0] != shown[1]
+
+
+def test_a_short_name_is_shown_whole_without_a_tip(main_window, palette):
     series = main_window.series
     selected = series.palette_traces[series.palette_index[0]][series.palette_index[1]]
-    selected.name = "dendrite_shaft_with_spines"
-    palette.reset()
-    assert palette.label.width() <= LABEL_MAX_WIDTH
-    assert palette.label.text().endswith("…")
-    assert palette.label.toolTip() == "dendrite_shaft_with_spines"
     selected.name = "d03"
     palette.reset()
     assert palette.label.text() == "d03"
     assert palette.label.toolTip() == ""
+
+
+RESIZE_STEPS = [(320, 382), (600, 400), (1280, 800), (450, 382), (330, 390), (800, 600)]
+
+
+@pytest.mark.parametrize("rows, cols", [(1, 1), (1, 5), (7, 3), (20, 12)])
+def test_resizing_the_window_keeps_every_control_reachable(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path, rows, cols):
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    local_series_settings(main_window)
+    settings = QSettings(str(tmp_path / "positions.ini"), QSettings.IniFormat)
+    monkeypatch.setattr(mouse_palette, "_position_settings", lambda: settings)
+    main_window.resize(1280, 800)
+    main_window.show()
+    qapp.processEvents()
+    main_window.series.setOption("trace_palette_per_row", rows)
+    main_window.series.setOption("tool_palette_cols", cols)
+    palette = main_window.mouse_palette
+    palette.reset()
+    qapp.processEvents()
+    assert missed_controls(main_window, palette) == []
+    # only the window is resized: the palette places itself from that alone
+    for size in RESIZE_STEPS:
+        main_window.resize(*size)
+        qapp.processEvents()
+        expected = (max(size[0], main_window.minimumWidth()), max(size[1], main_window.minimumHeight()))
+        assert main_window.size().toTuple() == expected
+        assert missed_controls(main_window, palette) == [], size

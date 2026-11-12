@@ -688,8 +688,9 @@ near the palette.
   columns** to change their arrangement. PyReconstruct remembers both settings
   for your user across series and restarts. Buttons wrap or shrink when needed
   to fit the window, and the window does not get smaller than the size where
-  every palette button and control can still be clicked. A long preset name is
-  shortened on the palette; point at it to see the whole name.
+  every palette button and control can still be clicked. If a long preset name
+  does not fit, the palette leaves out the middle and shows the start and end,
+  so a number at the end is still shown. Point at the name to see all of it.
 - Select a preset with the number keys: **`1` through `9`, `0`** for the first ten,
   and **`Shift+1` through `Shift+9`, `Shift+0`** for the next ten, regardless of the
   arrangement.
