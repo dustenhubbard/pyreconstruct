@@ -18,6 +18,7 @@ What these pin:
 """
 import copy
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -25,6 +26,7 @@ import sqlite3
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -1113,6 +1115,97 @@ def test_a_local_folder_s_file_system_is_read_and_allowed(tmp_path):
     fstype = hybrid_store.fsType(str(tmp_path))
     assert isinstance(fstype, str) and fstype
     assert fstype not in hybrid_store.NETWORK_FS
+
+
+@pytest.fixture
+def mount_table(monkeypatch):
+    """Btrfs subvolume device IDs need not appear in mountinfo."""
+    if os.name == "nt":
+        pytest.skip("Linux mount paths need POSIX path and device rules")
+    monkeypatch.setattr(hybrid_store, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(hybrid_store, "os", SimpleNamespace(
+        path=os.path, stat=lambda path: SimpleNamespace(st_dev=os.makedev(0, 61)),
+        makedev=os.makedev,
+    ))
+
+    def install(lines):
+        monkeypatch.setattr(
+            hybrid_store, "open", lambda path: io.StringIO(lines), raising=False,
+        )
+
+    return install
+
+
+@pytest.mark.parametrize("path, expected", [
+    ("/", "ext4"),
+    ("/home", "btrfs"),
+    ("/home/user/.worktrees/project", "btrfs"),
+    ("/home/user/network/store", "nfs4"),
+    ("/home/user/network-copy/store", "btrfs"),
+])
+def test_a_subvolume_uses_its_deepest_mount_when_device_ids_differ(mount_table, path, expected):
+    mount_table(
+        "40 30 0:42 / /home/user/network rw - nfs4 server:/data rw\n"
+        "32 2 8:1 / / rw - ext4 /dev/root rw\n"
+        "60 32 0:29 /@home /home rw shared:223 - btrfs /dev/data rw\n"
+    )
+    assert hybrid_store.fsType(path) == expected
+
+
+@pytest.mark.parametrize("name, escaped", [
+    ("with space", r"with\040space"),
+    ("with\ttab", r"with\011tab"),
+    ("with\nnewline", r"with\012newline"),
+    (r"literal\040", r"literal\134040"),
+])
+def test_mount_paths_decode_escaped_characters_once(mount_table, name, escaped):
+    mount_table(
+        "32 2 8:1 / / rw - ext4 /dev/root rw\n"
+        f"60 32 0:29 /@home /home/{escaped} rw - btrfs /dev/data rw\n"
+    )
+    assert hybrid_store.fsType(f"/home/{name}/store") == "btrfs"
+
+
+def test_a_symlink_uses_the_target_mount(mount_table, tmp_path):
+    target = tmp_path / "target"
+    target.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(target, target_is_directory=True)
+    mount_table(
+        "32 2 8:1 / / rw - ext4 /dev/root rw\n"
+        f"60 32 0:29 /@home {target} rw - btrfs /dev/data rw\n"
+    )
+    assert hybrid_store.fsType(str(link)) == "btrfs"
+
+
+@pytest.mark.parametrize("fstype", sorted(hybrid_store.NETWORK_FS))
+def test_a_network_mount_is_refused_when_device_ids_differ(mount_table, fstype):
+    mount_table(f"60 32 0:29 / /network rw - {fstype} server:/data rw\n")
+    with pytest.raises(OSError, match="network file system"):
+        hybrid_store.refuseNetworkFolder("/network/store")
+
+
+def test_a_device_match_takes_precedence_over_the_path_fallback(mount_table):
+    mount_table(
+        "32 2 8:1 / / rw - ext4 /dev/root rw\n"
+        "60 32 0:61 / /elsewhere rw - nfs4 server:/data rw\n"
+    )
+    with pytest.raises(OSError, match="network file system"):
+        hybrid_store.refuseNetworkFolder("/store")
+
+
+@pytest.mark.parametrize("contents", ["", "malformed\n"])
+def test_an_unrecognized_mount_table_still_returns_unknown(mount_table, contents):
+    mount_table(contents)
+    assert hybrid_store.fsType("/store") is None
+
+
+def test_an_unreadable_mount_table_still_returns_unknown(mount_table, monkeypatch):
+    def denied(path):
+        raise PermissionError(path)
+
+    monkeypatch.setattr(hybrid_store, "open", denied, raising=False)
+    assert hybrid_store.fsType("/store") is None
 
 
 @pytest.mark.parametrize("platform", [None, "linux"], ids=["this-platform", "linux"])

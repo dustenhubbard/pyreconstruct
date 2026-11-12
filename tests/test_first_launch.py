@@ -556,9 +556,9 @@ def test_help_menu_offers_whats_new_reopen():
                        "checkbox", toggle_sentinel)]
     assert entries.index(toggle[0]) == entries.index(whatsnew[0]) + 1
 
-    # the copyable diagnostic report heads the flat reporting group at the
-    # bottom of Help (the "Report issues" submenu went away in #459)
-    copydiag = [o for o in entries if o[0] == "copydiag_act"]
+    # The diagnostic report is the first command in Help > Diagnostics.
+    diagnostics = next(o for o in opts if isinstance(o, dict) and o["text"] == "Diagnostics")
+    copydiag = [o for o in diagnostics["opts"] if o[0] == "copydiag_act"]
     assert copydiag == [("copydiag_act", "Copy diagnostic report...", "", diag_sentinel)]
 
 

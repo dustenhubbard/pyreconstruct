@@ -74,6 +74,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - User Guide: USER_GUIDE.md
+  - Flat area: flat-area.md
   - Performance: performance.md
   - The .jser file format: JSER_FORMAT.md
   - Developing with uv: DEV_UV.md

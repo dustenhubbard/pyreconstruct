@@ -105,24 +105,12 @@ class VPlotter(vedo.Plotter):
                 series_fp (str): the path of the series the mesh came from;
                     None reads the open series
         """
-        # a mesh's z is its section number times its series' average
-        # thickness (objects_3D), so the inverse uses that same series: a
-        # mesh from another series has its own thickness and section numbers,
-        # recorded when it was added, since that series may be closed by now
         recorded = None if series_fp is None else self.objs.section_maps.get(series_fp)
         if recorded is None or series_fp == self.series.jser_fp:
-            thickness = self.series.avg_thickness
-            all_sections = sorted(self.series.sections)
+            zvals = self.series.getZValues()
         else:
-            thickness, all_sections = recorded
-        snum = round(z / thickness)
-
-        # if the section is not in the series, find closest section
-        if snum not in all_sections:
-            diffs = [abs(s - snum) for s in all_sections]
-            snum = all_sections[diffs.index(min(diffs))]
-        
-        return snum
+            zvals = recorded
+        return min(zvals, key=lambda snum: abs(zvals[snum] - z))
     
     def createScaleCube(self, attrs_dict=None):
         """Create the scale cube in the 3D scene."""
@@ -647,10 +635,10 @@ class VPlotter(vedo.Plotter):
 
         return objs, ztraces
     
-    def placeInScene(self, result):
+    def placeInScene(self, result, remove_first=True):
         """Called by addToScene after thread is completed"""
         # add objects and ztraces to scene
-        mesh_data_list, series = result
+        mesh_data_list, series, failures = result
 
         ## A series the 3D flow opened for itself gets its hidden dir removed
         ## the moment the meshes exist. Left open, that dir survived the app
@@ -665,6 +653,9 @@ class VPlotter(vedo.Plotter):
         placed = []
         for md in mesh_data_list:
             vm = vedo.Mesh([md["vertices"], md["faces"]], md["color"], md["alpha"])
+            if remove_first:
+                names = ([md["name"]], []) if md["type"] == "object" else ([], [md["name"]])
+                self.removeFromScene(*names, series.jser_fp, save_state=False)
             obj = self.objs.add(vm, series, md["name"], md["type"], md["color"], md["alpha"])
             if md["tform"]:
                 obj.applyTform(md["tform"])
@@ -673,6 +664,13 @@ class VPlotter(vedo.Plotter):
         self.render()
         if placed:
             self.qt_parent.updateObjectList(placed)
+        if failures:
+            for failure in failures:
+                names = ([failure["name"]], []) if failure["type"] == "object" else ([], [failure["name"]])
+                self.objs.markStale(*names, series.jser_fp)
+            notify("Could not generate 3D meshes:\n" + "\n".join(
+                f"{failure['name']}: {failure['error']}" for failure in failures
+            ))
     
     def addToScene(self, objs : list, ztraces : list, remove_first=True, series=None, save_state=True):
         """Add objects to the scene.
@@ -712,20 +710,15 @@ class VPlotter(vedo.Plotter):
         elif type(series) is Series:
             series_fp = series.jser_fp
 
-        # remove existing objects from scene
+        # Keep existing meshes until their replacements have been generated.
         if remove_first:
-            obj_dicts, ztrace_dicts = self.removeFromScene(obj_names, ztrace_names, series_fp, save_state=False)
-            # if removing, replace attributes in dict lists with those of the just-removed items
-            objs += obj_dicts
-            ztraces += ztrace_dicts
-            # remove redundant objects in the list
-            for dlist in (objs, ztraces):
-                names = set()
-                for d in reversed(dlist.copy()):
-                    if d["name"] in names:
-                        dlist.remove(d)
-                    else:
-                        names.add(d["name"])
+            for kind, dlist in (("object", objs), ("ztrace", ztraces)):
+                requested = {d["name"]: d for d in dlist}
+                for name in requested:
+                    old = self.objs.search(name, kind, series_fp)
+                    if old is not None:
+                        requested[name] = old.getExportDict()
+                dlist[:] = requested.values()
         
         # check for objects/ztraces that don't exist in the current series
         if series == self.series:  # operating from opened series
@@ -765,7 +758,9 @@ class VPlotter(vedo.Plotter):
             ztraces,
             progress=True,
         )
-        worker.signals.result.connect(self.placeInScene)
+        worker.signals.result.connect(
+            lambda result: self.placeInScene(result, remove_first=remove_first)
+        )
         self.threadpool.startAll(text="Generating 3D...", status_bar=self.mainwindow.statusbar)
 
     def showHelp(self):
@@ -1091,6 +1086,7 @@ class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
 
         ## Create vedo renderer
         self.plt = VPlotter(self, qt_widget=self)
+        self.plt.parallel_projection(True)
 
         ## Create menu bar
         menubar_list = [
@@ -1150,6 +1146,9 @@ class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
                         "text": "View",
                         "opts":
                         [
+                            ("orthographic_act", "Orthographic", "checkbox True", self.toggleProjection,
+                             "Turn off to use perspective projection."),
+                            None,
                             ("focusall_act", "Focus on all", "Home", self.plt.show),
                             ("focusselected_act", "Center on selected", "F", self.plt.setFocalPointToSelected),
                             {
@@ -1235,6 +1234,11 @@ class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
     def series(self):
         """The series open in the main window right now (see VPlotter.series)."""
         return self.mainwindow.series
+
+    def toggleProjection(self):
+        """Switch between orthographic and perspective projection."""
+        self.plt.parallel_projection(self.orthographic_act.isChecked())
+        self.plt.render()
 
     def _syncRenderWindowSize(self):
         """Resize the render window if it no longer matches this widget.
@@ -1332,6 +1336,8 @@ class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
         d["camera"]["focal_point"] = self.plt.camera.GetFocalPoint()
         d["camera"]["view_up"] = self.plt.camera.GetViewUp()
         d["camera"]["distance"] = self.plt.camera.GetDistance()
+        d["camera"]["parallel_projection"] = bool(self.plt.camera.GetParallelProjection())
+        d["camera"]["parallel_scale"] = self.plt.camera.GetParallelScale()
 
         if return_dict:
             return d
@@ -1381,6 +1387,12 @@ class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
             self.plt.camera.SetFocalPoint(d["camera"]["focal_point"])
             self.plt.camera.SetViewUp(d["camera"]["view_up"])
             self.plt.camera.SetDistance(d["camera"]["distance"])
+            # Older scene files were saved with perspective projection.
+            parallel = d["camera"].get("parallel_projection", False)
+            self.plt.parallel_projection(parallel)
+            self.orthographic_act.setChecked(parallel)
+            if "parallel_scale" in d["camera"]:
+                self.plt.camera.SetParallelScale(d["camera"]["parallel_scale"])
             self.plt.show(resetcam=False)
             
     def addFromOtherSeries(self):
@@ -1604,7 +1616,8 @@ class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
         fp = FileDialog.get(
             "save", self, "Save scene as obj",
             filter="*.obj",
-            file_name="scene.obj"
+            file_name="scene.obj",
+            confirm_overwrite=False
         )
 
         if not fp: return
@@ -1612,12 +1625,11 @@ class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
         combo_obj_fp = Path(fp)
         combo_mtl = combo_obj_fp.with_suffix(".mtl")
 
-        # the save dialog asked about the .obj; the .mtl beside it is ours too
-        if combo_mtl.exists() and not notifyConfirm(
-            f"This folder already has a file named {combo_mtl.name}.\n\n"
-            "Exporting the scene will replace it.\n\n"
-            "Continue?",
-            yn=True
+        existing = [p.name for p in (combo_obj_fp, combo_mtl) if p.exists()]
+        if existing and not notifyConfirm(
+            "Exporting the scene will replace these files:\n\n"
+            + "\n".join(existing)
+            + "\n\nContinue?"
         ):
             return
 
@@ -1921,7 +1933,7 @@ class SceneObjectList():
         """Create the scene object list."""
         self.scene_objects = {}
         self.host_trees = {}
-        # per series path: (average thickness, sorted section numbers), for
+        # Per series path: physical section planes, for
         # the hover's section lookup once that series is no longer open
         self.section_maps = {}
         # IDs of scene objects whose 2D source data changed after their mesh
@@ -1970,9 +1982,7 @@ class SceneObjectList():
         # while the scene is up (a Series-like without sections records none)
         sections = getattr(series, "sections", None)
         if sections is not None:
-            self.section_maps[series.jser_fp] = (
-                series.avg_thickness, sorted(sections)
-            )
+            self.section_maps[series.jser_fp] = series.getZValues()
         
         return scene_object
     

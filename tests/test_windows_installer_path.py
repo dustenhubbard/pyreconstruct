@@ -1,4 +1,4 @@
-"""The Windows installer puts {app}\\bin on the user's PATH, and only that.
+"""The Windows installer puts {app}\\bin on the selected mode's PATH.
 
 The terminal commands live in {app}\\bin. PATH is a value the user owns, so
 the script never deletes it (no ``uninsdeletevalue``, no ``RegDeleteValue``),
@@ -51,15 +51,28 @@ def test_only_the_bin_folder_goes_on_path():
     writes = re.findall(r"RegWrite\w+\(([^;]*)\);", code)
     assert writes, "the script writes PATH somewhere"
     for args in writes:
-        assert args.startswith("HKCU, EnvKey, 'Path'"), args
-    assert "EnvKey = 'Environment';" in code
+        assert args.startswith("PathRootKey(), PathSubkey(), 'Path'"), args
+
+
+def test_path_scope_follows_the_install_mode_for_install_and_uninstall():
+    code = _code()
+    root = _function(code, "function PathRootKey")
+    assert re.search(r"if IsAdminInstallMode then\s+Result := HKLM\s+else\s+Result := HKCU;", root)
+    subkey = _function(code, "function PathSubkey")
+    assert re.search(
+        r"if IsAdminInstallMode then\s+Result := "
+        + re.escape("'SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment'")
+        + r"\s+else\s+Result := 'Environment';", subkey)
+    reads = re.findall(r"RegQueryStringValue\(([^;]*)\) then", code)
+    assert reads == ["PathRootKey(), PathSubkey(), 'Path', Value"] * 2
 
 
 def test_install_adds_the_entry_once():
     code = _code()
     add = _function(code, "procedure AddCommandsToPath")
     assert "if PathHasEntry(Value, CommandsDir()) then\n    exit;" in add
-    assert "RegWriteExpandStringValue(HKCU, EnvKey, 'Path', Value + CommandsDir());" in add
+    assert "if Value <> '' then\n    Value := Value + ';';" in add
+    assert "RegWriteExpandStringValue(PathRootKey(), PathSubkey(), 'Path', Value + CommandsDir());" in add
     step = _function(code, "procedure CurStepChanged")
     assert re.search(r"if CurStep = ssPostInstall then\s+AddCommandsToPath\(\);", step)
 
@@ -68,7 +81,7 @@ def test_uninstall_removes_exactly_that_entry():
     code = _code()
     remove = _function(code, "procedure RemoveCommandsFromPath")
     assert "if not SamePathEntry(Parts[I], CommandsDir()) then" in remove
-    assert "RegWriteExpandStringValue(HKCU, EnvKey, 'Path', Kept);" in remove
+    assert "RegWriteExpandStringValue(PathRootKey(), PathSubkey(), 'Path', Kept);" in remove
     step = code[code.index("procedure CurUninstallStepChanged"):]
     assert re.search(r"if CurUninstallStep = usUninstall then\s+RemoveCommandsFromPath\(\);", step)
 
