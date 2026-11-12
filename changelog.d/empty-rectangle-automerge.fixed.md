@@ -1,0 +1,1 @@
+- **An empty rectangle draw no longer merges existing selected traces.**
