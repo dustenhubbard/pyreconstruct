@@ -50,7 +50,7 @@ def test_correlation_alignment_made_first_propagates(field, monkeypatch):
     before_later = {n: field.series.loadSection(n).tform.copy() for n in later}
     before = field.section.tform.copy()
 
-    monkeypatch.setattr(fw, "correlate", lambda a, b: (12, -8))
+    monkeypatch.setattr(fw, "correlate", lambda a, b, **kwargs: (12, -8))
     field.corrAlign()
     aligned = field.section.tform.copy()
     assert not aligned.equals(before), "the alignment should move the section"

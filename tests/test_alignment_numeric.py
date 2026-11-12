@@ -46,10 +46,17 @@ def test_correlation_applies_pixel_shift_in_field_coordinates_and_undoes(
     field.saveState()
     reference = np.repeat(_image((32, 64))[:, :, None], 3, axis=2)
     moving = np.roll(reference, (-4, 6), axis=(0, 1))
+
+    def _fake_array(array):
+        def generate(pixmap_dim, window, get_crop_only=False, bc=True):
+            return array
+
+        return generate
+
     monkeypatch.setattr(
-        field.b_section_layer, "generateImageArray", lambda *args: reference
+        field.b_section_layer, "generateImageArray", _fake_array(reference)
     )
-    monkeypatch.setattr(field.section_layer, "generateImageArray", lambda *args: moving)
+    monkeypatch.setattr(field.section_layer, "generateImageArray", _fake_array(moving))
     field.scaling = 2
 
     field.corrAlign()

@@ -52,15 +52,25 @@ def reverse_checkbox(dialog):
     )
 
 
+def private_qsettings_store(folder):
+    """A `QSettingsStore` on files of this test only, one per scope as in the app."""
+    from PySide6.QtCore import QSettings
+    from PyReconstruct.modules.backend.settings_store import QSettingsStore
+
+    store = QSettingsStore()
+    store._settings = lambda code: QSettings(
+        str(folder / f"{code or 'global'}.ini"), QSettings.IniFormat
+    )
+    return store
+
+
 @pytest.mark.parametrize("reverse", [False, True])
 def test_options_save_direction_across_series_and_settings_store_instances(
-    window, real_series, qtbot, reverse,
+    window, real_series, qtbot, tmp_path, reverse,
 ):
-    from PyReconstruct.modules.backend.settings_store import QSettingsStore
     from PyReconstruct.modules.gui.dialog.all_options import AllOptionsDialog
 
-    # conftest redirects QSettings to temporary files before importing PyReconstruct.
-    window.series.setSettingsStore(QSettingsStore())
+    window.series.setSettingsStore(private_qsettings_store(tmp_path))
     window.series.setOption("reverse_trackpad_scroll", not reverse)
     dialog = AllOptionsDialog(window, window.series)
     qtbot.addWidget(dialog)
@@ -68,7 +78,7 @@ def test_options_save_direction_across_series_and_settings_store_instances(
     assert dialog.accept()
 
     real_series.code = "another-series"
-    real_series.setSettingsStore(QSettingsStore())
+    real_series.setSettingsStore(private_qsettings_store(tmp_path))
     reopened = AllOptionsDialog(None, real_series)
     qtbot.addWidget(reopened)
     assert reverse_checkbox(reopened).isChecked() is reverse

@@ -198,7 +198,10 @@ def test_close_series_runs_close(main_window, bar, monkeypatch):
     assert calls == ["close"]
 
 
-def test_open_recent_rows_open_the_series(main_window, mac_dev, tmp_path, monkeypatch):
+def test_open_recent_rows_open_the_series(
+    main_window, mac_dev, tmp_path, monkeypatch, local_series_settings
+):
+    local_series_settings(main_window)
     other = tmp_path / "other.jser"
     other.write_text("{}")
     main_window.series.setOption("recently_opened_series", [str(other)])

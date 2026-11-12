@@ -59,8 +59,9 @@ def _contour(field):
 
 
 @pytest.fixture
-def merge_field(main_window):
+def merge_field(main_window, local_series_settings):
     """The live field widget with the auto_merge option switched on."""
+    local_series_settings(main_window)
     main_window.series.setOption("auto_merge", True)
     main_window.series.setOption("auto_merge_selected_only", False)
     field = main_window.field

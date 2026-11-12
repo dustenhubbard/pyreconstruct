@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QStyle,
     QApplication
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import (
     QPainter,
     QPalette
@@ -180,6 +180,7 @@ class AllOptionsDialog(QDialog):
                 ["user"],
                 ["series_code"],
                 ["2D_step"],
+                ["correlation_alignment"],
                 ["3D_step"],
                 ["left_handed"],
                 ["trackpad_scroll"],
@@ -216,6 +217,17 @@ class AllOptionsDialog(QDialog):
             qsa.setWidget(widget)
             self.tabs.addTab(qsa, tab_name)
     
+    def showOption(self, name):
+        """Open the tab containing an option and scroll it into view."""
+        option = self.all_widgets[name]
+        for index in range(self.tabs.count()):
+            area = self.tabs.widget(index)
+            if area.isAncestorOf(option):
+                self.tabs.setCurrentIndex(index)
+                # Scroll after the dialog is shown and its layouts have sizes.
+                QTimer.singleShot(0, lambda: area.ensureWidgetVisible(option))
+                break
+
     def createWidgets(self, use_defaults=False):
         """Create the widgets for each of the options
         
@@ -338,6 +350,25 @@ class AllOptionsDialog(QDialog):
             self.series.setOption("knife_ignore_secondary_click", response[1][0][1])
 
         self.addOptionWidget("knife", structure, setOption)
+
+        structure = [
+            ["Ignore image intensities at or outside these cutoffs (0 to 255)."],
+            ["Display brightness and contrast do not change these intensities."],
+            ["Dark cutoff:", (True, "int",
+                self.series.getOption("correlation_dark_cutoff", use_defaults),
+                range(0, 255))],
+            ["Bright cutoff:", (True, "int",
+                self.series.getOption("correlation_bright_cutoff", use_defaults),
+                range(1, 256))],
+        ]
+
+        def setOption(response):
+            self.series.setOption("correlation_dark_cutoff", response[0])
+            self.series.setOption("correlation_bright_cutoff", response[1])
+
+        self.all_widgets["correlation_alignment"] = CorrelationOptionsWidget(
+            self, "Align by correlation", structure, self.series, setOption,
+        )
 
         ## 3D options
         
@@ -829,5 +860,18 @@ class SeriesCodeWidget(OptionWidget):
         code = self.responses[0]
         if "\0" in code and code != self.series.code:
             notify(SERIES_CODE_NUL)
+            return False
+        return True
+
+
+class CorrelationOptionsWidget(OptionWidget):
+    """Keep the valid intensity range nonempty."""
+
+    def accept(self, close=True):
+        if not super().accept(close):
+            return False
+        dark, bright = self.responses
+        if dark >= bright:
+            notify("The dark cutoff must be lower than the bright cutoff.")
             return False
         return True
