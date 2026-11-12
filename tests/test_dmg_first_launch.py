@@ -5,6 +5,7 @@ from collections import Counter
 import html
 import json
 import os
+import plistlib
 import re
 import shlex
 from pathlib import Path
@@ -182,6 +183,99 @@ def test_dmg_build_fails_when_the_app_cannot_be_listed(tmp_path, python):
     assert not (tmp_path / "PyReconstruct-1.24.0-macOS-arm64.dmg").exists()
 
 
+
+def test_dmg_build_stops_when_the_app_in_the_image_fails_strict_verify(tmp_path):
+    # The app passes codesign --verify --deep --strict and its copy in the
+    # image does not: the build fails at once, since a retry builds the same image.
+    packaging = tmp_path / "packaging"
+    shutil.copytree(ROOT / "packaging" / "macos", packaging / "macos")
+    (tmp_path / "dist" / "PyReconstruct.app").mkdir(parents=True)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    codesign = bin_dir / "codesign"
+    codesign.write_text("#!/bin/sh\n"
+                        "echo 'Authority=Developer ID Application: Test (ABCDE12345)' >&2\n"
+                        'for last; do :; done\n'
+                        'case "$1 $last" in\n'
+                        '  "--verify dist/"*) exit 0 ;;\n'
+                        "  --verify*) echo 'resource fork, Finder information, or similar"
+                        " detritus not allowed' >&2; exit 1 ;;\n"
+                        "esac\n")
+    for name in ("sleep", "killall"):
+        (bin_dir / name).write_text("#!/bin/sh\n")
+    for tool in bin_dir.iterdir():
+        tool.chmod(0o755)
+    _fake_dmgbuild(bin_dir)
+    env = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+               PYR_PUBLIC="1.24.0", ARCH="arm64", TMPDIR=str(tmp_path))
+    result = subprocess.run(["bash", "packaging/macos/make_dmg.sh"], cwd=tmp_path,
+                            env=env, capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "fails codesign --verify --deep --strict" in result.stderr
+    assert "detritus" in result.stderr
+    assert "retrying" not in result.stderr
+    assert len((tmp_path / "dmgbuild-calls.txt").read_text().splitlines()) == 1
+    assert not (tmp_path / "PyReconstruct-1.24.0-macOS-arm64.dmg").exists()
+
+
+@pytest.mark.skipif(sys.platform != "darwin" or not shutil.which("dmgbuild"),
+                    reason="needs macOS, hdiutil, codesign and dmgbuild on PATH")
+@pytest.mark.parametrize("app_name", ["PyReconstruct", "PyReconstruct Dev"])
+def test_the_app_in_a_real_dmg_and_its_copy_pass_strict_verify(tmp_path, app_name):
+    # The real dmgbuild, with the real window settings, on a stand-in app
+    # sealed ad hoc. The image adds no Finder information to the bundle.
+    packaging = tmp_path / "packaging"
+    shutil.copytree(ROOT / "packaging" / "macos", packaging / "macos")
+    if app_name.endswith(" Dev"):
+        (packaging / "FLAVOR").write_text("dev\n")
+    img = tmp_path / "PyReconstruct" / "assets" / "img"
+    img.mkdir(parents=True)
+    for name in ("PyReconstruct.png", "PyReconstructDev.png"):
+        shutil.copyfile(ROOT / "PyReconstruct" / "assets" / "img" / name, img / name)
+    app = tmp_path / "dist" / f"{app_name}.app"
+    (app / "Contents" / "MacOS").mkdir(parents=True)
+    (app / "Contents" / "Resources").mkdir()
+    shutil.copyfile("/usr/bin/true", app / "Contents" / "MacOS" / app_name)
+    (app / "Contents" / "MacOS" / app_name).chmod(0o755)
+    (app / "Contents" / "Resources" / "data.txt").write_text("sealed\n")
+    with open(app / "Contents" / "Info.plist", "wb") as f:
+        plistlib.dump({"CFBundleExecutable": app_name, "CFBundleName": app_name,
+                       "CFBundleIdentifier": "edu.example.dmgtest",
+                       "CFBundlePackageType": "APPL"}, f)
+    subprocess.run(["codesign", "--force", "--sign", "-", str(app)], check=True,
+                   capture_output=True, timeout=60)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("sleep", "killall"):
+        (bin_dir / name).write_text("#!/bin/sh\n")
+        (bin_dir / name).chmod(0o755)
+    env = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+               PYR_PUBLIC="1.24.0", ARCH="arm64", TMPDIR=str(tmp_path))
+    result = subprocess.run(["bash", "packaging/macos/make_dmg.sh"], cwd=tmp_path,
+                            env=env, capture_output=True, text=True, timeout=600)
+    assert result.returncode == 0, result.stderr
+    suffix = "-Dev" if app_name.endswith(" Dev") else ""
+    out = tmp_path / f"PyReconstruct-1.24.0-macOS-arm64{suffix}.dmg"
+    mount = tmp_path / "mnt"
+    mount.mkdir()
+    subprocess.run(["hdiutil", "attach", "-readonly", "-nobrowse", "-noautoopen",
+                    "-mountpoint", str(mount), str(out)], check=True, capture_output=True,
+                   timeout=120)
+    try:
+        in_image = mount / f"{app_name}.app"
+        copy = tmp_path / "Applications" / f"{app_name}.app"
+        subprocess.run(["ditto", str(in_image), str(copy)], check=True, timeout=120)
+        for bundle in (in_image, copy):
+            names = subprocess.run(["xattr", str(bundle)], capture_output=True,
+                                   text=True, timeout=60).stdout
+            assert "com.apple.FinderInfo" not in names, bundle
+            done = subprocess.run(["codesign", "--verify", "--deep", "--strict", str(bundle)],
+                                  capture_output=True, text=True, timeout=60)
+            assert done.returncode == 0, done.stderr
+    finally:
+        subprocess.run(["hdiutil", "detach", str(mount)], capture_output=True, timeout=120)
+
+
 def _fake_dmgbuild(bin_dir):
     """Put a dmgbuild on PATH that records its arguments and writes the dmg,
     and an hdiutil that mounts the app the fake dmgbuild copied."""
@@ -199,6 +293,8 @@ assert Path(settings).name == "dmg_settings.py" and Path(settings).is_file()
 assert Path(defines["app"]).is_dir() and Path(defines["background"]).is_file()
 Path("dmgbuild-call.json").write_text(json.dumps(
     {"volume": volume, "out": out, "defines": defines}))
+with open("dmgbuild-calls.txt", "a") as calls:
+    calls.write(out + "\\n")
 app = Path(defines["app"])
 shutil.copytree(app, Path(out + ".contents") / app.name, symlinks=True)
 Path(out).touch()
@@ -234,6 +330,9 @@ def test_dmg_window_places_every_item_inside_the_background(app_name, guide):
     from PIL import Image
 
     s = _window(app_name, guide)
+    # dmgbuild would hide the extension with SetFile, which writes
+    # com.apple.FinderInfo onto the bundle and fails codesign --strict.
+    assert "hide_extensions" not in s
     names = [Path(f).name for f in s["files"]] + list(s["symlinks"])
     assert sorted(s["icon_locations"]) == sorted(names)
     assert s["symlinks"] == {"Applications": "/Applications"}

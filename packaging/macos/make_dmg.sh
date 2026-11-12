@@ -81,7 +81,9 @@ PY
 
 # dmgbuild copies the app with ditto but ignores its exit status, so a failed
 # or partial copy still gives an image. Mount the image and check that the app
-# in it has the same files, at the same sizes, as the app it came from.
+# in it has the same files, at the same sizes, as the app it came from. When
+# the app passes codesign --verify --deep --strict, the app in the image must
+# pass it too; that failure returns 2, since building again gives the same image.
 check_dmg() {
     local mnt status=0
     mnt="$(mktemp -d)"
@@ -94,6 +96,10 @@ check_dmg() {
     elif ! diff "$mnt.want" "$mnt.got" >&2; then
         echo "error: ${APP_NAME}.app in $OUT does not match $APP" >&2
         status=1
+    elif codesign --verify --deep --strict "$APP" 2>/dev/null \
+        && ! codesign --verify --deep --strict "$mnt/${APP_NAME}.app" >&2; then
+        echo "error: ${APP_NAME}.app in $OUT fails codesign --verify --deep --strict; $APP passes" >&2
+        status=2
     fi
     hdiutil detach "$mnt" >/dev/null || hdiutil detach -force "$mnt" >/dev/null || true
     rmdir "$mnt" 2>/dev/null || true
@@ -102,8 +108,11 @@ check_dmg() {
 }
 
 for attempt in 1 2 3 4 5; do
-    if make_dmg; then break; fi
+    status=0
+    make_dmg || status=$?
+    [ "$status" -eq 0 ] && break
     rm -f "$OUT"
+    [ "$status" -eq 2 ] && exit 1
     [ "$attempt" -eq 5 ] && { echo "error: dmgbuild failed after 5 attempts" >&2; exit 1; }
     echo "dmgbuild failed (attempt $attempt; likely 'Resource busy'). Cleaning up and retrying." >&2
     killall diskimages-helper 2>/dev/null || true   # release a stale helper holding the image

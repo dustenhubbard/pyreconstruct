@@ -82,5 +82,32 @@ def test_surface_rows_still_come_from_the_mesh(shapes, tmp_path):
     with open(out) as fp:
         row = next(csv.DictReader(fp))
 
-    assert float(row["SurfaceArea"]) == round(tm.area, 5)
-    assert float(row["Volume"]) == round(tm.volume, 5)
+    assert float(row["SurfaceArea"]) == pytest.approx(tm.area, rel=1e-12)
+    assert float(row["Volume"]) == pytest.approx(tm.volume, rel=1e-12)
+
+
+@pytest.mark.parametrize("radius,area,volume", [
+    (0.01, 0.0012566370614359172, 0.000004188790204786391),
+    (0.02, 0.005026548245743669, 0.00003351032163829113),
+    (0.00001, 0.0000000012566370614359173, 0.000000000000004188790204786392),
+])
+@pytest.mark.parametrize("quantity", ["SurfaceArea", "Volume"])
+def test_small_sphere_quantities_keep_significant_digits(shapes, tmp_path, radius, area, volume, quantity):
+    from PyReconstruct.modules.backend.volume import export_volumes as ev
+    from PyReconstruct.modules.datatypes import Trace, Transform
+
+    section = shapes.loadSection(min(shapes.sections))
+    section.tform = Transform.identity()
+    trace = Trace("small_sphere", (255, 0, 0), True)
+    trace.points = [(-radius, 0), (0, radius), (radius, 0), (0, -radius)]
+    section.addTrace(trace, log_event=False)
+    section.save()
+    shapes.setAttr("small_sphere", "3D_mode", "spheres")
+    out = tmp_path / "small_sphere.csv"
+
+    ev.export3DData(shapes, ["small_sphere"], str(out), notify_user=False)
+
+    with out.open() as fp:
+        row = next(csv.DictReader(fp))
+    expected = {"SurfaceArea": area, "Volume": volume}
+    assert float(row[quantity]) == pytest.approx(expected[quantity], rel=1e-12, abs=0)

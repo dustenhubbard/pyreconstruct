@@ -19,7 +19,9 @@ filesystem = "HFS+"
 
 files = [app]
 symlinks = {"Applications": "/Applications"}
-hide_extensions = [app_name]
+# No hide_extensions: dmgbuild hides an extension with SetFile, which adds
+# com.apple.FinderInfo to the bundle folder, and codesign --strict refuses
+# that. Finder hides ".app" without it.
 
 background = defines["background"]
 icon = defines.get("icon")
