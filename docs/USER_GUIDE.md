@@ -395,7 +395,12 @@ Under **Series ▸ Images**:
 - **Find/change image directory** points the series at the folder containing its
   images. The chosen directory is remembered with the series.
 - **Convert to scaled images** converts the series' images into a scaled
-  (`.zarr`) store for faster loading of large images.
+  (`.zarr`) store for faster loading of large images. Choose an output path
+  that does not exist. PyReconstruct adds `.zarr` if the name does not end in
+  `zarr`, then checks the final path. If that path already exists,
+  PyReconstruct shows "The output path already exists" and leaves it unchanged
+  without starting conversion. Run **Convert to scaled images** again and
+  choose an unused path.
 - **Update image scales** adds or refreshes scale levels on an existing Zarr.
 
 ### When a Zarr names its images differently
