@@ -609,30 +609,54 @@ def _top_level_widgets():
     return {getCppPointer(w)[0]: w for w in app.topLevelWidgets()}
 
 
+def delete_new_top_level_widgets(before):
+    """Delete every live top-level widget whose address is not in `before`.
+
+    `before` is a `_top_level_widgets()` taken earlier. The widgets are queued
+    with `deleteLater` and an event loop runs once, so they are gone when this
+    returns. `deleteLater` alone is not enough: `processEvents`,
+    `qtbot.waitExposed` and `QTest.qWaitForWindowExposed` never run a deferred
+    delete, and only an event loop does (`qtbot.wait`, `QTest.qWait`,
+    `QEventLoop.exec`). Deleting the widget at once with `shiboken6.delete`
+    crashes a `MainWindow` (measured, segmentation fault).
+    """
+    from shiboken6 import isValid
+
+    left = [
+        widget
+        for address, widget in _top_level_widgets().items()
+        if address not in before and isValid(widget)
+    ]
+    if left:
+        from PySide6.QtTest import QTest
+
+        for widget in left:
+            widget.deleteLater()
+        QTest.qWait(0)
+
+
 @pytest.fixture(autouse=True)
 def _delete_windows_a_test_leaves_behind():
-    """Queue for deletion every top-level widget a test made and left alive.
+    """Delete, before the next test starts, every top-level widget a test made.
 
-    A `MainWindow` or options dialog a test builds itself and only closes is
-    never deleted. `setMainWindow` and the window's own signal connections keep
-    its wrapper alive, so dropping the last test reference frees nothing, and a
-    worker ends a full run holding thousands of widgets. Each one makes every
-    later deletion slower (measured on PySide6 6.9: deleting one closed window
-    took 1 ms beside no leaked windows and 21 ms beside 40). The pending
-    deletions run in the first later test that spins an event loop, which on
-    khgpu then took over 100 s inside one `qtbot.wait`.
+    A `MainWindow` or options dialog a test builds and only closes, or a
+    fixture window queued with `deleteLater`, otherwise lives on until some
+    later test runs an event loop. A file whose tests only process events ends
+    with every window still alive (`test_wheel_steps.py`: 44 live `MainWindow`s
+    after the file), and the next `qtbot.wait` deletes them all. Under PySide6
+    6.9, deleting an object with a Python connection takes time in proportion
+    to every Python connection still alive in the process, so that batch costs
+    the square of the pile. On khgpu a worker held 650,000 live connections,
+    115,000 `QAction`s among them; deleting one widget with 200 connected
+    buttons took 470 ms instead of 0.3 ms, and single `qtbot.wait` calls ran
+    past 180 s.
 
     Widgets that existed before the test, a session window among them, are left
-    alone. Only `deleteLater` is called: the deletion runs when the event loop
-    next does, the same way the `main_window` fixture deletes its own window.
+    alone.
     """
     before = _top_level_widgets()
     yield
-    from shiboken6 import isValid
-
-    for address, widget in _top_level_widgets().items():
-        if address not in before and isValid(widget):
-            widget.deleteLater()
+    delete_new_top_level_widgets(before)
 
 
 @pytest.fixture
