@@ -1,0 +1,1 @@
+- **Imported curation statuses no longer show an unrelated person's name.**

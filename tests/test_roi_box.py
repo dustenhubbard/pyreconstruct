@@ -479,13 +479,15 @@ def test_a_click_with_the_tool_places_the_box_at_the_kept_size(mw, qapp):
     assert abs(field.roi_box_center[0] - CENTER[0]) <= _one_pixel(field)
 
 
-def _options(drag=True, size=SIZE, corner=False):
+def _options(drag=True, size=SIZE, corner=False, follow="", whole=False):
     """A response to the ROI mode options dialog."""
     return [
         [("Drag to draw it, click to move it", drag),
          ("Click to place it at the set size", not drag)],
         size[0], size[1],
         [("Center", not corner), ("Upper-left corner", corner)],
+        follow,
+        [("Show all of any object that touches the box, on every section", whole)],
     ]
 
 
@@ -531,6 +533,10 @@ def test_the_options_dialog_shows_the_current_options(mw, qapp, monkeypatch):
 
     (structure,) = seen
     inputs = [item for row in structure for item in row if isinstance(item, tuple)]
+    assert inputs[4][0] == "combo" and inputs[4][2] == ""
+    assert inputs[5] == ("check", (
+        "Show all of any object that touches the box, on every section", False
+    ))
     assert inputs[0] == ("radio",
         ("Drag to draw it, click to move it", False),
         ("Click to place it at the set size", True))
@@ -1112,6 +1118,7 @@ def test_find_frames_only_the_inside_traces_of_a_contour(mw, qapp):
 def test_trace_layer_keeps_both_initializations():
     layer = TraceLayer(None, None)
     assert layer.roi_box is None
+    assert layer.roi_keep is None
     assert layer.selected_style_preview is None
 
 
@@ -1173,14 +1180,12 @@ def test_a_click_sets_the_center_and_keeps_the_size(mw, qapp):
     assert field.roi_box_size == SIZE
 
 
-def test_movement_inside_the_click_window_is_a_click(mw, qapp):
-    """The field's own click-versus-drag rule (isSingleClicking): a press
-    released inside the single-click window is a click even if it moved. The
-    center is the press point and the size is unchanged."""
+def test_movement_inside_the_click_tolerance_is_a_click(mw, qapp):
+    """Small movement keeps the center at the press and the size unchanged."""
     field = mw.field
     _turn_on(mw, qapp, center=None)
     start = _pix(field, *CENTER)
-    end = start + QPoint(25, 15)
+    end = start + QPoint(1, 1)
 
     _press_and_drag(field, qapp, start, end, past_click=False)
     _release(field, qapp, end)

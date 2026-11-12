@@ -35,6 +35,7 @@ class SectionLayer(ImageLayer, TraceLayer):
         hide_image=False,
         focus_on=False,
         roi_box=None,
+        roi_keep=None,
         ):
         """Generate pixmap view for a section.
         
@@ -46,6 +47,7 @@ class SectionLayer(ImageLayer, TraceLayer):
                 focus_on (str): name of object to focus on
                 roi_box (tuple): the ROI box (center x, center y, width,
                     height in field units), or None
+                roi_keep (frozenset): the objects the box keeps whole, or None
         """
         ## Save attributes
         self.series.window = window
@@ -64,6 +66,7 @@ class SectionLayer(ImageLayer, TraceLayer):
         
         ## Kept even when the traces are hidden, so picking never sees a stale box
         self.roi_box = roi_box
+        self.roi_keep = roi_keep
         self.traces_hidden = hide_traces
 
         ## Hide all traces if requested. Nothing is drawn, so nothing is in
@@ -80,7 +83,8 @@ class SectionLayer(ImageLayer, TraceLayer):
                 show_all_traces,
                 window_moved=generate_image,
                 focus_on=focus_on,
-                roi_box=roi_box
+                roi_box=roi_box,
+                roi_keep=roi_keep,
             )
         
         ## Combine pixmaps

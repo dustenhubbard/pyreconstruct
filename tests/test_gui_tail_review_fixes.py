@@ -37,7 +37,7 @@ def test_place_in_scene_closes_a_borrowed_series(main_window, series_jser, tmp_p
     from PyReconstruct.modules.gui.popup.custom_plotter import VPlotter
 
     plt = SimpleNamespace(series=main_window.series, objs=None, render=lambda: None)
-    VPlotter.placeInScene(plt, ([], other))     # no meshes: just ownership
+    VPlotter.placeInScene(plt, ([], other, []))     # no meshes: just ownership
 
     assert not os.path.isdir(hidden), "the borrowed series' hidden dir leaked"
 
@@ -48,7 +48,7 @@ def test_place_in_scene_never_closes_the_plotters_own_series(main_window):
     from PyReconstruct.modules.gui.popup.custom_plotter import VPlotter
 
     plt = SimpleNamespace(series=main_window.series, objs=None, render=lambda: None)
-    VPlotter.placeInScene(plt, ([], main_window.series))
+    VPlotter.placeInScene(plt, ([], main_window.series, []))
 
     assert os.path.isdir(main_window.series.hidden_dir)
 

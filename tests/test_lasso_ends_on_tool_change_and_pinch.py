@@ -600,13 +600,13 @@ def test_the_release_after_the_menu_still_clears_the_pointers_points(
     field.max_click_time = 60
 
     field.mousePressEvent(FakeMouseEvent(40, 40, HELD))
-    field.mouseMoveEvent(FakeMouseEvent(45, 45, HELD))
+    field.mouseMoveEvent(FakeMouseEvent(44, 44, HELD))
     assert field.is_selecting_traces is False
-    assert field.current_trace == [(45, 45)]
+    assert field.current_trace == [(44, 44)]
 
-    field.mousePressEvent(FakeMouseEvent(45, 45, Qt.MouseButton.RightButton))
+    field.mousePressEvent(FakeMouseEvent(44, 44, Qt.MouseButton.RightButton))
     assert len(field_menu) == 1
-    field.mouseReleaseEvent(FakeMouseEvent(45, 45))
+    field.mouseReleaseEvent(FakeMouseEvent(44, 44))
 
     corners = [(140, 140), (180, 140), (180, 180), (140, 180)]
     _drag_lasso(field, corners)
@@ -730,7 +730,7 @@ def test_a_pinch_drops_the_pointers_points_before_they_are_a_lasso(
     finished = Qt.GestureState.GestureFinished
 
     field.mousePressEvent(FakeMouseEvent(40, 40, HELD))
-    for x, y in [(40, 40), (100, 40), (100, 100), (40, 100)]:
+    for x, y in [(40, 40), (44, 40), (44, 44), (40, 44)]:
         field.mouseMoveEvent(FakeMouseEvent(x, y, HELD))
     assert field.is_selecting_traces is False
     assert len(field.current_trace) == 4
@@ -738,7 +738,7 @@ def test_a_pinch_drops_the_pointers_points_before_they_are_a_lasso(
     field.gestureEvent(FakeGestureEvent(FakePinch(started, 200, 150, 1.0)))
     field.gestureEvent(FakeGestureEvent(FakePinch(updated, 210, 150, 1.5)))
     if button != "held through it":
-        field.mouseReleaseEvent(FakeMouseEvent(40, 100))
+        field.mouseReleaseEvent(FakeMouseEvent(40, 44))
     if button == "pressed again during the pinch":
         field.mousePressEvent(FakeMouseEvent(60, 60, HELD))
     field.gestureEvent(FakeGestureEvent(FakePinch(finished, 210, 150, 1.5)))

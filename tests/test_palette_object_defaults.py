@@ -587,7 +587,7 @@ def test_edit_all_palettes_keeps_every_items_defaults(tmp_path, monkeypatch):
         assert "renamed" in dlg.inputs and pal_name not in dlg.inputs
 
         def fake_exec(self):
-            response = {"current_tab_text": "renamed"}
+            response = {}
             for name, palette in s.palette_traces.items():
                 key = "renamed" if name == pal_name else name
                 flat = []
@@ -994,7 +994,7 @@ def test_the_palette_editor_carries_tokens_through_a_rename_and_not_to_a_new_tab
         dlg.editTab(RightClick())
 
         def fake_exec(self):
-            response = {"current_tab_text": "renamed"}
+            response = {}
             for name, palette in s.palette_traces.items():
                 key = "renamed" if name == pal_name else name
                 flat = []

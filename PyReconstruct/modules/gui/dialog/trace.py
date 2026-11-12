@@ -1,3 +1,5 @@
+from math import isfinite
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget,
@@ -523,10 +525,10 @@ class TraceDialog(QDialog):
             except ValueError:
                 notify("Please enter a valid number.")
                 return
-            if r <= 0:
+            if not isfinite(r) or r <= 0:
                 # zero collapses every point onto the centroid; negative
                 # mirrors the shape (found 2026-08-28)
-                notify("Please enter a positive number.")
+                notify("Please enter a finite, positive number.")
                 return
         if self.is_obj_list:
             try:

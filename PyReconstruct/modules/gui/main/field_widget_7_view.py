@@ -1,3 +1,4 @@
+import math
 
 from PySide6.QtWidgets import (
     QInputDialog, 
@@ -62,6 +63,8 @@ class FieldWidgetView(FieldWidgetPaint):
 
         self.roi_box_on = False
         self.roi_box_center = None
+        self.roi_follow_name = None
+        self.roi_follow_from = None
         if self.mouse_mode == ROI_BOX:
             self.mainwindow.mouse_palette.activateModeButton("Pointer")
         self.generateView()
@@ -74,6 +77,11 @@ class FieldWidgetView(FieldWidgetPaint):
 
         A placed box takes a new size at once and keeps the point its anchor
         names: its center, or its upper-left corner.
+
+        An object named to follow (the selected trace's, offered first) turns
+        the box on and centers it on that object on every section; a blank
+        name ends following. With "Show all of any object that touches the
+        box", every trace of such an object is shown on every section.
 
             Returns:
                 (bool): True if the user confirmed the options
@@ -94,6 +102,12 @@ class FieldWidgetView(FieldWidgetPaint):
                 ("Center", center),
                 ("Upper-left corner", not center),
             )],
+            ["Follow this object (blank for none):"],
+            [("combo", self.roiFollowChoices(), self.roiFollowOffer())],
+            [("check", (
+                "Show all of any object that touches the box, on every section",
+                self.roi_keep_whole,
+            ))],
         ]
         response, confirmed = QuickDialog.get(self, structure, "ROI mode")
         if not confirmed:
@@ -101,25 +115,51 @@ class FieldWidgetView(FieldWidgetPaint):
         new_size = (float(response[1]), float(response[2]))
         self.roi_box_drag_draws = response[0][0][1]
         self.roi_box_anchor = "center" if response[3][0][1] else "corner"
+        follow = response[4] or None
+        self.roi_keep_whole = response[5][0][1]
         if self.roi_box_center is not None and self.roi_box_anchor == "corner":
             # the upper-left corner stays where it is
             (cx, cy), (ow, oh) = self.roi_box_center, self.roi_box_size
             nw, nh = new_size
             self.roi_box_center = (cx - ow / 2 + nw / 2, cy + oh / 2 - nh / 2)
         self.roi_box_size = new_size
+        self.roi_follow_from = None
+        self.roi_follow_name = follow
+        if follow is not None:
+            self.roi_box_on = True
+            # placed by placeFollowedRoiBox when the view is drawn
+            self.roi_box_center = self.roi_box_center or (0.0, 0.0)
         if self.roiBox() is not None:
             self.generateView()
         else:
             self.update()
         return True
 
+    def roiFollowChoices(self) -> list:
+        """The object names the ROI mode box can follow, sorted."""
+        return sorted(self.series.data["objects"])
+
+    def roiFollowOffer(self) -> str:
+        """The name the options dialog offers to follow: the followed one,
+        else the selected trace's (the first, if several), else none."""
+        if self.roi_follow_name is not None:
+            return self.roi_follow_name
+        selected = self.section.selected_traces
+        return selected[0].name if selected else ""
+
     def roiBoxStatus(self) -> str:
         """The status-bar text for ROI mode, or None while it is off and its
         tool is not in use."""
         w, h = self.roi_box_size
         size = f"{w:g} x {h:g} μm"
+        whole = ", whole objects" if self.roi_keep_whole else ""
+        if self.roi_box_on and self.roi_follow_name is not None:
+            text = f"ROI mode {size}{whole}, following {self.roi_follow_name}"
+            if self.roi_follow_from not in (None, self.section.n):
+                text += f" (not on this section; placed as on section {self.roi_follow_from})"
+            return text
         if self.roi_box_on:
-            return f"ROI mode {size}"
+            return f"ROI mode {size}{whole}"
         if self.mouse_mode == ROI_BOX:
             point = "upper-left corner" if self.roi_box_anchor == "corner" else "center"
             if not self.roi_box_drag_draws:
@@ -148,7 +188,9 @@ class FieldWidgetView(FieldWidgetPaint):
                 new_mag = float(new_mag)
             except ValueError:
                 return
-            if new_mag <= 0:  # magnification must be positive
+            # magnification must be a positive number; float() also takes
+            # "nan", "inf" and overflow such as "1e309"
+            if not math.isfinite(new_mag) or new_mag <= 0:
                 return
         else:
             new_mag = 1 / new_mag
@@ -505,9 +547,14 @@ class FieldWidgetView(FieldWidgetPaint):
         # calculate the scaling factor for the magnification
         factor = mag * self.series.screen_mag
 
-        # reset the window
+        # reset the window; a scale that rounds to zero, or that would make
+        # the window infinite or empty, leaves it as it is
         w, h = self.series.window[2], self.series.window[3]
+        if not math.isfinite(factor) or factor <= 0:
+            return
         new_w, new_h = w / factor, h / factor
+        if not all(math.isfinite(v) and v > 0 for v in (new_w, new_h)):
+            return
         self.series.window[0] += (w - new_w) / 2
         self.series.window[1] += (h - new_h) / 2
         self.series.window[2] = new_w

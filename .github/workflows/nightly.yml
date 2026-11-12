@@ -69,6 +69,7 @@ jobs:
         shell: bash
         env:
           VERSION_INPUT: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           STABLE_RE='^v[0-9]+\.[0-9]+\.[0-9]+$'
@@ -80,10 +81,14 @@ jobs:
             exit 1
           fi
 
-          # Newest nightly by its date (or date and time) field, compared as
-          # an integer like PEP 440 does, then by version for a tie across
-          # base versions.
-          newest_nightly="$(git tag --list 'v*' | grep -E "$NIGHTLY_RE" \
+          # A tag can remain after a failed dispatch or build. Only published
+          # releases count as shipped nightlies. Keep API errors fatal so an
+          # unavailable release list is never mistaken for an empty one.
+          release_tags="$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq '.[] | select(.draft == false) | .tag_name')"
+          # Compare the date field as an integer like PEP 440 does, then the
+          # version for a tie across base versions.
+          newest_nightly="$(printf '%s\n' "$release_tags" | grep -E "$NIGHTLY_RE" \
             | awk -F'[.]dev' '{ print $2, $0 }' | sort -k1,1n -k2,2V | tail -n 1 | cut -d' ' -f2 || true)"
 
           if [ -n "$VERSION_INPUT" ]; then
@@ -110,8 +115,8 @@ jobs:
           fi
 
           # Nothing new since the last release on either channel. Checking
-          # both tags and skipping if EITHER already contains HEAD is the same
-          # as checking "whichever is newer" without having to decide which
+          # both baselines and skipping if EITHER already contains HEAD is
+          # the same as checking "whichever is newer" without deciding which
           # that is: a stable cut from a hotfix branch is not an ancestor of
           # main, so only the nightly can match; a stable cut from main today
           # matches on its own.

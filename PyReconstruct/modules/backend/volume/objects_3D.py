@@ -253,10 +253,13 @@ class Surface(Object3D):
         vres = vres_min + (1 - vres_percent / 100) * (vres_max - vres_min)
         # calculate the dimensions of bounding box for empty array
         xmin, xmax, ymin, ymax, smin, smax = tuple(self.extremes)
+        section_indices = {s: i for i, s in enumerate(
+            s for s in self.series.getZValues() if smin <= s <= smax
+        )}
         vshape = (
             round((xmax-xmin)/vres)+1,
             round((ymax-ymin)/vres)+1,
-            smax-smin+1
+            len(section_indices)
         )
 
         # create empty numpy volume
@@ -272,7 +275,7 @@ class Surface(Object3D):
         # its edge voxels, so it counts as cutting it.
         reach = math.hypot(vres, vres)
         for snum, trace_lists in self.traces.items():
-            z = snum - smin
+            z = section_indices[snum]
             for fill, key in ((True, "pos"), (False, "neg")):
                 for trace in trace_lists[key]:
                     x_pos, y_pos = voxels(trace)
@@ -301,6 +304,8 @@ class Surface(Object3D):
         """Generate a trimesh object from traces."""
         xmin, xmax, ymin, ymax, smin, smax = tuple(self.extremes)
         volume, vres = self.generateVolume()
+        if not volume.any():
+            raise ValueError("No positive volume remains after applying negative traces.")
 
         # generate trimesh
         tm = trimesh.voxel.ops.matrix_to_marching_cubes(volume)
@@ -331,8 +336,17 @@ class Surface(Object3D):
         tm.vertices[:,:2] *= vres
         tm.vertices[:,0] += xmin
         tm.vertices[:,1] += ymin
-        tm.vertices[:,2] += smin
-        tm.vertices[:,2] *= self.series.avg_thickness
+        # Marching cubes uses local slice indices. Use the full series plane
+        # table so a cap is independent of the object's traced section range.
+        zvals = self.series.getZValues()
+        sections = list(zvals)
+        planes = [zvals[s] for s in sections]
+        first_t = self.series.data["sections"][sections[0]]["thickness"]
+        last_t = self.series.data["sections"][sections[-1]]["thickness"]
+        tm.vertices[:, 2] = np.interp(
+            tm.vertices[:, 2] + sections.index(smin), np.arange(-1, len(sections) + 1),
+            [planes[0] - first_t, *planes, planes[-1] + last_t],
+        )
 
         return tm
 
@@ -394,13 +408,14 @@ class Spheres(Object3D):
         faces = []
 
         all_spheres = []
+        zvals = self.series.getZValues()
         
         for point, radius in zip(
             self.centroids,
             self.radii
         ):
             x, y, s = point
-            z = s * self.series.avg_thickness
+            z = zvals[s]
             sphere = trimesh.primitives.Sphere(radius=radius, center=(x,y,z), subdivisions=1)
             all_spheres.append(sphere)
             
@@ -477,10 +492,11 @@ class Contours(Object3D):
         verts = []
         faces = []
         
+        zvals = self.series.getZValues()
         for snum in self.traces:
             # get the z values
-            t = self.series.avg_thickness
-            z1 = snum * t
+            t = self.series.data["sections"][snum]["thickness"]
+            z1 = zvals[snum]
             z2 = z1 + t/2
             for trace in self.traces[snum]:
                 for i in range(len(trace)-1):
@@ -514,8 +530,7 @@ class Ztrace3D(Object3D):
     
     def generate3D(self):
         """Generate the 3D object for the ztrace."""
-        # ASSUME UNIFORM SECTION THICKNESS
-        thickness = self.series.avg_thickness
+        zvals = self.series.getZValues()
 
         ztrace = self.series.ztraces[self.name]
 
@@ -536,7 +551,7 @@ class Ztrace3D(Object3D):
             # get real field coord point
             tform = alignment_tform(self.series, s, alignment)
             x, y = tform.map(x, y)
-            z = s * thickness
+            z = zvals[s]
             pts.append((x, y, z))
         
         d = ztrace.getDistance(self.series)
@@ -583,19 +598,42 @@ def createTube(path_points, radius=0.1, segments=6):
             radius (float): the radius of the circle for the tube
             segments (int): the number of segments in the circle
     """
-    # Generate the circular profile vertices
+    points = np.asarray(path_points, dtype=float).reshape(-1, 3)
+    if len(points):
+        # Consecutive duplicates have no direction and would make empty quads.
+        points = points[np.r_[True, np.any(np.diff(points, axis=0) != 0, axis=1)]]
+    if len(points) < 2:
+        return np.empty((0, 3)), np.empty((0, 3), dtype=int)
+
+    directions = np.diff(points, axis=0)
+    directions /= np.linalg.norm(directions, axis=1)[:, None]
+    tangents = np.vstack([directions[0], directions[:-1] + directions[1:], directions[-1]])
+    lengths = np.linalg.norm(tangents, axis=1)
+    # At a reversal the bisector vanishes; use the outgoing segment instead.
+    reversing = np.flatnonzero(lengths < 1e-12)
+    tangents[reversing] = directions[reversing]
+    tangents /= np.linalg.norm(tangents, axis=1)[:, None]
+
     circle_vertices = getCircleVertices(radius, segments)
 
     # Initialize lists to store vertices and faces
     vertices = []
     faces = []
 
-    num_points = len(path_points)
     num_circle_vertices = len(circle_vertices)
 
-    for i, point in enumerate(path_points):
-        # Translate the circle profile to the current path point
-        translated_vertices = circle_vertices + point
+    normal = None
+    for i, (point, tangent) in enumerate(zip(points, tangents)):
+        # Carry the previous normal into the next ring's plane to limit twist.
+        if normal is not None:
+            normal = normal - np.dot(normal, tangent) * tangent
+        if normal is None or np.linalg.norm(normal) < 1e-12:
+            axis = np.eye(3)[np.argmin(np.abs(tangent))]
+            normal = np.cross(axis, tangent)
+        normal /= np.linalg.norm(normal)
+        binormal = np.cross(tangent, normal)
+        translated_vertices = (point + circle_vertices[:, :1] * normal
+                               + circle_vertices[:, 1:2] * binormal)
         vertices.extend(translated_vertices)
 
         if i > 0:

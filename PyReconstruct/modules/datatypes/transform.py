@@ -219,6 +219,13 @@ class Transform():
         if not invertible:
             raise Exception("Matrix is not invertible")
         return Transform(t)
+
+    def isInvertible(self):
+        """Whether the transform and its inverse contain only finite numbers."""
+        if not np.isfinite(self.tform).all() or not np.isfinite(self.det):
+            return False
+        inverse, invertible = _invert_list(self.tform)
+        return invertible and bool(np.isfinite(inverse).all())
     
     def copy(self):
         """Returns a copy of the transform."""
@@ -245,13 +252,25 @@ class Transform():
                 pts1 (list): the list of original points
                 pts2 (list): the list of points to transform into
         """
+        pts1, pts2 = np.asarray(pts1, dtype=float), np.asarray(pts2, dtype=float)
+        for points in (pts1, pts2):
+            if (len(points) < 3 or not np.isfinite(points).all() or
+                    np.linalg.matrix_rank(points - points[0]) < 2):
+                raise ValueError("Landmarks must include three non-collinear points.")
+
         from skimage import transform as tf  # deferred: skimage is slow to import
-        m = tf.estimate_transform("affine", np.array(pts1), np.array(pts2)).params
+        try:
+            m = tf.estimate_transform("affine", pts1, pts2).params
+        except np.linalg.LinAlgError as e:
+            raise ValueError("Cannot estimate an affine transform from these landmarks.") from e
 
         tform = Transform([
             m[0,0], m[0,1], m[0,2],
             m[1,0], m[1,1], m[1,2]
         ])
+
+        if not tform.isInvertible():
+            raise ValueError("Landmarks do not produce a finite, invertible transform.")
 
         return tform
 
