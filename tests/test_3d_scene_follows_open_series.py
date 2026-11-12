@@ -209,7 +209,7 @@ def _hover(viewer, msh, z):
 def test_hovering_a_first_series_mesh_reports_its_own_section(
     main_window, series_jser, tmp_path, monkeypatch
 ):
-    """A mesh's z is its section number times its series' thickness, and the
+    """A mesh uses its series' physical section planes, and the
     first series keeps its own section numbers after the switch, even
     though its working folder is closed."""
     window = main_window
@@ -221,7 +221,7 @@ def test_hovering_a_first_series_mesh_reports_its_own_section(
 
     _open_other(window, series_jser, tmp_path)
     window.series.sections.pop(last)  # the open series has no such section
-    text = _hover(viewer, theirs.msh, last * first.avg_thickness)
+    text = _hover(viewer, theirs.msh, first.getZValues()[last])
 
     assert f"section {last}" in text, text
     assert os.path.basename(first.jser_fp)[:-5] in text
@@ -242,7 +242,7 @@ def test_hovering_an_open_series_mesh_reports_its_own_section(
 
     _open_other(window, series_jser, tmp_path)
     mine = viewer.plt.objs.add(_mesh(), window.series, name, "object", (2, 2, 2), 1)
-    text = _hover(viewer, mine.msh, lowest * window.series.avg_thickness)
+    text = _hover(viewer, mine.msh, window.series.getZValues()[lowest])
 
     assert f"section {lowest}" in text, text
     assert "(" not in text

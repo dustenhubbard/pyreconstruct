@@ -21,8 +21,7 @@ def generateVolumes(series_like : Series_like_obj, objs : dict, ztraces : dict, 
                 from these reports (fork #421). The section pass is the first
                 80 percent, the meshing the last 20.
         Returns:
-            (list): the 3D item objects
-            (tuple): xmin, xmax, ymin, ymax, zmin, zmax
+            (tuple): meshes, source series, and failures with name, type, and error
     """
     # option to use fp instead of series
     if isinstance(series_like, str):
@@ -69,18 +68,11 @@ def generateVolumes(series_like : Series_like_obj, objs : dict, ztraces : dict, 
             obj_data[name] = Contours(*args)
 
     # iterate through all sections and gather points (and colors)
-    mags = []
-    thicknesses = []
-
     report = progress if progress is not None else (lambda percent: None)
     report(0)
     section_numbers = sorted(series.sections.keys())
     for i, (snum, section) in enumerate(series.enumerateSections(show_progress=False)):
         report(80 * i / max(len(section_numbers), 1))
-        # ASSUME SOMEWHAT UNIFORM THICKNESS
-        thicknesses.append(section.thickness)
-        mags.append(section.mag)
-
         for obj_name in obj_data.keys():
             if obj_name in section.contours:
                 # get the transform sepcific to the object
@@ -106,62 +98,27 @@ def generateVolumes(series_like : Series_like_obj, objs : dict, ztraces : dict, 
 
     # iterate through all objects and create 3D meshes
     mesh_data_list = []
-    extremes = []
+    failures = []
 
     n_meshes = max(len(obj_data) + len(ztrace_data), 1)
     done = 0
-    for obj_name, obj_3D in obj_data.items():
-        report(80 + 20 * done / n_meshes)
-        done += 1
-        extremes = addToExtremes(extremes, obj_3D.extremes)
-
-        if type(obj_3D) is Surface:
-            mesh_data_list.append(obj_3D.generate3D())
-        elif type(obj_3D) is Spheres:
-            mesh_data_list.append(obj_3D.generate3D())
-        elif type(obj_3D) is Contours:
-            mesh_data_list.append(obj_3D.generate3D())
-    
-    for _, ztrace_3D in ztrace_data.items():
-        report(80 + 20 * done / n_meshes)
-        done += 1
-        mesh_data = ztrace_3D.generate3D()
-        extremes = addToExtremes(extremes, ztrace_3D.extremes)
-        mesh_data_list.append(mesh_data)
-    
-    # convert snum extremes to z extremes
-    ## Guarded: every requested object or z-trace may have been renamed or
-    ## deleted since the request was saved (restoring an old 3D scene is the
-    ## reachable path), and then extremes is [] and indexing raised
-    ## IndexError in the worker, so the scene never loaded at all (found
-    ## 2026-08-28). An empty scene is a valid answer; the return value never
-    ## carried the extremes anyway.
-    if extremes:
-        t = series.avg_thickness
-        extremes[4] *= t
-        extremes[5] *= t
+    for kind, items in (("object", obj_data), ("ztrace", ztrace_data)):
+        for name, item in items.items():
+            report(80 + 20 * done / n_meshes)
+            done += 1
+            try:
+                mesh = item.generate3D()
+                if not len(mesh["vertices"]) or not len(mesh["faces"]):
+                    raise ValueError("No mesh faces were generated.")
+            except Exception as error:
+                failures.append({"name": name, "type": kind, "error": str(error)})
+            else:
+                mesh_data_list.append(mesh)
 
     report(100)
 
-    # return list tuples (volume, opengl objects)
-    # return global bounding box to set view
     return (
         mesh_data_list,
-        series
+        series,
+        failures,
     )
-
-def addToExtremes(extremes, new_extremes):
-    """Keep track of the extreme values."""
-    e = extremes.copy()
-    if not e:
-        e = new_extremes
-    else:
-        ne = new_extremes
-        if ne[0] < e[0]: e[0] = ne[0]
-        if ne[1] > e[1]: e[1] = ne[1]
-        if ne[2] < e[2]: e[2] = ne[2]
-        if ne[3] > e[3]: e[3] = ne[3]
-        if ne[4] < e[4]: e[4] = ne[4]
-        if ne[5] > e[5]: e[5] = ne[5]
-
-    return e

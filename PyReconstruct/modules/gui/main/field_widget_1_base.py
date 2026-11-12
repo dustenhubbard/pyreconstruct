@@ -21,6 +21,7 @@ from PyReconstruct.modules.datatypes import Series, Section, Trace, Transform
 from PyReconstruct.modules.datatypes.transform import alignment_tform
 from PyReconstruct.modules.backend.view import SectionLayer, ZarrLayer
 from PyReconstruct.modules.backend.view.image_layer import dropReadAhead
+from PyReconstruct.modules.datatypes.section_read_ahead import READ_AHEAD
 from PyReconstruct.modules.backend.view.trace_layer import roiBoxBounds, traceInRoiBox
 from PyReconstruct.modules.backend.view.roi_follow import (
     SeriesSquares,
@@ -173,9 +174,9 @@ class FieldWidgetBase:
         self.single_click : bool            = False
         self.click_time : float             = None
         self.max_click_time : float         = 0.15
-        # widget pixels a trace press may drift and still count as a click
+        # widget pixels a press may drift and still count as a click
         self.click_tolerance : int          = 4
-        self.trace_press_travel : int       = 0
+        self.click_travel : int             = 0
         # a trace tool started a new trace with the press under way, and
         # nothing has ended it since (see traceRelease)
         self.trace_click_pending : bool     = False
@@ -204,6 +205,14 @@ class FieldWidgetBase:
         ## An image read ahead for the series before this one is of no use
         ## to it, and must not outlive it
         dropReadAhead()
+        READ_AHEAD.stop()
+        if hasattr(self, "section_read_timer"):
+            self.section_read_timer.stop()
+        else:
+            self.section_read_timer = QTimer(self)
+            self.section_read_timer.setSingleShot(True)
+            self.section_read_timer.timeout.connect(self._readAheadSection)
+        self.section_read_target = None
 
         ## Initialize hover columns from series option
         from PyReconstruct.modules.gui.dialog.hover_columns import HoverColumnsDialog
@@ -865,6 +874,16 @@ class FieldWidgetBase:
         if new_section_num == self.series.current_section:
             return
         
+        snums = sorted(self.series.sections)
+        # Deleting the displayed section leaves no previous position in the
+        # new ordering. Treat the replacement section as a jump.
+        step = (snums.index(new_section_num) - snums.index(self.section.n)
+                if self.section.n in self.series.sections else 0)
+        self.section_read_timer.stop()
+        self.section_read_target = None
+        if abs(step) != 1:
+            READ_AHEAD.drop()
+
         ## The requested section may already be loaded as the B section -- the
         ## A/B flicker asks for exactly that. Swapping is then the whole change
         ## and nothing is read from disk.
@@ -941,7 +960,28 @@ class FieldWidgetBase:
 
         # generate view and update status bar
         self.generateView()
-    
+
+        # A jump gives no paging direction. Wait briefly after an adjacent
+        # step so held-down keys do not compete with speculative Python work.
+        READ_AHEAD.drop()
+        if abs(step) == 1:
+            index = snums.index(new_section_num) + step
+            if 0 <= index < len(snums):
+                target = snums[index]
+                if self.b_section is None or target != self.b_section.n:
+                    self.section_read_target = target
+                    self.section_read_timer.start(75)
+
+    def _readAheadSection(self):
+        number = self.section_read_target
+        if (self.series.closed or self.mainwindow.seriesTransitionRunning()
+                or number not in self.series.sections
+                or number in self.series._lazy):
+            return
+        # Lazy stubs require series-owned hydration. Leave those synchronous.
+        path = os.path.join(self.series.hidden_dir, self.series.sections[number])
+        READ_AHEAD.start(self.series, number, path)
+
     def readAheadImage(self, direction : int) -> None:
         """Start reading the image of the section one step from this one.
 
@@ -965,6 +1005,10 @@ class FieldWidgetBase:
             Params:
                 clear_states (bool): True if ALL undo states should be cleared (rare)
         """
+        self.section_read_timer.stop()
+        self.section_read_target = None
+        READ_AHEAD.drop()
+
         # the transforms may have been replaced on disk (an import, an undo
         # across the series, sections inserted or reordered), so a change
         # remembered for propagation recording no longer applies
