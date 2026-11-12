@@ -901,6 +901,9 @@ def _moveWorkingFolder(old_dir : str, new_dir : str, old_name : str, new_name : 
             _FolderNotRestored: a step failed, and so did undoing it
     """
     from PyReconstruct.modules.backend.func.atomic_io import replace_with_retry
+    from .section_read_ahead import READ_AHEAD
+
+    READ_AHEAD.stop()
 
     # Save-As onto the current path: the hidden dir is already in place --
     # moving it onto itself would fail (or nest it), so just rename files
@@ -2430,6 +2433,8 @@ class Series():
         """
         store_save.closing(self)
         collector.restore(self)
+        from .section_read_ahead import READ_AHEAD
+        READ_AHEAD.stop()
 
         if self.isWelcomeSeries() or self.leave_open:
             # closed even so: a series left open for the one replacing it in
@@ -5653,23 +5658,23 @@ class Series():
                 # skip user column data
                 if attr_name == "user_columns":
                     continue
+                if attr_name == "curation_by" and "curation" in obj_data:
+                    continue  # imported with the status it belongs to
 
                 if obj_name not in self.obj_attrs:
                     self.obj_attrs[obj_name] = {}
                 
-                if attr_name not in self.obj_attrs[obj_name]:
+                if attr_name == "curation":
+                    if "curation" in self.obj_attrs[obj_name]:
+                        self_date = self.obj_attrs[obj_name]["curation"][-1]
+                        if attr_value[-1] < self_date:
+                            continue
+                    self.obj_attrs[obj_name]["curation"] = attr_value
+                    # The assigner follows the winning status, including a
+                    # first import or a legacy status with no assigner.
+                    self.obj_attrs[obj_name]["curation_by"] = obj_data.get("curation_by")
+                elif attr_name not in self.obj_attrs[obj_name]:
                     self.obj_attrs[obj_name][attr_name] = attr_value
-                # special case: overwrite self curation if other is more recent
-                elif attr_name == "curation":
-                    self_date = self.obj_attrs[obj_name]["curation"][-1]
-                    other_date = attr_value[-1]
-                    if other_date >= self_date:
-                        self.obj_attrs[obj_name]["curation"] = attr_value
-                        # the assigner belongs to the curation that won; a
-                        # missing value on the other side clears rather than
-                        # keeping an assigner for a status it did not set
-                        other_by = other.obj_attrs.get(obj_name, {}).get("curation_by")
-                        self.obj_attrs[obj_name]["curation_by"] = other_by
     
     def importTraces(
             self,
@@ -6156,6 +6161,9 @@ class Series():
         for old_snum, new_snum in d.items():
             if old_snum != new_snum:
                 self.presentSection(old_snum)
+
+        from .section_read_ahead import READ_AHEAD
+        READ_AHEAD.stop()
 
         # rename the section files, each from the name the series has for it
         # (after a Save As that could not move its folder all the way back,
@@ -7360,6 +7368,9 @@ class Series():
         # are gone once the loop below runs, so refuse before touching any.
         if snums and len(snums) == len(self.sections):
             raise ValueError("cannot delete every section in the series")
+
+        from .section_read_ahead import READ_AHEAD
+        READ_AHEAD.stop()
 
         for snum in snums:
             # delete the file

@@ -641,6 +641,10 @@ class ObjectTableWidget(DataTable):
         )
         return sortList(filtered_list)
 
+    def refresh(self):
+        """Reload the objects matching this list's filters."""
+        self.manager.refreshObjects(self)
+
     def createTable(self):
         """Create the virtualized object list (model + view).
 
@@ -1246,6 +1250,7 @@ class ObjectTableWidget(DataTable):
         
         self.series.importUserColsText(fp)
         self.updateObjCols()
+        self.mainwindow.seriesModified(True)
     
     def setHostFilter(self):
         """Set the host filter."""

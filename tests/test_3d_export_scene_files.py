@@ -11,7 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 FIXTURE = os.path.join(
     os.path.dirname(__file__), "..", "dev", "assets", "checker", "files",
@@ -47,8 +48,17 @@ def open_series(tmp_path):
 
 def run_export(cp, objs, combo_fp, monkeypatch, confirm=True):
     notes, asked = [], []
+
+    def choose_file(*args, **kwargs):
+        options = kwargs.get("options", QFileDialog.Option(0))
+        if combo_fp.exists() and not options & QFileDialog.DontConfirmOverwrite:
+            asked.append(f"Replace {combo_fp.name}?")
+            if not confirm:
+                return "", ""
+        return str(combo_fp), "*.obj"
+
     monkeypatch.setattr(
-        cp.FileDialog, "get", staticmethod(lambda *a, **k: str(combo_fp))
+        QFileDialog, "getSaveFileName", staticmethod(choose_file)
     )
     monkeypatch.setattr(cp, "notify", lambda msg, *a, **k: notes.append(msg))
 
@@ -140,6 +150,131 @@ def test_existing_scene_mtl_is_replaced_only_after_asking(cp, open_series, tmp_p
     assert listing(out) == ["scene.mtl", "scene.obj"]
     assert "newmtl d01\n" in (out / "scene.mtl").read_text()
     assert notes
+
+
+@pytest.mark.parametrize("existing", [("obj",), ("mtl",), ("obj", "mtl")])
+@pytest.mark.parametrize("confirm", [False, True])
+def test_scene_overwrite_asks_once_for_all_existing_files(
+    cp, open_series, tmp_path, monkeypatch, existing, confirm
+):
+    import vedo
+    s = open_series("a")
+    out = tmp_path / "out"
+    out.mkdir()
+    originals = {f"scene.{suffix}": b"original\x00\xff" for suffix in existing}
+    originals.update({"d01.obj": b"my object", "d01.mtl": b"my material"})
+    for name, content in originals.items():
+        (out / name).write_bytes(content)
+    objs = cp.SceneObjectList()
+    objs.add(vedo.Sphere(), s, "d01", "object", (255, 0, 0), 1)
+    if not confirm:
+        def unexpected_export(*args):
+            pytest.fail("Cancel must return before exporting any object files")
+        monkeypatch.setattr(objs, "exportAsObjs", unexpected_export)
+
+    notes, asked = run_export(cp, objs, out / "scene.obj", monkeypatch, confirm)
+
+    assert len(asked) == 1
+    for suffix in existing:
+        assert f"scene.{suffix}" in asked[0]
+    assert (out / "d01.obj").read_bytes() == b"my object"
+    assert (out / "d01.mtl").read_bytes() == b"my material"
+    if confirm:
+        assert listing(out) == ["d01.mtl", "d01.obj", "scene.mtl", "scene.obj"]
+        assert "o d01\n" in (out / "scene.obj").read_text()
+        assert "mtllib scene.mtl\n" in (out / "scene.obj").read_text()
+        assert "newmtl d01\n" in (out / "scene.mtl").read_text()
+        assert notes
+    else:
+        assert {p.name: p.read_bytes() for p in out.iterdir()} == originals
+        assert notes == []
+
+
+@pytest.mark.gui
+def test_cancel_button_preserves_the_scene_pair(cp, tmp_path, monkeypatch, qtbot):
+    import PyReconstruct.modules.gui.utils.utils as utils
+
+    originals = {"scene.obj": b"my scene", "scene.mtl": b"my material"}
+    for name, content in originals.items():
+        (tmp_path / name).write_bytes(content)
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName",
+        staticmethod(lambda *a, **k: (str(tmp_path / "scene.obj"), "*.obj"))
+    )
+    monkeypatch.setattr(utils, "user_is_present", lambda: True)
+    monkeypatch.setattr(utils, "mainwindow", None)
+    observed = []
+
+    def cancel():
+        dialog = QApplication.activeModalWidget()
+        if isinstance(dialog, QMessageBox):
+            observed.append(dialog.text())
+            button = dialog.button(QMessageBox.Cancel)
+            if button is not None:
+                button.click()
+                return
+        if dialog is not None:
+            dialog.reject()
+
+    def unexpected_export(*args):
+        pytest.fail("Cancel must return before exporting any object files")
+
+    QTimer.singleShot(0, cancel)
+    cp.CustomPlotter.exportScene(SimpleNamespace(
+        plt=SimpleNamespace(objs=SimpleNamespace(exportAsObjs=unexpected_export))
+    ))
+
+    assert len(observed) == 1
+    assert "scene.obj" in observed[0] and "scene.mtl" in observed[0]
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == originals
+
+
+def test_other_saves_keep_the_native_overwrite_prompt(cp, tmp_path, monkeypatch):
+    fp = tmp_path / "other.obj"
+    fp.write_bytes(b"my object")
+    asked = []
+
+    def cancel(*args, **kwargs):
+        if not kwargs.get("options", QFileDialog.Option(0)) & QFileDialog.DontConfirmOverwrite:
+            asked.append(f"Replace {fp.name}?")
+        return "", ""
+
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", staticmethod(cancel))
+    assert cp.FileDialog.get("save", file_name="other.obj", filter="*.obj") == ""
+    assert asked == ["Replace other.obj?"]
+    assert fp.read_bytes() == b"my object"
+
+
+@pytest.mark.parametrize("platform", ["darwin", "win32", "linux"])
+@pytest.mark.parametrize("confirm", [False, True])
+def test_save_dialog_options_support_one_confirmation_on_each_platform(
+    cp, monkeypatch, platform, confirm
+):
+    import PyReconstruct.modules.gui.dialog.file_dialog as fd
+
+    monkeypatch.setattr(fd, "sys", SimpleNamespace(platform=platform), raising=False)
+    options = []
+
+    def choose_file(*args, **kwargs):
+        options.append(kwargs.get("options", QFileDialog.Option(0)))
+        return "", ""
+
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", staticmethod(choose_file))
+    kwargs = {} if confirm else {"confirm_overwrite": False}
+    assert cp.FileDialog.get("save", filter="*.obj", **kwargs) == ""
+    assert len(options) == 1
+    assert bool(options[0] & QFileDialog.DontConfirmOverwrite) == (not confirm)
+    assert bool(options[0] & QFileDialog.DontUseNativeDialog) == (
+        platform == "darwin" and not confirm
+    )
+
+
+def test_cancel_file_picker_writes_nothing(cp, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: ("", ""))
+    )
+    cp.CustomPlotter.exportScene(SimpleNamespace())
+    assert listing(tmp_path) == []
 
 
 def fail_for(cp, monkeypatch, attr, bad_names):

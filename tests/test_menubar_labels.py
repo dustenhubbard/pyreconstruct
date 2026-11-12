@@ -521,6 +521,26 @@ _CLASS_DOCS_ROW = (2, "act", "openclass_act")
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((2, "act", "openwiki_act")) + 1, _CLASS_DOCS_ROW
 )
+# Help > Diagnostics groups the seven reporting and log commands. Preserve
+# their order and action names while moving each one down a level.
+_DIAGNOSTICS_ACTIONS = [
+    "copydiag_act", "emailteam_act", "submitissue_act", "requestfeature_act",
+    "seeissues_act", "viewlog_act", "openlogdir_act",
+]
+_diag_at = MENUBAR_EXPECTED.index((1, "act", "copydiag_act"))
+assert MENUBAR_EXPECTED[_diag_at:_diag_at + 7] == [
+    (1, "act", attr) for attr in _DIAGNOSTICS_ACTIONS
+]
+MENUBAR_EXPECTED[_diag_at:_diag_at + 7] = [
+    (1, "menu", "diagnosticsmenu"),
+    *((2, "act", attr) for attr in _DIAGNOSTICS_ACTIONS),
+]
+# Public lab reference links follow the website guide and class documents.
+_lab_links_at = MENUBAR_EXPECTED.index(_CLASS_DOCS_ROW) + 1
+MENUBAR_EXPECTED[_lab_links_at:_lab_links_at] = [
+    (2, "act", "openlabwiki_act"),
+    (2, "act", "openlabguide_act"),
+]
 # The Dev-build row (fork, 2026-10-16): Series > Images > Crop scaled images
 # around an object... is built only when constants.build_flavor.is_dev_build()
 # says so, which the autouse fixture below forces on for these rows. The stable
@@ -581,11 +601,12 @@ def test_menubar_action_and_submenu_counts():
     Duplicates... replaced its two duplicate finders, 126 to 125. The Dev
     build's Series > Images > Crop scaled images around an object... took it
     to 126 (counted with the gate on, see dev_build). Help > Online
-    resources > Class documents took it to 127.
+    resources > Class documents took it to 127. The two lab wiki links take
+    it to 129, and Diagnostics adds one submenu, taking that count to 31.
     """
     rows = _rows()
-    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 127
-    assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 30
+    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 129
+    assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 31
 
 
 def test_recolor_all_objects_sits_in_view_beside_fill_opacity():
