@@ -44,12 +44,18 @@ class _StubSeries:
     avg_mag = 0.002
     avg_thickness = VRES
 
-    def __init__(self, smoothing="none", res=0):
+    def __init__(self, smoothing="none", res=0, sections=range(1)):
         self.options = {
             "3D_xy_res": res,
             "3D_smoothing": smoothing,
             "smoothing_iterations": 10,
         }
+        self.data = {"sections": {s: {"thickness": VRES} for s in sections}}
+
+    def getZValues(self):
+        """Each section's plane, as ``Series.getZValues`` stacks them."""
+        snums = sorted(self.data["sections"])
+        return {s: (i + 1) * VRES for i, s in enumerate(snums)}
 
     def getOption(self, name):
         return self.options[name]
@@ -67,7 +73,8 @@ class _StubTrace:
 
 def _surface(sections, smoothing="none", tforms=None):
     """A Surface from ``{section: [(points, negative), ...]}``."""
-    surf = Surface("obj", _StubSeries(smoothing), None, None, None)
+    span = range(min(sections), max(sections) + 1)
+    surf = Surface("obj", _StubSeries(smoothing, sections=span), None, None, None)
     for snum, traces in sections.items():
         tform = tforms[snum] if tforms else None
         for points, negative in traces:

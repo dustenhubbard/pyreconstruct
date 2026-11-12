@@ -327,6 +327,7 @@ def _table_stub(monkeypatch, locked_sections=(), selected=(1, 2)):
             saveAllData=lambda: None,
             seriesModified=lambda *a: None,
             field=types.SimpleNamespace(
+                prepareProfileAdjustment=lambda kind: True,
                 reload=lambda: None,
                 section=types.SimpleNamespace(brightness=41, contrast=42),
             ),

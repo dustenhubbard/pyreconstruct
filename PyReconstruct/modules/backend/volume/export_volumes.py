@@ -1,6 +1,7 @@
 """Export 3D objects."""
 
 import importlib.util
+import re
 from pathlib import Path
 from typing import List, Union
 
@@ -39,6 +40,17 @@ def _objectProgress(series: Series, text: str):
         return factory(text=text, cancel=False, eta=True)
     except TypeError:
         return factory(text=text, cancel=False)
+
+
+def mesh_export_name(name: str, used: set) -> str:
+    """Make a unique filename component and OBJ material name for this export."""
+    base = re.sub(r'[<>:"/\\|?*\x00-\x1f\s]', "_", name) or "object"
+    export_name, n = base, 1
+    while export_name.casefold() in used:
+        n += 1
+        export_name = f"{base}_{n}"
+    used.add(export_name.casefold())
+    return export_name
 
 
 def export3DObjects(series: Series, obj_names : list, output_dir : str, export_type: str, notify_user: bool = True) -> None:
@@ -81,6 +93,7 @@ def export3DObjects(series: Series, obj_names : list, output_dir : str, export_t
     ## Iterate through objects and export 3D meshes
 
     output_directory = Path(output_dir)
+    used = set()
 
     skipped = []
     # finish() in a finally, not through the reporter's context manager: the
@@ -93,10 +106,13 @@ def export3DObjects(series: Series, obj_names : list, output_dir : str, export_t
         for i, (obj_name, obj_3D) in enumerate(obj_data.items()):
             progress.set_progress(100 * i / max(len(obj_data), 1))
 
-            output_file = output_directory / f"{obj_name}.{export_type}"
+            export_name = mesh_export_name(obj_name, used)
+            output_file = output_directory / f"{export_name}.{export_type}"
 
             if type(obj_3D) is Surface or type(obj_3D) is Spheres:
 
+                if output_file.is_symlink():
+                    raise ValueError(f"Cannot export over a symbolic link: {output_file}")
                 obj_3D.exportTrimesh(
                     output_file,
                     export_type,
@@ -305,7 +321,7 @@ def return_mesh_mtl(obj, name: str = None) -> str:
     """Make mtl file string for an exported obj.
 
         Params:
-            obj: the scene object (supplies the color)
+            obj: the scene object (supplies color and opacity)
             name (str): the material name (default: the object's name)
     """
 
@@ -319,6 +335,7 @@ def return_mesh_mtl(obj, name: str = None) -> str:
         f"Kd {col_norm[0]} {col_norm[1]} {col_norm[2]}\n"
         f"Ks 0.5 0.5 0.5\n"
         f"Ns 10.0\n"
+        f"d {obj.alpha}\n"
     )
 
     return mtl_str

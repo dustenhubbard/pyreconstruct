@@ -140,6 +140,7 @@ class FieldState():
                         self.contours[contour_name] = Contour(contour_name)
         
         self.ztraces = {}
+        self.ztraces_before = {}
         # first state made for a section (or copy)
         if updated_ztraces is None:
             for ztrace_name in ztraces:
@@ -181,6 +182,7 @@ class FieldState():
 
     def copy(self):
         c = FieldState(self.contours, self.ztraces, self.tforms, self.flags, self.contours_fp)
+        c.ztraces_before = {n: z.copy() for n, z in self.ztraces_before.items()}
         c.obj_snapshot = deepcopy(self.obj_snapshot)
         c.oids = dict(self.oids)
         c.kept_before = {n: list(v) for n, v in self.kept_before.items()}
@@ -267,7 +269,7 @@ class FieldState():
         return self.tforms.copy()
 
     def getFlags(self):
-        return self.flags.copy()
+        return deepcopy(self.flags)
     
     def updateTime(self):
         self.time = nextStamp()  # keep track of when it was added to a state list
@@ -754,6 +756,9 @@ class SectionStates():
             updated_contours,
             updated_ztraces
         )
+        self.current_state.ztraces_before = {
+            n: z.copy() for n, z in section.ztraces_before.items()
+        }
         self.current_state.obj_snapshot = objectSnapshot(series, updated_contours)
         # the ids the tree keeps for these names, before the action: the
         # capture below gives a drawn name its id, and may take a kept one
@@ -882,6 +887,12 @@ class SectionStates():
             if n in series.data["objects"] or len(section.contours.get(n, []))
         }
 
+        ztraces_before = self.current_state.ztraces_before
+        for zname, before in ztraces_before.items():
+            series.ztraces[zname] = restoreZtraceOnSection(
+                series.ztraces[zname], before, section.n
+            )
+
         # if only one undo state exists
         if len(self.undo_states) == 1:
             state = self.undo_states[0]
@@ -891,7 +902,7 @@ class SectionStates():
             restored_oids = getattr(state, "oids", {})
             # restore ztraces
             modified_ztraces = self.current_state.getModifiedZtraces()
-            for zname in modified_ztraces:
+            for zname in modified_ztraces - ztraces_before.keys():
                 # A z-trace created AFTER this section's states were
                 # initialized is absent from the initial snapshot (series-
                 # level creation never calls addState), and indexing it here
@@ -910,9 +921,9 @@ class SectionStates():
         else:
             # iterate backwards and find the last ieration of the recently changed contours
             last_changed_contours = self.current_state.getModifiedContours().copy()
-            last_changed_ztraces = self.current_state.getModifiedZtraces().copy()
+            last_changed_ztraces = self.current_state.getModifiedZtraces() - ztraces_before.keys()
             modified_contours = last_changed_contours.copy()
-            modified_ztraces = last_changed_ztraces.copy()
+            modified_ztraces = self.current_state.getModifiedZtraces()
             # each contour's id comes from the state its traces come from
             restored_oids = {}
             for state in reversed(self.undo_states):
@@ -1029,14 +1040,14 @@ def restoreZtraceOnSection(orig_ztrace : Ztrace, new_ztrace : Ztrace, snum : int
         Returns:
             (Ztrace): the newly formed ztrace
     """
-    orig_points = orig_ztrace.points.copy()
-    new_points = new_ztrace.points.copy()
-    restored_points = []
-    for p0, p1 in zip(orig_points, new_points):
-        if p1[2] == snum:
-            restored_points.append(p1)
-        else:
-            restored_points.append(p0)
+    restored_points = orig_ztrace.points.copy()
+    for i, point in enumerate(new_ztrace.points):
+        if (
+            i < len(restored_points)
+            and point[2] == snum
+            and restored_points[i][2] == snum
+        ):
+            restored_points[i] = point
     return Ztrace(
         orig_ztrace.name,
         orig_ztrace.color,
@@ -1695,10 +1706,9 @@ class SeriesStates():
             # The series refuses such a save while the loop runs
             with self.series.seriesStep():
                 for snum, section in self.series.enumerateSections(
-                    message=("Re" if redo else "Un") + "doing action..."
+                    message=("Re" if redo else "Un") + "doing action...",
+                    section_numbers=sections,
                 ):
-                    if snum not in sections:
-                        continue
                     # the mag only; the section's own step puts back its traces
                     state.swapMag(section)
                     if snum in state.undo_lens:

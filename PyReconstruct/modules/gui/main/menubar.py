@@ -3,6 +3,8 @@ from PyReconstruct.modules.gui.utils import getOpenRecentMenu, getGroupsMenu
 from PyReconstruct.modules.constants.build_flavor import is_dev_build
 from PyReconstruct.modules.constants import (
     kh_web,
+    kh_wiki,
+    kh_user_guide,
     kh_atlas,
     gh_repo,
     user_guide,
@@ -478,15 +480,10 @@ def _other_flavor_label(self=None):
 
 
 def return_help_menu(self):
-    """Return help menu.
+    """Return Help with Diagnostics and Online resources submenus.
 
-    Ordered in seven groups, separator between each: the search field, then
-    what this build IS, then updates, then the other build's download, then
-    the What's-new pop-up, then the shortcuts list, then one flat group for
-    reporting a problem in the order the steps happen: copy the report, send
-    it to us or file it, the log tools, and the links last.
-    The search field itself is inserted at the very top by
-    MainWindow.createMenuBar, which also focuses it when Help opens.
+    MainWindow.createMenuBar inserts the search field at the top and focuses
+    it when Help opens.
     """
 
     return {
@@ -538,31 +535,27 @@ def return_help_menu(self):
             # 5. the shortcuts list
             ("shortcutshelp_act", "Shortcuts list", "?", self.displayShortcuts),
             None,
-            # 6. reporting a problem, one flat list in the order the steps
-            # happen. The old "Report issues
-            # (GitHub)" submenu is gone; its rows sit here directly.
-            # Copy the report first, then send it to us or file it...
-            ("copydiag_act", "Copy diagnostic report...", "", self.copyDiagnosticReport),
-            ("emailteam_act", "Email developers", "", lambda : self.openWebsite(developers_mailto_str)),
-            # One row per issue form (2026-09-28). The old single row opened
-            # GitHub's chooser page, which cannot take prefilled fields; a
-            # direct form link can, so each row opens its own form with the
-            # version/OS/Python lines already filled in (MainWindow.openIssueForm).
-            # The bug row keeps the old act_name so the menubar baseline sees
-            # no loss.
-            ("submitissue_act", "Report a bug...", "", lambda : self.openIssueForm(gh_bug_form)),
-            ("requestfeature_act", "Request a feature...", "", lambda : self.openIssueForm(gh_feature_form)),
-            ("seeissues_act", "See unresolved issues", "", lambda : self.openWebsite(gh_issues)),
-            # ...then the log tools for anyone who needs them...
-            ("viewlog_act", "View log file...", "", self.viewLogFile),
-            ("openlogdir_act", "Open log folder", "", self.openLogFolder),
-            # ...and the links last.
+            {
+                "attr_name": "diagnosticsmenu",
+                "text": "Diagnostics",
+                "opts": [
+                    ("copydiag_act", "Copy diagnostic report...", "", self.copyDiagnosticReport),
+                    ("emailteam_act", "Email developers", "", lambda : self.openWebsite(developers_mailto_str)),
+                    ("submitissue_act", "Report a bug...", "", lambda : self.openIssueForm(gh_bug_form)),
+                    ("requestfeature_act", "Request a feature...", "", lambda : self.openIssueForm(gh_feature_form)),
+                    ("seeissues_act", "See unresolved issues", "", lambda : self.openWebsite(gh_issues)),
+                    ("viewlog_act", "View log file...", "", self.viewLogFile),
+                    ("openlogdir_act", "Open log folder", "", self.openLogFolder),
+                ],
+            },
             {
                 "attr_name": "onlinemenu",
                 "text": "Online resources",
                 "opts": [
                     ("openwiki_act", "PyReconstruct user guide", "", lambda : self.openWebsite(user_guide)),
                     ("openclass_act", "Class documents", "", lambda : self.openWebsite(class_docs)),
+                    ("openlabwiki_act", "Harris lab wiki", "", lambda : self.openWebsite(kh_wiki)),
+                    ("openlabguide_act", "PyReconstruct lab wiki guide", "", lambda : self.openWebsite(kh_user_guide)),
                     ("openrepo_act", "PyReconstruct source code", "", lambda : self.openWebsite(gh_repo)),
                     ("openkhlab_act", "KH lab website", "", lambda : self.openWebsite(kh_web)),
                     ("openkhatlast_act", "Atlas of Ultrastructural Neurocytology", "", lambda : self.openWebsite(kh_atlas)),

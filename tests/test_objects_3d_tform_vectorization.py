@@ -111,7 +111,7 @@ def _scalar_map_points(points, snum, tform, extremes):
 
 def _scalar_ztrace_pts(series, name, extremes):
     """The original per-point loop from ``Ztrace3D.generate3D``."""
-    thickness = series.avg_thickness
+    zvals = series.getZValues()
     ztrace = series.ztraces[name]
     pts = []
     for pt in ztrace.points:
@@ -122,7 +122,7 @@ def _scalar_ztrace_pts(series, name, extremes):
             alignment = series.alignment
         tform = series.data["sections"][s]["tforms"][alignment]
         x, y = tform.map(x, y)
-        z = s * thickness
+        z = zvals[s]
         pts.append((x, y, z))
     return pts
 
@@ -333,6 +333,9 @@ class _StubZSeries:
             }} for s in (0, 1, 2)
         }}
 
+    def getZValues(self):
+        return {s: (s + 1) * self.avg_thickness for s in (0, 1, 2)}
+
     def getAttr(self, name, attr, ztrace=False):
         assert (name, attr, ztrace) == ("zt", "alignment", True)
         return self._ztrace_alignment
@@ -357,7 +360,7 @@ def test_ztrace3d_uses_per_ztrace_alignment(ztrace_alignment, expect_alignment):
     for x, y, s in series.ztraces["zt"].points:
         tform = series.data["sections"][s]["tforms"][expect_alignment]
         mx, my = tform.map(x, y)
-        ref_pts.append((mx, my, s * series.avg_thickness))
+        ref_pts.append((mx, my, series.getZValues()[s]))
     ref_verts, _ = createTube(ref_pts, 250.0 / 1000)
 
     assert (mesh["vertices"] == ref_verts).all()
@@ -366,6 +369,6 @@ def test_ztrace3d_uses_per_ztrace_alignment(ztrace_alignment, expect_alignment):
     wrong_pts = []
     for x, y, s in series.ztraces["zt"].points:
         mx, my = series.data["sections"][s]["tforms"][other].map(x, y)
-        wrong_pts.append((mx, my, s * series.avg_thickness))
+        wrong_pts.append((mx, my, series.getZValues()[s]))
     wrong_verts, _ = createTube(wrong_pts, 250.0 / 1000)
     assert not (mesh["vertices"] == wrong_verts).all()

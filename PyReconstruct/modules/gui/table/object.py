@@ -1,3 +1,6 @@
+import csv
+import re
+
 from PySide6.QtWidgets import (
     QTableWidgetItem,
     QWidget,
@@ -638,6 +641,10 @@ class ObjectTableWidget(DataTable):
         )
         return sortList(filtered_list)
 
+    def refresh(self):
+        """Reload the objects matching this list's filters."""
+        self.manager.refreshObjects(self)
+
     def createTable(self):
         """Create the virtualized object list (model + view).
 
@@ -950,7 +957,8 @@ class ObjectTableWidget(DataTable):
         model = self.model
         n_cols = model.columnCount()
 
-        with open(file_path, "w") as csv_file:
+        with open(file_path, "w", encoding="utf-8", newline="") as csv_file:
+            writer = csv.writer(csv_file)
 
             ## Headers first
             items = []
@@ -960,7 +968,7 @@ class ObjectTableWidget(DataTable):
                 if header_title in CHECKBOX_EXPORT_COLUMNS:
                     checkable.append(c)
                 items.append(header_title)
-            csv_file.write(",".join(items) + "\n")
+            writer.writerow(items)
 
             ## Then data
             for r in range(model.rowCount()):
@@ -974,10 +982,8 @@ class ObjectTableWidget(DataTable):
                         cell_text = checkboxExportText(check_state)
                     else:
                         cell_text = model.data(index, Qt.DisplayRole) or ""
-                        if "," in cell_text:  # e.g., multiple tags
-                            cell_text = cell_text.replace(",", "")
                     items.append(cell_text)
-                csv_file.write(",".join(items) + "\n")
+                writer.writerow(items)
 
     ############################################################################
     ## Menu-related functions ##################################################
@@ -1015,8 +1021,14 @@ class ObjectTableWidget(DataTable):
         if not confirmed:
             return
         
-        self.re_filters = set(response[0] if response[0] else [".*"])
-        self.re_filters = set([s.replace("#", "[0-9]") for s in self.re_filters])
+        re_filters = {s.replace("#", "[0-9]") for s in (response[0] or [".*"])}
+        try:
+            for pattern in re_filters:
+                re.compile(pattern)
+        except (re.error, OverflowError, RecursionError) as error:
+            notify(f"Invalid regex filter {pattern!r}: {error}")
+            return
+        self.re_filters = re_filters
 
         # call through manager to update self
         self.manager.recreateTable(self)
@@ -1238,6 +1250,7 @@ class ObjectTableWidget(DataTable):
         
         self.series.importUserColsText(fp)
         self.updateObjCols()
+        self.mainwindow.seriesModified(True)
     
     def setHostFilter(self):
         """Set the host filter."""
