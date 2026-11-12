@@ -1030,7 +1030,8 @@ def _install_option_write_guard():
         if (
             caller is not None
             and not (item is not None and item.get_closest_marker("shared_settings_store"))
-            and _in_shared_store(self._settings(code).fileName(), code)
+            # no migration: the check must not copy a store the write would not
+            and _in_shared_store(self._settings(code, migrate=False).fileName(), code)
         ):
             pytest.fail(
                 f"{os.path.basename(caller)} writes the series option {key!r} "

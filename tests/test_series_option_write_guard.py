@@ -66,7 +66,7 @@ def test_a_qsettings_store_on_a_private_file_passes(tmp_path):
 
     settings = QSettings(str(tmp_path / "private.ini"), QSettings.IniFormat)
     store = QSettingsStore()
-    store._settings = lambda code: settings
+    store._settings = lambda code, migrate=True: settings
     series = bare(store)
     series.setOption("trace_mode", "poly")
     assert series.getOption("trace_mode") == "poly"
@@ -79,7 +79,7 @@ def test_a_qsettings_store_on_a_private_named_domain_passes():
 
     settings = QSettings("option-guard-" + uuid.uuid4().hex, "PyReconstruct")
     store = QSettingsStore()
-    store._settings = lambda code: settings
+    store._settings = lambda code, migrate=True: settings
     assert not settings.contains("trace_mode")
     series = bare(store)
     series.setOption("trace_mode", "poly")

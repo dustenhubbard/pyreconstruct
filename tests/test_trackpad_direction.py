@@ -58,7 +58,7 @@ def private_qsettings_store(folder):
     from PyReconstruct.modules.backend.settings_store import QSettingsStore
 
     store = QSettingsStore()
-    store._settings = lambda code: QSettings(
+    store._settings = lambda code, migrate=True: QSettings(
         str(folder / f"{code or 'global'}.ini"), QSettings.IniFormat
     )
     return store
