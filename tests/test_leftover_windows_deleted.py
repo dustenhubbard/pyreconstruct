@@ -49,3 +49,28 @@ def test_a_deleted_main_window_is_no_longer_the_main_window(qapp):
     delete_new_top_level_widgets(before)
 
     assert utils.mainwindow is None
+
+
+@pytest.mark.gui
+def test_a_new_window_at_a_deleted_window_s_address_is_deleted(qapp):
+    from PySide6.QtTest import QTest
+    from shiboken6 import getCppPointer
+
+    window = QWidget()
+    before = _top_level_widgets()
+    address = getCppPointer(window)[0]
+    window.deleteLater()
+    QTest.qWait(0)
+    assert not isValid(window)
+    for _ in range(1000):
+        made = QWidget()
+        if getCppPointer(made)[0] == address:
+            break
+        made.deleteLater()
+        QTest.qWait(0)
+    else:
+        pytest.fail("Qt never reused the deleted window's address")
+
+    delete_new_top_level_widgets(before)
+
+    assert not isValid(made)

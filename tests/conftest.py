@@ -610,7 +610,7 @@ def _top_level_widgets():
 
 
 def delete_new_top_level_widgets(before):
-    """Delete every live top-level widget whose address is not in `before`.
+    """Delete every live top-level widget that is not one of `before`'s.
 
     `before` is a `_top_level_widgets()` taken earlier. The widgets are queued
     with `deleteLater` and an event loop runs once, so they are gone when this
@@ -627,10 +627,13 @@ def delete_new_top_level_widgets(before):
     """
     from shiboken6 import isValid
 
+    # A widget at an address in `before` is the same widget only if it has the
+    # same wrapper: once the earlier widget is deleted, Qt can put a new one at
+    # its address, and that one gets a new wrapper.
     left = [
         widget
         for address, widget in _top_level_widgets().items()
-        if address not in before and isValid(widget)
+        if before.get(address) is not widget and isValid(widget)
     ]
     if left:
         from PySide6.QtTest import QTest
