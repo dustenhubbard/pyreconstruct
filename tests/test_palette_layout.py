@@ -324,6 +324,8 @@ def test_partial_rows_and_controls_stay_reachable(main_window, palette, trace_co
         assert main_window.field.mouse_mode == mode
 
 
+# it writes both options to the shared user store on purpose, and removes them
+@pytest.mark.shared_settings_store
 def test_options_apply_cancel_reset_and_persist_per_user(main_window, palette, qtbot):
     series = main_window.series
     dialog = AllOptionsDialog(main_window, series)
