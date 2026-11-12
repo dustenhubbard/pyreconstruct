@@ -270,9 +270,10 @@ def test_the_commands_name_scripts_the_site_publishes():
 # --------------------------------------------------------------------------- #
 
 @pytest.fixture
-def routes(main_window, main_window_dialogs, monkeypatch):
+def routes(main_window, main_window_dialogs, monkeypatch, local_series_settings):
     """Drive the real window's update routes with the feed faked and every
     download path booby-trapped."""
+    local_series_settings(main_window)
     from PyReconstruct.modules.gui.dialog import update_dialog as UD
     from PyReconstruct.modules.gui.main import main_window as MW
 

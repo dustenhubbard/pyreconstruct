@@ -756,9 +756,10 @@ def test_box_moved_with_a_name_selected_keeps_only_inside_traces(mw, qapp):
 
 # --- round 2: auto-merge -------------------------------------------------------
 
-def test_auto_merge_leaves_a_trace_outside_the_box(mw, qapp):
+def test_auto_merge_leaves_a_trace_outside_the_box(mw, qapp, local_series_settings):
     """With "Only merge selected traces" off, a new trace inside the box that
     overlaps a same-name trace outside it does not merge that trace away."""
+    local_series_settings(mw)
     field = mw.field
     mw.series.setOption("auto_merge", True)
     mw.series.setOption("auto_merge_selected_only", False)

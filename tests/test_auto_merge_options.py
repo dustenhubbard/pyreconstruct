@@ -29,8 +29,10 @@ def _edit_filter(dialog):
     assert not selected_only.isChecked()
 
 
-def test_trace_mode_dialog_saves_filter_and_preserves_smoothing(main_window, monkeypatch):
-    series = main_window.series
+def test_trace_mode_dialog_saves_filter_and_preserves_smoothing(
+    main_window, monkeypatch, local_series_settings
+):
+    series = local_series_settings(main_window)
     series.setOption('auto_merge', False)
     series.setOption('auto_merge_selected_only', True)
     series.setOption('roll_average', True)
@@ -61,8 +63,10 @@ def test_trace_mode_dialog_saves_filter_and_preserves_smoothing(main_window, mon
     assert series.getOption('auto_merge_selected_only') is False, 'Cancel must not save edits'
 
 
-def test_all_options_saves_filter_and_resets_defaults(main_window, qtbot):
-    series = main_window.series
+def test_all_options_saves_filter_and_resets_defaults(
+    main_window, qtbot, local_series_settings
+):
+    series = local_series_settings(main_window)
     series.setOption('auto_merge', False)
     series.setOption('auto_merge_selected_only', True)
     dialog = AllOptionsDialog(main_window, series)

@@ -34,7 +34,8 @@ def _rotate_shear(angle, shear, dx, dy):
 
 
 @pytest.fixture
-def layer(qapp, real_series):
+def layer(qapp, real_series, local_series_settings):
+    local_series_settings(real_series)
     section = real_series.loadSection(min(real_series.sections))
     real_series.setOption("show_ztraces", False)
     real_series.setOption("show_flags", "none")
