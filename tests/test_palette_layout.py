@@ -381,10 +381,10 @@ def test_invalid_dimensions_do_not_save(main_window, palette, qtbot, monkeypatch
 
 
 SWEEP_ROWS = (1, 2, 7, 20, 100)
-SWEEP_COLS = (1, 3, 6, 12)
+SWEEP_COLS = (1, 3, 5, 6, 12)
 SWEEP_SPOTS = ((0.001, 0.001), (0.999, 0.001), (0.5, 0.5), (0.001, 0.999), (0.999, 0.999))
 # the smallest window first: a smaller request gets the minimum size
-SWEEP_WINDOWS = [(100, 100), (300, 352), (301, 353), (330, 360), (450, 352),
+SWEEP_WINDOWS = [(100, 100), (321, 363), (330, 370), (360, 400), (450, 362),
                  (500, 400), (600, 400), (800, 600), (1280, 800)]
 
 
@@ -412,7 +412,7 @@ def test_the_window_cannot_shrink_below_the_palette_minimum(main_window, qapp):
     main_window.show()
     qapp.processEvents()
     field = main_window.field.size().toTuple()
-    assert field == main_window.field.minimumSize().toTuple() == (300, 310)
+    assert field == main_window.field.minimumSize().toTuple() == (320, 320)
     assert main_window.size().toTuple() == main_window.minimumSize().toTuple()
 
 

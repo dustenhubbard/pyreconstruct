@@ -247,7 +247,7 @@ class MousePalette():
         # controls would have to cover others. Set on the field rather than
         # the window, so the window's minimum follows from it with each
         # platform's own menu bar and status bar added on top.
-        mainwindow.field.setMinimumSize(300, 310)
+        mainwindow.field.setMinimumSize(320, 320)
 
         self.mblen = 40  # mode button size
         self.pblen = 40  # palette button size
