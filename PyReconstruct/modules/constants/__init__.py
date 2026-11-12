@@ -29,6 +29,7 @@ from .locations import (
 from .websites import (
     kh_web,
     kh_wiki,
+    kh_user_guide,
     kh_atlas,
     gh_repo,
     user_guide,

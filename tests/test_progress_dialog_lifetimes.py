@@ -118,7 +118,7 @@ def test_the_3d_worker_opens_series_without_qt(series_jser, monkeypatch):
     )
     monkeypatch.setattr(series_module, "_default_notifier", qt_forbidden)
 
-    meshes, series = gv.generateVolumes(
+    meshes, series, _failures = gv.generateVolumes(
         str(series_jser),
         [{"name": "an_object_deleted_since_the_scene_was_saved"}],
         [],

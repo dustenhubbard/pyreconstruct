@@ -641,6 +641,10 @@ class ObjectTableWidget(DataTable):
         )
         return sortList(filtered_list)
 
+    def refresh(self):
+        """Reload the objects matching this list's filters."""
+        self.manager.refreshObjects(self)
+
     def createTable(self):
         """Create the virtualized object list (model + view).
 
