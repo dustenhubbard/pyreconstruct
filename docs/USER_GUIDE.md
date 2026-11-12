@@ -804,7 +804,7 @@ it to the 3D scene. Columns include **Name**, **Start/End** (first/last section)
 columns you define.
 
 - **Flat area** = the summed closed-trace areas plus open-trace lengths × section
-  thickness; **Volume** = summed closed-trace areas × section thickness.
+  thickness ([how flat area is calculated](flat-area.md)); **Volume** = summed closed-trace areas × section thickness.
 - The context menu edits the object across the whole series: edit attributes, set
   comments/hosts/groups/alignment, lock/unlock, create a copy, edit radius/shape,
   smooth, split into individual objects, set curation, manage the object in 3D
