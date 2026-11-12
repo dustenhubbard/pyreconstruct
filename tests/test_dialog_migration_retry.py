@@ -333,3 +333,130 @@ def test_dialogs_check_for_a_pending_copy_before_reading_options(
     open_dialog()
     print(f"{name}: {events[:4]}")
     assert events[:1] == ["check"]
+
+
+# (dialog, option, old value, value the dialog shows if the read fails, edit)
+RECOVERY_CASES = {
+    # mode left alone, rolling window changed
+    "trace mode": ("trace_mode", "poly", "combo", "window"),
+    # each of the others is changed: to the fallback unless the control shows
+    # it, else to another value
+    "pointer": ("display_closest", False, True, "fallback"),
+    "grid": ("sampling_frame_grid", False, True, "fallback"),
+    "knife": ("roll_knife_window", 25, 10, "fallback"),
+    "flag": ("flag_size", 42, 14, "fallback"),
+    "3D step": ("rotate_step_3D", 45, 10, "fallback"),
+}
+
+
+def _edit_shown_option(name, fallback, shown, chosen):
+    """The edit for each dialog in RECOVERY_CASES: `shown` gets what the
+    control showed and `chosen` the value the user picks."""
+    def pick(value):
+        shown.append(value)
+        if value != fallback:
+            chosen.append(fallback)
+        else:
+            chosen.append(not value if isinstance(value, bool) else 33)
+        return chosen[-1]
+
+    def edit(dialog):
+        if name == "trace mode":
+            shown.append(dialog.inputs[0].getResponse()[0][1][1])  # Poly
+            dialog.inputs[5].widget.setText("7")
+        elif name == "pointer":
+            check = dialog.inputs[2].widget.layout().itemAt(0).widget()
+            check.setChecked(pick(check.isChecked()))
+        elif name == "grid":
+            dialog.sf_cb.setChecked(pick(dialog.sf_cb.isChecked()))
+        else:
+            field = dialog.inputs[{"knife": 2, "flag": 2, "3D step": 1}[name]].widget
+            field.setText(str(pick(int(float(field.text())))))
+    return edit
+
+
+@pytest.mark.parametrize("transient", [False, True])
+@pytest.mark.parametrize("name", list(RECOVERY_CASES))
+def test_recovery_while_opening_compares_with_what_the_dialog_showed(
+    series, legacy, monkeypatch, request, name, transient
+):
+    """The first read of the option fails and the next one copies the old store.
+    OK must compare with the value the control showed, so the untouched mode
+    keeps its old value and each change from the shown value is stored, even
+    a change to the value shown when a read fails."""
+    from PyReconstruct.modules.gui.main.main_window import MainWindow
+    from PyReconstruct.modules.gui.popup.custom_plotter import CustomPlotter
+
+    key, old_value, fallback, change = RECOVERY_CASES[name]
+    legacy.seed(transient, **{key: old_value})
+    if name == "flag":
+        window = request.getfixturevalue("main_window")
+        target = window.series
+        open_dialog = window.mouse_palette.modifyFlag
+    else:
+        target = series
+        method = {
+            "trace mode": MainWindow.changeTraceMode,
+            "pointer": MainWindow.modifyPointer,
+            "grid": MainWindow.modifyGrid,
+            "knife": MainWindow.modifyKnife,
+            "3D step": CustomPlotter.setStep,
+        }[name]
+        open_dialog = lambda: method(StubWindow(series))  # noqa: E731
+    get_option = Series.getOption
+
+    def read(self, option, *args, **kwargs):
+        value = get_option(self, option, *args, **kwargs)
+        if self is target and option == key:
+            legacy.finish(target)  # the old store reads from now on
+        return value
+
+    shown, chosen = [], []
+    edit = _edit_shown_option(name, fallback, shown, chosen)
+    if name == "grid":
+        accept_dialog(monkeypatch, edit)
+    else:
+        accept_quick_dialog(monkeypatch, edit)
+    monkeypatch.setattr(Series, "getOption", read)
+    open_dialog()
+    if change == "window":
+        values = legacy.finish(target, key, "roll_window")
+        expected = {key: old_value, "roll_window": 7}
+    else:
+        values = legacy.finish(target, key)
+        expected = {key: chosen[0]}
+    print(f"{name} transient={transient} shown={shown} {values}")
+    assert values == expected
+
+
+@pytest.mark.parametrize("name", [
+    "scale bar", "pointer", "grid", "knife", "trace mode", "3D step", "flag",
+    "shortcuts",
+])
+def test_dialogs_read_each_option_once_while_opening(
+    domain, series, monkeypatch, request, name  # noqa: F811  (fixture)
+):
+    """A copy can finish between two reads of one option, so a dialog that
+    reads it twice can show one value and compare OK with the other.
+    Options and Backup are not here: they compare each control with the
+    value it showed when built, whatever was read to fill it."""
+    open_dialog = _dialogs()[name](series, request, monkeypatch)
+    reads = []
+    opening = [True]
+    get_option = Series.getOption
+
+    def read(self, option, get_default=False, **kwargs):
+        if opening[0] and not get_default:
+            reads.append(option)
+        return get_option(self, option, get_default, **kwargs)
+
+    def shown(dialog):
+        opening[0] = False  # the dialog is open: later reads are OK's
+
+    accept_quick_dialog(monkeypatch, shown)
+    accept_dialog(monkeypatch, shown)
+    monkeypatch.setattr(Series, "getOption", read)
+    open_dialog()
+    twice = sorted({option for option in reads if reads.count(option) > 1})
+    print(f"{name}: {len(reads)} reads, twice: {twice}")
+    assert twice == []

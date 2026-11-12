@@ -56,8 +56,20 @@ class ChosenOptions:
         self.copy_pending = settings_copy_pending(series)
         self.opening = {}
 
+    def read(self, *keys):
+        """Read each option once, keep it as shown, and return the values.
+
+        Build the dialog's controls from these values, not from new reads:
+        a copy that finishes between two reads of one option would make
+        the control show one value and OK compare with another.
+        """
+        values = {key: self.series.getOption(key) for key in keys}
+        self.opening.update(deepcopy(values))
+        return values
+
     def shown(self, opening):
-        """Keep `opening`, the values the dialog shows; return self."""
+        """Keep `opening`, the values the dialog's built controls show;
+        return self. Values read from the series go through `read`."""
         self.opening = deepcopy(dict(opening))
         return self
 

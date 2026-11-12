@@ -1597,13 +1597,11 @@ class CustomPlotter(GLSceneWidget if GL_SCENE else QVTKRenderWindowInteractor):
         
     def setStep(self):
         """Set the translate/rotate increments."""
-        chosen = ChosenOptions(self.series).shown({
-            key: self.series.getOption(key)
-            for key in ("translate_step_3D", "rotate_step_3D")
-        })
+        chosen = ChosenOptions(self.series)
+        shown = chosen.read("translate_step_3D", "rotate_step_3D")
         structure = [
-            ["Translate step (in microns):", (True, "float", self.series.getOption("translate_step_3D"))],
-            ["Rotate step (in degrees):", (True, "float", self.series.getOption("rotate_step_3D"))],
+            ["Translate step (in microns):", (True, "float", shown["translate_step_3D"])],
+            ["Rotate step (in degrees):", (True, "float", shown["rotate_step_3D"])],
         ]
         response, confirmed = QuickDialog.get(self, structure, "3D Step")
         if not confirmed:

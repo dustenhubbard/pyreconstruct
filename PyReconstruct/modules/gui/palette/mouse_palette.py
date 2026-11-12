@@ -1109,15 +1109,13 @@ class MousePalette():
     
     def modifyFlag(self):
         """Modify the default flag."""
-        chosen = ChosenOptions(self.series).shown({
-            key: self.series.getOption(key)
-            for key in ("flag_name", "flag_color", "flag_size", "show_flags")
-        })
-        show_flags = chosen.opening["show_flags"]
+        chosen = ChosenOptions(self.series)
+        shown = chosen.read("flag_name", "flag_color", "flag_size", "show_flags")
+        show_flags = shown["show_flags"]
         structure = [
-            ["Default name:", ("text", self.series.getOption("flag_name"))],
-            ["Default color:", ("color", self.series.getOption("flag_color"))],
-            ["Size of all flags: ", ("int", self.series.getOption("flag_size"), tuple(range(1, 100)))],
+            ["Default name:", ("text", shown["flag_name"])],
+            ["Default color:", ("color", shown["flag_color"])],
+            ["Size of all flags: ", ("int", shown["flag_size"], tuple(range(1, 100)))],
             ["Display"],
             [("radio",
               ("All flags", show_flags == "all"),
@@ -1133,7 +1131,7 @@ class MousePalette():
         elif response[3][2][1]: show_flags = "none"
         else: show_flags = "unresolved"
         
-        shown = {key: chosen.opening[key] for key in ("flag_size", "show_flags")}
+        drawn = {key: shown[key] for key in ("flag_size", "show_flags")}
         chosen.store({
             "flag_name": response[0],
             "flag_color": response[1],
@@ -1142,11 +1140,11 @@ class MousePalette():
         })
         # draw what is stored: a copy that finished while the dialog was
         # open keeps the values the dialog showed as defaults
-        stored = {key: self.series.getOption(key) for key in shown}
-        if stored["show_flags"] != shown["show_flags"]:
+        stored = {key: self.series.getOption(key) for key in drawn}
+        if stored["show_flags"] != drawn["show_flags"]:
             self.mainwindow.field.section.selected_flags = []
         self.setFlag()
-        if stored != shown:
+        if stored != drawn:
             self.mainwindow.field.generateView(generate_image=False)
     
     def displayHelp(self):

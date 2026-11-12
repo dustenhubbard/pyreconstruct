@@ -2722,12 +2722,9 @@ class MainWindow(QMainWindow):
 
         chosen = ChosenOptions(self.series)
         current_shape = self.field.closed_trace_shape
-        current_mode = self.series.getOption("trace_mode")
-        chosen.shown({
-            key: self.series.getOption(key)
-            for key in ("trace_mode", "auto_merge", "auto_merge_selected_only",
-                        "roll_average", "roll_window")
-        })
+        shown = chosen.read("trace_mode", "auto_merge", "auto_merge_selected_only",
+                            "roll_average", "roll_window")
+        current_mode = shown["trace_mode"]
 
         structure = [
             ["Mode:"],
@@ -2742,10 +2739,10 @@ class MainWindow(QMainWindow):
                 ("Rectangle", current_shape == "rect"),
                 ("Ellipse", current_shape == "circle")
             )],
-            [("check", ("Automatically merge overlapping traces", self.series.getOption("auto_merge"))),
-             ("check", ("Only merge selected traces", self.series.getOption("auto_merge_selected_only")))],
-            [("check", ("Apply rolling average while scribbling", self.series.getOption("roll_average"))),
-             ("int", self.series.getOption("roll_window"))]
+            [("check", ("Automatically merge overlapping traces", shown["auto_merge"])),
+             ("check", ("Only merge selected traces", shown["auto_merge_selected_only"]))],
+            [("check", ("Apply rolling average while scribbling", shown["roll_average"])),
+             ("int", shown["roll_window"])]
         ]
 
         dialog = QuickDialog(self, structure, "Closed Trace Mode")
@@ -4194,17 +4191,14 @@ class MainWindow(QMainWindow):
     def modifyPointer(self, event=None):
         """Modify the pointer properties."""
         chosen = ChosenOptions(self.series)
-        s, t = tuple(self.series.getOption("pointer"))
-        chosen.shown({
-            "pointer": [s, t],
-            "display_closest": self.series.getOption("display_closest"),
-        })
+        shown = chosen.read("pointer", "display_closest")
+        s, t = tuple(shown["pointer"])
         structure = [
             ["Shape:"],
             [("radio", ("Rectangle", s=="rect"), ("Lasso", s=="lasso"))],
             ["Select:"],
             [("radio", ("All touched traces", t=="inc"), ("Only completed encircled traces", t=="exc"))],
-            [("check", ("Display closest field item", self.series.getOption("display_closest")))]
+            [("check", ("Display closest field item", shown["display_closest"]))]
         ]
         response, confirmed = QuickDialog.get(self, structure, "Pointer Settings")
         if not confirmed:
@@ -4217,14 +4211,12 @@ class MainWindow(QMainWindow):
     
     def modifyGrid(self, event=None):
         """Modify the grid properties."""
-        chosen = ChosenOptions(self.series).shown({
-            key: self.series.getOption(key)
-            for key in ("grid", "sampling_frame_grid")
-        })
+        chosen = ChosenOptions(self.series)
+        shown = chosen.read("grid", "sampling_frame_grid")
         response, confirmed = GridDialog(
             self,
-            tuple(self.series.getOption("grid")),
-            self.series.getOption("sampling_frame_grid")
+            tuple(shown["grid"]),
+            shown["sampling_frame_grid"]
         ).exec()
         if not confirmed:
             return
@@ -4237,23 +4229,22 @@ class MainWindow(QMainWindow):
         """Modify the knife properties."""
         keys = ("knife_del_threshold", "roll_knife_average", "roll_knife_window",
                 "knife_ignore_secondary_click")
-        chosen = ChosenOptions(self.series).shown(
-            {key: self.series.getOption(key) for key in keys}
-        )
+        chosen = ChosenOptions(self.series)
+        shown = chosen.read(*keys)
         structure = [
             [
                 "Delete traces smaller than this percent:\n"
             ],
             [
                 "% original trace:",
-                ("float", self.series.getOption("knife_del_threshold"), (0, 100))
+                ("float", shown["knife_del_threshold"], (0, 100))
             ],
             [
                 "\nOptionally smooth while cutting:"
             ],
             [
-                ("check", ("Smooth cuts", self.series.getOption("roll_knife_average"))),
-                ("int", self.series.getOption("roll_knife_window"))
+                ("check", ("Smooth cuts", shown["roll_knife_average"])),
+                ("int", shown["roll_knife_window"])
             ],
             [
                 "\nWhile a cut is being drawn:"
@@ -4263,7 +4254,7 @@ class MainWindow(QMainWindow):
                     "check",
                     (
                         "Ignore the other mouse buttons",
-                        self.series.getOption("knife_ignore_secondary_click")
+                        shown["knife_ignore_secondary_click"]
                     )
                 )
             ]
