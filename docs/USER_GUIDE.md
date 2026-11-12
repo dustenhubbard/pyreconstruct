@@ -964,6 +964,11 @@ active. Switch to a real alignment first.
   the current image to the last-viewed comparison ("B") section by image
   cross-correlation, using a translation-only adjustment. Visit the reference
   section, then the section you want to align.
+  Pixels at or below the dark cutoff and at or above the bright cutoff are ignored,
+  including black image borders. Set the cutoffs in **Series ▸ Options ▸ User/Series**.
+  The defaults are 5 and 250 on a 0 to 255 intensity scale. Display brightness and
+  contrast do not affect alignment. A weak match displays a message and leaves the
+  section unchanged.
 - **Propagate transform** records a transform adjustment and applies it across many
   sections: **Start propagation recording**, make your adjustment, then **Propagate
   to start** / **Propagate to end** (or simply navigate; while recording, moving to
