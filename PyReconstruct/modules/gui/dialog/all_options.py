@@ -104,12 +104,25 @@ class AllOptionsDialog(QDialog):
 
         self.resize(*self.defaultSize())
 
+    @staticmethod
+    def scrollBarRoom(page : QScrollArea) -> int:
+        """The width a page's vertical scrollbar takes from its contents.
+
+        This is what the scroll area itself sets aside. On macOS the bar can
+        be wider than the style's PM_ScrollBarExtent.
+        """
+        style = page.style()
+        room = page.verticalScrollBar().sizeHint().width()
+        if style.styleHint(QStyle.SH_ScrollView_FrameOnlyAroundContents, None, page):
+            room += style.pixelMetric(QStyle.PM_ScrollView_ScrollBarSpacing, None, page)
+        return room
+
     def defaultSize(self):
         """Fit the widest page, with room for its vertical scrollbar."""
         page_width = max(
             self.tabs.widget(i).widget().sizeHint().width()
             + 2 * self.tabs.widget(i).frameWidth()
-            + self.tabs.widget(i).style().pixelMetric(QStyle.PM_ScrollBarExtent)
+            + self.scrollBarRoom(self.tabs.widget(i))
             for i in range(self.tabs.count())
         )
         # QScrollArea caps its size hint even when its content needs more room.

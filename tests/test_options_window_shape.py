@@ -73,6 +73,30 @@ def test_opens_at_content_width_with_every_tab_usable(qtbot, series, monkeypatch
         assert dlg.width() == width
 
 
+def test_a_scrollbar_wider_than_the_style_extent_still_fits(qtbot, qapp, series, monkeypatch):
+    # The bar can be wider than PM_ScrollBarExtent, as on macOS. A style sheet does that everywhere.
+    class Screen:
+        def availableGeometry(self):
+            return QRect(0, 0, 1920, 1080)
+
+    monkeypatch.setattr(QApplication, "primaryScreen", lambda: Screen())
+    old_sheet = qapp.styleSheet()
+    qapp.setStyleSheet("QScrollBar:vertical { width: 40px; }")
+    try:
+        dlg = AllOptionsDialog(None, series)
+        qtbot.addWidget(dlg)
+        dlg.show()
+        qtbot.wait(1)
+        for i in range(dlg.tabs.count()):
+            dlg.tabs.setCurrentIndex(i)
+            qtbot.wait(1)
+            page = dlg.tabs.widget(i)
+            assert page.verticalScrollBar().sizeHint().width() == 40
+            assert page.horizontalScrollBar().maximum() == 0, dlg.tabs.tabText(i)
+    finally:
+        qapp.setStyleSheet(old_sheet)
+
+
 def test_small_screen_keeps_content_accessible_by_scrolling(qtbot, series, monkeypatch):
     class Screen:
         def availableGeometry(self):
