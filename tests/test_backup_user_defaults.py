@@ -448,7 +448,10 @@ def test_a_drive_in_the_code_stays_inside_the_picked_folder(windows_paths, code,
 
 
 @pytest.mark.parametrize("code", ["C:ABC", "A:B:C", ":"])
-def test_a_colon_code_keeps_its_v1_24_folder_on_macos_and_linux(posix_paths, code, tmp_path):
+@pytest.mark.parametrize("parent", ["backups", ".backups"])
+def test_a_colon_code_keeps_its_v1_24_folder_on_macos_and_linux(posix_paths, code, parent, tmp_path):
+    tmp_path = tmp_path / parent
+    tmp_path.mkdir()
     store = DictSettingsStore()
     series = _series(code, store)
     _set_defaults(series, Series.joinSeriesFolderTemplate(str(tmp_path), True))

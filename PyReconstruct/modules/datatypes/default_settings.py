@@ -1,5 +1,6 @@
 import getpass
 import math
+import sys
 
 # MFO = modifiable from options dialog
 
@@ -59,6 +60,7 @@ default_settings = {
 
     # misc preferences
     "left_handed": False,  # MFO
+    "reverse_trackpad_scroll": sys.platform == "darwin",  # MFO
     "utc": False,  # MFO
     "cpu_max": 50,  # % of cores -> parallel zarr-conversion workers; ~half leaves headroom
     # a local copy of each series opened, for a fast open (Dev builds only;
