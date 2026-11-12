@@ -544,7 +544,7 @@ class SeriesData():
             if trace_names is None:
                 trace_names = section.getAllModifiedNames()
 
-                if section.tformsModified(scaling_only=True) or (all_traces and not trace_names):
+                if section.tformsModified() or (all_traces and not trace_names):
                     trace_names = section.contours.keys()
             else:
                 trace_names = tuple(trace_names)

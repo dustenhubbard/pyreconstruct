@@ -874,7 +874,8 @@ The context menu locks/unlocks sections, sets brightness/contrast (set, incremen
 match to the in-view section, or optimize), edits thickness, edits the image source,
 inserts a section above/below, copies, and deletes. **Modify ▸ Edit all image
 sources…** bulk-renames image sources, and **Reorder sections** renumbers them
-sequentially.
+sequentially. Section thickness must be a positive, finite number. Invalid values
+leave the selected sections unchanged.
 
 ![The Section list docked to the left of the field, with a row for each section: thickness, locked, brightness and contrast.](assets/images/user-guide/09-section-list.png)
 
@@ -933,7 +934,8 @@ active. Switch to a real alignment first.
   where you can create a **New** alignment (created as a copy of the current one),
   **Rename**, or **Remove** alignments. Objects can also carry a per-object
   alignment override (**Object attributes ▸ Change object alignment…** in the
-  object list's context menu).
+  object list's context menu). Measurements and open lists update after alignment
+  edits, including translation, rotation, and changes that preserve area.
 
 ![The alignment dialog: a list of the alignments, default and no-alignment, with Remove, Rename and New buttons.](assets/images/user-guide/10-edit-alignments.png)
 
@@ -1142,7 +1144,8 @@ The 3D window has its own menu bar:
   not. Collada export additionally requires the optional `pycollada` package; if it
   is missing, the Collada item is disabled and labeled **(not installed)**.)
 - **Object list ▸ 3D ▸ Export quantitative data** writes per-object surface area
-  and volume to CSV. (Note these depend on the meshing settings; verify mesh quality
+  and volume to CSV, preserving the measured precision for small quantities.
+  (Note these depend on the meshing settings; verify mesh quality
   before relying on the numbers.)
 
 ---
