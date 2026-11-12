@@ -1,0 +1,1 @@
+- **Zarr images retain fine detail when alignment enlarges or stretches them.**

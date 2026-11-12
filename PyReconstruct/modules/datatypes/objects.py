@@ -1,3 +1,6 @@
+import csv
+import io
+
 from PyReconstruct.modules.constants import EXPORT_ERRORS
 
 
@@ -32,25 +35,18 @@ class Objects():
                 out_fp (str): filepath for newly created CSV (function returns str if filepath not provided)
         """
         sep = "|"
-        
-        out_str = f"Series{sep}Name{sep}Start{sep}End{sep}Count{sep}Flat_Area{sep}Volume{sep}Groups{sep}"
-        out_str += f"Trace_Tags{sep}Last_User{sep}Curation_Status{sep}Curation_User{sep}"
-        out_str += f"Curation_Date{sep}Alignment{sep}Comment\n"
+        output = io.StringIO(newline="")
+        writer = csv.writer(output, delimiter=sep)
+        writer.writerow([
+            "Series", "Name", "Start", "End", "Count", "Flat_Area", "Volume",
+            "Groups", "Trace_Tags", "Last_User", "Curation_Status",
+            "Curation_User", "Curation_Date", "Alignment", "Comment",
+        ])
 
         series_code = self.series.code
 
         for obj_name in sorted(self.series.data["objects"].keys()):
 
-            out_str += f"{series_code}{sep}"
-            out_str += f"{obj_name}{sep}"
-            out_str += f"{self.series.data.getStart(obj_name)}{sep}"
-            out_str += f"{self.series.data.getEnd(obj_name)}{sep}"
-            out_str += f"{self.series.data.getCount(obj_name)}{sep}"
-            out_str += f"{self.series.data.getFlatArea(obj_name)}{sep}"
-            out_str += f"{self.series.data.getVolume(obj_name)}{sep}"
-            out_str += f"{':'.join(self.series.object_groups.getObjectGroups(obj_name))}{sep}"
-            out_str += f"{':'.join(self.series.data.getTags(obj_name))}{sep}"
-            out_str += f"{self.series.getAttr(obj_name, 'last_user')}{sep}"
             curation = self.series.getAttr(obj_name, "curation")
 
             if curation:
@@ -62,19 +58,27 @@ class Objects():
             else:
                 status = user = date = ""
 
-            out_str += f"{status}{sep}{user}{sep}{date}{sep}"
-
             alignment = self.series.getAttr(obj_name, "alignment")
             if not alignment: alignment = ""
-            out_str += f"{alignment}{sep}"
 
             ## Remove seperator from comments
             comments = self.series.getAttr(obj_name, "comment").replace(sep, "_")
-            out_str += comments + "\n"
-            
+            writer.writerow(map(str, [
+                series_code, obj_name,
+                self.series.data.getStart(obj_name),
+                self.series.data.getEnd(obj_name),
+                self.series.data.getCount(obj_name),
+                self.series.data.getFlatArea(obj_name),
+                self.series.data.getVolume(obj_name),
+                ':'.join(self.series.object_groups.getObjectGroups(obj_name)),
+                ':'.join(self.series.data.getTags(obj_name)),
+                self.series.getAttr(obj_name, "last_user"),
+                status, user, date, alignment, comments,
+            ]))
+
+        out_str = output.getvalue()
         if out_fp:
-            
-            with open(out_fp, "w", errors=EXPORT_ERRORS) as f:
+            with open(out_fp, "w", errors=EXPORT_ERRORS, newline="") as f:
                 f.write(out_str)
 
         return out_str

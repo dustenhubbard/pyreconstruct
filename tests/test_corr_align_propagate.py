@@ -112,6 +112,7 @@ def _record_stub(base_tform):
         series=types.SimpleNamespace(addLog=lambda *a, **k: None),
         propagate_tform=True,
         stored_tform=Transform.identity(),
+        prepareProfileAdjustment=lambda kind: True,
     )
     stub.generateView = lambda *a, **k: None
     stub.saveState = lambda *a, **k: None
@@ -208,6 +209,7 @@ def _prop_stub(monkeypatch, base_tforms, current_section, locked=()):
         propagate_tform=True,
         stored_tform=Transform.identity(),
         propagated_sections={current_section},
+        prepareProfileAdjustment=lambda kind: True,
     )
     stub.generateView = lambda *a, **k: None
     stub.saveState = lambda *a, **k: None
