@@ -498,3 +498,39 @@ a:focus-visible, button:focus-visible, input:focus-visible, label[tabindex]:focu
   .md-typeset .clip-tag { top: .35rem; left: .35rem; }
   .md-typeset .clip-replay { right: .35rem; bottom: .35rem; }
 }
+
+/* Flat area page (flat-area.md): the three-orientation figure. Inline SVG, so
+   the strokes and fills follow the scheme through these tokens. */
+[data-md-color-scheme="default"] { --fa-green: #15803d; }
+[data-md-color-scheme="slate"] { --fa-green: var(--pr-green); }
+.md-typeset .fa-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: .8rem;
+  margin: 1em 0;
+}
+.md-typeset .fa-card {
+  padding: .9rem;
+  border: 1px solid var(--pr-line);
+  border-radius: var(--pr-radius);
+  background: var(--pr-surface);
+}
+.md-typeset .fa-title { font-weight: 700; font-size: .8rem; }
+.md-typeset .fa-sub { color: var(--pr-secondary); font-size: .68rem; line-height: 1.45; min-height: 3em; margin: .2em 0 .5em; }
+.md-typeset .fa-card svg { display: block; width: 100%; height: auto; }
+.md-typeset .fa-slab-a { fill: var(--md-default-fg-color--lightest); stroke: var(--pr-line-strong); }
+.md-typeset .fa-slab-b { fill: transparent; stroke: var(--pr-line-strong); }
+.md-typeset .fa-psd { fill: none; stroke: var(--md-default-fg-color); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+.md-typeset .fa-open { stroke: var(--fa-green); stroke-width: 2.5; stroke-linecap: round; }
+.md-typeset .fa-closed { fill: var(--fa-green); fill-opacity: .3; stroke: var(--fa-green); stroke-width: 1.5; }
+.md-typeset .fa-label { fill: var(--md-default-fg-color); font-family: var(--md-code-font); font-size: 10px; }
+.md-typeset .fa-none { fill: var(--pr-secondary); font-size: 10px; }
+.md-typeset .fa-math {
+  margin-top: .6rem;
+  padding-top: .5rem;
+  border-top: 1px dashed var(--pr-line-strong);
+  font-family: var(--md-code-font);
+  font-size: .64rem;
+  line-height: 1.6;
+}
+.md-typeset .fa-math strong { color: var(--fa-green); }

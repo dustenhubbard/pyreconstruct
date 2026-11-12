@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QPushButton,
     QScrollArea,
+    QStyle,
     QApplication
 )
 from PySide6.QtCore import Qt, QTimer
@@ -54,10 +55,7 @@ def cpuSliderReadout(percent : int) -> str:
     total = os.cpu_count() or 1
     return f"{percent}% ({workers} of {total} workers)"
 
-# The options window's opening size, in logical pixels, before the screen
-# clamps it. Wide enough for the lists tab's columns, tall enough for the
-# colors page's embedded picker.
-DEFAULT_SIZE = (1100, 850)
+DEFAULT_HEIGHT = 850
 
 # a NUL in the series code would stop every backup into a {series} folder
 SERIES_CODE_NUL = "The series code holds a NUL character. Remove it to save the code."
@@ -104,22 +102,33 @@ class AllOptionsDialog(QDialog):
 
         self.setLayout(full_vlayout)
 
-        # A default size that fits the taller pages (the colors page carries
-        # a picker) without scrolling on an ordinary laptop screen.
         self.resize(*self.defaultSize())
 
     def defaultSize(self):
-        """The opening size: large, but never past the screen it opens on."""
+        """Fit the widest page, with room for its vertical scrollbar."""
+        page_width = max(
+            self.tabs.widget(i).widget().sizeHint().width()
+            + 2 * self.tabs.widget(i).frameWidth()
+            + self.tabs.widget(i).style().pixelMetric(QStyle.PM_ScrollBarExtent)
+            for i in range(self.tabs.count())
+        )
+        # QScrollArea caps its size hint even when its content needs more room.
+        # Keep the dialog's tab frame and margins when expanding that hint.
+        scroll_width = max(
+            self.tabs.widget(i).sizeHint().width()
+            for i in range(self.tabs.count())
+        )
+        width = self.sizeHint().width() + max(0, page_width - scroll_width)
         owner = self.parentWidget()
         screen = owner.screen() if owner is not None else QApplication.primaryScreen()
         if screen is None:
-            return DEFAULT_SIZE
+            return width, DEFAULT_HEIGHT
         avail = screen.availableGeometry()
         return (
-            min(DEFAULT_SIZE[0], int(avail.width() * 0.75)),
-            min(DEFAULT_SIZE[1], int(avail.height() * 0.85)),
+            min(width, int(avail.width() * 0.75)),
+            min(DEFAULT_HEIGHT, int(avail.height() * 0.85)),
         )
-    
+
     def getWidgetsLayout(self, structure : list):
         """Create a layout from a predifined widget structure
 
@@ -172,6 +181,7 @@ class AllOptionsDialog(QDialog):
                 ["2D_step"],
                 ["3D_step"],
                 ["left_handed"],
+                ["trackpad_scroll"],
                 ["time"],
                 ["computation"]
 
@@ -529,6 +539,14 @@ class AllOptionsDialog(QDialog):
         def setOption(response):
             self.series.setOption("left_handed", response[0][0][1])
         self.addOptionWidget("left_handed", structure, setOption)
+
+        structure = [
+            [("check", ("Reverse trackpad section scrolling",
+                        self.series.getOption("reverse_trackpad_scroll", use_defaults)))],
+        ]
+        def setOption(response):
+            self.series.setOption("reverse_trackpad_scroll", response[0][0][1])
+        self.addOptionWidget("trackpad_scroll", structure, setOption)
 
         # utc
         structure = [

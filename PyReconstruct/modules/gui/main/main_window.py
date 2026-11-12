@@ -3200,6 +3200,9 @@ class MainWindow(QMainWindow):
                 steps = self.wheel_steps.take(event, units)
                 if not steps:
                     return
+                if (event.phase() != Qt.ScrollPhase.NoScrollPhase
+                        and self.series.getOption("reverse_trackpad_scroll")):
+                    steps = -steps
                 # change the section, keeping the scroll left over
                 with self.wheel_steps.moving():
                     self.incrementSection(down=steps < 0, count=abs(steps))

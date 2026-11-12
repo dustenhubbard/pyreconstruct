@@ -289,6 +289,20 @@ def defaultTickInterval(minimum : int, maximum : int) -> int:
     return span
 
 
+class FocusSlider(QSlider):
+    """Leave wheel events to the scroll area until the slider has focus."""
+
+    def __init__(self, orientation, parent=None):
+        super().__init__(orientation, parent)
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def wheelEvent(self, event):
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
+
 class SliderWidget(QWidget):
     """A horizontal slider that shows its tick marks and its current value.
 
@@ -328,7 +342,7 @@ class SliderWidget(QWidget):
         self.suffix = suffix
         self.fmt = fmt
 
-        self.slider = QSlider(Qt.Horizontal, self)
+        self.slider = FocusSlider(Qt.Horizontal, self)
         self.slider.setMinimum(minimum)
         self.slider.setMaximum(maximum)
         self.slider.setTickPosition(QSlider.TicksBelow)

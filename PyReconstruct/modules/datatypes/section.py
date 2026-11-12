@@ -53,9 +53,11 @@ StoredTraceID = namedtuple("StoredTraceID", ("trace_id", "fill_mode_key"))
 ##
 ## Every `Section` carries a `SectionColumns` beside its own `self.contours`
 ## and mirrors every mutation into it, so that the columnar store is driven by
-## real code on real data and checked against the object model. A few readers
-## (`export_svg`, the trace layer's culling, `SeriesData`) now read from the
-## store; the object model still owns every value, as below.
+## real code on real data and checked against the object model. Several readers
+## now read from the store: `export_svg`, `SeriesData`, and the trace layer's
+## culling, drawing and hover (`backend/view/trace_layer.py`: `_rawBounds`
+## caches bounds for one store generation, and `_fieldPoints` reads rows on
+## every draw). The object model still owns every value, as below.
 ##
 ## THE GATE IS GONE, DELIBERATELY, AND WHAT REPLACED IT
 ## ----------------------------------------------------
@@ -72,12 +74,16 @@ StoredTraceID = namedtuple("StoredTraceID", ("trace_id", "fill_mode_key"))
 ## What is NOT reversed, and is the safety property that replaces invisibility:
 ##
 ##   * **The object model is still authoritative.** `self.contours` owns
-##     correctness. Nothing in this class reads an answer out of the store, and
-##     `getDict`/`save` serialize the object model, never the columns. The store
-##     is a shadow copy that is written and checked, not consulted.
-##   * **The store is still never the source of a user-visible value.** A
-##     consumer that reads it is reading a copy that this class has
-##     just checked against the thing that owns the value.
+##     correctness, and `getDict`/`save` serialize the contours' geometry,
+##     never the columns. The store is a derived copy: it is written, checked,
+##     and read, by this class (trace ids, the row map) and by the readers
+##     above.
+##   * **The store never owns a user-visible value.** A consumer that reads it
+##     reads a copy that this class keeps in step with the owner. Between an
+##     out-of-class edit and its repair that copy can be stale, and drawing and
+##     hover read it in that window: a save does not protect a reader that ran
+##     before the save. The trace layer falls back to a trace's own points only
+##     when the row is missing or its point count differs.
 ##   * **Divergence at a mutation is still loud.** Every dual-write hook still
 ##     raises `ColumnarDualWriteMismatch`, never logged and never swallowed.
 ##     What is no longer a raise is the WHOLE-SECTION check at `save()`; see
@@ -115,28 +121,34 @@ StoredTraceID = namedtuple("StoredTraceID", ("trace_id", "fill_mode_key"))
 ##
 ## `resyncColumnarStore()` is the public repair for that last case, and it is not
 ## hypothetical. Always-on turned every out-of-class mutation in the tree into a
-## `ColumnarDualWriteMismatch` raised at the user, and there are **TWELVE**, on
-## paths a user reaches constantly:
+## `ColumnarDualWriteMismatch` raised at the user, on paths a user reaches
+## constantly. The calls outside this module are, at this writing, ten:
 ##
-##     backend/func/state_manager.py    undoState, redoState  (contour rebind)
-##     datatypes/series.py              deleteObjects         (contour rebind)
-##     backend/autoseg/conversions.py   group deletion        (contour rebind)
-##     datatypes/series.py              hideObjects           (in-place write)
-##     datatypes/series.py              hideAllTraces         (in-place write)
-##     datatypes/series.py              restoreObjectVisibility(in-place write)
-##     datatypes/series.py              smoothObject          (in-place write)
-##     datatypes/series.py              combineDuplicateTraces (in-place write)
-##     gui/main/field_widget_2_trace.py findFlag              (in-place write)
-##     gui/main/field_widget_2_trace.py smoothTraces          (in-place write)
-##     gui/main/field_widget_2_trace.py cutTrace's tag merge  (in-place write)
+##     backend/func/state_manager.py    SectionStates._restoreState (rebind)
+##     backend/autoseg/conversions.py   exportTraces, group delete  (rebind)
+##     datatypes/series.py              Series.hideObjects          (in place)
+##     datatypes/series.py              Series.hideAllTraces        (in place)
+##     datatypes/series.py              Series.restoreObjectVisibility (in place)
+##     datatypes/series.py              Series.smoothObject         (in place)
+##     datatypes/series.py              Series.combineDuplicateTraces (in place)
+##     gui/main/field_widget_2_trace.py FieldWidgetTrace.findFlag   (in place)
+##     gui/main/field_widget_2_trace.py FieldWidgetTrace.smoothTraces (in place)
+##     gui/main/field_widget_2_trace.py FieldWidgetTrace.cutTrace   (in place)
 ##
-## (That is twelve sites across eleven rows: `state_manager.py` carries two.)
+## `undoState` and `redoState` share the one call in `_restoreState`.
+## `Series.deleteObjects` was once on this list and no longer needs the
+## repair: it routes every trace through `removeTrace`. `cutTrace` calls it
+## only after merging tags onto traces the cut missed. Read the list as a
+## snapshot. The current one is what a search for `resyncColumnarStore(`
+## outside this module finds, and the tests that hold the rule are
+## `test_no_module_outside_section_py_edits_a_store_backed_trace_column` and
+## `test_an_unrepaired_out_of_class_edit_still_raises_before_the_next_save` in
+## `tests/test_section_columnar_dual_write.py`.
 ##
-## Every one of them now calls the repair. The invariant this establishes is
-## worth stating plainly because it is new and it is enforced by a raise: **a
-## trace or contour mutated outside `Section` owes a `resyncColumnarStore()`
-## before the section is saved.** That was free advice under the gate. It is a
-## rule now, and the twelve sites above are what it caught.
+## The invariant this establishes is worth stating plainly because it is
+## enforced by a raise: **a trace or contour mutated outside `Section` owes a
+## `resyncColumnarStore()` before the section is saved.** That was free advice
+## under the gate. It is a rule now, and the sites above are what it caught.
 ##
 ## THE COUNT ABOVE HAS BEEN WRONG FOUR TIMES. READ IT AS A WARNING.
 ## ----------------------------------------------------------------
@@ -169,7 +181,8 @@ StoredTraceID = namedtuple("StoredTraceID", ("trace_id", "fill_mode_key"))
 ## routes instead of two, and three reach routes instead of one. But the honest
 ## summary is that four consecutive "complete" sets have been wrong, the third
 ## of them after the enumeration had been mechanized specifically to prevent
-## that. Nothing about "twelve" is more trustworthy than "eight" was.
+## that. Nothing about "twelve" was more trustworthy than "eight" was, and it
+## too went stale; the list above is current only as of its writing.
 ##
 ## REBUILD AT SAVE, NOT COMPARE, AND EXACTLY WHAT IT BUYS
 ## ------------------------------------------------------
@@ -183,7 +196,7 @@ StoredTraceID = namedtuple("StoredTraceID", ("trace_id", "fill_mode_key"))
 ## **What that removes, precisely:** an out-of-class edit can no longer leave a
 ## section unsaveable, and can no longer abort a multi-section operation partway
 ## through (`smoothObject` and `combineDuplicateTraces` both call `save()` inside
-## their own loop). The thirteenth site, whenever it is found, is not a crash in
+## their own loop). The next site, whenever it is found, is not a crash in
 ## a user's session and not a data-loss risk. It is also cheaper: rebuilding the
 ## busiest section of `autoseg745` costs about half what comparing it did.
 ##
@@ -204,17 +217,18 @@ StoredTraceID = namedtuple("StoredTraceID", ("trace_id", "fill_mode_key"))
 ## is none to build. The claim is about `save()`, and only about `save()`.
 ##
 ## **What it does NOT remove, and this is the part it would be easy to overclaim
-## -- the twelve repair calls above are still load-bearing and still there.**
+## -- the repair calls above are still load-bearing and still there.**
 ## Rebuilding at `save()` fixes the store *at* `save()`. It does nothing for the
 ## window BETWEEN the out-of-class edit and the next save, and that window is
-## where most of the twelve actually bit:
+## where most of the sites actually bit, and where drawing and hover read:
 ##
-##   * a REBIND (undo, redo, `deleteObjects`, autoseg's group delete) leaves
+##   * a REBIND (undo and redo through `_restoreState`, autoseg's group delete
+##     in `exportTraces`) leaves
 ##     `_column_rows` keyed on discarded `Trace` objects, so the next hooked
 ##     mutation touching a surviving trace goes through `_rowFor` and raises
 ##     "holds no row for" -- before any save runs.
-##   * an IN-PLACE write (the eight `setHidden` / `smooth` / `mergeTags` /
-##     `tags.add` sites) leaves one row's value stale, so the next hooked
+##   * an IN-PLACE write (the `setHidden` / `smooth` / `mergeTags` / tag-set
+##     sites) leaves one row's value stale, so the next hooked
 ##     mutation of that same trace runs `_assertRowMatchesTrace`, which compares
 ##     the whole row, and raises on the column that drifted.
 ##
@@ -227,7 +241,7 @@ StoredTraceID = namedtuple("StoredTraceID", ("trace_id", "fill_mode_key"))
 ## THE DISCIPLINE SIGNAL, KEPT AS A WARNING RATHER THAN LOST
 ## ---------------------------------------------------------
 ## A pure rebuild silently absorbs an out-of-class edit, and that signal is
-## exactly how five of the twelve sites were found. So the rebuild is compared
+## exactly how five of the sites were found. So the rebuild is compared
 ## against the store it replaces -- store against store, not store against
 ## object model -- and any difference is PRINTED, never raised. `print` reaches
 ## a real place: `backend/func/logging_setup.py` tees stdout and stderr to a
@@ -248,7 +262,7 @@ StoredTraceID = namedtuple("StoredTraceID", ("trace_id", "fill_mode_key"))
 ## common case keeps the store it already had, untouched, generation included.
 ##
 ## One thing that has NOT changed: the rebuild runs AFTER the write, for the
-## same reason the comparison did. A fault in a shadow copy must never cost a
+## same reason the comparison did. A fault in the derived copy must never cost a
 ## user their valid bytes (see `save`).
 
 
@@ -421,7 +435,7 @@ def _storeDrift(before, before_map, after, after_map) -> list:
     Reported, never raised. The rebuild has already made the store correct by
     the time this runs, so there is nothing left to refuse; what is left is the
     discipline signal that the edit happened at all, which is how five of the
-    twelve known out-of-class sites were found and is the one thing rebuilding
+    known out-of-class sites were found and is the one thing rebuilding
     at `save()` knowingly put at risk.
 
         Params:
@@ -1540,8 +1554,10 @@ class Section():
         # raise rather than be written and then raise. That is exactly
         # backwards for what the two representations are. The object model is
         # authoritative and `getDict()` above serialized it; the store is a
-        # shadow copy that NOTHING reads. So a fault in the shadow copy's
-        # bookkeeping was vetoing the persistence of the model that owns every
+        # derived copy. Drawing, hover, SVG export and the series data read
+        # it, but none of them reads it to produce these bytes. So a fault in
+        # the copy's bookkeeping was vetoing the persistence of the model that
+        # owns every
         # value, and the refusal recurred on every later save, leaving the
         # section unsaveable for the rest of the session.
         #
@@ -1731,17 +1747,13 @@ class Section():
     # Paths that edit a section's traces or contours from OUTSIDE this class are
     # the reason always-on was more than deleting an `if`. Under the gate they
     # were unreachable with a store present, and the comment here said only that
-    # they "owe the resync". **There are TWELVE**, they are all on hot user
-    # paths, and with a store always present every one of them was a
-    # `ColumnarDualWriteMismatch` raised in a real session -- undo, redo,
-    # deleting an object, autoseg's group deletion, the three hide paths,
-    # smoothing an object, de-duplicating traces, clicking an import-conflict
-    # flag, smoothing a selection, and cutting one. They now call
-    # `resyncColumnarStore()`:
+    # they "owe the resync". They are on hot user paths, and with a store
+    # always present every one of them was a `ColumnarDualWriteMismatch`
+    # raised in a real session. At this writing ten calls outside this
+    # module make the repair, `resyncColumnarStore()`:
     #
-    #   backend/func/state_manager.py    SectionStates.undoState / .redoState
-    #   datatypes/series.py              Series.deleteObjects
-    #   backend/autoseg/conversions.py   seriesToLabels
+    #   backend/func/state_manager.py    SectionStates._restoreState
+    #   backend/autoseg/conversions.py   exportTraces (group deletion)
     #   datatypes/series.py              Series.hideObjects
     #   datatypes/series.py              Series.hideAllTraces
     #   datatypes/series.py              Series.restoreObjectVisibility
@@ -1751,15 +1763,17 @@ class Section():
     #   gui/main/field_widget_2_trace.py FieldWidgetTrace.smoothTraces
     #   gui/main/field_widget_2_trace.py FieldWidgetTrace.cutTrace
     #
-    # (Eleven rows, twelve sites: the `state_manager.py` row carries two.)
+    # Undo and redo share the one call in `_restoreState`. The module header
+    # says which earlier sites no longer need the repair, and which tests
+    # hold the rule; a search for `resyncColumnarStore(` outside this module
+    # gives the current list.
     #
     # Two shapes, and the second is the one that keeps being missed: a *rebind*
     # (the contour dict or a key is replaced) and an *in-place write* (a trace
     # the section still holds has one of the eight columns written on it). The
-    # first three rows are rebinds -- four sites, since `state_manager.py`
-    # carries two -- and the last eight rows are in-place writes.
+    # first two rows are rebinds and the other eight are in-place writes.
     #
-    # That is a real limit on this design, not a fixed bug: a thirteenth such site
+    # That is a real limit on this design, not a fixed bug: a new such site
     # added later fails the same way. What it costs is smaller now that `save()`
     # rebuilds the store, and the smaller amount is the honest number rather
     # than zero. It used to make the section UNSAVEABLE for the rest of the
@@ -1806,7 +1820,8 @@ class Section():
         The public repair for a section whose traces or contours were edited
         from outside this class, and the only way a store is ever created.
         `__init__` calls it once per section, and the import path and the
-        twelve out-of-class edit sites call it after they are done.
+        out-of-class edit sites (listed in the module header) call it after
+        they are done.
 
         The work itself is `_rebuildColumnarStore`, which this delegates to and
         which `save()` reaches independently through its own rebuild. The split
@@ -1859,8 +1874,8 @@ class Section():
         the IDS -- which is what happened at the `fromSection` layer whenever
         an issuer WAS passed -- meant every trace on the section was
         re-identified. Either way a birth certificate was reissued for a trace
-        that had not changed, and this method is reached from all fourteen
-        `resyncColumnarStore()` call sites plus every `save()`.
+        that had not changed, and this method is reached from every
+        `resyncColumnarStore()` call site plus every `save()`.
 
         The correlation is the outgoing row map, and it has to be, because
         `Trace` carries no id attribute of any kind: there is no id to read off
@@ -1893,9 +1908,10 @@ class Section():
         ## `+ 1`, not `previous`. `fromSection` bumps once per appended row, so
         ## seeding with `previous` relies on the rebuild having at least one row
         ## to move the counter past the value a cache may already hold. A resync
-        ## that produces ZERO rows does not advance at all -- and
-        ## `Series.deleteObjects` reaches exactly that shape, deleting every
-        ## contour key on a section and then calling the repair. A cache holding
+        ## that produces ZERO rows does not advance at all -- and a section
+        ## whose every contour key was deleted outside this class reaches
+        ## exactly that shape when the repair runs (autoseg's group delete in
+        ## `exportTraces` can). A cache holding
         ## the old generation would conclude it was current against a store that
         ## had just been emptied, which is the stale-render bug the counter
         ## exists to prevent. Seeding one above the outgoing count makes the
@@ -2007,7 +2023,7 @@ class Section():
         not, which made a missed out-of-class edit site into an unsaveable
         section. This one does not ask. The object model owns every value, the
         store is derived from it, so rebuilding makes the store correct
-        whenever a store can be built -- and a thirteenth edit site, whenever
+        whenever a store can be built -- and a new edit site, whenever
         it turns up, cannot cost anybody a save.
 
         **"Cannot cost a save" is a claim about this method not raising, and
@@ -2045,7 +2061,7 @@ class Section():
 
         **The residue this paragraph used to record is closed.** A save that
         DOES find drift adopts the rebuild, and that used to lose the ids with
-        it -- exactly as the fourteen `resyncColumnarStore()` call sites did.
+        it -- exactly as every `resyncColumnarStore()` call site did.
         `_rebuildColumnarStore` now carries both the issuer and the outgoing
         ids into the replacement, so a drifted save keeps every id it can
         correlate through the outgoing row map. The two mechanisms are

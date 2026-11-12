@@ -1,0 +1,1 @@
+- **Series with invalid trace IDs still open with every trace intact.** Duplicate IDs produce a warning in the log with the object name, section, and trace number.
