@@ -1,0 +1,1 @@
+- **Existing 3D mesh files stay intact when mesh conversion fails.**
