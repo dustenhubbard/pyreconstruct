@@ -15,9 +15,9 @@ publisher" SmartScreen warning (click *More info → Run anyway*).
 | `PyReconstruct.spec` | PyInstaller build recipe (one-folder) |
 | `rthook_qt.py` | Runtime hook: clears a stale Qt plugin path |
 | `smoke_test.py` | Headless import + offscreen VTK render check |
-| `make_cli_shims.py` | The `pyrecon` and `pyreconstruct` terminal commands, written into the frozen app after the freeze; on macOS it seals the unsigned app again ad hoc, so `codesign --verify` still passes |
+| `make_cli_shims.py` | The `pyrecon` and `pyreconstruct` terminal commands, written into the PyReconstruct bundle after the freeze; on macOS it seals an unsigned PyReconstruct again ad hoc, so `codesign --verify` still passes |
 | `windows/PyReconstruct.iss` | Inno Setup installer script *(to be added)* |
-| `macos/make_icns.sh`, `macos/make_dmg.sh` | macOS icon + dmg |
+| `macos/make_icns.sh`, `macos/make_dmg.sh` | macOS icon + dmg; the dmg build fails if PyReconstruct in the image fails `codesign --verify --deep --strict` |
 | `macos/sign_app.sh`, `macos/entitlements.plist` | Developer ID signing with the hardened runtime |
 
 ## Prerequisites
