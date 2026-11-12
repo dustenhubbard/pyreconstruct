@@ -178,6 +178,7 @@ WHAT THIS MODULE DELIBERATELY DOES NOT DO
 import hashlib
 import json
 import secrets
+import sys
 
 try:
     import orjson
@@ -278,6 +279,8 @@ def decodeTraceID(trace_id: str) -> int:
         Returns:
             (int): the encoded value
     """
+    if not isinstance(trace_id, str):
+        raise ValueError(f"a trace id must be a string, got {trace_id!r}")
     if len(trace_id) != TRACE_ID_LENGTH:
         raise ValueError(
             f"a trace id is {TRACE_ID_LENGTH} characters, got {len(trace_id)}: "
@@ -604,7 +607,12 @@ class TraceIDIssuer():
                     self._malformed.append((trace_id, cname))
                     continue
                 if not accepted:
-                    ## `adopt` has already recorded the clash by name.
+                    print(
+                        f"WARNING: Duplicate stored trace ID {trace_id!r} for "
+                        f"{cname!r} on section {section_number}, trace {i + 1}; "
+                        "a replacement ID will be derived.",
+                        file=sys.stderr,
+                    )
                     continue
                 while len(recorded) <= k:
                     recorded.append(None)

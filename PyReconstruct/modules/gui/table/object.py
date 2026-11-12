@@ -1250,6 +1250,7 @@ class ObjectTableWidget(DataTable):
         
         self.series.importUserColsText(fp)
         self.updateObjCols()
+        self.mainwindow.seriesModified(True)
     
     def setHostFilter(self):
         """Set the host filter."""
