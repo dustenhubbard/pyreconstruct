@@ -50,7 +50,10 @@ def test_mesh_files_keep_aligned_geometry_and_section_gaps(
     mesh_series, tmp_path, mode, file_type
 ):
     mesh_series.setAttr("mesh", "3D_mode", mode)
-    scene_meshes, _ = generateVolumes(mesh_series, [{"name": "mesh"}], [])
+    scene_meshes, _, failures = generateVolumes(
+        mesh_series, [{"name": "mesh"}], []
+    )
+    assert failures == []
     scene_mesh = trimesh.Trimesh(
         vertices=scene_meshes[0]["vertices"], faces=scene_meshes[0]["faces"]
     )
@@ -67,7 +70,7 @@ def test_mesh_files_keep_aligned_geometry_and_section_gaps(
     assert len(parts) == 2
     np.testing.assert_allclose(
         [part.bounds.mean(axis=0) for part in parts],
-        [[12, -2, 0], [22, 8, 1]], atol=1e-6,
+        [[12, -2, 0.5], [22, 8, 1.5]], atol=1e-6,
     )
     assert [part.euler_number for part in parts] == [2, 2]
     assert all(part.is_watertight for part in parts)
@@ -75,14 +78,14 @@ def test_mesh_files_keep_aligned_geometry_and_section_gaps(
     assert exported.volume == pytest.approx(scene_mesh.volume, rel=1e-6)
 
     if mode == "spheres":
-        for part, center in zip(parts, ((12, -2, 0), (22, 8, 1))):
+        for part, center in zip(parts, ((12, -2, 0.5), (22, 8, 1.5))):
             np.testing.assert_allclose(
                 np.linalg.norm(part.vertices - center, axis=1),
                 math.sqrt(8), atol=1e-6,
             )
     else:
         np.testing.assert_allclose(
-            exported.bounds, [[10, -4, -0.25], [24, 10, 1.25]], atol=1e-6
+            exported.bounds, [[10, -4, 0.25], [24, 10, 1.75]], atol=1e-6
         )
 
 
