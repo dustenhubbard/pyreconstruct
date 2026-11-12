@@ -53,7 +53,7 @@ DEFAULT_POSITIONS = {
 # The narrowest the trace palette's name label is cut to, in pixels. The
 # label shows the whole name where the layout has room for it; where it has
 # not, the middle of the name is cut out, down to this width, so the end and
-# its number stay in view, and the tool tip shows the whole name. The field's
+# its number stay in view. The tool tip always shows the whole name. The field's
 # minimum size (MousePalette.__init__) was measured with a label this wide,
 # so no name can make the palette need more room than that.
 LABEL_MIN_WIDTH = 130
@@ -565,7 +565,7 @@ class MousePalette():
             self.label.setText(metrics.elidedText(name, Qt.ElideMiddle, room))
         else:
             self.label.setText(name)
-        self.label.setToolTip(name if self.label.text() != name else "")
+        self.label.setToolTip(name)
         self.label.resize(self.label.sizeHint())
         x -= self.label.width() / 2
         _, height = self.traceGridSize(*self.traceGrid())

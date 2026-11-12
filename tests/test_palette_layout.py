@@ -558,22 +558,21 @@ def test_a_long_name_keeps_its_number_in_view(
             assert palette.label.text() != name
             assert palette.label.text().startswith("dend")
             assert palette.label.text().endswith(f"_{number}")
-            assert palette.label.toolTip() == name
         else:
             assert palette.label.text() == name
-            assert palette.label.toolTip() == ""
+        assert palette.label.toolTip() == name
         assert missed_controls(main_window, palette) == []
         shown.append(palette.label.text())
     assert shown[0] != shown[1]
 
 
-def test_a_short_name_is_shown_whole_without_a_tip(main_window, palette):
+def test_a_short_name_is_shown_whole(main_window, palette):
     series = main_window.series
     selected = series.palette_traces[series.palette_index[0]][series.palette_index[1]]
     selected.name = "d03"
     palette.reset()
     assert palette.label.text() == "d03"
-    assert palette.label.toolTip() == ""
+    assert palette.label.toolTip() == "d03"
 
 
 RESIZE_STEPS = [(320, 382), (600, 400), (1280, 800), (450, 382), (330, 390), (800, 600)]
