@@ -10,7 +10,8 @@ pytestmark = pytest.mark.gui
 
 
 @pytest.fixture
-def dense_layer(qapp, real_series):
+def dense_layer(qapp, real_series, local_series_settings):
+    local_series_settings(real_series)
     section = real_series.loadSection(min(real_series.sections))
     section.tforms[real_series.alignment] = Transform.identity()
     real_series.setOption("show_ztraces", False)

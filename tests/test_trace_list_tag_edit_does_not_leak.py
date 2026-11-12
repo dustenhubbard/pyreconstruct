@@ -49,7 +49,8 @@ class _Answering:
 
 
 @pytest.fixture
-def field(main_window, monkeypatch):
+def field(main_window, monkeypatch, local_series_settings):
+    local_series_settings(main_window)
     monkeypatch.setattr(field_widget_2_trace, "TraceDialog", _Answering)
     main_window.series.tag_sets = SETS.copy()
     main_window.series.setOption("auto_merge", True)

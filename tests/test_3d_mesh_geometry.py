@@ -15,8 +15,9 @@ from PyReconstruct.modules.gui.popup import custom_plotter as cp
 
 
 @pytest.fixture
-def mesh_series(shapes1_jser, qapp):
+def mesh_series(shapes1_jser, qapp, local_series_settings):
     series = Series.openJser(str(shapes1_jser), progress=NullProgressReporter)
+    local_series_settings(series)
     yield series
     series.close()
 

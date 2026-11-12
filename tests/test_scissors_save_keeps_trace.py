@@ -300,6 +300,13 @@ def test_a_jump_within_the_section_finishes_the_cut_before_the_view_moves(
         assert abs(got - want) <= 2 * per_pixel
 
 
+@pytest.fixture
+def main_window(main_window, local_series_settings):
+    """The shared fixture window, its option writes kept to this test."""
+    local_series_settings(main_window)
+    return main_window
+
+
 def _draw_closed(main_window, qapp, name="scissors_undo_a", slot=0):
     """Draw a small closed trace with the Closed Trace tool, a click per
     corner and a right-click to finish, away from the fixture's traces. It
