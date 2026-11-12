@@ -18,9 +18,10 @@ readers that build user-facing data are:
     `SeriesData.refresh` and `Series.openJser` both go through it;
   * the trace layer, `backend/view/trace_layer.py`: `_rawBounds` reads each
     trace's bounds for the draw's culling and for hover (`findClosest`), and
-    `_fieldPoints` reads the points it draws. Both key on the store's
-    `generation`, and both take a trace's own points when its row is missing
-    or has another point count.
+    `_fieldPoints` reads the points it draws. `_rawBounds` caches the bounds
+    for one store `generation`; `_fieldPoints` keeps no cache and reads the
+    row map and coordinates on every draw. Both take a trace's own points
+    when its row is missing or has another point count.
 
 An open does not always build a store. Both first open and resume read most
 sections as `SectionRows` (`section_rows.py`): raw rows measured straight into

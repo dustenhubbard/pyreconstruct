@@ -55,9 +55,9 @@ StoredTraceID = namedtuple("StoredTraceID", ("trace_id", "fill_mode_key"))
 ## and mirrors every mutation into it, so that the columnar store is driven by
 ## real code on real data and checked against the object model. Several readers
 ## now read from the store: `export_svg`, `SeriesData`, and the trace layer's
-## culling, drawing and hover (`_rawBounds` and `_fieldPoints` in
-## `backend/view/trace_layer.py`, keyed on the store's generation). The object
-## model still owns every value, as below.
+## culling, drawing and hover (`backend/view/trace_layer.py`: `_rawBounds`
+## caches bounds for one store generation, and `_fieldPoints` reads rows on
+## every draw). The object model still owns every value, as below.
 ##
 ## THE GATE IS GONE, DELIBERATELY, AND WHAT REPLACED IT
 ## ----------------------------------------------------
