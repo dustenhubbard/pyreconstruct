@@ -36,3 +36,16 @@ def test_a_window_made_before_is_kept(qapp):
 
     assert isValid(window)
     assert not isValid(made)
+
+
+@pytest.mark.gui
+def test_a_deleted_main_window_is_no_longer_the_main_window(qapp):
+    from PyReconstruct.modules.gui.utils import utils
+
+    before = _top_level_widgets()
+    window = QWidget()
+    utils.setMainWindow(window)
+
+    delete_new_top_level_widgets(before)
+
+    assert utils.mainwindow is None

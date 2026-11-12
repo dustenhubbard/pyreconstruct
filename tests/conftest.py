@@ -619,6 +619,11 @@ def delete_new_top_level_widgets(before):
     delete, and only an event loop does (`qtbot.wait`, `QTest.qWait`,
     `QEventLoop.exec`). Deleting the widget at once with `shiboken6.delete`
     crashes a `MainWindow` (measured, segmentation fault).
+
+    A deleted window that `setMainWindow` still names is cleared from it, so
+    the next test starts with no main window, as a test run alone does.
+    `getProgbar` asks that window `isVisible()`; on a deleted one the call
+    raises, and the progress window falls back to the console.
     """
     from shiboken6 import isValid
 
@@ -633,6 +638,9 @@ def delete_new_top_level_widgets(before):
         for widget in left:
             widget.deleteLater()
         QTest.qWait(0)
+    utils = sys.modules.get("PyReconstruct.modules.gui.utils.utils")
+    if utils is not None and utils.mainwindow is not None and not isValid(utils.mainwindow):
+        utils.setMainWindow(None)
 
 
 @pytest.fixture(autouse=True)
