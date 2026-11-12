@@ -27,6 +27,13 @@ from PyReconstruct.modules.gui.main.field_widget_5_mouse import SCISSORS
 
 pytestmark = pytest.mark.gui
 
+
+@pytest.fixture(autouse=True)
+def _options_in_memory(main_window, local_series_settings):
+    """These tests set auto-merge; keep that in a store of their own, so the
+    tests that run after them on the worker read the defaults."""
+    local_series_settings(main_window)
+
 NAME = "scissors_automerge_obj"
 
 # pixel-space squares; the second overlaps the first, the third is far away
@@ -143,11 +150,10 @@ def test_undo_in_the_middle_of_a_cut_that_merges(main_window, qapp, local_series
 
 
 def test_a_cut_finished_from_a_focused_trace_list_still_merges(
-    main_window, qapp, local_series_settings
+    main_window, qapp
 ):
     """The cut's undo state refreshes the Trace List, which drops its row
     selection; the merge must still run on the overlapping traces it found."""
-    local_series_settings(main_window)
     field = _setup(main_window, SQ_OVERLAP)
     before = _traces(field)
 
@@ -213,13 +219,12 @@ LOCKED = "scissors_automerge_locked"
 
 
 def test_a_merging_cut_leaves_a_focused_locked_row_alone(
-    main_window, qapp, local_series_settings, monkeypatch
+    main_window, qapp, monkeypatch
 ):
     """The merge works on the traces it found, so a locked row of another
     object, focused in the Trace List, is not read and not offered to unlock."""
     from PyReconstruct.modules.gui.utils import utils as gui_utils
 
-    local_series_settings(main_window)
     field = _setup(main_window, SQ_OVERLAP)
     field.setTracingTrace(Trace(LOCKED, (255, 0, 0), True))
     field.newTrace(SQ_DISJOINT, field.tracing_trace, closed=True)

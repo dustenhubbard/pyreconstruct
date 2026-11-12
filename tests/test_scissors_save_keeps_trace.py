@@ -33,6 +33,13 @@ from PyReconstruct.modules.gui.main.field_widget_5_mouse import SCISSORS
 pytestmark = pytest.mark.gui
 
 
+@pytest.fixture(autouse=True)
+def _options_in_memory(main_window, local_series_settings):
+    """These tests set the trace mode; keep that in a store of their own, so the
+    tests that run after them on the worker read the defaults."""
+    local_series_settings(main_window)
+
+
 def _pick_trace(field, closed):
     """An unlocked trace of at least three points, opened if asked.
 
