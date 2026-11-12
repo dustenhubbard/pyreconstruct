@@ -601,6 +601,78 @@ _MAIN_WINDOW_SETTINGS_KEYS = (
 )
 
 
+def _top_level_widgets():
+    """The application's top-level widgets by C++ address, or {} with no app."""
+    widgets = sys.modules.get("PySide6.QtWidgets")
+    app = widgets.QApplication.instance() if widgets else None
+    if app is None:
+        return {}
+    from shiboken6 import getCppPointer
+
+    return {getCppPointer(w)[0]: w for w in app.topLevelWidgets()}
+
+
+def delete_new_top_level_widgets(before):
+    """Delete every live top-level widget that is not one of `before`'s.
+
+    `before` is a `_top_level_widgets()` taken earlier. The widgets are queued
+    with `deleteLater` and an event loop runs once, so they are gone when this
+    returns. `deleteLater` alone is not enough: `processEvents`,
+    `qtbot.waitExposed` and `QTest.qWaitForWindowExposed` never run a deferred
+    delete, and only an event loop does (`qtbot.wait`, `QTest.qWait`,
+    `QEventLoop.exec`). Deleting the widget at once with `shiboken6.delete`
+    crashes a `MainWindow` (measured, segmentation fault).
+
+    A deleted window that `setMainWindow` still names is cleared from it, so
+    the next test starts with no main window, as a test run alone does.
+    `getProgbar` asks that window `isVisible()`; on a deleted one the call
+    raises, and the progress window falls back to the console.
+    """
+    from shiboken6 import isValid
+
+    # A widget at an address in `before` is the same widget only if it has the
+    # same wrapper: once the earlier widget is deleted, Qt can put a new one at
+    # its address, and that one gets a new wrapper.
+    left = [
+        widget
+        for address, widget in _top_level_widgets().items()
+        if before.get(address) is not widget and isValid(widget)
+    ]
+    if left:
+        from PySide6.QtTest import QTest
+
+        for widget in left:
+            widget.deleteLater()
+        QTest.qWait(0)
+    utils = sys.modules.get("PyReconstruct.modules.gui.utils.utils")
+    if utils is not None and utils.mainwindow is not None and not isValid(utils.mainwindow):
+        utils.setMainWindow(None)
+
+
+@pytest.fixture(autouse=True)
+def _delete_windows_a_test_leaves_behind():
+    """Delete, before the next test starts, every top-level widget a test made.
+
+    A `MainWindow` or options dialog a test builds and only closes, or a
+    fixture window queued with `deleteLater`, otherwise lives on until some
+    later test runs an event loop. A file whose tests only process events ends
+    with every window still alive (`test_wheel_steps.py`: 44 live `MainWindow`s
+    after the file), and the next `qtbot.wait` deletes them all. Under PySide6
+    6.9, deleting an object with a Python connection takes time in proportion
+    to every Python connection still alive in the process, so that batch costs
+    the square of the pile. On khgpu a worker held 650,000 live connections,
+    115,000 `QAction`s among them; deleting one widget with 200 connected
+    buttons took 470 ms instead of 0.3 ms, and single `qtbot.wait` calls ran
+    past 180 s.
+
+    Widgets that existed before the test, a session window among them, are left
+    alone.
+    """
+    before = _top_level_widgets()
+    yield
+    delete_new_top_level_widgets(before)
+
+
 @pytest.fixture
 def qsettings_snapshot():
     """Leave `QSettings("KHLab", "PyReconstruct")` as the test found it.
