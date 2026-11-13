@@ -26,11 +26,13 @@ import os
 import shutil
 import sqlite3
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
 from PyReconstruct.modules.backend.progress import NullProgressReporter
+from PyReconstruct.modules.constants import getdatetime
 from PyReconstruct.modules.datatypes import hybrid_store, lazy_sections, network_folder, store_open
 from PyReconstruct.modules.datatypes import section as section_module
 from PyReconstruct.modules.datatypes.hybrid_store import HybridStore, storePaths
@@ -352,6 +354,11 @@ def test_a_fixed_alignment_a_section_lacks_is_cleared_as_today(tmp_path, switch_
 
 
 def test_an_edit_and_save_after_an_open_from_the_store_writes_today_s_bytes(tmp_path, switch_on, monkeypatch):
+    # Both saves write a history line stamped with the minute, so both read
+    # one fixed clock; the bytes then differ only if the open path does.
+    fixed = datetime(2026, 1, 2, 7, 59, 59)
+    monkeypatch.setattr(getdatetime, "get_now", lambda: fixed)
+
     def edit_and_save(fp):
         series = _open(fp)
         try:
