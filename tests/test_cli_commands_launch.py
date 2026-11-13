@@ -252,6 +252,37 @@ def ensure(mac, shell="zsh", bundle=None, settings=None):
                           shell=shell, env={})
 
 
+@pytest.fixture
+def fake_login(monkeypatch):
+    """A login shell whose answer does not depend on the host. Some hosts' own
+    startup files add ~/.local/bin to every login PATH (Omarchy's
+    /etc/profile.d/omarchy.sh), and there the real answer leaves nothing to
+    write. This one has the folder only once PyReconstruct's lines are in a
+    file it reads."""
+    def answer(shell, home, env=None, timeout=10):
+        env = {} if env is None else env
+        entries = ["/usr/bin", "/bin"]
+        files = C.shell_profiles(shell, home, env) or []
+        if any(f.is_file() and C.PROFILE_TAG in f.read_text() for f in files):
+            entries.insert(0, str(Path(home) / ".local" / "bin"))
+        return entries, env.get("ZDOTDIR") or None
+    monkeypatch.setattr(C, "login_path", answer)
+
+
+@pytest.fixture
+def plain_login_host(tmp_path):
+    """Skips a real-shell test on a host whose own login files already put
+    ~/.local/bin on PATH: there PyReconstruct rightly writes nothing, so the
+    file it would pick cannot be seen."""
+    def check(shell):
+        home = tmp_path / "bare-home"
+        home.mkdir(exist_ok=True)
+        answer = C.login_path(shell, home, env={})
+        if answer is not None and C.has_local_bin(answer[0], home):
+            pytest.skip(f"this host's login {shell} already has ~/.local/bin")
+    return check
+
+
 def link_to(mac, name):
     return os.readlink(mac["links"] / name)
 
@@ -272,7 +303,7 @@ def test_only_an_installed_bundle_gets_links(path, ok):
 
 
 @posix_only
-def test_first_launch_makes_both_links_and_the_path_line(mac):
+def test_first_launch_makes_both_links_and_the_path_line(mac, fake_login):
     assert ensure(mac)
     assert link_to(mac, "pyrecon") == str(mac["bin"] / "pyrecon")
     assert link_to(mac, "pyreconstruct") == str(mac["bin"] / "pyreconstruct")
@@ -305,7 +336,7 @@ def test_the_path_line_never_doubles_an_entry():
 
 
 @posix_only
-def test_a_second_launch_changes_nothing(mac):
+def test_a_second_launch_changes_nothing(mac, fake_login):
     assert ensure(mac)
     before = (mac["home"] / ".zshenv").read_text()
     assert not ensure(mac)
@@ -337,7 +368,7 @@ def test_a_login_shell_that_has_local_bin_is_left_alone(mac, shell, name, line, 
 
 
 @posix_only
-def test_the_line_goes_after_what_is_there(mac):
+def test_the_line_goes_after_what_is_there(mac, fake_login):
     (mac["home"] / ".zshenv").write_text("export EDITOR=vi")
     ensure(mac)
     lines = (mac["home"] / ".zshenv").read_text().splitlines()
@@ -353,7 +384,7 @@ def found_by(shell, mac, **env):
 
 
 @posix_only
-def test_zdotdir_is_followed(mac, tmp_path):
+def test_zdotdir_is_followed(mac, tmp_path, fake_login):
     zdot = tmp_path / "zdot"
     zdot.mkdir()
     C.macos_ensure(mac["settings"], mac["bundle"], home=mac["home"], shell="zsh",
@@ -370,7 +401,8 @@ def test_zdotdir_is_followed(mac, tmp_path):
     {".zshenv": 'export ZDOTDIR="$HOME/.config/zsh"',
      ".config/zsh/.zshenv": 'export ZDOTDIR="$HOME/.config/zsh2"'},
 ])
-def test_a_zdotdir_moved_by_startup_files_still_finds_the_commands(mac, files):
+def test_a_zdotdir_moved_by_startup_files_still_finds_the_commands(mac, files, plain_login_host):
+    plain_login_host("zsh")
     for name, text in files.items():
         (mac["home"] / name).parent.mkdir(parents=True, exist_ok=True)
         (mac["home"] / name).write_text(text + "\n")
@@ -381,7 +413,8 @@ def test_a_zdotdir_moved_by_startup_files_still_finds_the_commands(mac, files):
 
 
 @needs("zsh")
-def test_a_zdotdir_that_zshenv_unsets_is_handled(mac, tmp_path):
+def test_a_zdotdir_that_zshenv_unsets_is_handled(mac, tmp_path, plain_login_host):
+    plain_login_host("zsh")
     old = tmp_path / "old-zdotdir"
     old.mkdir()
     (old / ".zshenv").write_text("unset ZDOTDIR\n")
@@ -399,13 +432,9 @@ def test_a_zdotdir_that_zshenv_unsets_is_handled(mac, tmp_path):
 ])
 def test_startup_files_that_print_do_not_confuse_the_answer(mac, shell, name):
     mac["home"].mkdir(exist_ok=True)
+    quiet = C.login_path(shell, mac["home"], env={})
     (mac["home"] / name).write_text('printf "Hello\\n/x:/y\\nset\\n/nowhere\\n"\n')
-    ensure(mac, shell=shell)
-    target = ".zshenv" if shell == "zsh" else ".bash_profile"
-    assert C.PROFILE_TAG in (mac["home"] / target).read_text()
-    out = subprocess.run([shell, "-lic", "command -v pyrecon"], capture_output=True, text=True, stdin=subprocess.DEVNULL,
-                         env={"HOME": str(mac["home"]), "PATH": "/usr/bin:/bin"}, timeout=30)
-    assert str(mac["links"] / "pyrecon") in out.stdout.splitlines()
+    assert quiet is not None and C.login_path(shell, mac["home"], env={}) == quiet
 
 
 @needs("zsh")
@@ -448,16 +477,8 @@ def test_a_setup_where_no_file_works_is_not_recorded(mac):
     assert not found_by("zsh", mac)
 
 
-@pytest.fixture
-def no_local_bin(monkeypatch):
-    """A login shell that answers without ~/.local/bin. Some hosts' own startup
-    files add it to every login PATH (Omarchy's /etc/profile.d/omarchy.sh), and
-    there the shell's real answer leaves nothing to write."""
-    monkeypatch.setattr(C, "login_path", lambda *args, **kwargs: (["/usr/bin", "/bin"], None))
-
-
 @posix_only
-def test_bash_uses_the_file_a_login_bash_reads(mac, no_local_bin):
+def test_bash_uses_the_file_a_login_bash_reads(mac, fake_login):
     (mac["home"] / ".profile").write_text("# mine\n")
     ensure(mac, shell="bash")
     assert C.PROFILE_TAG in (mac["home"] / ".profile").read_text()
@@ -465,7 +486,7 @@ def test_bash_uses_the_file_a_login_bash_reads(mac, no_local_bin):
 
 
 @posix_only
-def test_bash_with_no_startup_file_gets_a_bash_profile(mac, no_local_bin):
+def test_bash_with_no_startup_file_gets_a_bash_profile(mac, fake_login):
     ensure(mac, shell="bash")
     assert C.PROFILE_TAG in (mac["home"] / ".bash_profile").read_text()
 
@@ -479,7 +500,7 @@ def test_a_login_bash_skips_the_bashrc(mac):
 
 
 @posix_only
-def test_a_bashrc_a_login_bash_skips_does_not_count(mac, no_local_bin):
+def test_a_bashrc_a_login_bash_skips_does_not_count(mac, fake_login):
     mac["home"].mkdir(exist_ok=True)
     (mac["home"] / ".bashrc").write_text('export PATH="$HOME/.local/bin:$PATH"\n')
     ensure(mac, shell="bash")
@@ -500,10 +521,9 @@ def test_a_bashrc_a_login_bash_skips_does_not_count(mac, no_local_bin):
 ])
 def test_a_line_that_does_not_set_path_does_not_count(mac, shell, name, line):
     mac["home"].mkdir(exist_ok=True)
+    before = C.login_path(shell, mac["home"], env={})
     (mac["home"] / name).write_text(line + "\n")
-    ensure(mac, shell=shell)
-    target = ".zshenv" if shell == "zsh" else ".bash_profile"
-    assert C.PROFILE_TAG in (mac["home"] / target).read_text()
+    assert before is not None and C.login_path(shell, mac["home"], env={}) == before
 
 
 @posix_only
@@ -628,7 +648,7 @@ def test_a_bundle_outside_applications_gets_nothing(mac, tmp_path):
 
 
 @posix_only
-def test_dev_uses_its_own_names_beside_stable(mac, monkeypatch):
+def test_dev_uses_its_own_names_beside_stable(mac, monkeypatch, fake_login):
     ensure(mac)
     monkeypatch.setenv("PYRECON_APP_NAME", "PyReconstruct Dev")
     dev_bundle = mac["home"] / "Applications" / "PyReconstruct Dev.app"
