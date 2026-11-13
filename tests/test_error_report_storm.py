@@ -40,6 +40,8 @@ def fresh_report_state(qapp, monkeypatch):
     """
     monkeypatch.setattr(errors, "_reported_signatures", set(), raising=False)
     monkeypatch.setattr(errors, "_showing_report", False, raising=False)
+    # someone is there to see the window
+    monkeypatch.delenv("PYRECON_UNATTENDED", raising=False)
     # keep the console traceback out of the test output
     monkeypatch.setattr(sys, "__excepthook__", lambda *args: None)
 

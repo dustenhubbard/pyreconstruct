@@ -123,6 +123,9 @@ to the console and waits for an answer on stdin. With it set, nothing reads
 stdin: a notice is printed and the run continues, and a yes/no question is
 printed and answered no.
 
+With it set, no error window opens either. A crash report goes to the terminal
+and the log file, and a failed save prints its message.
+
 Exactly `1` enables it. Leave it unset for an ordinary launch — it suppresses
 dialogs a real user wants to see.
 
