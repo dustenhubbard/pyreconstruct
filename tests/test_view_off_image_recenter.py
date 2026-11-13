@@ -677,6 +677,10 @@ def test_a_series_imported_from_xml_opens_on_its_image(
     images are; the recorder answers yes and names the legacy folder. The
     series code is detected from the name, so that prompt confirms it, and
     the save-as prompt at the end is answered with no file.
+
+    The user at the screen is two settings: ``qt_offscreen`` off and
+    ``PYRECON_UNATTENDED`` unset. A run that exports ``PYRECON_UNATTENDED=1``
+    skips the images prompt, so the queued folder went to Save As instead.
     """
     from PySide6.QtWidgets import QMessageBox
 
@@ -686,6 +690,7 @@ def test_a_series_imported_from_xml_opens_on_its_image(
     folder.mkdir()
     ser = _write_legacy_series(folder)
     monkeypatch.setattr(gui_utils, "qt_offscreen", False)
+    monkeypatch.delenv(gui_utils.UNATTENDED_ENV_VAR, raising=False)
     main_window_dialogs.message_box_response = QMessageBox.Yes
     main_window_dialogs.file_responses.append(str(folder))
 

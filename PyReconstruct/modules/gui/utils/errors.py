@@ -21,6 +21,7 @@ from PyReconstruct.modules.constants import gh_issues, gh_bug_form, developers_e
 # Sibling module, relative like the package's own re-exports: an absolute import
 # here would re-enter `gui.utils.__init__`, which is what imports this file.
 from .confetti import burst_confetti
+from .utils import is_unattended
 
 # Qt-free report builders (usable from the headless data model too).
 from PyReconstruct.modules.backend.func.error_report import (
@@ -205,10 +206,14 @@ def show_error_report(
     this far, and ``Help > Diagnostics > View log file`` reads it back. The other
     two callers do no logging of their own, so a report suppressed for them leaves
     no record. That can happen only inside an open, application-modal report window.
+
+    Unattended (``PYRECON_UNATTENDED=1``), nobody can close the window, so none
+    opens and this returns False. The hook has already printed and logged the
+    report, and a failed save prints its message instead.
     """
     global _showing_report
 
-    if _showing_report:
+    if _showing_report or is_unattended():
         return False
 
     active_window = QApplication.activeWindow()
@@ -233,14 +238,17 @@ def show_error_report(
     return True
 
 
-def show_save_error(message: str, report: str, parent=None):
+def show_save_error(message: str, report: str, parent=None) -> bool:
     """Copyable dialog for a handled save failure (used by the Notifier seam).
 
     ``message`` is the plain-text explanation already shown to the user; the
     ``report`` carries the traceback + environment for pasting into a bug report.
+    Returns whether the dialog opened, as ``show_error_report`` does.
     """
     lead = html.escape(message).replace("\n", "<br>")
-    show_error_report(_standard_summary(lead, report), report, parent, title="Save failed")
+    return show_error_report(
+        _standard_summary(lead, report), report, parent, title="Save failed"
+    )
 
 
 class LogViewerDialog(QDialog):

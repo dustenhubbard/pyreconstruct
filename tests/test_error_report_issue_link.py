@@ -29,6 +29,8 @@ REPORT = "PyReconstruct error report\nVersion:  1.24.0\n\nValueError: boom"
 @pytest.fixture(autouse=True)
 def fixed_context(monkeypatch):
     monkeypatch.setattr(error_report, "_context_lines", lambda: ["Version:  1.24.0"])
+    # someone is there to see the window
+    monkeypatch.delenv("PYRECON_UNATTENDED", raising=False)
 
 
 @pytest.fixture
