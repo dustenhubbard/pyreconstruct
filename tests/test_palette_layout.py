@@ -976,9 +976,13 @@ def test_a_shortened_bar_is_labeled_with_the_length_it_draws(
 
 
 def first_clear_decade(main_window, palette, length):
-    """The length a typed bar must be drawn at: as typed, or the first
-    decade below whose bar leaves every group clear (by brute force)."""
+    """The length a typed bar must be drawn at: as typed (or the decade a
+    zoom moves it to), or the first decade below whose bar leaves every
+    group clear (by brute force)."""
+    from PyReconstruct.modules.gui.palette.scale_bar import pinnedLength
+
     clear = clear_widths(main_window, palette)
+    length = pinnedLength(length, palette.sb.scale, main_window.field.width())[0]
     return next(length / 10 ** k for k in range(6)
                 if palette.sbBarWidth(length / 10 ** k) in clear)
 
@@ -1108,3 +1112,54 @@ def test_every_placement_road_refits_a_typed_length(
     qapp.processEvents()
     palette = main_window.mouse_palette
     assert check_typed(main_window, palette, 3.2) == []
+
+
+def pan_zoom_to(main_window, palette, qapp, scale):
+    """Zoom the field to `scale` µm a pixel with real pan-zoom drags, each
+    at most 100 times in or out, as a hand would."""
+    field = main_window.field
+    for _ in range(40):
+        if palette.getScale() == pytest.approx(scale):
+            break
+        factor = min(max(palette.getScale() / scale, 0.01), 100)
+        field.panzoomPress(100, 100)
+        field.panzoomMove(zoom_factor=factor)
+        field.panzoomRelease(zoom_factor=factor)
+        qapp.processEvents()
+    assert palette.sb.scale == pytest.approx(scale)
+
+
+def test_a_typed_bar_with_no_room_at_any_length_is_hidden_until_the_room_returns(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path):
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    palette = smallest_window(main_window, local_series_settings, monkeypatch, qapp,
+                              tmp_path, 1, 1, thickness=25)
+    typed = 1.234567891
+    type_length(monkeypatch, palette, [typed])
+    assert check_typed(main_window, palette, typed) == []
+    visibility = mouse_palette.load_palette_visibility(mouse_palette._visibility_settings())
+    # so far out that the bar's number alone is wider than any clear spot,
+    # at every length it can be drawn
+    pan_zoom_to(main_window, palette, qapp, 1e16)
+    assert palette.sbTypedFit(typed)[1] is None
+    assert palette.sb.isHidden() and not palette.sb_hidden
+    assert missed_controls(main_window, palette) == ["scale bar"]
+    # the View menu's toggle does not show a bar that has no room
+    palette.toggleSB()
+    palette.toggleSB()
+    assert palette.sb.isHidden()
+    # a larger window has room again, and the smallest one has not
+    main_window.resize(1280, 800)
+    qapp.processEvents()
+    assert check_typed(main_window, palette, typed) == []
+    main_window.resize(100, 100)
+    qapp.processEvents()
+    assert palette.sb.isHidden()
+    assert missed_controls(main_window, palette) == ["scale bar"]
+    # zoomed back in, the typed length is drawn again
+    pan_zoom_to(main_window, palette, qapp, 0.01)
+    assert not palette.sb.isHidden()
+    assert palette.sb.currentLength()[0] == typed
+    assert check_typed(main_window, palette, typed) == []
+    assert mouse_palette.load_palette_visibility(mouse_palette._visibility_settings()) == visibility

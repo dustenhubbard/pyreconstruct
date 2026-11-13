@@ -348,6 +348,10 @@ class MousePalette():
 
         self.help_widget = None
 
+        # True while a length you typed has no room and its bar is hidden
+        # (fitTypedLength); never stored
+        self.sb_no_room = False
+
         # create scale palette
         self.createSB()
 
@@ -865,7 +869,9 @@ class MousePalette():
         return {
             "inc": (self.ibw, self.ibh*2 + 15),
             "bc": (self.bcsize*6 + 5, self.bcsize*2 + 20),
-            "sb": (self.sb.width(), self.sb.height()) if hasattr(self, "sb") else (10, 50),
+            # a bar hidden for want of room (fitTypedLength) takes none
+            "sb": ((1 if self.sb_no_room else self.sb.width()), self.sb.height())
+            if hasattr(self, "sb") else (10, 50),
         }[group]
 
     @staticmethod
@@ -886,7 +892,7 @@ class MousePalette():
             tuple(self.savedFractions().items()),
             self.trace_palette_per_row, self.tool_palette_cols,
             self.palette_button_count, len(self.mode_buttons),
-            self.sb.size().toTuple() if hasattr(self, "sb") else None,
+            self.groupSize("sb") if hasattr(self, "sb") else None,
             self.labelSize().toTuple(),
         )
 
@@ -963,7 +969,8 @@ class MousePalette():
         clear width (sbTypedRoom), but narrower than the decade above, so
         `pinnedLength` draws that decade, and a live zoom, which places no
         group again, can grow the bar into it. When none is clear, the room
-        is the shortest one's and the count is None."""
+        is the shortest one's and the count is None: the bar is then hidden
+        (fitTypedLength)."""
         scale = self.sb.scale
         key = self.layoutKey()[:-2] + (
             self.sb.height(), self.labelSize().toTuple(), scale, length,
@@ -1280,7 +1287,12 @@ class MousePalette():
         for b, slider in self.bc_widgets:
             b.hide() if self.bc_hidden else b.show()
             slider.hide() if self.bc_hidden else slider.show()
-        self.sb.hide() if self.sb_hidden else self.sb.show()
+        self.showSB()
+
+    def showSB(self):
+        """Show the scale bar unless the View menu hides it or a length you
+        typed has no room (fitTypedLength)."""
+        self.sb.setVisible(not (self.sb_hidden or self.sb_no_room))
 
     def togglePalette(self):
         """Hide/Unhide the mouse palette."""
@@ -1307,7 +1319,7 @@ class MousePalette():
     def toggleSB(self):
         """Hide/Unhide the scale bar."""
         self.sb_hidden = not self.sb_hidden
-        self.sb.hide() if self.sb_hidden else self.sb.show()
+        self.showSB()
         self.saveVisibilityState("sb_hidden")
     
     def resetPos(self):
@@ -1768,11 +1780,20 @@ class MousePalette():
         it less room than when it was typed; it then steps a decade, as a
         zoom does, so its label still measures what is drawn. The typed
         length is kept, so it is drawn as typed again when the room comes
-        back."""
+        back.
+
+        When not even the shortest decade leaves every group clear, which
+        takes a zoom far beyond any image, the bar is hidden instead, so it
+        covers no button. It comes back by itself when the room does."""
+        no_room = False
         if self.sb.override_length:
-            room = self.sbTypedFit(self.sb.override_length)[0]
+            room, decades = self.sbTypedFit(self.sb.override_length)
+            no_room = decades is None
             if room != self.sb.override_room:
                 self.sb.setOverride(self.sb.override_length, room)
+        if no_room != self.sb_no_room:
+            self.sb_no_room = no_room
+            self.showSB()
 
     def moveSB(self):
         """Move the bar to its spot in the layout, inside the field."""
@@ -1806,7 +1827,7 @@ class MousePalette():
         """
         self.fitTypedLength()
         room = self.layout()["sb width"]
-        if room < self.sb.width():
+        if not self.sb_no_room and room < self.sb.width():
             self.sb.setMaxPixelLength(room)
         self._placed_key = self.layoutKey()
         self.placeModeButtons()
