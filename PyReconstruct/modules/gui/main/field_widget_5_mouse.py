@@ -46,6 +46,18 @@ class FieldWidgetMouse(FieldWidgetData):
         if mode != self.mouse_mode:
             self.cancelLasso()
 
+        # A pending z-trace is a line trace only under the Ztool. Any other
+        # tool starts with no line under way, so its press cannot add a point
+        # to the z-trace. The z-trace keeps its points in current_ztrace, and
+        # the Ztool gets them back from there.
+        if self.is_z_tracing:
+            self.is_line_tracing = mode == ZTOOL
+            if mode == ZTOOL:
+                self.current_trace = [(x, y) for x, y, _ in self.current_ztrace]
+                self.activateMouseBoundaryTimer()
+            elif self.mouse_mode == ZTOOL:
+                self.deactivateMouseBoundaryTimer()
+
         self.mouse_mode = mode
 
         ## Set cursor icon

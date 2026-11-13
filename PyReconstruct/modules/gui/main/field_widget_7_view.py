@@ -12,7 +12,8 @@ from PyReconstruct.modules.gui.utils import notify
 from .field_widget_5_mouse import (
     CLOSEDTRACE, 
     OPENTRACE,
-    ROI_BOX
+    ROI_BOX,
+    ZTOOL,
 )
 from .field_widget_6_paint import FieldWidgetPaint
 from .status_readout import SEPARATOR
@@ -362,7 +363,11 @@ class FieldWidgetView(FieldWidgetPaint):
     
     def endPendingEvents(self):
         """End ongoing events that are connected to the mouse."""
-        if self.is_line_tracing and not self.is_z_tracing:
+        # A pending z-trace under the Ztool spans sections, so it stays open.
+        # A line another tool started while a z-trace waits ends here.
+        if self.is_line_tracing and not (
+            self.is_z_tracing and self.mouse_mode == ZTOOL
+        ):
             self.lineRelease(override=True)
 
         # A pointer drag is the other gesture that spans several events, and it
