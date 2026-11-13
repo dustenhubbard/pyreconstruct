@@ -517,6 +517,10 @@ The tool palette is the column of mode buttons (top-right by default). Click a
 button (or press its shortcut) to switch the active tool. **Right-clicking a
 tool button opens that tool's settings** (where it has any).
 
+If you switch tools while holding a mouse button, release it and press again to
+use the new tool. An unfinished mouse pan or zoom is canceled, restoring the
+previous view. An unfinished z-trace remains available when you return to Ztool.
+
 In every tool except Pan/Zoom, **right-clicking the field** opens a context menu
 (for the selected traces, or for the field). The mouse wheel changes sections, and
 middle-click pans, regardless of the active tool.
@@ -660,9 +664,10 @@ its dialog, where you can edit its name/color, add comments, and mark it
 
 Sets host (parent) relationships between objects. **Click a first trace** (the
 object that will be hosted), then **click a second trace** (its host); a line is
-drawn between them while you choose. **Right-click** to cancel. An object can't host
-itself, and two objects can't host each other. Hosts also appear as a column in the
-object list and can be set from the object list's context menu.
+drawn between them while you choose. **Right-click** to cancel. Changing tools also
+cancels an unfinished host link. An object can't host itself, and two objects can't
+host each other. Hosts also appear as a column in the object list and can be set
+from the object list's context menu.
 
 ### Z-trace tool
 
@@ -684,8 +689,16 @@ near the palette.
 ![The trace palette: two rows of ten preset buttons, with the selected preset's name, circle1, above them in orange.](assets/images/user-guide/07-trace-palette.png)
 
 - The default palette has **20 presets**, arranged as two rows of ten.
-- Select a preset with the number keys: **`1`–`9`, `0`** for the first row, and
-  **`Shift+1`–`Shift+9`, `Shift+0`** for the second.
+- In **Series ▸ Options ▸ View**, set **Trace buttons per row** and **Tool
+  columns** to change their arrangement. PyReconstruct remembers both settings
+  for your user across series and restarts. Buttons wrap or shrink when needed
+  to fit the window, and the window does not get smaller than the size where
+  every palette button and control can still be clicked. If a long preset name
+  does not fit, the palette leaves out the middle and shows the start and end,
+  so a number at the end is still shown. Point at the name to see all of it.
+- Select a preset with the number keys: **`1` through `9`, `0`** for the first ten,
+  and **`Shift+1` through `Shift+9`, `Shift+0`** for the next ten, regardless of the
+  arrangement.
 - **Right-click a preset** (or press `Ctrl`+its number) to edit its attributes:
   name, color, fill mode, tags, the trace **shape**, and the **stamp radius
   (microns)** used by the Stamp and Grid tools.

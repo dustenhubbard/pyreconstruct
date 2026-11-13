@@ -108,6 +108,8 @@ default_settings = {
     "flag_name": "",  # MFO
     "flag_color": [255, 0, 0],  # MFO
     "palette_inc_all": True,
+    "trace_palette_per_row": 10,  # MFO
+    "tool_palette_cols": 1,  # MFO
 
     # autoseg import trace colors
     # Colors for autoseg-imported traces are chosen from a curated,

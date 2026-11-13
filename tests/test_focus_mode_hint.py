@@ -112,8 +112,8 @@ def test_label_wraps_to_stay_inside_a_narrow_field(window):
     hint = _hint(window)
     one_line = hint.geometry().height()
 
-    field.resize(220, field.height())
-    assert field.width() == 220
+    field.resize(field.minimumWidth(), field.height())
+    assert field.width() == field.minimumWidth()
     assert field.rect().contains(hint.geometry())
     assert hint.geometry().height() > one_line
     assert hint.text().endswith("to exit.")

@@ -412,3 +412,112 @@ def test_correlation_row_keeps_or_saves_the_legacy_cutoffs(
     finally:
         dialog.close()
         series.close()
+
+
+@pytest.mark.parametrize("action", ["untouched", "edited", "reset"])
+@pytest.mark.parametrize("pending", [False, True])
+def test_palette_layout_row_keeps_or_saves_the_legacy_layout(
+    qapp, series_jser, domain, monkeypatch, pending, action  # noqa: F811  (fixture)
+):
+    app, make = domain
+    old = make("KHLab")
+    old.setValue("trace_palette_per_row", 17)
+    old.setValue("tool_palette_cols", 4)
+    old.sync()
+    old_bytes = Path(old.fileName()).read_bytes()
+    state = fail_legacy(monkeypatch, app)
+    state["fail"] = pending
+    series = Series.openJser(str(series_jser))
+    series.setSettingsStore(QSettingsStore())
+    dialog = AllOptionsDialog(None, series)
+    try:
+        if action == "edited":
+            dialog.all_widgets["palette_layout"].inputs[0].widget.setText("23")
+        elif action == "reset":
+            dialog.resetDefaults()
+        assert dialog.accept() is True
+        state["fail"] = False
+        values = [series.getOption(key) for key in
+                  ("trace_palette_per_row", "tool_palette_cols")]
+        print(f"palette layout pending={pending} {action} {values}")
+        assert Path(old.fileName()).read_bytes() == old_bytes
+        if action == "untouched":
+            assert values == [17, 4]
+        elif action == "edited":
+            assert values == [23, 4]
+        else:
+            assert values == [Series.qsettings_defaults["trace_palette_per_row"],
+                              Series.qsettings_defaults["tool_palette_cols"]]
+    finally:
+        dialog.close()
+        series.close()
+
+
+@pytest.mark.parametrize("reset", [False, True])
+@pytest.mark.parametrize("dev", [False, True])
+def test_every_options_row_returns_its_values_and_stores_only_on_ok(
+    qapp, series_jser, domain, monkeypatch, request, dev, reset  # noqa: F811  (fixture)
+):
+    """Walk every Options row while the copy of the old preferences is pending.
+
+    An OptionWidget row's callback must return {option: value}: the row
+    compares that with its opening values and stores only the changes. A
+    callback that writes at once stores a value the user never chose while
+    the dialog opens, and its None makes OK raise. A row with that shape,
+    added to main after this check, fails here instead of in a user's OK.
+    """
+    from copy import deepcopy
+    from PyReconstruct.modules.gui.dialog.all_options import OptionWidget
+
+    from PySide6.QtCore import QSettings
+
+    app, make = domain
+    if dev:
+        request.getfixturevalue("local_copy_row")
+    # both old stores, global and per-series ("<app>-<code>"), stay unread
+    status = QSettings.status
+
+    def unread(self):
+        if (self.organizationName() == "KHLab"
+                and self.applicationName().startswith(app)):
+            return QSettings.AccessError
+        return status(self)
+
+    monkeypatch.setattr(QSettings, "status", unread)
+    series = Series.openJser(str(series_jser))
+    series.setSettingsStore(QSettingsStore())
+    writes = []
+    set_value = QSettingsStore.set_value
+
+    def recorded(self, code, key, value):
+        writes.append(key)
+        return set_value(self, code, key, value)
+
+    monkeypatch.setattr(QSettingsStore, "set_value", recorded)
+    dialog = AllOptionsDialog(None, series)
+    try:
+        if reset:
+            dialog.resetDefaults()
+        assert writes == [], "an Options row stored a value while the dialog opened"
+        known = (set(series.options) | set(Series.qsettings_defaults)
+                 | set(Series.qsettings_series_defaults))
+        rows = []
+        for name, widget in dialog.all_widgets.items():
+            if isinstance(widget, OptionWidget):
+                values = widget.getOptions(deepcopy(widget.initial_responses))
+                assert isinstance(values, dict) and values, name
+                assert set(values) <= known, (name, set(values) - known)
+                assert widget.initial_options == values, name
+                rows.append(name)
+            else:
+                assert callable(getattr(widget, "accept", None)), name
+                assert callable(getattr(widget, "set", None)), name
+        print(f"options rows dev={dev} reset={reset} {len(rows)}: {rows}")
+        assert {"palette_layout", "trackpad_scroll", "correlation_alignment"} <= set(rows)
+        assert writes == []
+        if not reset:
+            assert dialog.accept() is True
+            assert writes == [], "an untouched OK stored a value while the copy was pending"
+    finally:
+        dialog.close()
+        series.close()

@@ -178,6 +178,7 @@ class AllOptionsDialog(QDialog):
             ],
             "View": [
                 ["theme"],
+                ["palette_layout"],
                 ["scale_bar"],
                 ["show_ztraces"],
                 ["show_flags"],
@@ -251,6 +252,20 @@ class AllOptionsDialog(QDialog):
         """
         self._use_defaults = use_defaults
         self.all_widgets = {}
+        structure = [
+            ["Trace buttons per row (1-100):", (True, "int", self.series.getOption("trace_palette_per_row", use_defaults), range(1, 101))],
+            ["Tool columns (1-12):", (True, "int", self.series.getOption("tool_palette_cols", use_defaults), range(1, 13))],
+            ["Buttons wrap or shrink to fit the window."],
+        ]
+
+        def getOptions(response):
+            return {
+                "trace_palette_per_row": response[0],
+                "tool_palette_cols": response[1],
+            }
+
+        self.addOptionWidget("palette_layout", structure, getOptions)
+
         # pointer
         s, t = tuple(self.series.getOption("pointer", use_defaults))
         structure = [
