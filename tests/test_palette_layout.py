@@ -392,6 +392,16 @@ SWEEP_WINDOWS = [(100, 100), (321, 383), (330, 390), (360, 400), (450, 382),
                  (500, 400), (600, 400), (800, 600), (1280, 800)]
 
 
+def sweep_positions(groups):
+    """No saved spots, each group alone at each spot, then every group together at it."""
+    return [{}] + [
+        {f"{group}_x": x, f"{group}_y": y} for group in groups for x, y in SWEEP_SPOTS
+    ] + [
+        {f"{group}_{axis}": v for group in groups for axis, v in (("x", x), ("y", y))}
+        for x, y in SWEEP_SPOTS
+    ]
+
+
 def missed_controls(main_window, palette):
     """Names of the clickable controls whose center does not hit them."""
     field = main_window.field.geometry()
@@ -434,14 +444,7 @@ def test_every_control_is_reachable_across_layouts(
     expected = (max(window[0], main_window.minimumWidth()), max(window[1], main_window.minimumHeight()))
     assert main_window.size().toTuple() == expected
     series = main_window.series
-    groups = mouse_palette.DEFAULT_POSITIONS
-    # each group alone at each spot, then every group together at it
-    saved = [{}] + [
-        {f"{group}_x": x, f"{group}_y": y} for group in groups for x, y in SWEEP_SPOTS
-    ] + [
-        {f"{group}_{axis}": v for group in groups for axis, v in (("x", x), ("y", y))}
-        for x, y in SWEEP_SPOTS
-    ]
+    saved = sweep_positions(mouse_palette.DEFAULT_POSITIONS)
     selected = series.palette_traces[series.palette_index[0]][series.palette_index[1]]
     # each layout is reached by resizing the window from another size, as a
     # user does, with nothing else asking the palette to place itself
@@ -602,3 +605,83 @@ def test_resizing_the_window_keeps_every_control_reachable(
         expected = (max(size[0], main_window.minimumWidth()), max(size[1], main_window.minimumHeight()))
         assert main_window.size().toTuple() == expected
         assert missed_controls(main_window, palette) == [], size
+
+
+def bar_preview(width, thickness, pinned=None):
+    """The settings the scale bar dialog previews, numbers and ticks shown."""
+    return {"show_scale_bar_text": True, "show_scale_bar_ticks": True,
+            "scale_bar_mode": "micron_pinned" if pinned else "screen_fraction",
+            "scale_bar_width": width, "scale_bar_length_um": pinned or 1.0,
+            "scale_bar_thickness": thickness}
+
+
+# the allowed sizes' ends and middle, at the thinnest and thickest bar, and
+# a pinned length that fills its room
+SWEEP_PREVIEWS = [bar_preview(100, 3), bar_preview(60, 25), bar_preview(100, 25),
+                  bar_preview(100, 25, pinned=100.0)]
+
+
+@pytest.mark.parametrize("window", SWEEP_WINDOWS)
+def test_a_scale_bar_preview_leaves_every_control_reachable(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path, window):
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    local_series_settings(main_window)
+    settings = QSettings(str(tmp_path / "positions.ini"), QSettings.IniFormat)
+    monkeypatch.setattr(mouse_palette, "_position_settings", lambda: settings)
+    main_window.resize(*window)
+    main_window.show()
+    qapp.processEvents()
+    series = main_window.series
+    stored = {key: series.getOption(key) for key in SWEEP_PREVIEWS[0]}
+    failures = []
+    for rows in SWEEP_ROWS:
+        for cols in SWEEP_COLS:
+            series.setOption("trace_palette_per_row", rows)
+            series.setOption("tool_palette_cols", cols)
+            palette = main_window.mouse_palette
+            palette.reset()
+            for positions in sweep_positions(mouse_palette.DEFAULT_POSITIONS):
+                mouse_palette.save_palette_positions(settings, positions)
+                mouse_palette.set_default_positions(palette)
+                palette.loadPositionState()
+                palette.resize()
+                # the Options slider, then the scale bar settings dialog
+                palette.previewScaleBarWidth(100)
+                checks = [("slider 100", missed_controls(main_window, palette))]
+                for preview in SWEEP_PREVIEWS:
+                    palette.previewScaleBar(preview)
+                    checks.append((preview, missed_controls(main_window, palette)))
+                palette.restoreScaleBar()
+                checks.append(("restored", missed_controls(main_window, palette)))
+                failures += [(rows, cols, positions, what, missed) for what, missed in checks if missed]
+                for key in mouse_palette.PALETTE_POS_KEYS:
+                    settings.remove(key)
+    assert {key: series.getOption(key) for key in stored} == stored
+    assert not failures, f"{window}: {len(failures)}: {failures[:5]}"
+
+
+@pytest.mark.parametrize("window", [(100, 100), (1280, 800)])
+def test_a_large_stored_scale_bar_leaves_every_control_reachable(
+        main_window, local_series_settings, monkeypatch, qapp, window):
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    local_series_settings(main_window)
+    monkeypatch.setattr(mouse_palette, "load_palette_positions", lambda settings: {})
+    main_window.resize(*window)
+    main_window.show()
+    qapp.processEvents()
+    series = main_window.series
+    series.setOption("scale_bar_width", 100)
+    series.setOption("scale_bar_thickness", 25)
+    palette = main_window.mouse_palette
+    palette.reset()
+    qapp.processEvents()
+    assert missed_controls(main_window, palette) == []
+    assert series.getOption("scale_bar_width") == 100
+    narrowed = palette.sb.width()
+    # a window with more room gives the bar more of its share again
+    main_window.resize(1600, 1000)
+    qapp.processEvents()
+    assert missed_controls(main_window, palette) == []
+    assert palette.sb.width() > narrowed

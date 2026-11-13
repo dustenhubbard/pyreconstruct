@@ -899,28 +899,45 @@ class MousePalette():
         palette, the one group that can wrap and shrink. Each goes to the
         spot nearest where it was left that is clear of every group placed
         before it. When a group has no clear spot, the default arrangement
-        is tried. The field's minimum size leaves room for one of the two;
-        should neither fit anyway, each group covers as little of the
-        others as it can. Saved positions are never changed.
+        is tried. The field's minimum size leaves room for one of the two
+        with the bar at its default size. When a larger bar leaves neither
+        clear, the bar is drawn narrower, as a smaller size would, at the
+        widest that leaves every group a clear spot ("sb width"). Should
+        nothing fit anyway, each group covers as little of the others as it
+        can. Saved positions are never changed.
         """
         key = self.layoutKey()
         if key != getattr(self, "_layout_key", None):
             saved = self.savedFractions()
             self._layout_key = key
             self._layout = (self.arrange(saved) or self.arrange(DEFAULT_POSITIONS)
+                            or self.narrowBar(saved) or self.narrowBar(DEFAULT_POSITIONS)
                             or self.arrange(saved, force=True))
         return self._layout
 
-    def arrange(self, fractions, force=False):
+    def narrowBar(self, fractions):
+        """The arrangement from these fractions with the widest bar that
+        leaves every group a clear spot, or None. A length you typed is
+        drawn as typed, so it is never narrowed."""
+        if self.sb.override_length:
+            return None
+        widest = self.groupSize("sb")[0]
+        fit = largestFit(1, widest - 1, lambda width: self.arrange(fractions, bar_width=width))
+        return None if fit is None else fit[1]
+
+    def arrange(self, fractions, force=False, bar_width=None):
         """Every group placed from these fractions clear of the ones before
-        it. None if a group has no clear spot, unless forced: then it goes
-        where it covers the least of them."""
+        it, the bar bar_width wide if given. None if a group has no clear
+        spot, unless forced: then it goes where it covers the least of
+        them."""
         field = QRectF(self.mainwindow.field.geometry())
         w, h = self.groupSize("mode")
         placed = {"mode": self.spotIn(fractions["mode"], spanOf(field, 0, w, 0, h))}
         boxes = [QRectF(*placed["mode"], w, h)]
         for group in ("inc", "bc", "sb"):
             w, h = self.groupSize(group)
+            if group == "sb" and bar_width is not None:
+                w = bar_width
             # a bar wider than its room is drawn as far left as it must be
             x, y = self.spotIn(fractions[group], spanOf(field, 0, 10 if group == "sb" else w, 0, h))
             spot = clearSpot(x, y, w, h, boxes, field)
@@ -929,6 +946,8 @@ class MousePalette():
                     return None
                 spot = leastCoveringSpot(x, y, w, h, boxes, field)
             placed[group] = spot
+            if group == "sb":
+                placed["sb width"] = w
             boxes.append(QRectF(*spot, w, h))
         # the buttons are fitted with the label cut to its narrowest, then
         # the label is given as much more of the name as that grid leaves room for
@@ -1625,7 +1644,18 @@ class MousePalette():
         has grown, or a size near 100 percent. It is then drawn as far left
         as it must be to fit in the field. The saved position is kept, so a
         shorter bar goes back to it.
+
+        The layout depends on the bar's size. A preview, a typed length or a
+        zoom can change that size after the other groups were placed, so
+        then every group is placed again from the new layout.
         """
+        if self.layoutKey() != getattr(self, "_placed_key", None):
+            self.placeGroups()
+        else:
+            self.moveSB()
+
+    def moveSB(self):
+        """Move the bar to its spot in the layout, inside the field."""
         x, y = self.getButtonCoords("sb")
         field = self.mainwindow.field
         x = max(field.x(), min(x, field.x() + field.width() - self.sb.width()))
@@ -1644,6 +1674,20 @@ class MousePalette():
         self.sb.setMaxPixelLength(self.sbWidth())
         if self.sb.override_length:
             self.sb.setOverride(self.sb.override_length, self.mainwindow.field.width())
+        self.placeGroups()
+
+    def placeGroups(self):
+        """Place every group from one layout, with the bar at its size now.
+
+        When the layout has room only for a narrower bar, the bar is first
+        given that room, as a smaller "Scale bar size" would, and the layout
+        is worked out again for it. The stored size is unchanged, and the
+        next resize offers the bar its whole share again.
+        """
+        room = self.layout()["sb width"]
+        if room < self.sb.width():
+            self.sb.setMaxPixelLength(room)
+        self._placed_key = self.layoutKey()
         self.placeModeButtons()
         for i, pb in enumerate(self.palette_buttons):
             self.placePaletteButton(pb, i)
@@ -1651,7 +1695,7 @@ class MousePalette():
         self.placeLabel()
         self.placeIncrementButtons()
         self.placeBCButtons()
-        self.placeSB()
+        self.moveSB()
 
     def reset(self):
         """Reset the mouse palette when opening a new series."""
