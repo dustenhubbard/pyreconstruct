@@ -74,6 +74,8 @@ def test_exception_dialog_log_path_matches_live_menu(
     monkeypatch.setattr(errors.ErrorReportDialog, "exec", capture_dialog)
     monkeypatch.setattr(errors, "_reported_signatures", set())
     monkeypatch.setattr(errors, "_showing_report", False)
+    # someone is there to see the window
+    monkeypatch.delenv("PYRECON_UNATTENDED", raising=False)
     monkeypatch.setattr(sys, "__excepthook__", lambda *args: None)
     monkeypatch.setattr(logging_setup, "log_file_path", lambda: tmp_path / "error.log")
 
