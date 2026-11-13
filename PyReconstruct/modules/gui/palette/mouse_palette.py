@@ -122,7 +122,7 @@ def clear_palette_positions(settings : QSettings) -> None:
 
 
 from .buttons import PaletteButton, ModeButton, MoveableButton
-from .scale_bar import ScaleBar, drawableLengths, formatLength
+from .scale_bar import ScaleBar, drawableLengths, formatLength, pinnedLength
 from .outlined_label import OutlinedLabel
 from .help import palette_help
 from .default_rows import shownButtonCount
@@ -921,29 +921,71 @@ class MousePalette():
     def narrowBar(self, fractions):
         """The arrangement from these fractions with the widest bar that
         leaves every group a clear spot, or None. A length you typed is
-        drawn as typed, so it is never narrowed: its room is already the
-        widest clear one (sbTypedRoom)."""
+        never narrowed: it steps a decade instead (sbTypedFit)."""
         if self.sb.override_length:
             return None
         widest = self.groupSize("sb")[0]
         fit = largestFit(1, widest - 1, lambda width: self.arrange(fractions, bar_width=width))
         return None if fit is None else fit[1]
 
+    def barIsClear(self, width):
+        """Whether a bar widget this wide leaves every group a clear spot in
+        the saved or the default arrangement, at the bar's height now."""
+        return any(self.arrange(fractions, bar_width=width) is not None
+                   for fractions in (self.savedFractions(), DEFAULT_POSITIONS))
+
     def sbTypedRoom(self):
         """The widest bar, in pixels, that leaves every group a clear spot
-        in the saved or the default arrangement at the bar's height now: the
-        room a length you type may fill. 0 if there is none."""
+        (barIsClear): the room a length you type may fill. 0 if there is
+        none. Each width is tried from the field's down, because a narrower
+        bar is not always easier to place than a wider one: the groups are
+        placed again for each width."""
         key = self.layoutKey()[:-2] + (self.sb.height(), self.labelSize().toTuple())
         if key != getattr(self, "_typed_room_key", None):
-            widest = 0
-            for fractions in (self.savedFractions(), DEFAULT_POSITIONS):
-                fit = largestFit(widest + 1, self.mainwindow.field.width(),
-                                 lambda width: self.arrange(fractions, bar_width=width))
-                if fit is not None:
-                    widest = fit[0]
             self._typed_room_key = key
-            self._typed_room = widest
+            self._typed_room = next((width for width in range(self.mainwindow.field.width(), 0, -1)
+                                     if self.barIsClear(width)), 0)
         return self._typed_room
+
+    def sbBarWidth(self, real_len):
+        """How wide the bar widget is for a bar of `real_len` µm drawn
+        exactly at the current zoom: never narrower than its label
+        (ScaleBar._fitPinned)."""
+        return max(int(real_len / self.sb.scale), self.sb.labelWidth(real_len) + 2)
+
+    def sbTypedFit(self, length):
+        """The room to give a length you typed, in pixels, and how many
+        decades shorter than typed it is drawn there.
+
+        The bar is drawn at the length, or at a tenth of it, a hundredth
+        and so on, whichever comes first that leaves every group a clear
+        spot (barIsClear) at the width it is drawn. The room is the widest
+        clear width (sbTypedRoom), but narrower than the decade above, so
+        `pinnedLength` draws that decade, and a live zoom, which places no
+        group again, can grow the bar into it. When none is clear, the room
+        is the shortest one's and the count is None."""
+        scale = self.sb.scale
+        key = self.layoutKey()[:-2] + (
+            self.sb.height(), self.labelSize().toTuple(), scale, length,
+            self.sb.displayOption("show_scale_bar_text"))
+        if key != getattr(self, "_typed_fit_key", None):
+            # a length too long for the field steps down first, as a zoom does
+            room, fit, decades = self.mainwindow.field.width(), (0, None), 0
+            while True:
+                real_len, pix_len = pinnedLength(length, scale, room)
+                if pix_len <= 0 or 0 < fit[0] <= real_len / scale:
+                    break
+                room = real_len / scale
+                if self.barIsClear(self.sbBarWidth(real_len)):
+                    longer = room * 10 * (1 - 1e-6) if decades else math.inf
+                    fit = max(room, min(self.sbTypedRoom(), longer)), decades
+                    break
+                fit = room, None
+                room /= 10
+                decades += 1
+            self._typed_fit_key = key
+            self._typed_fit = fit
+        return self._typed_fit
 
     def arrange(self, fractions, force=False, bar_width=None):
         """Every group placed from these fractions clear of the ones before
@@ -1559,10 +1601,23 @@ class MousePalette():
 
     def sbLengthRange(self):
         """The shortest and longest lengths, in µm, you can type for a bar
-        drawn exactly at the current zoom, with the widest room clear of the
-        other groups (sbTypedRoom), so a typed bar never covers a button.
-        The first is larger when there is none (see drawableLengths)."""
-        return drawableLengths(self.sb.scale, self.sbTypedRoom())
+        drawn exactly at the current zoom. The longest is the longest whose
+        bar leaves every group a clear spot, so it is drawn as typed; a
+        shorter one that would cover a button is drawn a decade shorter
+        (sbTypedFit). The first is larger when there is none (see
+        drawableLengths)."""
+        scale = self.sb.scale
+        for room in range(self.mainwindow.field.width(), 0, -1):
+            if not self.barIsClear(room):
+                continue
+            lo, hi = drawableLengths(scale, room)
+            if lo > hi:
+                break
+            # the longest is rounded down to three figures, which can land
+            # it on a width that is not clear
+            if self.sbTypedFit(hi)[1] == 0:
+                return lo, hi
+        return drawableLengths(scale, 0)
 
     def setSBLength(self):
         """Ask for a length and draw the bar at it until told otherwise.
@@ -1580,7 +1635,7 @@ class MousePalette():
             )
             return
         # the field could hold a longer bar, but it would cover buttons
-        limited = self.sbTypedRoom() < self.mainwindow.field.width()
+        limited = hi < drawableLengths(self.sb.scale, self.mainwindow.field.width())[1]
         length = self.sb.currentLength()[0]
         while True:
             structure = [
@@ -1591,6 +1646,8 @@ class MousePalette():
             if limited:
                 structure.append(["A longer bar would cover the palette buttons."])
             structure += [
+                ["A length that would cover the palette buttons is drawn"],
+                ["a tenth as long or shorter, and its label shows that length."],
                 ["It keeps this length until you choose"],
                 ["\"Size the scale bar automatically\" or open another series."],
             ]
@@ -1601,7 +1658,15 @@ class MousePalette():
                 return
             length = response[0]
             if length is not None and lo <= length <= hi:
-                break
+                room, decades = self.sbTypedFit(float(length))
+                if decades is not None:
+                    break
+                notify(
+                    f"A {formatLength(length)} µm bar would cover the palette "
+                    "buttons, and so would a shorter one. Please enter "
+                    "another length, or zoom first."
+                )
+                continue
             notify(
                 f"Please enter a length from {formatLength(lo)} to "
                 f"{formatLength(hi)} µm, or zoom first to draw a "
@@ -1609,7 +1674,7 @@ class MousePalette():
             )
             if length is None or not length > 0:
                 length = self.sb.currentLength()[0]
-        self.sb.setOverride(float(length), self.sbTypedRoom())
+        self.sb.setOverride(float(length), room)
         self.placeSB()
 
     def clearSBLength(self):
@@ -1696,13 +1761,16 @@ class MousePalette():
             self.moveSB()
 
     def fitTypedLength(self):
-        """Give a length you typed the widest room clear of the other groups.
+        """Draw a length you typed as typed if its bar leaves every group
+        clear, else a decade shorter (sbTypedFit).
 
         A smaller window, a thicker bar, or numbers and ticks shown can leave
         it less room than when it was typed; it then steps a decade, as a
-        zoom does, so its label still measures what is drawn."""
+        zoom does, so its label still measures what is drawn. The typed
+        length is kept, so it is drawn as typed again when the room comes
+        back."""
         if self.sb.override_length:
-            room = self.sbTypedRoom()
+            room = self.sbTypedFit(self.sb.override_length)[0]
             if room != self.sb.override_room:
                 self.sb.setOverride(self.sb.override_length, room)
 
@@ -1759,7 +1827,7 @@ class MousePalette():
         self.close()
         self.__init__(self.mainwindow)
         if override:
-            self.sb.setOverride(override, self.sbTypedRoom())
+            self.sb.setOverride(override, self.sbTypedFit(override)[0])
             self.placeSB()
         # the new buttons start on Pointer, but the field keeps its mode
         for name, (button, mouse_mode, _) in self.mode_buttons.items():

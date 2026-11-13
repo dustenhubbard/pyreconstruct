@@ -553,8 +553,8 @@ class ScaleBar(MoveableButton):
 
         Someone exporting a figure may want a length the automatic sizing
         would not pick, so `room` is not the scale bar size: on the field it
-        is the widest bar the palette buttons leave clear, in an exported
-        frame the frame's width. The user asked for this length, so the size
+        is the room the palette buttons leave clear (MousePalette.sbTypedFit),
+        in an exported frame the frame's width. The user asked for this length, so the size
         option does not cap it. If the length does not fit that room, the bar steps a decade, as
         a pinned bar does, so its label still matches what it measures.
         """

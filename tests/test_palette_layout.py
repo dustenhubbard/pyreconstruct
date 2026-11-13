@@ -824,6 +824,116 @@ def test_a_typed_length_and_later_previews_leave_every_control_reachable(
     assert not failures, f"{window}: {len(failures)}: {failures[:5]}"
 
 
+def smallest_window(main_window, local_series_settings, monkeypatch, qapp, tmp_path,
+                    rows, cols, spot=None, thickness=3):
+    """The palette in the smallest window, at 0.01 µm a pixel, with every
+    group saved at `spot` (None: no saved spots) and a bar this thick."""
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    local_series_settings(main_window)
+    settings = QSettings(str(tmp_path / "positions.ini"), QSettings.IniFormat)
+    monkeypatch.setattr(mouse_palette, "_position_settings", lambda: settings)
+    if spot is not None:
+        mouse_palette.save_palette_positions(settings, {
+            f"{group}_{axis}": v for group in mouse_palette.DEFAULT_POSITIONS
+            for axis, v in (("x", spot[0]), ("y", spot[1]))})
+    main_window.resize(100, 100)
+    main_window.show()
+    qapp.processEvents()
+    series = main_window.series
+    series.setOption("trace_palette_per_row", rows)
+    series.setOption("tool_palette_cols", cols)
+    palette = main_window.mouse_palette
+    palette.reset()
+    series.window[2] = 0.01 * main_window.field.pixmap_dim[0]
+    palette.setScale()
+    palette.previewScaleBar(bar_preview(100, thickness))
+    assert missed_controls(main_window, palette) == []
+    return palette
+
+
+def clear_widths(main_window, palette):
+    """Every bar width up to the field's that leaves every group a clear
+    spot, each found by placing all the groups for it."""
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    return {width for width in range(1, main_window.field.width() + 1)
+            if any(palette.arrange(fractions, bar_width=width) is not None
+                   for fractions in (palette.savedFractions(), mouse_palette.DEFAULT_POSITIONS))}
+
+
+def test_a_typed_length_that_would_cover_a_button_is_drawn_a_decade_shorter(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path):
+    palette = smallest_window(main_window, local_series_settings, monkeypatch, qapp,
+                              tmp_path, 1, 1, spot=(0.0, 0.0))
+    # 179 px falls between widths that are clear: 1.79 µm is offered, but
+    # drawn as typed it would cover buttons
+    lo, hi = palette.sbLengthRange()
+    assert lo <= 1.79 <= hi
+    clear = clear_widths(main_window, palette)
+    assert 179 not in clear and max(clear) == 320
+    asked, refused = type_length(monkeypatch, palette, [1.79])
+    assert refused == []
+    assert ["A length that would cover the palette buttons is drawn"] in asked[0]
+    assert palette.sb.override_length == 1.79
+    assert palette.sb.currentLength()[0] == pytest.approx(0.179)
+    assert drawn_as_labeled(palette.sb)
+    assert missed_controls(main_window, palette) == []
+
+
+def test_the_longest_clear_typed_length_is_offered_and_drawn_as_typed(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path):
+    palette = smallest_window(main_window, local_series_settings, monkeypatch, qapp,
+                              tmp_path, 1, 1)
+    # clear widths stop at 161 px and start again at 219: the longest clear
+    # bar is past the gap
+    clear = clear_widths(main_window, palette)
+    assert 180 not in clear and max(clear) == 228
+    assert palette.sbTypedRoom() == 228
+    assert palette.sbLengthRange()[1] == 2.28
+    asked, refused = type_length(monkeypatch, palette, [2.28])
+    assert refused == []
+    assert ["A longer bar would cover the palette buttons."] in asked[0]
+    assert palette.sb.currentLength()[0] == 2.28 and drawn_as_labeled(palette.sb)
+    assert missed_controls(main_window, palette) == []
+
+
+@pytest.mark.parametrize("shape", [(1, 1), (3, 2), (100, 12)])
+def test_every_typed_length_at_the_smallest_window_leaves_every_control_reachable(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path, shape):
+    """Each whole-pixel length the dialog offers, in each arrangement: drawn
+    as typed when that bar is clear, else at the first clear decade below."""
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    failures = []
+    for spot in (None, (0.0, 0.0), (1.0, 1.0), (0.5, 0.5)):
+        palette = smallest_window(main_window, local_series_settings, monkeypatch, qapp,
+                                  tmp_path, *shape, spot=spot)
+        for thickness in (3, 25):
+            palette.clearSBLength()
+            palette.previewScaleBar(bar_preview(100, thickness))
+            clear = clear_widths(main_window, palette)
+            scale = palette.sb.scale
+            lo, hi = palette.sbLengthRange()
+            # the longest offered is drawn as typed; nothing longer is clear
+            assert palette.sbBarWidth(hi) in clear
+            assert not any(palette.sbBarWidth(round(w * scale, 10)) in clear
+                           for w in range(round(hi / scale) + 1, main_window.field.width() + 1))
+            for pixels in range(round(lo / scale), round(hi / scale) + 1):
+                length = round(pixels * scale, 10)
+                decades = next((k for k in range(4)
+                                if palette.sbBarWidth(length / 10 ** k) in clear), None)
+                asked, refused = type_length(monkeypatch, palette, [length, hi])
+                drawn = palette.sb.currentLength()[0]
+                missed = missed_controls(main_window, palette)
+                if (decades is None) != bool(refused) or missed or not drawn_as_labeled(palette.sb) \
+                        or (decades is not None and drawn != pytest.approx(length / 10 ** decades)):
+                    failures.append((shape, spot, thickness, length, decades, drawn, refused, missed))
+        for key in mouse_palette.PALETTE_POS_KEYS:
+            mouse_palette._position_settings().remove(key)
+    assert not failures, f"{len(failures)}: {failures[:5]}"
+
+
 @pytest.mark.parametrize("pinned", [None, 3.0])
 def test_a_shortened_bar_is_labeled_with_the_length_it_draws(
         main_window, local_series_settings, monkeypatch, qapp, pinned):
