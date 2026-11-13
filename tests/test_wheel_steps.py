@@ -554,8 +554,12 @@ def test_momentum_after_a_finished_zoom_starts_no_zoom(window):
     # events are: QTest.mouseMove(widget) only moves the cursor, and offscreen
     # Qt hands that move to whichever window is under it, which can be one an
     # earlier test left open. Two points, because a move to where the pointer
-    # already is reaches no widget.
-    center = window.field.mapTo(window, window.field.rect().center())
+    # already is reaches no widget. Both points are on the field itself, clear
+    # of the palette buttons drawn over it.
+    field = window.field
+    center = field.mapTo(window, QPoint(field.width() // 4, field.height() // 4))
+    assert window.childAt(center) is field
+    assert window.childAt(center + QPoint(5, 5)) is field
     QTest.mouseMove(window.windowHandle(), center)
     QTest.mouseMove(window.windowHandle(), center + QPoint(5, 5))
     assert not window.is_zooming

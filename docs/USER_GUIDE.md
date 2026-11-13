@@ -689,8 +689,16 @@ near the palette.
 ![The trace palette: two rows of ten preset buttons, with the selected preset's name, circle1, above them in orange.](assets/images/user-guide/07-trace-palette.png)
 
 - The default palette has **20 presets**, arranged as two rows of ten.
-- Select a preset with the number keys: **`1`–`9`, `0`** for the first row, and
-  **`Shift+1`–`Shift+9`, `Shift+0`** for the second.
+- In **Series ▸ Options ▸ View**, set **Trace buttons per row** and **Tool
+  columns** to change their arrangement. PyReconstruct remembers both settings
+  for your user across series and restarts. Buttons wrap or shrink when needed
+  to fit the window, and the window does not get smaller than the size where
+  every palette button and control can still be clicked. If a long preset name
+  does not fit, the palette leaves out the middle and shows the start and end,
+  so a number at the end is still shown. Point at the name to see all of it.
+- Select a preset with the number keys: **`1` through `9`, `0`** for the first ten,
+  and **`Shift+1` through `Shift+9`, `Shift+0`** for the next ten, regardless of the
+  arrangement.
 - **Right-click a preset** (or press `Ctrl`+its number) to edit its attributes:
   name, color, fill mode, tags, the trace **shape**, and the **stamp radius
   (microns)** used by the Stamp and Grid tools.
