@@ -448,8 +448,16 @@ def test_a_setup_where_no_file_works_is_not_recorded(mac):
     assert not found_by("zsh", mac)
 
 
+@pytest.fixture
+def no_local_bin(monkeypatch):
+    """A login shell that answers without ~/.local/bin. Some hosts' own startup
+    files add it to every login PATH (Omarchy's /etc/profile.d/omarchy.sh), and
+    there the shell's real answer leaves nothing to write."""
+    monkeypatch.setattr(C, "login_path", lambda *args, **kwargs: (["/usr/bin", "/bin"], None))
+
+
 @posix_only
-def test_bash_uses_the_file_a_login_bash_reads(mac):
+def test_bash_uses_the_file_a_login_bash_reads(mac, no_local_bin):
     (mac["home"] / ".profile").write_text("# mine\n")
     ensure(mac, shell="bash")
     assert C.PROFILE_TAG in (mac["home"] / ".profile").read_text()
@@ -457,17 +465,26 @@ def test_bash_uses_the_file_a_login_bash_reads(mac):
 
 
 @posix_only
-def test_bash_with_no_startup_file_gets_a_bash_profile(mac):
+def test_bash_with_no_startup_file_gets_a_bash_profile(mac, no_local_bin):
     ensure(mac, shell="bash")
     assert C.PROFILE_TAG in (mac["home"] / ".bash_profile").read_text()
 
 
 @needs("bash")
-def test_a_bashrc_a_login_bash_skips_does_not_count(mac):
+def test_a_login_bash_skips_the_bashrc(mac):
+    mac["home"].mkdir(exist_ok=True)
+    (mac["home"] / ".bashrc").write_text('export PATH="$HOME/rc-only:$PATH"\n')
+    entries, _ = C.login_path("bash", mac["home"], env={})
+    assert str(mac["home"] / "rc-only") not in entries
+
+
+@posix_only
+def test_a_bashrc_a_login_bash_skips_does_not_count(mac, no_local_bin):
     mac["home"].mkdir(exist_ok=True)
     (mac["home"] / ".bashrc").write_text('export PATH="$HOME/.local/bin:$PATH"\n')
     ensure(mac, shell="bash")
     assert C.PROFILE_TAG in (mac["home"] / ".bash_profile").read_text()
+    assert C.PROFILE_TAG not in (mac["home"] / ".bashrc").read_text()
 
 
 @needs("zsh")
