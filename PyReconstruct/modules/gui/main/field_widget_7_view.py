@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (
     QInputDialog, 
 )
 
+from PyReconstruct.modules.constants.settings_domain import user_action
 from PyReconstruct.modules.datatypes import Trace, Ztrace
 from PyReconstruct.modules.calc import pixmapPointToField, distance
 from PyReconstruct.modules.gui.dialog import QuickDialog
@@ -12,7 +13,8 @@ from PyReconstruct.modules.gui.utils import notify
 from .field_widget_5_mouse import (
     CLOSEDTRACE, 
     OPENTRACE,
-    ROI_BOX
+    ROI_BOX,
+    ZTOOL,
 )
 from .field_widget_6_paint import FieldWidgetPaint
 from .status_readout import SEPARATOR
@@ -350,9 +352,11 @@ class FieldWidgetView(FieldWidgetPaint):
                 left_handed (bool): True if user is left handed
         """
         if left_handed is not None:
-            self.series.setOption("left_handed", left_handed)
+            with user_action():
+                self.series.setOption("left_handed", left_handed)
         else:
-            self.series.setOption("left_handed", self.mainwindow.lefthanded_act.isChecked())
+            with user_action():
+                self.series.setOption("left_handed", self.mainwindow.lefthanded_act.isChecked())
 
         # adjust handedness of the cursor
         if (self.mouse_mode == OPENTRACE or
@@ -362,7 +366,11 @@ class FieldWidgetView(FieldWidgetPaint):
     
     def endPendingEvents(self):
         """End ongoing events that are connected to the mouse."""
-        if self.is_line_tracing and not self.is_z_tracing:
+        # A pending z-trace under the Ztool spans sections, so it stays open.
+        # A line another tool started while a z-trace waits ends here.
+        if self.is_line_tracing and not (
+            self.is_z_tracing and self.mouse_mode == ZTOOL
+        ):
             self.lineRelease(override=True)
 
         # A pointer drag is the other gesture that spans several events, and it
@@ -569,4 +577,5 @@ class FieldWidgetView(FieldWidgetPaint):
         columns, confirmed = HoverColumnsDialog(self, self.hover_columns).exec()
         if confirmed:
             self.hover_columns = columns
-            self.series.setOption("hover_columns", columns)
+            with user_action():
+                self.series.setOption("hover_columns", columns)

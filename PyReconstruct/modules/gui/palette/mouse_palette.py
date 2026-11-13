@@ -1,3 +1,4 @@
+from PyReconstruct.modules.constants.settings_domain import user_action
 import os
 import re
 import math
@@ -5,7 +6,7 @@ import math
 from PySide6.QtWidgets import QWidget, QSlider
 from PySide6.QtGui import QIcon, QPixmap, QFont, QFontMetrics
 from PySide6.QtCore import QSize, Qt, QSettings, QRectF
-from PyReconstruct.modules.constants.settings_domain import domain_for
+from PyReconstruct.modules.constants.settings_domain import settings_for
 
 # Palette-visibility preferences are global (a UI choice, not per-series) and
 # persist across launches. Map each in-memory flag to its QSettings key.
@@ -19,7 +20,7 @@ PALETTE_VIS_KEYS = {
 
 def _visibility_settings():
     """The store the visibility flags live in (shared between the two apps)."""
-    return QSettings(*domain_for(*PALETTE_VIS_KEYS.values()))
+    return settings_for(*PALETTE_VIS_KEYS.values())
 
 
 def load_palette_visibility(settings : QSettings) -> dict:
@@ -33,7 +34,8 @@ def load_palette_visibility(settings : QSettings) -> dict:
 def save_palette_visibility(settings : QSettings, state : dict) -> None:
     """Persist the palette-visibility flags."""
     for attr, key in PALETTE_VIS_KEYS.items():
-        settings.setValue(key, bool(state[attr]))
+        if attr in state:
+            settings.setValue(key, bool(state[attr]))
 
 
 # Each moveable palette group stores its position as a fraction (0..1) of the
@@ -78,7 +80,7 @@ PALETTE_POS_KEYS = tuple(
 
 def _position_settings():
     """The store the palette positions live in (shared between the two apps)."""
-    return QSettings(*domain_for(*PALETTE_POS_KEYS))
+    return settings_for(*PALETTE_POS_KEYS)
 
 
 def load_palette_positions(settings : QSettings) -> dict:
@@ -136,6 +138,7 @@ from PyReconstruct.modules.constants import (
 )
 from PyReconstruct.modules.gui.dialog import TracePaletteDialog, QuickDialog
 from PyReconstruct.modules.gui.dialog.scale_bar_settings import ScaleBarSettingsDialog
+from PyReconstruct.modules.gui.dialog.chosen_options import ChosenOptions
 from PyReconstruct.modules.gui.popup import TextWidget
 from PyReconstruct.modules.gui.utils import notify
 from PyReconstruct.modules.gui.utils.fonts import uiFamily, uiFont
@@ -550,7 +553,7 @@ class MousePalette():
 
         self.palette_side_buttons = [b_up, b_down, b_all, b_ind, b_opts, b_help]
         self.placePaletteSideButtons()
-        self.setPaletteIncMode(self.series.getOption("palette_inc_all"))
+        self.setPaletteIncMode(self.series.getOption("palette_inc_all"), save=False)
     
     def placeLabel(self):
         """Place the trace palette label."""
@@ -1117,10 +1120,13 @@ class MousePalette():
         for attr, value in load_palette_visibility(_visibility_settings()).items():
             setattr(self, attr, value)
 
-    def saveVisibilityState(self):
+    def saveVisibilityState(self, changed=None):
         """Persist the current palette-visibility flags so they survive a restart."""
         state = {attr: getattr(self, attr) for attr in PALETTE_VIS_KEYS}
-        save_palette_visibility(_visibility_settings(), state)
+        if changed is not None:
+            state = {changed: state[changed]}
+        with user_action():
+            save_palette_visibility(_visibility_settings(), state)
         # every toggle road ends here, so this is where the View menu's
         # checkboxes learn about a change they did not make
         self.notifyVisibilityChanged()
@@ -1131,13 +1137,17 @@ class MousePalette():
         for attr, value in saved.items():
             setattr(self, attr, value)
 
-    def savePositionState(self):
+    def savePositionState(self, changed=None):
         """Persist the current palette positions so they survive a restart."""
         positions = {
             f"{group}_{axis}": getattr(self, f"{group}_{axis}")
             for group in PALETTE_POS_GROUPS for axis in ("x", "y")
         }
-        save_palette_positions(_position_settings(), positions)
+        if changed is not None:
+            positions = {name: value for name, value in positions.items()
+                         if name.startswith(changed + "_")}
+        with user_action():
+            save_palette_positions(_position_settings(), positions)
 
     # Right-click to hide, group by group: the View
     # menu keeps every toggle, and this adds the direct road from the widget
@@ -1235,14 +1245,14 @@ class MousePalette():
         self.palette_hidden = not self.palette_hidden
         for w in (self.palette_buttons + [self.label]):
             w.hide() if self.palette_hidden else w.show()
-        self.saveVisibilityState()
+        self.saveVisibilityState("palette_hidden")
 
     def toggleIncrement(self):
         """Hide/Unhide the increment buttons."""
         self.inc_hidden = not self.inc_hidden
         for b in self.inc_buttons:
             b.hide() if self.inc_hidden else b.show()
-        self.saveVisibilityState()
+        self.saveVisibilityState("inc_hidden")
 
     def toggleBC(self):
         """Hide/Unhide the brightness/contrast buttons."""
@@ -1250,28 +1260,31 @@ class MousePalette():
         for b, s in self.bc_widgets:
             b.hide() if self.bc_hidden else b.show()
             s.hide() if self.bc_hidden else s.show()
-        self.saveVisibilityState()
+        self.saveVisibilityState("bc_hidden")
 
     def toggleSB(self):
         """Hide/Unhide the scale bar."""
         self.sb_hidden = not self.sb_hidden
         self.sb.hide() if self.sb_hidden else self.sb.show()
-        self.saveVisibilityState()
+        self.saveVisibilityState("sb_hidden")
     
     def resetPos(self):
         """Reset every palette group to its default spot and forget saved positions."""
         set_default_positions(self)
-        clear_palette_positions(_position_settings())
+        with user_action():
+            clear_palette_positions(_position_settings())
         self.resize()
     
-    def setPaletteIncMode(self, all : bool):
+    def setPaletteIncMode(self, all : bool, save=True):
         """Set the mode for incrementing the palette buttons.
         
             Params:
                 all (bool): True if all palette buttons should be incremented at once
         """
         b_all, b_inc = self.palette_side_buttons[2:4]
-        self.series.setOption("palette_inc_all", all)
+        if save:
+            with user_action():
+                self.series.setOption("palette_inc_all", all)
         if all:
             b_all.setChecked(True)
             b_inc.setChecked(False)
@@ -1370,30 +1383,17 @@ class MousePalette():
             self.reset()
             self.mainwindow.changeTracingTrace(self.selectedTrace())
     
-    def setFlag(self, name : str = None, color : tuple = None, font_size : int = None, display_flags : str = None):
+    def setFlag(self, name : str = None, color : tuple = None):
         """Set the default flag in the palette."""
-        regenerate_view = False
         if name is not None:
-            self.series.setOption("flag_name", name)
+            with user_action():
+                self.series.setOption("flag_name", name)
         
         if color is None:
             color = self.series.getOption("flag_color")
         else:
-            self.series.setOption("flag_color", color)
-        
-        if font_size is None:
-            font_size = self.series.getOption("flag_size")
-        elif font_size != self.series.getOption("flag_size"):
-            self.series.setOption("flag_size", font_size)
-            regenerate_view = True
-        
-        if display_flags is not None and display_flags != self.series.getOption("show_flags"):
-            self.series.setOption("show_flags", display_flags)
-            self.mainwindow.field.section.selected_flags = []
-            regenerate_view = True
-        
-        if regenerate_view:
-            self.mainwindow.field.generateView(generate_image=False)
+            with user_action():
+                self.series.setOption("flag_color", color)
         
         button = self.mode_buttons["Flag"][0]
         button.setFont(QFont("Courier New", 25, QFont.Bold))
@@ -1409,11 +1409,13 @@ class MousePalette():
     
     def modifyFlag(self):
         """Modify the default flag."""
-        show_flags = self.series.getOption("show_flags")
+        chosen = ChosenOptions(self.series)
+        shown = chosen.read("flag_name", "flag_color", "flag_size", "show_flags")
+        show_flags = shown["show_flags"]
         structure = [
-            ["Default name:", ("text", self.series.getOption("flag_name"))],
-            ["Default color:", ("color", self.series.getOption("flag_color"))],
-            ["Size of all flags: ", ("int", self.series.getOption("flag_size"), tuple(range(1, 100)))],
+            ["Default name:", ("text", shown["flag_name"])],
+            ["Default color:", ("color", shown["flag_color"])],
+            ["Size of all flags: ", ("int", shown["flag_size"], tuple(range(1, 100)))],
             ["Display"],
             [("radio",
               ("All flags", show_flags == "all"),
@@ -1429,7 +1431,21 @@ class MousePalette():
         elif response[3][2][1]: show_flags = "none"
         else: show_flags = "unresolved"
         
-        self.setFlag(response[0], response[1], response[2], show_flags)
+        drawn = {key: shown[key] for key in ("flag_size", "show_flags")}
+        chosen.store({
+            "flag_name": response[0],
+            "flag_color": response[1],
+            "flag_size": response[2],
+            "show_flags": show_flags,
+        })
+        # draw what is stored: a copy that finished while the dialog was
+        # open keeps the values the dialog showed as defaults
+        stored = {key: self.series.getOption(key) for key in drawn}
+        if stored["show_flags"] != drawn["show_flags"]:
+            self.mainwindow.field.section.selected_flags = []
+        self.setFlag()
+        if stored != drawn:
+            self.mainwindow.field.generateView(generate_image=False)
     
     def displayHelp(self):
         """Display the help associated with the trace palette."""

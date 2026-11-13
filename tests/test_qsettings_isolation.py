@@ -75,13 +75,16 @@ def test_the_qsettings_name_is_the_isolated_subclass():
     "application",
     [
         "PyReconstruct",              # the global scope
+        "PyReconstruct Dev",
+        "PyReconstruct Dev-someseries",
         "PyReconstruct-someseries",   # a per-series scope
         "PyReconstruct-",             # a series whose code is empty; this file
                                       # exists on disk in the real Preferences
                                       # directory, so the route is real
     ],
 )
-def test_every_scope_resolves_inside_the_isolation_root(application):
+@pytest.mark.parametrize("organization", ["KHLab", "PyReconstruct"])
+def test_every_scope_resolves_inside_the_isolation_root(application, organization):
     """Both scopes `QSettingsStore` addresses are redirected, not just the global one.
 
     A partial redirect is worse than none, because the half that still works
@@ -89,19 +92,19 @@ def test_every_scope_resolves_inside_the_isolation_root(application):
     """
     import PySide6.QtCore as qtcore
 
-    settings = qtcore.QSettings("KHLab", application)
+    settings = qtcore.QSettings(organization, application)
     assert settings.format() == qi._real_qsettings.Format.IniFormat
     assert _under_root(settings.fileName()), settings.fileName()
 
 
 def test_direct_two_argument_construction_writes_into_the_root():
-    """The plain `QSettings("KHLab", "PyReconstruct")` form, as written in
+    """The plain `QSettings("PyReconstruct", "PyReconstruct")` form, as written in
     `file_dialog.py`, `whats_new.py`, `main_window.py` and `mouse_palette.py`.
     """
     _require_isolated()
     import PySide6.QtCore as qtcore
 
-    settings = qtcore.QSettings("KHLab", "PyReconstruct")
+    settings = qtcore.QSettings("PyReconstruct", "PyReconstruct")
     settings.setValue("isolation_probe_direct", "landed")
     settings.sync()
     with open(settings.fileName()) as f:
@@ -329,27 +332,19 @@ def test_no_imported_module_still_holds_the_real_qsettings_class():
 
 
 def test_the_production_call_sites_resolve_to_the_isolated_class():
-    """Import every module that constructs a `QSettings` and check what it holds.
-
-    Enumerated from `git grep QSettings(` rather than discovered, so a new call
-    site in a new module does not quietly get left out of the check: the sweep
-    above is what covers that case, and this is what pins the known ones.
-    """
+    """Open each routed production store and verify its isolated path."""
     import importlib
 
     modules = (
         "PyReconstruct.modules.gui.dialog.file_dialog",
         "PyReconstruct.modules.gui.dialog.whats_new",
         "PyReconstruct.modules.gui.palette.mouse_palette",
-        "PyReconstruct.modules.gui.main.main_imports",
         "PyReconstruct.modules.gui.main.main_window",
     )
     for name in modules:
         module = importlib.import_module(name)
-        bound = getattr(module, "QSettings", None)
-        assert bound is not None, f"{name} no longer binds QSettings"
-        assert bound is not qi._real_qsettings, name
-        assert _under_root(bound("KHLab", "PyReconstruct").fileName()), name
+        bound = module.settings_for("username")
+        assert _under_root(bound.fileName()), name
 
 
 def test_whats_new_module_constants_still_name_the_real_domain():
@@ -361,7 +356,7 @@ def test_whats_new_module_constants_still_name_the_real_domain():
     """
     from PyReconstruct.modules.gui.dialog import whats_new
 
-    assert (whats_new.ORG, whats_new.APP) == ("KHLab", "PyReconstruct")
+    assert (whats_new.ORG, whats_new.APP) == ("PyReconstruct", "PyReconstruct")
 
 
 # --- the guard ----------------------------------------------------------------
@@ -690,7 +685,7 @@ def test_production_still_resolves_to_the_real_settings_location():
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         from PySide6.QtCore import QSettings
 
-        s = QSettings("KHLab", "PyReconstruct")
+        s = QSettings("PyReconstruct", "PyReconstruct")
         # read-only: fileName() and format() do not write
         print("FORMAT", s.format().name)
         print("PATH", s.fileName())
@@ -729,7 +724,8 @@ def test_isolation_needs_the_suite_conftest_to_be_active():
         import os
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         from PyReconstruct.modules.gui.dialog import file_dialog
-        print("CLASSNAME", file_dialog.QSettings.__name__)
+        from PySide6.QtCore import QSettings
+        print("CLASSNAME", QSettings.__name__)
         """
     )
     result = subprocess.run(
@@ -783,3 +779,9 @@ def test_the_interactive_profiler_redirects_qsettings_by_domain():
             "QSettings on macOS; it is on the list of scoping that looks like "
             "it worked and did not."
         )
+
+
+def test_both_settings_organizations_have_file_guards():
+    assert len(qi.guards) == 2
+    assert len({(g.directory, g.prefix) for g in qi.guards}) == 2
+    assert all(g.baseline is not None for g in qi.guards)

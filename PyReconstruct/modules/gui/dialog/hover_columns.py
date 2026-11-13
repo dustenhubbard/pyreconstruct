@@ -1,3 +1,4 @@
+from PyReconstruct.modules.constants.settings_domain import user_action
 from PySide6.QtWidgets import (
     QWidget,
     QDialog,
@@ -202,4 +203,5 @@ class HoverColumnsOptionWidget(QWidget):
 
     def set(self):
         if self._changed:
-            self.series.setOption("hover_columns", self.columns)
+            with user_action():
+                self.series.setOption("hover_columns", self.columns)

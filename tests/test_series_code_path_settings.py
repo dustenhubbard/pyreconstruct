@@ -1,6 +1,6 @@
 """A series code that reads as a path keeps settings of its own.
 
-A series' own settings live in the domain ``KHLab / PyReconstruct-<code>``. In
+A series' own settings live in the domain ``PyReconstruct / PyReconstruct-<code>``. In
 the Ini format (Linux, and this suite) that name becomes a file path, so a
 code with an empty, "." or ".." segment between two slashes resolves to
 another file: ``a//b`` and ``a/./b`` to the file of ``a/b``, and
@@ -41,13 +41,13 @@ def _apart(existing_name, incoming_code):
     """Another domain has its backups set first. The incoming series then
     reads and sets its own."""
     return PRELUDE + f"""
-existing = QSettings("KHLab", {existing_name!r})
+existing = QSettings("PyReconstruct", {existing_name!r})
 existing.setValue("backup_dir", "/existing-series-backups")
 existing.sync()
 incoming = series({incoming_code!r})
 before = incoming.getOption("backup_dir")
 incoming.setOption("backup_dir", "/incoming-series-backups")
-existing = QSettings("KHLab", {existing_name!r})
+existing = QSettings("PyReconstruct", {existing_name!r})
 print(repr([
     before,
     existing.value("backup_dir", "", str),
@@ -120,7 +120,7 @@ def test_a_nul_code_keeps_its_nul_name():
 def test_every_short_code_names_a_file_of_its_own():
     # every code up to five characters over a mix of plain, path and NUL; the
     # two app-wide domains are in the set too
-    root = "/settings/KHLab/"
+    root = "/settings/PyReconstruct/"
     files = {}
     for app in APPS:
         files[root + app + ".ini"] = (app, None)

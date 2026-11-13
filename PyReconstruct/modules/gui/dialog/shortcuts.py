@@ -27,6 +27,7 @@ from PyReconstruct.modules.gui.modifiers import (
     usable_modifiers,
 )
 from PyReconstruct.modules.gui.utils import notify
+from .chosen_options import ChosenOptions
 
 
 #: Rows whose binding is a held modifier combination rather than a key sequence.
@@ -156,6 +157,8 @@ class ShortcutsDialog(QDialog):
         super().__init__(mainwindow)
         self.mainwindow = mainwindow
         self.series = series
+        # before the rows read the bindings they show
+        chosen = ChosenOptions(series)
 
         grid = QGridLayout()
         self.act_widgets = {}
@@ -206,6 +209,7 @@ class ShortcutsDialog(QDialog):
         vlayout.addWidget(buttonbox)
 
         self.setLayout(vlayout)
+        self.chosen = chosen.shown(self.bindings())
 
     def effectiveBinding(self, name) -> str:
         """The modifier binding the user is actually getting, canonical form.
@@ -248,6 +252,8 @@ class ShortcutsDialog(QDialog):
         """
         for act, w in self.act_widgets.items():
             w.setKeySequence(self.series.getOption(act, get_default=True))
+            # an explicit reset is stored even where nothing looks changed
+            self.chosen.opening.pop(act, None)
         for name, w in self.modifier_widgets.items():
             # `effectiveBinding`, not the raw option, for the same reason the
             # constructor uses it: this button is a second way to land an
@@ -284,18 +290,22 @@ class ShortcutsDialog(QDialog):
         confirmed = super().exec()
 
         if confirmed:
-            shortcuts_dict = {}
-            for act_name, keyseq in self.act_widgets.items():
-                shortcuts_dict[act_name] = keyseq.keySequence().toString()
-            # Modifier rows ride the same dict, and `resetShortcuts` stores them
-            # without trying to hang them off a QAction. They are deliberately
-            # not checked for collisions above: a held modifier is not a key
-            # sequence and cannot duplicate one.
-            for name, w in self.modifier_widgets.items():
-                shortcuts_dict[name] = w.modifierString()
-            return shortcuts_dict, True
+            return self.bindings(), True
         else:
             return None, False
+
+    def bindings(self):
+        """Every row's binding, as {option: value}."""
+        shortcuts_dict = {}
+        for act_name, keyseq in self.act_widgets.items():
+            shortcuts_dict[act_name] = keyseq.keySequence().toString()
+        # Modifier rows ride the same dict, and `resetShortcuts` stores them
+        # without trying to hang them off a QAction. They are deliberately
+        # not checked for collisions above: a held modifier is not a key
+        # sequence and cannot duplicate one.
+        for name, w in self.modifier_widgets.items():
+            shortcuts_dict[name] = w.modifierString()
+        return shortcuts_dict
 
 
 def shownShortcuts() -> list:

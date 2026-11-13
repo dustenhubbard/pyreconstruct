@@ -21,6 +21,7 @@ The length field does nothing in share-of-field mode, so it is disabled there.
 """
 from PySide6.QtWidgets import QDialog, QLabel
 
+from .chosen_options import ChosenOptions
 from .quick_dialog import QuickDialog
 from PyReconstruct.modules.datatypes.default_settings import (
     MAX_SCALE_BAR_THICKNESS,
@@ -86,23 +87,19 @@ def scaleBarStructure(series, use_defaults=False):
     ]
 
 
-def storeScaleBarResponse(series, response):
-    """Store an accepted response (the tuple described at the top)."""
-    series.setOption("show_scale_bar_text", response[0][0][1])
-    series.setOption("show_scale_bar_ticks", response[0][1][1])
-    series.setOption(
-        "scale_bar_mode",
-        "micron_pinned" if response[1][1][1] else "screen_fraction",
-    )
-    series.setOption("scale_bar_width", response[2])
-    # an empty or nonsensical box keeps the stored length rather than pinning
-    # the bar to nothing. "Nonsensical" has to mean more than `<= 0`: `inf > 0`
-    # is True and `1e400` parses to inf, and this key is global, so storing one
-    # would crash the palette on every launch from here on. validPinnedLength
-    # is the predicate the palette and the bar itself apply to the same value.
+def scaleBarOptions(response):
+    """The stored options represented by the scale bar controls."""
+    options = {
+        "show_scale_bar_text": response[0][0][1],
+        "show_scale_bar_ticks": response[0][1][1],
+        "scale_bar_mode": "micron_pinned" if response[1][1][1] else "screen_fraction",
+        "scale_bar_width": response[2],
+        "scale_bar_thickness": response[4],
+    }
+    # Empty or invalid lengths keep the stored value.
     if validPinnedLength(response[3]):
-        series.setOption("scale_bar_length_um", float(response[3]))
-    series.setOption("scale_bar_thickness", response[4])
+        options["scale_bar_length_um"] = float(response[3])
+    return options
 
 
 def _controls(page):
@@ -189,16 +186,20 @@ class ScaleBarSettingsDialog(QuickDialog):
     """The scale bar's right-click "Scale bar settings..." dialog.
 
     The same page as the Options group, previewed on the bar as it changes.
-    OK stores every option and Cancel puts the bar back; either way the bar
-    is changed in place, so its position, visibility and right-click menu are
-    untouched.
+    OK stores the options (while a settings copy is pending, only the changed
+    ones) and Cancel puts the bar back; either way the bar is changed in
+    place, so its position, visibility and right-click menu are untouched.
     """
 
     def __init__(self, parent, series, palette=None):
+        # before scaleBarStructure reads the values the dialog shows
+        chosen = ChosenOptions(series)
         super().__init__(parent, scaleBarStructure(series), TITLE)
         self.series = series
         self.palette = palette
         self.previewed = False
+        opening = [field.getResponse()[0] for field in self.inputs]
+        self.chosen = chosen.shown(scaleBarOptions(opening))
         wireScaleBarControls(self, series, self._preview)
 
     def _preview(self, settings):
@@ -209,7 +210,7 @@ class ScaleBarSettingsDialog(QuickDialog):
     def accept(self, close=True):
         if not super().accept(close=False):
             return False
-        storeScaleBarResponse(self.series, self.responses)
+        self.chosen.store(scaleBarOptions(self.responses))
         if self.palette is not None:
             self.palette.restoreScaleBar()
         self.previewed = False

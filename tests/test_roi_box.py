@@ -107,7 +107,7 @@ def test_box_writes_nothing_and_saves_no_undo_state(mw, qapp):
     traces_before = [
         (t.name, t.hidden, list(t.points)) for t in field.section.tracesAsList()
     ]
-    settings_before = set(QSettings("KHLab", "PyReconstruct").allKeys())
+    settings_before = set(QSettings("PyReconstruct", "PyReconstruct").allKeys())
 
     _turn_on(mw, qapp)
     _click(field, qapp, 13.6, 23.8)  # move it
@@ -123,7 +123,7 @@ def test_box_writes_nothing_and_saves_no_undo_state(mw, qapp):
         (t.name, t.hidden, list(t.points)) for t in field.section.tracesAsList()
     ] == traces_before
     # the size lasts the session only: no settings key was written
-    assert set(QSettings("KHLab", "PyReconstruct").allKeys()) == settings_before
+    assert set(QSettings("PyReconstruct", "PyReconstruct").allKeys()) == settings_before
 
 
 def test_undo_works_while_the_box_is_on(mw, qapp):

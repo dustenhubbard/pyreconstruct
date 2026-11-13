@@ -59,7 +59,7 @@ from PyReconstruct.modules.datatypes.default_settings import default_settings
 from PyReconstruct.modules.datatypes.series import Series
 from PyReconstruct.modules.gui.main import main_window as MW
 
-ORG = "KHLab"
+ORG = "PyReconstruct"
 APP = "PyReconstruct"
 DEV_APP = "PyReconstruct Dev"
 STAMP_KEY = "last_update_check_epoch"
@@ -179,7 +179,7 @@ def stamp():
     leaving it set would silently throttle whatever ran next.
 
     The key is per app, so the Dev flavor keeps its stamp in
-    ``KHLab / PyReconstruct Dev``. That domain is cleared too. A Dev stamp
+    ``PyReconstruct / PyReconstruct Dev``. That domain is cleared too. A Dev stamp
     written earlier in the session otherwise throttled the Dev test here,
     which then saw no dispatch at all. One writer was measured: every real
     ``MainWindow`` schedules its launch check 2.5 s after it is built, and
