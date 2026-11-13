@@ -53,9 +53,16 @@ class LocalStoreOptionWidget(BorderedWidget):
     automatic backup, and says which files it wrote (local_stores.turnOff).
     """
 
-    def __init__(self, parent, series, use_defaults=False):
+    def __init__(self, parent, series, use_defaults=False, *, copy_pending=False):
+        """
+            Params:
+                copy_pending (bool): while a settings copy is pending, store
+                    the setting only when the user changes it (Reset
+                    Defaults still stores it)
+        """
         super().__init__(parent)
         self.series = series
+        self._save_unchanged = use_defaults or not copy_pending
         layout = QVBoxLayout()
         layout.setSpacing(4)
         layout.setContentsMargins(8, 6, 8, 8)
@@ -64,6 +71,7 @@ class LocalStoreOptionWidget(BorderedWidget):
         # read without writing: getOption stores a default it does not find
         on = series.getOption(local_stores.SETTING, True) if use_defaults else local_stores.storedSetting(series)
         self.check.setChecked(bool(on))
+        self._shown = bool(on)
         layout.addWidget(self.check)
         explain = QLabel(EXPLAIN, self)
         explain.setWordWrap(True)
@@ -118,6 +126,11 @@ class LocalStoreOptionWidget(BorderedWidget):
         return True
 
     def set(self):
+        on = self.check.isChecked()
+        if on == self._shown and not self._save_unchanged:
+            # the box shows a default in place of the preference being copied
+            return
+        self._shown = on
         # the main window, the dialog's parent, writes the .jser as its
         # close does: with the automatic backup
         owner = self.window().parentWidget()
@@ -128,7 +141,7 @@ class LocalStoreOptionWidget(BorderedWidget):
                 return written if write_out(written) else None
         else:
             write = None
-        report = local_stores.setSetting(self.series, self.check.isChecked(), write)
+        report = local_stores.setSetting(self.series, on, write)
         text = local_stores.turnOffText(report) if report is not None else ""
         if text:
             notify(text)

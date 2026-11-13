@@ -60,7 +60,7 @@ from PyReconstruct.modules.datatypes.default_settings import default_settings
 from PyReconstruct.modules.datatypes.series import Series
 from PyReconstruct.modules.gui.main import main_window as MW
 
-ORG = "KHLab"
+ORG = "PyReconstruct"
 APP = "PyReconstruct"
 OPTION = M.UPDATE_CHECK_KEY
 MARKER = M.UPDATE_CHECK_DEFAULT_APPLIED_KEY

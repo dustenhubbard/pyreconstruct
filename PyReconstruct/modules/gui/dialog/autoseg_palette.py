@@ -26,7 +26,6 @@ so changing the *number* of colors reshuffles every id -> color assignment (not
 just the colors that changed). The status line under the preview says so the
 moment the count differs from what was loaded.
 """
-
 import re
 
 from PySide6.QtWidgets import (
@@ -47,6 +46,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtCore import QSize, Qt, Signal
 
+from .chosen_options import store_chosen_options
 from .helper import resizeLineEdit
 from PyReconstruct.modules.backend.autoseg.palette import (
     DEFAULT_AUTOSEG_PALETTE, palette_color, next_shuffle_seed,
@@ -173,7 +173,7 @@ class _EmbeddedColorDialog(QColorDialog):
 
 class AutosegColorsWidget(QWidget):
 
-    def __init__(self, parent, series, use_defaults=False):
+    def __init__(self, parent, series, use_defaults=False, *, copy_pending=False):
         """Create the autoseg import-colors editor.
 
             Params:
@@ -181,9 +181,12 @@ class AutosegColorsWidget(QWidget):
                 series (Series): the series whose options are edited
                 use_defaults (bool): show the shipped defaults instead of the
                     stored values (Reset Defaults in the options dialog)
+                copy_pending (bool): save only deliberate edits while migration waits
         """
         super().__init__(parent)
         self.series = series
+        self._use_defaults = use_defaults
+        self._copy_pending = copy_pending
 
         stored = series.getOption("autoseg_color_palette", use_defaults) or []
         # An empty option means "use the built-in default"; show that default so
@@ -191,6 +194,7 @@ class AutosegColorsWidget(QWidget):
         source = stored if stored else DEFAULT_AUTOSEG_PALETTE
         self.colors = [[int(v) for v in c] for c in source]
         self._loaded_len = len(self.colors)
+        self._initial_palette = normalize_palette(self.colors)
 
         seed = series.getOption("autoseg_color_seed", use_defaults) or 0
         self._seed = int(seed)
@@ -221,6 +225,7 @@ class AutosegColorsWidget(QWidget):
         seed_row = QHBoxLayout()
         seed_row.addWidget(QLabel("Color seed (same seed gives the same colors):", self))
         self.seed_edit = QLineEdit(str(self._seed), self)
+        self._initial_seed = int(self.seed_edit.text())
         resizeLineEdit(self.seed_edit, "000000")
         self.seed_edit.textChanged.connect(lambda _: self._refresh_preview())
         seed_row.addWidget(self.seed_edit)
@@ -547,8 +552,16 @@ class AutosegColorsWidget(QWidget):
 
     def set(self):
         """Commit the seed and palette to the series options."""
-        self.series.setOption("autoseg_color_seed", self._seed)
-        self.series.setOption("autoseg_color_palette", normalize_palette(self.colors))
+        store_chosen_options(
+            self.series,
+            {"autoseg_color_seed": self._seed,
+             "autoseg_color_palette": normalize_palette(self.colors)},
+            {"autoseg_color_seed": self._initial_seed,
+             "autoseg_color_palette": self._initial_palette},
+            self._copy_pending and not self._use_defaults,
+        )
+        self._initial_seed = self._seed
+        self._initial_palette = normalize_palette(self.colors)
 
     # --- cosmetic border, matching the sibling OptionWidgets -----------------
 

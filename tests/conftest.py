@@ -675,7 +675,7 @@ def _delete_windows_a_test_leaves_behind():
 
 @pytest.fixture
 def qsettings_snapshot():
-    """Leave `QSettings("KHLab", "PyReconstruct")` as the test found it.
+    """Leave `QSettings("PyReconstruct", "PyReconstruct")` as the test found it.
 
     MainWindow reads and writes the developer's real user settings on the way up
     and down: `window/geometry` (`__init__` and `closeEvent`), `username`
@@ -697,14 +697,14 @@ def qsettings_snapshot():
     """
     from PySide6.QtCore import QSettings
 
-    settings = QSettings("KHLab", "PyReconstruct")
+    settings = QSettings("PyReconstruct", "PyReconstruct")
     before = {
         key: settings.value(key)
         for key in _MAIN_WINDOW_SETTINGS_KEYS
         if settings.contains(key)
     }
     yield settings
-    restore = QSettings("KHLab", "PyReconstruct")
+    restore = QSettings("PyReconstruct", "PyReconstruct")
     for key in _MAIN_WINDOW_SETTINGS_KEYS:
         if key in before:
             restore.setValue(key, before[key])
@@ -1102,7 +1102,8 @@ def _install_option_write_guard():
         if (
             caller is not None
             and not (item is not None and item.get_closest_marker("shared_settings_store"))
-            and _in_shared_store(self._settings(code).fileName(), code)
+            # no migration: the check must not copy a store the write would not
+            and _in_shared_store(self._settings(code, migrate=False).fileName(), code)
         ):
             pytest.fail(
                 f"{os.path.basename(caller)} writes the series option {key!r} "

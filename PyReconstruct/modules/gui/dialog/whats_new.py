@@ -21,7 +21,7 @@ from PySide6.QtGui import (
     QColor, QPalette, QTextCursor, QTextCharFormat, QTextBlockFormat,
     QFont, QFontDatabase, QFontInfo, QFontMetricsF,
 )
-from PySide6.QtCore import Qt, QSettings, QEvent, QRect
+from PySide6.QtCore import Qt, QEvent, QRect
 
 from functools import partial
 
@@ -34,7 +34,7 @@ from PyReconstruct.modules.gui.main.first_launch import (
 )
 
 from PyReconstruct.modules.constants.settings_domain import (
-    SETTINGS_ORG, SHARED_APP, domain_for,
+    SETTINGS_ORG, SHARED_APP, settings_for, user_action,
 )
 # ORG/APP name the shared store, kept as module names because tests and the
 # isolation suite address the store through them. The live QSettings sites
@@ -846,7 +846,7 @@ class WhatsNewDialog(QDialog):
     def _store(self):
         """The settings store the checkbox reads and writes."""
         if self._settings is None:
-            self._settings = QSettings(*domain_for(WHATSNEW_SUPPRESS_KEY))
+            self._settings = settings_for(WHATSNEW_SUPPRESS_KEY)
         return self._settings
 
     def setShowAfterUpdate(self, checked):
@@ -857,7 +857,8 @@ class WhatsNewDialog(QDialog):
         switches the popup back on picks the ordinary rules up where they
         stood, a version bump missed while it was off included.
         """
-        self._store().setValue(WHATSNEW_SUPPRESS_KEY, not checked)
+        with user_action():
+            self._store().setValue(WHATSNEW_SUPPRESS_KEY, not checked)
         if self.parent() is not None:
             sync_show_boxes(self.parent())
 
@@ -912,7 +913,7 @@ def maybe_show_whats_new(parent, settings=None, current=None, show=None,
     once-per-version rules back intact, pending bump included.
     """
     if settings is None:
-        settings = QSettings(*domain_for(WHATSNEW_SUPPRESS_KEY, key))
+        settings = settings_for(WHATSNEW_SUPPRESS_KEY, key)
     if current is None:
         current = current_version_str()
     if whats_new_suppressed(settings.value(WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT)):

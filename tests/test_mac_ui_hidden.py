@@ -154,7 +154,7 @@ def test_a_hidden_launch_leaves_the_theme_then_a_shown_one_applies_it(
     monkeypatch.setattr(build_flavor, "running_version", lambda: DEV)
     asked = []
     monkeypatch.setattr(appearance, "setColorScheme", asked.append)
-    QSettings("KHLab", "PyReconstruct").setValue(WHATSNEW_KEY, current_version_str())
+    QSettings("PyReconstruct", "PyReconstruct").setValue(WHATSNEW_KEY, current_version_str())
     store = DictSettingsStore()
     store.set_value(None, "theme", "light")
     set_default_settings_store(store)

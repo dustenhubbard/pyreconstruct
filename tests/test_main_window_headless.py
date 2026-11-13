@@ -352,7 +352,7 @@ def own_recents(main_window):
 
     `recently_opened_series` is a *computer*-scoped option: `Series.setOption`
     resolves it to `Series.qsettings_defaults`, so it is addressed with
-    `code=None` and lands in `QSettings("KHLab", "PyReconstruct")` under a bare
+    `code=None` and lands in `QSettings("PyReconstruct", "PyReconstruct")` under a bare
     key. That is one machine-wide slot shared by every reader on the box, which
     makes these two tests read and write state that nothing in the test session
     owns. Three consequences, the first two measured rather than argued:
@@ -374,7 +374,7 @@ def own_recents(main_window):
         whole list (`addToRecentSeries` caps it at ten). Read it with `QSettings`
         and not `defaults read`: the domain on disk is `com.khlab.PyReconstruct`,
         and `defaults` writes to the name it is given rather than the name that
-        exists, so a mixed-case `com.KHLab.PyReconstruct` reads through but
+        exists, so a mixed-case `com.PyReconstruct.PyReconstruct` reads through but
         writes somewhere the application never looks.
       * The result depends on what the store already held. Not observed to fail
         on its own here (the file passes 12 of 12 alone, and under `-m gui` in 8

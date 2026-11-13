@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (
     QInputDialog, 
 )
 
+from PyReconstruct.modules.constants.settings_domain import user_action
 from PyReconstruct.modules.datatypes import Trace, Ztrace
 from PyReconstruct.modules.calc import pixmapPointToField, distance
 from PyReconstruct.modules.gui.dialog import QuickDialog
@@ -351,9 +352,11 @@ class FieldWidgetView(FieldWidgetPaint):
                 left_handed (bool): True if user is left handed
         """
         if left_handed is not None:
-            self.series.setOption("left_handed", left_handed)
+            with user_action():
+                self.series.setOption("left_handed", left_handed)
         else:
-            self.series.setOption("left_handed", self.mainwindow.lefthanded_act.isChecked())
+            with user_action():
+                self.series.setOption("left_handed", self.mainwindow.lefthanded_act.isChecked())
 
         # adjust handedness of the cursor
         if (self.mouse_mode == OPENTRACE or
@@ -574,4 +577,5 @@ class FieldWidgetView(FieldWidgetPaint):
         columns, confirmed = HoverColumnsDialog(self, self.hover_columns).exec()
         if confirmed:
             self.hover_columns = columns
-            self.series.setOption("hover_columns", columns)
+            with user_action():
+                self.series.setOption("hover_columns", columns)

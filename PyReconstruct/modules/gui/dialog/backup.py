@@ -1,3 +1,4 @@
+from PyReconstruct.modules.constants.settings_domain import user_action
 import os
 import webbrowser
 from datetime import datetime, timezone
@@ -5,12 +6,12 @@ from datetime import datetime, timezone
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
-    QDialog, 
-    QDialogButtonBox, 
+    QDialog,
+    QDialogButtonBox,
     QFrame,
     QGridLayout,
-    QLabel, 
-    QLineEdit, 
+    QLabel,
+    QLineEdit,
     QScrollArea,
     QStyle,
     QVBoxLayout,
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget
 )
 
+from .chosen_options import settings_copy_pending, store_chosen_options
 from .helper import BrowseWidget, BorderedWidget
 
 from PyReconstruct.modules.datatypes import Series
@@ -53,7 +55,7 @@ class BackupDialog(QDialog):
 
     def __init__(self, parent, series : Series, include_confirm=True):
         """Create a dialog for backing up.
-        
+
             Params:
                 series (Series): the series obj
                 include_confirm (bool): True if dialog should include OK and Cancel buttons
@@ -61,6 +63,7 @@ class BackupDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Backup Settings")
         self.series = series
+        self._copy_pending = settings_copy_pending(series)
 
         utc = self.series.getOption("utc")
         if utc:
@@ -130,7 +133,7 @@ class BackupDialog(QDialog):
         r = QHBoxLayout()
         lbl = QLabel(content, text="Delimiter:")
         self.delimiter_le = QLineEdit(
-            content, 
+            content,
             text=self.series.getOption("backup_delimiter")
         )
         # resizeLineEdit(self.delimiter_le, "000")
@@ -239,6 +242,8 @@ class BackupDialog(QDialog):
             outer.addWidget(content)
 
         self.setLayout(outer)
+        self._initial_options = self._options()
+        self._initial_use_defaults = self.use_defaults_cb.isChecked()
         self.updateWidgets()
         self.updateEnabled()
         self.updateDefaultFolder()
@@ -271,7 +276,7 @@ class BackupDialog(QDialog):
             self.default_folder_lbl.setText(f"For this series: {folder}")
         else:
             self.default_folder_lbl.setText("")
-    
+
     def defaultTemplate(self) -> str:
         """The default folder to store, from the folder field and the box.
 
@@ -295,10 +300,10 @@ class BackupDialog(QDialog):
                     text = w.text()
                 l.append(text.replace(" ", dl))
         self.save_name_lbl.setText(dl.join(l) + ".jser")
-    
+
     def accept(self, close=True):
         """Overwritten from parent class.
-        
+
             Params:
                 close (bool): True if close when successful
         """
@@ -314,31 +319,34 @@ class BackupDialog(QDialog):
             return False
         if close: super().accept()
         return True
-    
+
+    def _options(self):
+        """The values displayed by the backup controls."""
+        options = {
+            "autobackup": self.auto_cb.isChecked(),
+            "backup_dir": self.dir_widget.text(),
+            "default_autobackup": self.default_auto_cb.isChecked(),
+            "default_backup_dir": self.defaultTemplate(),
+            "backup_delimiter": self.delimiter_le.text(),
+        }
+        for name, (cb, widget) in self.widgets.items():
+            options[f"backup_{name}"] = cb.isChecked()
+            if name in ("date", "time", "prefix", "suffix"):
+                options[f"backup_{name}_str"] = widget.text()
+        return options
+
     def set(self):
-        """Set the series options with the requested backup data"""
+        """Store backup controls, limiting pending copies to deliberate edits."""
         if self.accept():
-            # set the series options
-            self.series.setBackupUsesDefaults(self.use_defaults_cb.isChecked())
-            self.series.setOption("autobackup", self.auto_cb.isChecked())
-            self.series.setOption("backup_dir", self.dir_widget.text())
-            self.series.setOption("default_autobackup", self.default_auto_cb.isChecked())
-            self.series.setOption("default_backup_dir", self.defaultTemplate())
-            for name, (cb, w) in self.widgets.items():
-                self.series.setOption(
-                    f"backup_{name}",
-                    cb.isChecked()
-                )
-                if name in ("date", "time", "prefix", "suffix"):
-                    self.series.setOption(
-                        f"backup_{name}_str", 
-                        w.text()
-                    )
-            self.series.setOption(
-                "backup_delimiter",
-                self.delimiter_le.text()
-            )
-    
+            use_defaults = self.use_defaults_cb.isChecked()
+            if not self._copy_pending or use_defaults != self._initial_use_defaults:
+                with user_action():
+                    self.series.setBackupUsesDefaults(use_defaults)
+            store_chosen_options(self.series, self._options(),
+                                 self._initial_options, self._copy_pending)
+            self._initial_use_defaults = use_defaults
+            self._initial_options = self._options()
+
     def exec(self):
         "Run the dialog."
         confirmed = super().exec()
