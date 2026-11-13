@@ -508,22 +508,37 @@ def test_a_bashrc_a_login_bash_skips_does_not_count(mac, fake_login):
     assert C.PROFILE_TAG not in (mac["home"] / ".bashrc").read_text()
 
 
-@needs("zsh")
-@needs("bash")
-@pytest.mark.parametrize("shell,name", [("zsh", ".zshenv"), ("bash", ".bash_profile")])
-@pytest.mark.parametrize("line", [
+LINES_THAT_DO_NOT_SET_PATH = [
     "# someday: ~/.local/bin",
     "   # someday: ~/.local/bin",
     "export EDITOR=vi # someday add ~/.local/bin",
     "export EDITOR=vi\t# ~/.local/bin",
     "export EDITOR=vi;# ~/.local/bin",
     'if false; then export PATH="$HOME/.local/bin:$PATH"; fi',
-])
+]
+
+
+@needs("zsh")
+@needs("bash")
+@pytest.mark.parametrize("shell,name", [("zsh", ".zshenv"), ("bash", ".bash_profile")])
+@pytest.mark.parametrize("line", LINES_THAT_DO_NOT_SET_PATH)
 def test_a_line_that_does_not_set_path_does_not_count(mac, shell, name, line):
     mac["home"].mkdir(exist_ok=True)
     before = C.login_path(shell, mac["home"], env={})
     (mac["home"] / name).write_text(line + "\n")
     assert before is not None and C.login_path(shell, mac["home"], env={}) == before
+
+
+@posix_only
+@pytest.mark.parametrize("shell,name", [("zsh", ".zshenv"), ("bash", ".bash_profile")])
+@pytest.mark.parametrize("line", LINES_THAT_DO_NOT_SET_PATH)
+def test_a_line_that_does_not_set_path_still_gets_the_lines(mac, fake_login, shell, name, line):
+    mac["home"].mkdir(exist_ok=True)
+    (mac["home"] / name).write_text(line + "\n")
+    assert ensure(mac, shell=shell)
+    text = (mac["home"] / name).read_text()
+    assert text.startswith(line + "\n") and C.PROFILE_TAG in text
+    assert mac["settings"].values[C.ADDED_KEY] is True
 
 
 @posix_only
