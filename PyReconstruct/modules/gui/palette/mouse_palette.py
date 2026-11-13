@@ -1788,10 +1788,9 @@ class MousePalette():
         # gets its right-click hide menu here
         self.installHideMenus()
         # the field may have changed width, and the bar's room is a share of
-        # it; a no-op when unchanged. A length you typed is fitted to its room
-        # when the field redraws (setScale, placeSB). The
-        # layout depends on the bar's size, so it is set before any group is
-        # placed: set after, the other groups would keep the old layout.
+        # it; a no-op when unchanged. The layout depends on the bar's size, so
+        # it is set before any group is placed: set after, the other groups
+        # would keep the old layout.
         self.sb.setMaxPixelLength(self.sbWidth())
         self.placeGroups()
 
@@ -1801,8 +1800,11 @@ class MousePalette():
         When the layout has room only for a narrower bar, the bar is first
         given that room, as a smaller "Scale bar size" would, and the layout
         is worked out again for it. The stored size is unchanged, and the
-        next resize offers the bar its whole share again.
+        next resize offers the bar its whole share again. A length you typed
+        is fitted first (fitTypedLength), so every road here (a resize, a
+        palette group moved or reset, a new name or preset) refits it.
         """
+        self.fitTypedLength()
         room = self.layout()["sb width"]
         if room < self.sb.width():
             self.sb.setMaxPixelLength(room)

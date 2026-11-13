@@ -973,3 +973,138 @@ def test_a_shortened_bar_is_labeled_with_the_length_it_draws(
     assert drawn < chosen
     assert float(labels[0].split()[0]) == pytest.approx(drawn, abs=palette.sb.scale)
     assert {key: series.getOption(key) for key in stored} == stored
+
+
+def first_clear_decade(main_window, palette, length):
+    """The length a typed bar must be drawn at: as typed, or the first
+    decade below whose bar leaves every group clear (by brute force)."""
+    clear = clear_widths(main_window, palette)
+    return next(length / 10 ** k for k in range(6)
+                if palette.sbBarWidth(length / 10 ** k) in clear)
+
+
+def check_typed(main_window, palette, typed):
+    """What is wrong with a typed bar: a covered control, a label that is not
+    the drawn length, a typed length forgotten, or not the first clear decade."""
+    wrong = list(missed_controls(main_window, palette))
+    if palette.sb.override_length != typed:
+        wrong.append("typed length forgotten")
+    if not drawn_as_labeled(palette.sb):
+        wrong.append("label is not the drawn length")
+    if palette.sb.currentLength()[0] != pytest.approx(first_clear_decade(main_window, palette, typed)):
+        wrong.append(f"drawn {palette.sb.currentLength()[0]} µm")
+    return wrong
+
+
+def test_resetting_palette_positions_refits_a_typed_length(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path):
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    palette = smallest_window(main_window, local_series_settings, monkeypatch, qapp,
+                              tmp_path, 1, 1, spot=(0.0, 0.0))
+    type_length(monkeypatch, palette, [3.2])
+    assert palette.sb.currentLength()[0] == 3.2 and palette.sb.width() == 320
+    assert check_typed(main_window, palette, 3.2) == []
+    # View > Palette > Reset palette position: the default spots leave no
+    # room for a 320 px bar, so it is drawn a decade shorter
+    main_window.resetpalette_act.trigger()
+    qapp.processEvents()
+    assert mouse_palette.load_palette_positions(mouse_palette._position_settings()) == {}
+    assert palette.sb.currentLength()[0] == pytest.approx(0.32)
+    assert check_typed(main_window, palette, 3.2) == []
+
+
+def drag_group(main_window, qapp, monkeypatch, button, dx, dy):
+    """Drag a palette group by one of its buttons, with real mouse events."""
+    from PySide6.QtCore import QEvent, QPointF
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QApplication
+
+    monkeypatch.setattr(main_window.field, "max_click_time", -1)
+
+    def send(kind, global_pos, buttons):
+        local = button.mapFromGlobal(global_pos)
+        QApplication.sendEvent(button, QMouseEvent(
+            kind, QPointF(local), QPointF(global_pos), Qt.LeftButton, buttons, Qt.NoModifier))
+
+    start = button.mapToGlobal(button.rect().center())
+    end = start + type(start)(dx, dy)
+    send(QEvent.MouseButtonPress, start, Qt.LeftButton)
+    send(QEvent.MouseMove, end, Qt.LeftButton)
+    send(QEvent.MouseButtonRelease, end, Qt.NoButton)
+    qapp.processEvents()
+
+
+def road_reset_menu(main_window, palette, qapp, monkeypatch):
+    main_window.resetpalette_act.trigger()
+
+
+def road_drag_tools(main_window, palette, qapp, monkeypatch):
+    button = next(iter(palette.mode_buttons.values()))[0]
+    drag_group(main_window, qapp, monkeypatch, button, 150, 150)
+
+
+def road_drag_sections(main_window, palette, qapp, monkeypatch):
+    drag_group(main_window, qapp, monkeypatch, palette.inc_buttons[0], 150, 150)
+
+
+def road_drag_bar(main_window, palette, qapp, monkeypatch):
+    drag_group(main_window, qapp, monkeypatch, palette.sb, 0, 300)
+
+
+def road_window(main_window, palette, qapp, monkeypatch):
+    main_window.resize(1280, 800)
+    qapp.processEvents()
+    main_window.resize(100, 100)
+
+
+def road_long_name(main_window, palette, qapp, monkeypatch):
+    trace = palette.selectedTrace().copy()
+    trace.name = "dendrite_shaft_spine_long_name_01"
+    palette.modifyPaletteButton(palette.selectedPos(), trace)
+
+
+def road_preset(main_window, palette, qapp, monkeypatch):
+    series = main_window.series
+    traces = series.palette_traces[series.palette_index[0]]
+    series.palette_traces["more"] = [t.copy() for t in traces * 3]
+    series.palette_index[0] = "more"
+    palette.reset()
+
+
+def road_tool_columns(main_window, palette, qapp, monkeypatch):
+    main_window.series.setOption("tool_palette_cols", 5)
+    palette.reset()
+
+
+def road_zoom(main_window, palette, qapp, monkeypatch):
+    series = main_window.series
+    zoom = series.window[2]
+    series.window[2] = zoom * 4
+    palette.setScale()
+    series.window[2] = zoom
+    palette.setScale()
+
+
+def road_thicker_bar(main_window, palette, qapp, monkeypatch):
+    palette.previewScaleBar(bar_preview(100, 25))
+
+
+PLACEMENT_ROADS = [road_reset_menu, road_drag_tools, road_drag_sections, road_drag_bar,
+                   road_window, road_long_name, road_preset, road_tool_columns,
+                   road_zoom, road_thicker_bar]
+
+
+@pytest.mark.parametrize("road", PLACEMENT_ROADS, ids=lambda road: road.__name__[5:])
+def test_every_placement_road_refits_a_typed_length(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path, road):
+    """A typed bar that fills the field, then each road that places the
+    palette groups again: the bar is drawn at the first clear decade."""
+    palette = smallest_window(main_window, local_series_settings, monkeypatch, qapp,
+                              tmp_path, 1, 1, spot=(0.0, 0.0))
+    type_length(monkeypatch, palette, [3.2])
+    assert palette.sb.currentLength()[0] == 3.2
+    road(main_window, palette, qapp, monkeypatch)
+    qapp.processEvents()
+    palette = main_window.mouse_palette
+    assert check_typed(main_window, palette, 3.2) == []
