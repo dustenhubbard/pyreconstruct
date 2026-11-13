@@ -452,9 +452,11 @@ The main window shows the current section's image with its traces drawn on top
 (the column of mode buttons, top-right by default), the **trace palette** (the row
 of preset traces, bottom-center), section-increment buttons, brightness/contrast
 sliders, and a scale bar. Each overlay group can be dragged to reposition it, and
-**View ▸ Palette ▸ Reset palette position** restores the defaults. If the scale
-bar's size leaves it no room clear of the other overlays, PyReconstruct draws it
-shorter.
+**View ▸ Palette ▸ Reset palette position** restores the defaults. The scale
+bar's size is a maximum that also depends on the space available: when the other
+overlays need the room, PyReconstruct draws the bar shorter, and its label shows
+the length drawn. A length typed with the bar's right-click **Set the scale bar
+length...** can be no longer than the room the other overlays leave.
 
 ![The main window with its parts labeled: the field, the tool palette at the top right, the brightness and contrast sliders, the section buttons at the bottom right, the trace palette at the bottom center, and the scale bar at the bottom left.](assets/images/user-guide/05-main-window-labeled.png)
 
