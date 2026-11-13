@@ -81,8 +81,7 @@ class QtNotifier(Notifier):
         from PyReconstruct.modules.gui.utils.utils import qt_offscreen
         if QApplication.instance() is not None and not qt_offscreen:
             from PyReconstruct.modules.gui.utils.errors import show_save_error
-            show_save_error(message, report)
-            return True
+            return show_save_error(message, report)
         return False
 
     def confirm(self, message, title="Confirm"):
