@@ -519,6 +519,23 @@ class _StreamedJser:
         self._f.close()
 
 
+def _zarrAbove(folder : str) -> Optional[str]:
+    """The nearest zarr that is folder or holds it, or None.
+
+    A zarr is a folder whose name ends in "zarr", which is the test the image
+    readers apply to src_dir. The letters inside a longer name (zarr-test,
+    images.zarr.bak) do not make a zarr.
+    """
+    path = folder
+    while True:
+        if os.path.basename(path).endswith("zarr"):
+            return path
+        parent = os.path.dirname(path)
+        if parent == path:
+            return None
+        path = parent
+
+
 def _setAside(folder : str) -> str:
     """Rename `folder` to a free name beside it and return that name.
 
@@ -2878,9 +2895,10 @@ class Series():
             
             wdir = os.path.dirname(image_locations[0])
             
-            if "zarr" in wdir:  # create series next to zarr if necessary
+            src_dir = _zarrAbove(wdir)
+
+            if src_dir:  # create series next to zarr if necessary
                 
-                src_dir = wdir[:wdir.rfind("zarr") + len("zarr")]
                 wdir = os.path.dirname(src_dir)
                 
             else:
