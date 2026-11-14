@@ -381,7 +381,11 @@ class SectionBlocks:
         return z0, min(z0 + self.depth, self.array.shape[0])
 
     def plane(self, z):
-        """The zeroed (y, x) array to draw section z into."""
+        """The zeroed (y, x) array to draw section z into.
+
+        If the block cannot be made, the block is kept as failed and this
+        raises; the caller still calls ``done(z, failed=True)``.
+        """
 
         block = z // self.depth
         z0, z1 = self._bounds(block)
@@ -389,13 +393,20 @@ class SectionBlocks:
             while block not in self._open and self._held >= self.max_blocks:
                 self._cond.wait()
             if block not in self._open:
-                self._open[block] = [
-                    np.zeros((z1 - z0, *self.array.shape[1:]), self.array.dtype),
-                    z1 - z0,
-                    False,
-                ]
+                try:
+                    data = np.zeros((z1 - z0, *self.array.shape[1:]), self.array.dtype)
+                except BaseException:
+                    ## held and failed, so each of its sections still calls
+                    ## done() and the block makes room once they all have
+                    self._open[block] = [None, z1 - z0, True]
+                    self._held += 1
+                    raise
+                self._open[block] = [data, z1 - z0, False]
                 self._held += 1
-            return self._open[block][0][z - z0]
+            data = self._open[block][0]
+            if data is None:
+                raise MemoryError(f"no memory for the block of section index {z}")
+            return data[z - z0]
 
     def done(self, z, failed : bool = False):
         """Mark section z finished; write its block if it was the last one.
@@ -939,8 +950,8 @@ def exportSection(blocks : SectionBlocks,
             window (list): the frame for the raw export
             pixmap_dim (tuple): the w and h in pixels for the arr output
     """
-    plane = blocks.plane(z)  # may wait for a held block to be written
     try:
+        plane = blocks.plane(z)  # may wait for a held block to be written
         section = series.loadSection(snum)
         slayer = SectionLayer(section, series)
 

@@ -244,6 +244,51 @@ def test_no_more_blocks_are_held_than_allowed(max_blocks):
     np.testing.assert_array_equal(array.data[:, 0, 0], np.arange(1, n + 1))
 
 
+def test_a_block_that_cannot_be_made_is_dropped_without_a_hang(monkeypatch):
+    """The first two blocks fail to allocate; the other three are written."""
+    n = 40
+    array = _RecordingArray((n, 3, 4), (8, 3, 4))
+    blocks = conversions.SectionBlocks(array, max_blocks=2)
+    real_zeros, calls = np.zeros, [0]
+
+    def zeros_failing_twice(*args, **kwargs):
+        calls[0] += 1
+        if calls[0] <= 2:
+            raise MemoryError("no memory")
+        return real_zeros(*args, **kwargs)
+
+    monkeypatch.setattr(conversions.np, "zeros", zeros_failing_twice)
+    queue, queue_lock, failed = list(range(n)), threading.Lock(), []
+
+    def worker():
+        while True:
+            with queue_lock:
+                if not queue:
+                    return
+                z = queue.pop(0)
+            try:
+                plane = blocks.plane(z)
+                plane[:] = z + 1
+            except MemoryError:
+                failed.append(z)
+                blocks.done(z, failed=True)
+                continue
+            blocks.done(z)
+
+    threads = [threading.Thread(target=worker) for _ in range(10)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+        assert not t.is_alive(), "a worker never finished"
+
+    assert sorted(failed) == list(range(16))
+    assert sorted((key.start, key.stop) for key, _ in array.writes) == [
+        (16, 24), (24, 32), (32, 40)
+    ]
+    assert blocks._open == {} and blocks._held == 0
+
+
 class _ThreadedPool:
     """Ten threads taking the workers in the order they were made, like
     ThreadPoolProgBar, without its progress and error windows."""
