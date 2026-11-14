@@ -1,0 +1,1 @@
+- **A new series finds its images when a folder name contains "zarr".**
