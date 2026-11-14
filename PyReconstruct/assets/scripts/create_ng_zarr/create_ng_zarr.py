@@ -3,7 +3,6 @@
 """Create neuroglancer-formatted zarrs from PyReconstruct jser files."""
 
 import sys
-import os
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -40,13 +39,6 @@ from PyReconstruct.assets.scripts.create_ng_zarr.utils import (
     print_summary
 )
 
-
-qt_offscreen = os.getenv("QT_QPA_PLATFORM") == "offscreen"
-
-if qt_offscreen and not modules_available("dask", notify=False):
-
-    print("Please pip install 'dask' before converting series to zarr.")
-    sys.exit()
 
 t_convert = datetime.now(timezone.utc)
 
@@ -231,9 +223,10 @@ if groups:
 
 series.close()
 
-## Rechunk if possible
+## Rechunk if possible. raw and labels are written with their final chunks,
+## so only an older raw given with --labels_only is rechunked.
 
-if modules_available("dask"):
+if modules_available("dask", notify=False):
 
     print_flush("Rechunking datasets...")
 

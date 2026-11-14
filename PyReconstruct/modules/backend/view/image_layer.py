@@ -227,7 +227,7 @@ class ImageLayer():
             self._generateImage(pixmap_dim, window, get_crop_only, bc)
         )
 
-    def _generateImage(self, pixmap_dim : tuple, window : list, get_crop_only=False, bc=True) -> QImage:
+    def _generateImage(self, pixmap_dim : tuple, window : list, get_crop_only=False, bc=True, rows=None) -> QImage:
         """Generate the image layer as a QImage.
 
         Unlike QPixmap, QImage is safe to create and paint on outside
@@ -237,24 +237,32 @@ class ImageLayer():
                 pixmap_dim (tuple): the w and h of the main window
                 window (list): the x, y, w, and h of the field window
                 get_crop_only (bool): returns only the direct crop from the image (only for use with brightness/contrast functions)
+                rows (tuple): draw only rows start to end (end exclusive) of
+                    the pixmap_dim image, with the same pixels the whole
+                    image has there; brightness and contrast are not drawn
             Returns:
                 image_layer (QImage): the image layer
         """
+        if rows is not None and bc:
+            raise ValueError("rows draws no brightness or contrast; pass bc=False")
+
         # set attrs
         self.series.window = window
         self.pixmap_dim = pixmap_dim
         pmw, pmh = tuple(self.pixmap_dim)
+        rows = (0, pmh) if rows is None else tuple(rows)
+        out_h = rows[1] - rows[0]
 
         # return blank if image was not found
         if not self.image_found:
-            return _blank(pmw, pmh)
+            return _blank(pmw, out_h)
 
         # setup
         tform = self.section.tform
         mag = self.section.mag
         wx, wy, ww, wh = tuple(self.series.window)
         if ww <= 0 or wh <= 0:
-            return _blank(pmw, pmh)
+            return _blank(pmw, out_h)
 
         self.scaling = pmw / (ww / mag)
 
@@ -282,9 +290,9 @@ class ImageLayer():
             return self._cropWindow(tform, mag, scale_level)
 
         if pmw <= 0 or pmh <= 0:
-            return _blank(pmw, pmh)
+            return _blank(pmw, out_h)
 
-        image_layer = self._sampleWindow(pmw, pmh, tform, mag, scale_level)
+        image_layer = self._sampleWindow(pmw, pmh, tform, mag, scale_level, rows)
 
         # step 12: draw brightness and contrast
         # create the brightness/contrast polygon (draws as a polygon over the image)
@@ -300,7 +308,7 @@ class ImageLayer():
 
         return image_layer
     
-    def _sampleWindow(self, pmw : int, pmh : int, tform : Transform, mag : float, scale_level : int) -> QImage:
+    def _sampleWindow(self, pmw : int, pmh : int, tform : Transform, mag : float, scale_level : int, rows : tuple = None) -> QImage:
         """Draw the image by reading the source pixel under each screen pixel's center.
 
         Each screen pixel center is taken to field coordinates, through the
@@ -314,9 +322,13 @@ class ImageLayer():
                 tform (Transform): the section transform
                 mag (float): the image magnification (microns per pixel)
                 scale_level (int): image pixels per source pixel (zarr pyramids)
+                rows (tuple): the screen rows to draw, start to end (end
+                    exclusive); all pmh rows if None
             Returns:
-                (QImage) the pmw by pmh image layer, black where the image is not
+                (QImage) the pmw by pmh image layer, black where the image is
+                not; only the rows asked for, if rows is given
         """
+        r0, r1 = (0, pmh) if rows is None else rows
         wx, wy, ww, wh = tuple(self.series.window)
         k = scale_level
         unit = mag * k  # field units per source pixel
@@ -329,9 +341,11 @@ class ImageLayer():
         else:
             lh, lw = self._pixels.shape
 
-        image_layer = _blank(pmw, pmh)
+        # each screen row maps through pmh and its own index alone, so the
+        # rows of a band are the same pixels the whole image has there
+        image_layer = _blank(pmw, r1 - r0)
         px = np.arange(pmw)
-        py = np.arange(pmh)
+        py = np.arange(r0, r1)
 
         if b == 0 and d == 0:
             # scale and translation only: one source column per screen column
@@ -468,12 +482,15 @@ class ImageLayer():
         cy1 = min(ih, math.ceil(fymax))
         return self.image.copy(QRect(cx0, ih - cy1, cx1 - cx0, cy1 - cy0))
 
-    def generateImageArray(self, pixmap_dim : tuple, window : list, get_crop_only=False, bc : bool = True):
+    def generateImageArray(self, pixmap_dim : tuple, window : list, get_crop_only=False, bc : bool = True, rows : tuple = None):
         """Generate the image layer.
-        
+
             Params:
                 pixmap_dim (tuple): the w and h of the 2D array
                 window (list): the x, y, w, and h of the field window
+                rows (tuple): only rows start to end (end exclusive) of the
+                    array, the same pixels as those rows of the whole array;
+                    needs bc=False
             Returns:
                 (numpy.ndarray) the image as a numpy array
         """
@@ -482,7 +499,8 @@ class ImageLayer():
             pixmap_dim,
             window,
             get_crop_only,
-            bc
+            bc,
+            rows
         )
         qimage = qimage.convertToFormat(QImage.Format.Format_RGBA8888)
 
