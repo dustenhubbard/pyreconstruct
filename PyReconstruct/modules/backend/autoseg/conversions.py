@@ -353,21 +353,28 @@ def _skips_empty(array):
 class SectionBlocks:
     """The sections of an export, gathered into blocks as deep as its chunks.
 
-    A section's worker draws into ``plane(z)`` and then calls ``done(z)``.
-    The worker that finishes the last section of a block writes the whole
-    block, once, and drops it. Blocks start on chunk boundaries in z, so two
-    blocks never share a chunk and no two workers write the same chunk.
+    A section's worker takes ``plane(z)``, draws section z into it and calls
+    ``done(z)``. The worker that finishes the last section of a block writes
+    the whole block, once, and drops it. Blocks start on chunk boundaries in
+    z, so two blocks never share a chunk and no two workers write the same
+    chunk.
 
-    A block is held only while its sections are being drawn. The pool starts
-    workers in order, so about as many blocks are held as the running
-    workers span, plus one.
+    At most ``max_blocks`` blocks are held at once, counting the ones being
+    written: ``plane`` waits before it starts another. Two let one block be
+    drawn while the one before it is written; writing is the slow part, so
+    more only wait their turn and hold memory. A worker waits only
+    for a block none of its sections has started, and the pool starts
+    workers in z order, so every section of a held block has already started
+    and the wait ends when one of those blocks is written.
     """
 
-    def __init__(self, array):
+    def __init__(self, array, max_blocks : int = 2):
         self.array = array
         self.depth = array.chunks[0]
-        self._lock = threading.Lock()
-        self._open = {}  # block index: [array of its sections, sections left]
+        self.max_blocks = max(1, max_blocks)
+        self._cond = threading.Condition()
+        self._open = {}  # block index: [its sections' array, sections left, failed]
+        self._held = 0  # blocks open or being written
 
     def _bounds(self, block):
         z0 = block * self.depth
@@ -378,26 +385,42 @@ class SectionBlocks:
 
         block = z // self.depth
         z0, z1 = self._bounds(block)
-        with self._lock:
+        with self._cond:
+            while block not in self._open and self._held >= self.max_blocks:
+                self._cond.wait()
             if block not in self._open:
                 self._open[block] = [
                     np.zeros((z1 - z0, *self.array.shape[1:]), self.array.dtype),
                     z1 - z0,
+                    False,
                 ]
+                self._held += 1
             return self._open[block][0][z - z0]
 
-    def done(self, z):
-        """Mark section z drawn; write its block if it was the last one."""
+    def done(self, z, failed : bool = False):
+        """Mark section z finished; write its block if it was the last one.
+
+        A block with a failed section is dropped unwritten, so it still
+        makes room for the next one.
+        """
 
         block = z // self.depth
-        with self._lock:
+        with self._cond:
             entry = self._open[block]
             entry[1] -= 1
+            entry[2] = entry[2] or failed
             if entry[1]:
                 return
             del self._open[block]  # no other worker reaches it now
-        z0, z1 = self._bounds(block)
-        self.array[z0:z1] = entry[0]
+        try:
+            if not entry[2]:
+                z0, z1 = self._bounds(block)
+                self.array[z0:z1] = entry[0]
+        finally:
+            entry[0] = None
+            with self._cond:
+                self._held -= 1
+                self._cond.notify_all()
 
 
 def groupsToVolume(series: Series, groups: list=None, padding: float=None, restrict_to_sections: list=None):
@@ -916,19 +939,24 @@ def exportSection(blocks : SectionBlocks,
             window (list): the frame for the raw export
             pixmap_dim (tuple): the w and h in pixels for the arr output
     """
-    section = series.loadSection(snum)
-    slayer = SectionLayer(section, series)
+    plane = blocks.plane(z)  # may wait for a held block to be written
+    try:
+        section = series.loadSection(snum)
+        slayer = SectionLayer(section, series)
 
-    plane = blocks.plane(z)
-    h = pixmap_dim[1]
-    for r0 in range(0, h, _EXPORT_BAND_ROWS):
-        r1 = min(r0 + _EXPORT_BAND_ROWS, h)
-        plane[r0:r1] = slayer.generateImageArray(
-            pixmap_dim,
-            window,
-            bc=False,
-            rows=(r0, r1)
-        )
+        h = pixmap_dim[1]
+        for r0 in range(0, h, _EXPORT_BAND_ROWS):
+            r1 = min(r0 + _EXPORT_BAND_ROWS, h)
+            plane[r0:r1] = slayer.generateImageArray(
+                pixmap_dim,
+                window,
+                bc=False,
+                rows=(r0, r1)
+            )
+        del slayer, section, plane  # not held while the block is written
+    except BaseException:
+        blocks.done(z, failed=True)
+        raise
 
     blocks.done(z)
 

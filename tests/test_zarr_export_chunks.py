@@ -199,15 +199,101 @@ def test_each_block_is_written_once_whole_on_chunk_boundaries(n, depth):
     assert blocks._open == {}
 
 
-def test_a_block_with_a_failed_section_is_never_written():
-    array = _RecordingArray((10, 2, 2), (8, 2, 2))
-    blocks = conversions.SectionBlocks(array)
-    for z in range(10):
-        blocks.plane(z)
-        if z != 3:  # section 3's worker raised before done
+def test_a_block_with_a_failed_section_is_dropped_and_makes_room():
+    array = _RecordingArray((24, 2, 2), (8, 2, 2))
+    blocks = conversions.SectionBlocks(array, max_blocks=1)
+    for z in range(24):
+        blocks.plane(z)  # with one block allowed, this waits on a held block
+        blocks.done(z, failed=z == 3)
+
+    assert [(key.start, key.stop) for key, _ in array.writes] == [(8, 16), (16, 24)]
+    assert blocks._held == 0
+
+
+@pytest.mark.parametrize("max_blocks", [1, 2])
+def test_no_more_blocks_are_held_than_allowed(max_blocks):
+    """Ten workers, started in z order like the pool's, never hold more."""
+    n = 40
+    array = _RecordingArray((n, 3, 4), (8, 3, 4))
+    blocks = conversions.SectionBlocks(array, max_blocks=max_blocks)
+    most = [0]
+    queue = list(range(n))
+    queue_lock = threading.Lock()
+
+    def worker():
+        while True:
+            with queue_lock:
+                if not queue:
+                    return
+                z = queue.pop(0)
+            plane = blocks.plane(z)
+            most[0] = max(most[0], blocks._held)
+            time.sleep(random.random() / 500)
+            plane[:] = z + 1
             blocks.done(z)
 
-    assert [(key.start, key.stop) for key, _ in array.writes] == [(8, 10)]
+    threads = [threading.Thread(target=worker) for _ in range(10)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+        assert not t.is_alive(), "a worker never finished"
+
+    assert most[0] <= max_blocks
+    assert len(array.writes) == n // 8
+    np.testing.assert_array_equal(array.data[:, 0, 0], np.arange(1, n + 1))
+
+
+class _ThreadedPool:
+    """Ten threads taking the workers in the order they were made, like
+    ThreadPoolProgBar, without its progress and error windows."""
+
+    def __init__(self):
+        self.jobs = []
+
+    def createWorker(self, fn, *args, **kwargs):
+        self.jobs.append((fn, args))
+
+    def startAll(self, *args, **kwargs):
+        lock, failed = threading.Lock(), []
+
+        def run():
+            while True:
+                with lock:
+                    if not self.jobs:
+                        return
+                    fn, args = self.jobs.pop(0)
+                try:
+                    fn(*args)
+                except Exception as e:
+                    failed.append(e)
+
+        threads = [threading.Thread(target=run) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=60)
+            assert not t.is_alive(), "the export hung"
+        return not failed
+
+
+def test_a_failed_section_stops_the_export_without_a_hang(series, tmp_path, monkeypatch):
+    real = SectionLayer.generateImageArray
+
+    def fail_on_section_5(self, *args, **kwargs):
+        if self.section.n == 5:
+            raise RuntimeError("cannot draw")
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(SectionLayer, "generateImageArray", fail_on_section_5)
+    monkeypatch.setattr(conversions, "ThreadPoolProgBar", _ThreadedPool)
+    ## one block at a time: the second block waits on the failed first one
+    blocks = conversions.SectionBlocks
+    monkeypatch.setattr(conversions, "SectionBlocks", lambda a: blocks(a, max_blocks=1))
+    out = tmp_path / "out.zarr"
+
+    assert conversions.seriesToZarr(series, SECTIONS, MAG, WINDOW, data_fp=str(out)) is None
+    assert not out.exists()
 
 
 def test_labels_give_each_worker_one_whole_block_in_order(series, tmp_path, monkeypatch):
