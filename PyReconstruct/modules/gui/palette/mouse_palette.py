@@ -997,6 +997,28 @@ class MousePalette():
             self._typed_fit = fit
         return self._typed_fit
 
+    def sbPinnedFit(self):
+        """How many decades shorter than its `pinnedLength` a bar of a fixed
+        length is drawn, so that its widget, widened to its whole label,
+        leaves every group a clear spot (barIsClear); None when no decade
+        with a pixel of rule does."""
+        sb = self.sb
+        key = self.layoutKey()[:-2] + (
+            sb.height(), self.labelSize().toTuple(), sb.scale, sb.micron_length,
+            sb.max_pixel_length, sb.displayOption("show_scale_bar_text"))
+        if key != getattr(self, "_pinned_fit_key", None):
+            real_len = pinnedLength(sb.micron_length, sb.scale, sb.max_pixel_length)[0]
+            fit, decades = None, 0
+            while real_len > 0 and real_len / sb.scale >= 1:
+                if self.barIsClear(self.sbBarWidth(real_len)):
+                    fit = decades
+                    break
+                real_len /= 10
+                decades += 1
+            self._pinned_fit_key = key
+            self._pinned_fit = fit
+        return self._pinned_fit
+
     def arrange(self, fractions, force=False, bar_width=None):
         """Every group placed from these fractions clear of the ones before
         it, the bar bar_width wide if given. None if a group has no clear
@@ -1771,6 +1793,10 @@ class MousePalette():
         then every group is placed again from the new layout.
         """
         self.fitTypedLength()
+        if self.layoutKey() == getattr(self, "_placed_key", None):
+            # a new cap or zoom that leaves the bar's width can still change
+            # the decade its label needs; placeGroups fits it otherwise
+            self.fitPinnedLabel()
         if self.layoutKey() != getattr(self, "_placed_key", None):
             self.placeGroups()
         else:
@@ -1800,12 +1826,24 @@ class MousePalette():
             self.sb_no_room = no_room
             self.showSB()
 
+    def fitPinnedLabel(self):
+        """Draw a bar of a fixed length a decade shorter, or more, while its
+        whole label at that length would cover a group (sbPinnedFit).
+
+        The label of a long number is wider than its bar, and the widget is
+        widened to it. The bar steps a decade, as a zoom does, until the
+        widget leaves every group clear; when none does, it is drawn at its
+        length and hidden (fitAutoLabel)."""
+        fixed = self.sb.micron_length and not self.sb.override_length
+        self.sb.setLabelDecades((self.sbPinnedFit() or 0) if fixed else 0)
+
     def fitAutoLabel(self):
         """Hide an automatic bar while its whole label has no room.
 
         The bar steps a decade shorter until its label fits its widget
-        (ScaleBar.labelFit), and a bar of a fixed length is widened to its
-        label. Zoomed far out the number alone can be wider than any room
+        (ScaleBar.labelFit), or for a bar of a fixed length until the widget
+        widened to its label leaves every group clear (fitPinnedLabel).
+        Zoomed far out the number alone can be wider than any room
         the palette buttons leave, so the label would be cut off or cover a
         button; the bar is hidden instead, as a length you typed is. It comes
         back by itself when the room does, and the View menu is untouched."""
@@ -1849,6 +1887,7 @@ class MousePalette():
         room = self.layout()["sb width"]
         if not self.sb_no_room and room < self.sb.width():
             self.sb.setMaxPixelLength(room)
+        self.fitPinnedLabel()
         self.fitAutoLabel()
         self._placed_key = self.layoutKey()
         self.placeModeButtons()

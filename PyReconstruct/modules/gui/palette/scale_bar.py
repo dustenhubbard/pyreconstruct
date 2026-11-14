@@ -471,6 +471,10 @@ class ScaleBar(MoveableButton):
         # rebuild on the same series)
         self.override_length = None
         self.override_room = 0
+        # how many decades shorter than its length a bar of a fixed length
+        # is drawn, so its whole label leaves the palette buttons clear
+        # (MousePalette.fitPinnedLabel); never stored
+        self.label_decades = 0
         # "show numbers" and "show ticks" as a settings dialog previews
         # them; empty means the stored options (see displayOption)
         self.display_preview = {}
@@ -574,10 +578,24 @@ class ScaleBar(MoveableButton):
             return self.micron_length, self.max_pixel_length
         return None
 
+    def setLabelDecades(self, decades):
+        """Draw a bar of a fixed length `decades` decades shorter than
+        `pinnedLength` gives, so its label still matches what it measures."""
+        if decades == self.label_decades:
+            return
+        self.label_decades = decades
+        self._fitPinned()
+        self.update()
+
     def pinnedRender(self):
         """The pinned bar's length and tick count at the current zoom."""
         micron_length, room = self._pinned()
         real_len, pix_len = pinnedLength(micron_length, self.scale, room)
+        if self.label_decades and not self.override_length:
+            real_len /= 10 ** self.label_decades
+            pix_len = int(real_len / self.scale)
+            if pix_len <= 0:
+                real_len, pix_len = 0.0, 0
         return real_len, pix_len, pinnedSubdivisions(real_len)
 
     def currentLength(self):
