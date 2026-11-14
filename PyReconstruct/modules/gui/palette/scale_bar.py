@@ -588,7 +588,22 @@ class ScaleBar(MoveableButton):
         else:
             # the longest nice length that fits the widget, and how finely to tick it
             real_len, subdivs = niceLength(self.width() * self.scale)
+            real_len = self.labelFit(real_len, self.width())
         return real_len, subdivs
+
+    def labelFit(self, real_len, room):
+        """`real_len`, or the first decade below it whose whole label fits
+        in `room` pixels, so a long number is never cut off.
+
+        0.0 when no decade has room for its label before the bar is under a
+        pixel. Far zoomed out the number alone is wider than the room; the
+        palette then hides the bar (MousePalette.fitAutoLabel).
+        """
+        while real_len > 0 and self.labelWidth(real_len) + 2 > room:
+            real_len /= 10
+            if real_len / self.scale < 1:
+                return 0.0
+        return real_len
 
     def _fitPinned(self):
         """Resize the widget to the pinned bar, so the paint is never clipped.

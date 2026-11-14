@@ -351,6 +351,9 @@ class MousePalette():
         # True while a length you typed has no room and its bar is hidden
         # (fitTypedLength); never stored
         self.sb_no_room = False
+        # True while an automatic bar's whole label has no room and the bar
+        # is hidden (fitAutoLabel); never stored
+        self.sb_label_too_wide = False
 
         # create scale palette
         self.createSB()
@@ -1290,9 +1293,10 @@ class MousePalette():
         self.showSB()
 
     def showSB(self):
-        """Show the scale bar unless the View menu hides it or a length you
-        typed has no room (fitTypedLength)."""
-        self.sb.setVisible(not (self.sb_hidden or self.sb_no_room))
+        """Show the scale bar unless the View menu hides it, a length you
+        typed has no room (fitTypedLength), or an automatic bar's label has
+        none (fitAutoLabel)."""
+        self.sb.setVisible(not (self.sb_hidden or self.sb_no_room or self.sb_label_too_wide))
 
     def togglePalette(self):
         """Hide/Unhide the mouse palette."""
@@ -1771,6 +1775,7 @@ class MousePalette():
             self.placeGroups()
         else:
             self.moveSB()
+            self.fitAutoLabel()
 
     def fitTypedLength(self):
         """Draw a length you typed as typed if its bar leaves every group
@@ -1793,6 +1798,21 @@ class MousePalette():
                 self.sb.setOverride(self.sb.override_length, room)
         if no_room != self.sb_no_room:
             self.sb_no_room = no_room
+            self.showSB()
+
+    def fitAutoLabel(self):
+        """Hide an automatic bar while its whole label has no room.
+
+        The bar steps a decade shorter until its label fits its widget
+        (ScaleBar.labelFit), and a bar of a fixed length is widened to its
+        label. Zoomed far out the number alone can be wider than any room
+        the palette buttons leave, so the label would be cut off or cover a
+        button; the bar is hidden instead, as a length you typed is. It comes
+        back by itself when the room does, and the View menu is untouched."""
+        too_wide = not self.sb.override_length and (
+            self.sb.currentLength()[0] <= 0 or self.sb.width() > self.layout()["sb width"])
+        if too_wide != self.sb_label_too_wide:
+            self.sb_label_too_wide = too_wide
             self.showSB()
 
     def moveSB(self):
@@ -1829,6 +1849,7 @@ class MousePalette():
         room = self.layout()["sb width"]
         if not self.sb_no_room and room < self.sb.width():
             self.sb.setMaxPixelLength(room)
+        self.fitAutoLabel()
         self._placed_key = self.layoutKey()
         self.placeModeButtons()
         for i, pb in enumerate(self.palette_buttons):

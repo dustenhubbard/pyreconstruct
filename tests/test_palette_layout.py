@@ -1163,3 +1163,118 @@ def test_a_typed_bar_with_no_room_at_any_length_is_hidden_until_the_room_returns
     assert palette.sb.currentLength()[0] == typed
     assert check_typed(main_window, palette, typed) == []
     assert mouse_palette.load_palette_visibility(mouse_palette._visibility_settings()) == visibility
+
+
+def automatic_length(bar):
+    """The length a screen-fraction bar must draw, by brute force: the
+    longest nice length that fits its widget, or the first decade below
+    whose whole label fits there too; 0 when none does at a pixel or more."""
+    from PyReconstruct.modules.gui.palette.scale_bar import niceLength
+
+    length = niceLength(bar.width() * bar.scale)[0]
+    for k in range(40):
+        shorter = niceLength(length / 10 ** k)[0]
+        if shorter / bar.scale < 1:
+            return 0.0
+        if bar.labelWidth(shorter) + 2 <= bar.width():
+            return shorter
+    return 0.0
+
+
+def bar_problems(main_window, palette):
+    """What is wrong with the scale bar as it stands: a covered control, a
+    label cut off by its widget, or a hidden bar that has room to draw."""
+    bar = palette.sb
+    missed = missed_controls(main_window, palette)
+    if bar.isHidden():
+        wrong = [name for name in missed if name != "scale bar"]
+        if not palette.sb_hidden and not bar._pinned() and automatic_length(bar):
+            wrong.append("hidden with room")
+        return wrong
+    real_len = bar.currentLength()[0]
+    if real_len <= 0:
+        missed.append("nothing drawn")
+    elif bar.labelWidth(real_len) + 2 > bar.width():
+        missed.append(f"label {bar.labelWidth(real_len)} px in a {bar.width()} px bar")
+    elif not bar._pinned() and real_len != pytest.approx(automatic_length(bar)):
+        missed.append(f"drawn {real_len} µm")
+    return missed
+
+
+@pytest.mark.parametrize("percent", [25, 100])
+def test_an_automatic_bar_far_zoomed_out_is_hidden_while_no_label_fits(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path, percent):
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    palette = smallest_window(main_window, local_series_settings, monkeypatch, qapp,
+                              tmp_path, 1, 1, thickness=25)
+    visibility = mouse_palette.load_palette_visibility(mouse_palette._visibility_settings())
+    palette.previewScaleBar(bar_preview(percent, 25))
+    pan_zoom_to(main_window, palette, qapp, 1e16)
+    palette.previewScaleBarWidth(percent)
+    qapp.processEvents()
+    # every label at this zoom, 1000000000000000000 µm and each decade
+    # down to a one-pixel bar, is wider than the room the bar has
+    assert automatic_length(palette.sb) == 0
+    assert palette.sb.isHidden() and not palette.sb_hidden
+    assert missed_controls(main_window, palette) == ["scale bar"]
+    palette.toggleSB()
+    palette.toggleSB()
+    assert palette.sb.isHidden()
+    # a larger window has room for the whole label, and the smallest has not
+    main_window.resize(1280, 800)
+    qapp.processEvents()
+    assert not palette.sb.isHidden()
+    assert bar_problems(main_window, palette) == []
+    main_window.resize(100, 100)
+    qapp.processEvents()
+    assert palette.sb.isHidden()
+    assert missed_controls(main_window, palette) == ["scale bar"]
+    pan_zoom_to(main_window, palette, qapp, 0.01)
+    assert not palette.sb.isHidden()
+    assert bar_problems(main_window, palette) == []
+    assert mouse_palette.load_palette_visibility(mouse_palette._visibility_settings()) == visibility
+
+
+ZOOM_STEPS = [0.01, 1e4, 1e8, 1e12, 1e14, 1e16, 1e20, 0.01]
+
+
+@pytest.mark.parametrize("window", [(100, 100), (1280, 800)])
+def test_no_scale_bar_label_is_cut_off_at_any_zoom(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path, window):
+    """The automatic bar in either mode and a typed length, at 25 and 100
+    percent, from the smallest window up: zoomed out step by step to 10^20 µm
+    a pixel and back, the whole label shows or the bar is hidden."""
+    palette = smallest_window(main_window, local_series_settings, monkeypatch, qapp,
+                              tmp_path, 1, 1, thickness=25)
+    main_window.resize(*window)
+    qapp.processEvents()
+    failures = []
+    for kind in ("screen fraction", "pinned", "typed"):
+        for percent in (25, 100):
+            pan_zoom_to(main_window, palette, qapp, 0.01)
+            palette.clearSBLength()
+            palette.previewScaleBar(bar_preview(percent, 25, 3.0 if kind == "pinned" else None))
+            if kind == "typed":
+                type_length(monkeypatch, palette, [palette.sbLengthRange()[1] / 3])
+            for scale in ZOOM_STEPS:
+                pan_zoom_to(main_window, palette, qapp, scale)
+                failures += [(kind, percent, scale, wrong)
+                             for wrong in bar_problems(main_window, palette)]
+            assert not palette.sb.isHidden(), (kind, percent)
+    assert not failures, f"{len(failures)}: {failures[:6]}"
+
+
+def test_resetting_palette_positions_hides_an_automatic_bar_whose_label_loses_its_room(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path):
+    palette = smallest_window(main_window, local_series_settings, monkeypatch, qapp,
+                              tmp_path, 1, 1, spot=(0.0, 0.0))
+    pan_zoom_to(main_window, palette, qapp, 1e13)
+    # saved in the corner, the bar has the field's width for its label
+    assert palette.sb.width() == 320 and not palette.sb.isHidden()
+    assert bar_problems(main_window, palette) == []
+    # the default spots leave 161 px, too few for any decade's label
+    main_window.resetpalette_act.trigger()
+    qapp.processEvents()
+    assert palette.sb.isHidden() and not palette.sb_hidden
+    assert bar_problems(main_window, palette) == []
