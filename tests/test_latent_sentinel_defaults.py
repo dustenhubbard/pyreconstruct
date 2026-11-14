@@ -127,8 +127,9 @@ def test_optimize_series_bc_still_restricts_to_the_given_sections(no_op_section_
 # seriesToLabels
 # --------------------------------------------------------------------------- #
 class _FakeZarrArray:
-    def __init__(self, attrs):
+    def __init__(self, attrs, chunks=(1, 64, 64)):
         self.shape = (3, 64, 64)
+        self.chunks = chunks
         self.attrs = attrs
 
 
@@ -139,8 +140,9 @@ class _FakeZarrGroup(dict):
         self.created = {}
 
     def create_dataset(self, name, **kwargs):
-        self[name] = _FakeZarrArray({})
+        self[name] = _FakeZarrArray({}, kwargs["chunks"])
         self.created[name] = kwargs
+        return self[name]
 
 
 ## seriesToLabels numbers the group's objects before it queues any worker
@@ -150,7 +152,11 @@ _SERIES = types.SimpleNamespace(
 
 
 class _CountingThreadPool:
-    """Stands in for ThreadPoolProgBar: records one entry per queued section."""
+    """Stands in for ThreadPoolProgBar: records the arguments of each worker.
+
+    A labels worker gets the exportTraces arguments of each section in its
+    block.
+    """
 
     def __init__(self):
         self.workers = []
@@ -160,6 +166,10 @@ class _CountingThreadPool:
 
     def startAll(self, *args, **kwargs):
         return True
+
+
+def _queued_sections(pool):
+    return [job[1] for (jobs,) in pool.workers for job in jobs]
 
 
 @pytest.fixture()
@@ -205,9 +215,9 @@ def test_series_to_labels_reads_the_section_range_off_the_zarr(labels_zarr):
 
     seriesToLabels(_SERIES, "/nonexistent.zarr", group="mito")
 
-    ## one queued worker per section named in raw.attrs["sections"]
+    ## every section named in raw.attrs["sections"] is queued
     assert len(pools) == 1
-    assert [args[1] for args in pools[0].workers] == [0, 1, 2]
+    assert _queued_sections(pools[0]) == [0, 1, 2]
 
     ## and the labels dataset is shaped from the window stored on the zarr:
     ## 3 sections, h/mag = 4.0/0.008, w/mag = 8.0/0.008
@@ -232,7 +242,7 @@ def test_series_to_labels_still_prefers_an_explicit_window(labels_zarr):
         raw_window=[0.0, 0.0, 8.0, 4.0],
     )
 
-    assert [args[1] for args in pools[0].workers] == [5, 6]
+    assert _queued_sections(pools[0]) == [5, 6]
     assert group.created["labels_mito"]["shape"][0] == 2
     ## section 5 is raw slice 3, so the labels start 3 slices of 50 nm in
     assert group["labels_mito"].attrs["offset"][0] == 150

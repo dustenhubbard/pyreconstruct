@@ -4323,13 +4323,6 @@ class MainWindow(QMainWindow):
     def exportToZarr(self):
         """Export series as a neuroglancer-compatible zarr."""
 
-        if not modules_available("dask"):
-
-            notify(
-                "The 'dask' module (needed to rechunk your zarr after conversion) is not "
-                "available, but conversion will continue with a chunk size of (1, 256, 256)."
-            )
-
         all_sections = sorted(list(self.series.sections.keys()))
 
         ## Get options from user

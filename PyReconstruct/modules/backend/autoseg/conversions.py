@@ -287,17 +287,28 @@ def get_offset(window, resolution, img_mag, relative_to, section_diff=0):
     return offset
 
 
+## The chunks seriesToZarr and seriesToLabels write, and rechunk's target
+EXPORT_CHUNKS = (8, 256, 256)
+
+## Rows of a section drawn at a time in an export. A whole 30,000 px section
+## drawn at once held about 8 bytes a pixel in Qt images on top of the 1 byte
+## kept.
+_EXPORT_BAND_ROWS = 512
+
+
 def rechunk(
         zarr_fp: Union[str, Path],
-        target_chunks: Tuple[int, int, int] = (8, 256, 256)
+        target_chunks: Tuple[int, int, int] = EXPORT_CHUNKS
 ):
-    """Rechunk all available datasets."""
+    """Rechunk all available datasets.
 
-    import dask.array as da
+    A dataset already chunked as target_chunks is left as it is, so a zarr
+    exported with those chunks is not copied or deleted.
+    """
 
     if not isinstance(zarr_fp, Path):
         zarr_fp = Path(zarr_fp)
-    
+
     z = zarr.open(str(zarr_fp), "r")
 
     for arr_name, src_arr in z.items():
@@ -305,21 +316,88 @@ def rechunk(
         if not isinstance(src_arr, zarr.Array):
             continue
 
+        if tuple(src_arr.chunks) == tuple(target_chunks):
+            continue
+
+        import dask.array as da
+
         src_fp = zarr_fp / arr_name
         target_fp = src_fp.with_name(arr_name + "_rechunked")
-        
+
         da_old = da.from_zarr(src_fp)
-        da_new = da_old.rechunk((8, 256, 256))
-        
-        da_new.to_zarr(target_fp)
+        da_new = da_old.rechunk(target_chunks)
+
+        ## an integer chunk of only fill_value is not stored, and it reads
+        ## back the same; a float chunk of -0.0 would read back as +0.0
+        da_new.to_zarr(
+            target_fp,
+            fill_value=src_arr.fill_value,
+            write_empty_chunks=not _skips_empty(src_arr),
+        )
 
         zarr.open(target_fp, "r+").attrs.update(src_arr.attrs)
 
         ## Remove original
         shutil.rmtree(str(src_fp))
         target_fp.rename(src_fp)
-        
+
     return True
+
+
+def _skips_empty(array):
+    """True if a chunk of only the array's fill_value can go unstored."""
+
+    return array.dtype.kind in "biu" and array.fill_value is not None
+
+
+class SectionBlocks:
+    """The sections of an export, gathered into blocks as deep as its chunks.
+
+    A section's worker draws into ``plane(z)`` and then calls ``done(z)``.
+    The worker that finishes the last section of a block writes the whole
+    block, once, and drops it. Blocks start on chunk boundaries in z, so two
+    blocks never share a chunk and no two workers write the same chunk.
+
+    A block is held only while its sections are being drawn. The pool starts
+    workers in order, so about as many blocks are held as the running
+    workers span, plus one.
+    """
+
+    def __init__(self, array):
+        self.array = array
+        self.depth = array.chunks[0]
+        self._lock = threading.Lock()
+        self._open = {}  # block index: [array of its sections, sections left]
+
+    def _bounds(self, block):
+        z0 = block * self.depth
+        return z0, min(z0 + self.depth, self.array.shape[0])
+
+    def plane(self, z):
+        """The zeroed (y, x) array to draw section z into."""
+
+        block = z // self.depth
+        z0, z1 = self._bounds(block)
+        with self._lock:
+            if block not in self._open:
+                self._open[block] = [
+                    np.zeros((z1 - z0, *self.array.shape[1:]), self.array.dtype),
+                    z1 - z0,
+                ]
+            return self._open[block][0][z - z0]
+
+    def done(self, z):
+        """Mark section z drawn; write its block if it was the last one."""
+
+        block = z // self.depth
+        with self._lock:
+            entry = self._open[block]
+            entry[1] -= 1
+            if entry[1]:
+                return
+            del self._open[block]  # no other worker reaches it now
+        z0, z1 = self._bounds(block)
+        self.array[z0:z1] = entry[0]
 
 
 def groupsToVolume(series: Series, groups: list=None, padding: float=None, restrict_to_sections: list=None):
@@ -415,9 +493,12 @@ def seriesToZarr(series : Series,
                  data_fp: str = None,
                  output_dir: str = None,
                  other_attrs: dict = None,
-                 chunk_size: tuple = (1, 256, 256)):
+                 chunk_size: tuple = EXPORT_CHUNKS):
     """Convert a series of images into a neuroglancer-compatible zarr.
-    
+
+    Each block of sections as deep as a chunk is written once, after all of
+    its sections are drawn, and chunks of only 0 are not stored.
+
         Params:
             series (Series): the series to convert
             sections (list): the sections to include (exclusive; ASSUME sorted already)
@@ -426,6 +507,7 @@ def seriesToZarr(series : Series,
             data_fp (str): filename of output zarr
             output_dir (str): directory to store zarr
             other_attrs (dict): other infoformation to store in .zattrs
+            chunk_size (tuple): the (z, y, x) chunks of raw
 
         Returns:
             the filepath for the zarr (None if a section failed)
@@ -471,14 +553,17 @@ def seriesToZarr(series : Series,
         
     data_zg = zarr.open(data_fp, "a")
     
-    data_zg.create_dataset(
+    ## write_empty_chunks is a setting of this Array object, not of the
+    ## stored array, so every write goes through raw. A missing chunk reads
+    ## as fill_value.
+    raw = data_zg.create_dataset(
         "raw",
         shape=shape,
         chunks=chunk_size,
-        dtype=np.uint8
+        dtype=np.uint8,
+        fill_value=0,
+        write_empty_chunks=False,
     )
-
-    raw = data_zg["raw"]
 
     ## Get values for saving zarr files (from last known section)
     section_thickness = series.loadSection(sections[0]).thickness
@@ -512,11 +597,12 @@ def seriesToZarr(series : Series,
     
     ## Create threadpool and interate through series
     threadpool = ThreadPoolProgBar()
-    
+    blocks = SectionBlocks(raw)
+
     for i, snum in enumerate(sections):
         threadpool.createWorker(
             exportSection,
-            data_zg,
+            blocks,
             snum,
             series,
             i,
@@ -536,10 +622,15 @@ def seriesToLabels(series: Series,
                    group: Union[str, None] = None,
                    window: Union[List, None] = None,
                    img_mag: float = 0.00254,
-                   chunk_size: tuple = (1, 256, 256),
+                   chunk_size: tuple = EXPORT_CHUNKS,
                    raw_window: Union[List, None] = None):
     """Export contours as labels to an existing zarr.
-    
+
+    One worker draws each block of sections as deep as a chunk, one section
+    after another, so no two workers write the same chunk. Each section is
+    written as it is drawn: labels are mostly 0, a chunk of only 0 is not
+    stored, and one section's labels at a time is what each worker holds.
+
         Params:
             series (Series): the series
             data_fp (str): the filepath for the zarr
@@ -616,18 +707,21 @@ def seriesToLabels(series: Series,
 
     dataset_name = f"labels_{group_or_tag}"
 
-    # create labels datasets
-    data_zg.create_dataset(
+    # create labels datasets; every write goes through this Array object,
+    # which holds write_empty_chunks
+    labels = data_zg.create_dataset(
         dataset_name,
         shape=shape,
         chunks=chunk_size,
-        dtype=np.uint64
+        dtype=np.uint64,
+        fill_value=0,
+        write_empty_chunks=False,
     )
-    
-    data_zg[dataset_name].attrs["offset"] = offset
-    data_zg[dataset_name].attrs["voxel_size"] = resolution
-    data_zg[dataset_name].attrs["axis_names"] = ["z", "y", "x"]
-    data_zg[dataset_name].attrs["units"] = ["nm", "nm", "nm"]
+
+    labels.attrs["offset"] = offset
+    labels.attrs["voxel_size"] = resolution
+    labels.attrs["axis_names"] = ["z", "y", "x"]
+    labels.attrs["units"] = ["nm", "nm", "nm"]
 
     ## One label per object for the whole export, so an object keeps its label
     ## on every section and no two objects share one. Every worker draws only
@@ -637,24 +731,19 @@ def seriesToLabels(series: Series,
     )
     gt_lookup = {}
 
-    # create threadpool
+    # create threadpool: one worker per block of chunk_size[0] sections
     threadpool = ThreadPoolProgBar()
+    depth = labels.chunks[0]
 
-    for i, snum in enumerate(sections):
+    for z0 in range(0, len(sections), depth):
         threadpool.createWorker(
-            exportTraces,
-            data_zg,
-            snum,
-            series,
-            group_or_tag,
-            is_group,
-            i,
-            window,
-            pixmap_dim,
-            del_group,
-            alignment[str(snum)],
-            name_ids,
-            gt_lookup
+            _exportTraceBlock,
+            [
+                (labels, snum, series, group_or_tag, is_group, z, window,
+                 pixmap_dim, del_group, alignment[str(snum)], name_ids,
+                 gt_lookup)
+                for z, snum in enumerate(sections[z0:z0 + depth], start=z0)
+            ]
         )
 
     if not threadpool.startAll("Converting contours to zarr..."):
@@ -808,36 +897,53 @@ def exterior_to_points(ext: list[np.ndarray], placement, tform):
     return tform.map(placement.to_field(ext).tolist(), inverted=True)
 
 
-def exportSection(data_zg,
+def exportSection(blocks : SectionBlocks,
                   snum : int,
                   series : Series,
                   z : int,
                   window : list,
                   pixmap_dim : tuple):
     """Export the raw data for a single section.
-    
+
+    The section is drawn a band of rows at a time into its block, which is
+    written once its last section is drawn.
+
         Params:
-            data_zg: the zarr group
+            blocks (SectionBlocks): the blocks of the raw array
             snum (int): the section number
             series (Series): the series
             z (int): the z-level of the section in the zarr
             window (list): the frame for the raw export
             pixmap_dim (tuple): the w and h in pixels for the arr output
     """
-    # print(f"Section {snum} exporting started")
     section = series.loadSection(snum)
     slayer = SectionLayer(section, series)
 
-    arr = slayer.generateImageArray(
-        pixmap_dim, 
-        window,
-        bc=False
-    )
+    plane = blocks.plane(z)
+    h = pixmap_dim[1]
+    for r0 in range(0, h, _EXPORT_BAND_ROWS):
+        r1 = min(r0 + _EXPORT_BAND_ROWS, h)
+        plane[r0:r1] = slayer.generateImageArray(
+            pixmap_dim,
+            window,
+            bc=False,
+            rows=(r0, r1)
+        )
 
-    data_zg["raw"][z] = arr
+    blocks.done(z)
 
 
-def exportTraces(data_zg,
+def _exportTraceBlock(jobs : list):
+    """Run exportTraces for each section of one block, in order.
+
+    Params:
+        jobs (list): the exportTraces arguments for each section
+    """
+    for args in jobs:
+        exportTraces(*args)
+
+
+def exportTraces(labels,
                  snum : int,
                  series : Series,
                  group_or_tag : str,
@@ -850,9 +956,9 @@ def exportTraces(data_zg,
                  name_ids : dict = None,
                  gt_lookup : dict = None):
     """Export the traces as labels for a single section.
-    
+
         Params:
-            data_zg: the zarr group
+            labels: the zarr labels array
             snum (int): the section number
             series (Series): the series
             group_or_tag (str): the group or tag to include as labels
@@ -897,9 +1003,7 @@ def exportTraces(data_zg,
             name_ids=name_ids
     )
 
-    labels_name = f"labels_{group_or_tag}"
-
-    data_zg[labels_name][z] = array
+    labels[z] = array
     if gt_lookup is not None:
         gt_lookup.update(sec_id_dict)
 
