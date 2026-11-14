@@ -2896,7 +2896,7 @@ class Series():
             wdir = os.path.dirname(image_locations[0])
             
             src_dir = _zarrAbove(wdir)
-            
+
             if src_dir:  # create series next to zarr if necessary
                 
                 wdir = os.path.dirname(src_dir)
