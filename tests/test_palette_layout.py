@@ -392,6 +392,16 @@ SWEEP_WINDOWS = [(100, 100), (321, 383), (330, 390), (360, 400), (450, 382),
                  (500, 400), (600, 400), (800, 600), (1280, 800)]
 
 
+def sweep_positions(groups):
+    """No saved spots, each group alone at each spot, then every group together at it."""
+    return [{}] + [
+        {f"{group}_x": x, f"{group}_y": y} for group in groups for x, y in SWEEP_SPOTS
+    ] + [
+        {f"{group}_{axis}": v for group in groups for axis, v in (("x", x), ("y", y))}
+        for x, y in SWEEP_SPOTS
+    ]
+
+
 def missed_controls(main_window, palette):
     """Names of the clickable controls whose center does not hit them."""
     field = main_window.field.geometry()
@@ -434,14 +444,7 @@ def test_every_control_is_reachable_across_layouts(
     expected = (max(window[0], main_window.minimumWidth()), max(window[1], main_window.minimumHeight()))
     assert main_window.size().toTuple() == expected
     series = main_window.series
-    groups = mouse_palette.DEFAULT_POSITIONS
-    # each group alone at each spot, then every group together at it
-    saved = [{}] + [
-        {f"{group}_x": x, f"{group}_y": y} for group in groups for x, y in SWEEP_SPOTS
-    ] + [
-        {f"{group}_{axis}": v for group in groups for axis, v in (("x", x), ("y", y))}
-        for x, y in SWEEP_SPOTS
-    ]
+    saved = sweep_positions(mouse_palette.DEFAULT_POSITIONS)
     selected = series.palette_traces[series.palette_index[0]][series.palette_index[1]]
     # each layout is reached by resizing the window from another size, as a
     # user does, with nothing else asking the palette to place itself
@@ -602,3 +605,787 @@ def test_resizing_the_window_keeps_every_control_reachable(
         expected = (max(size[0], main_window.minimumWidth()), max(size[1], main_window.minimumHeight()))
         assert main_window.size().toTuple() == expected
         assert missed_controls(main_window, palette) == [], size
+
+
+def bar_preview(width, thickness, pinned=None):
+    """The settings the scale bar dialog previews, numbers and ticks shown."""
+    return {"show_scale_bar_text": True, "show_scale_bar_ticks": True,
+            "scale_bar_mode": "micron_pinned" if pinned else "screen_fraction",
+            "scale_bar_width": width, "scale_bar_length_um": pinned or 1.0,
+            "scale_bar_thickness": thickness}
+
+
+# the allowed sizes' ends and middle, at the thinnest and thickest bar, and
+# a pinned length that fills its room
+SWEEP_PREVIEWS = [bar_preview(100, 3), bar_preview(60, 25), bar_preview(100, 25),
+                  bar_preview(100, 25, pinned=100.0)]
+
+
+@pytest.mark.parametrize("window", SWEEP_WINDOWS)
+def test_a_scale_bar_preview_leaves_every_control_reachable(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path, window):
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    local_series_settings(main_window)
+    settings = QSettings(str(tmp_path / "positions.ini"), QSettings.IniFormat)
+    monkeypatch.setattr(mouse_palette, "_position_settings", lambda: settings)
+    main_window.resize(*window)
+    main_window.show()
+    qapp.processEvents()
+    series = main_window.series
+    stored = {key: series.getOption(key) for key in SWEEP_PREVIEWS[0]}
+    failures = []
+    for rows in SWEEP_ROWS:
+        for cols in SWEEP_COLS:
+            series.setOption("trace_palette_per_row", rows)
+            series.setOption("tool_palette_cols", cols)
+            palette = main_window.mouse_palette
+            palette.reset()
+            for positions in sweep_positions(mouse_palette.DEFAULT_POSITIONS):
+                mouse_palette.save_palette_positions(settings, positions)
+                mouse_palette.set_default_positions(palette)
+                palette.loadPositionState()
+                palette.resize()
+                # the Options slider, then the scale bar settings dialog
+                palette.previewScaleBarWidth(100)
+                checks = [("slider 100", missed_controls(main_window, palette))]
+                for preview in SWEEP_PREVIEWS:
+                    palette.previewScaleBar(preview)
+                    checks.append((preview, missed_controls(main_window, palette)))
+                palette.restoreScaleBar()
+                checks.append(("restored", missed_controls(main_window, palette)))
+                failures += [(rows, cols, positions, what, missed) for what, missed in checks if missed]
+                for key in mouse_palette.PALETTE_POS_KEYS:
+                    settings.remove(key)
+    assert {key: series.getOption(key) for key in stored} == stored
+    assert not failures, f"{window}: {len(failures)}: {failures[:5]}"
+
+
+@pytest.mark.parametrize("window", [(100, 100), (1280, 800)])
+def test_a_large_stored_scale_bar_leaves_every_control_reachable(
+        main_window, local_series_settings, monkeypatch, qapp, window):
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    local_series_settings(main_window)
+    monkeypatch.setattr(mouse_palette, "load_palette_positions", lambda settings: {})
+    main_window.resize(*window)
+    main_window.show()
+    qapp.processEvents()
+    series = main_window.series
+    series.setOption("scale_bar_width", 100)
+    series.setOption("scale_bar_thickness", 25)
+    palette = main_window.mouse_palette
+    palette.reset()
+    qapp.processEvents()
+    assert missed_controls(main_window, palette) == []
+    assert series.getOption("scale_bar_width") == 100
+    narrowed = palette.sb.width()
+    # a window with more room gives the bar more of its share again
+    main_window.resize(1600, 1000)
+    qapp.processEvents()
+    assert missed_controls(main_window, palette) == []
+    assert palette.sb.width() > narrowed
+
+
+def type_length(monkeypatch, palette, answers):
+    """Run "Set the scale bar length..." with these answers, in order; the
+    dialog's lines and the refusals it shows are returned."""
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    asked, refused = [], []
+    queue = list(answers)
+    monkeypatch.setattr(mouse_palette.QuickDialog, "get", staticmethod(
+        lambda parent, structure, title: (asked.append(structure), ([queue.pop(0)], True))[1]))
+    monkeypatch.setattr(mouse_palette, "notify", refused.append)
+    palette.setSBLength()
+    return asked, refused
+
+
+def drawn_as_labeled(bar):
+    """True if the typed bar's label is the length its pixels measure."""
+    real_len, pix_len, _ = bar.pinnedRender()
+    return pix_len > 0 and abs(real_len / bar.scale - pix_len) <= 1
+
+
+def test_a_typed_length_leaves_every_control_reachable(
+        main_window, local_series_settings, monkeypatch, qapp):
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    local_series_settings(main_window)
+    monkeypatch.setattr(mouse_palette, "load_palette_positions", lambda settings: {})
+    main_window.resize(100, 100)
+    main_window.show()
+    qapp.processEvents()
+    series = main_window.series
+    series.setOption("trace_palette_per_row", 1)
+    series.setOption("tool_palette_cols", 1)
+    palette = main_window.mouse_palette
+    palette.reset()
+    palette.previewScaleBar(bar_preview(100, 25))
+    assert missed_controls(main_window, palette) == []
+    lo, hi = palette.sbLengthRange()
+    # the field could hold a longer bar than the buttons leave room for
+    assert hi < mouse_palette.drawableLengths(palette.sb.scale, main_window.field.width())[1]
+    # one past the longest is refused and the dialog asks again
+    asked, refused = type_length(monkeypatch, palette, [hi * 1.01, hi])
+    assert len(asked) == 2 and len(refused) == 1
+    assert ["A longer bar would cover the palette buttons."] in asked[0]
+    assert palette.sb.currentLength()[0] == hi and drawn_as_labeled(palette.sb)
+    assert missed_controls(main_window, palette) == []
+    palette.previewScaleBarWidth(60)
+    assert palette.sb.currentLength()[0] == hi
+    assert missed_controls(main_window, palette) == []
+    # a larger window and back, and an Options OK rebuild, keep it clear
+    main_window.resize(1280, 800)
+    qapp.processEvents()
+    assert missed_controls(main_window, palette) == []
+    main_window.resize(100, 100)
+    qapp.processEvents()
+    assert missed_controls(main_window, palette) == [] and drawn_as_labeled(palette.sb)
+    palette.reset()
+    palette = main_window.mouse_palette
+    assert palette.sb.override_length == hi
+    assert missed_controls(main_window, palette) == [] and drawn_as_labeled(palette.sb)
+    # typed in a large window, then the window made as small as it goes
+    main_window.resize(1280, 800)
+    qapp.processEvents()
+    hi = palette.sbLengthRange()[1]
+    type_length(monkeypatch, palette, [hi])
+    assert palette.sb.currentLength()[0] == hi
+    assert missed_controls(main_window, palette) == []
+    main_window.resize(100, 100)
+    qapp.processEvents()
+    assert missed_controls(main_window, palette) == [] and drawn_as_labeled(palette.sb)
+
+
+@pytest.mark.parametrize("window", [(100, 100), (360, 400), (600, 400), (1280, 800)])
+def test_a_typed_length_and_later_previews_leave_every_control_reachable(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path, window):
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    local_series_settings(main_window)
+    settings = QSettings(str(tmp_path / "positions.ini"), QSettings.IniFormat)
+    monkeypatch.setattr(mouse_palette, "_position_settings", lambda: settings)
+    main_window.resize(*window)
+    main_window.show()
+    qapp.processEvents()
+    series = main_window.series
+    stored = {key: series.getOption(key) for key in SWEEP_PREVIEWS[0]}
+    zoom = series.window[2]
+    failures = []
+
+    def check(what, palette, typed=None):
+        missed = missed_controls(main_window, palette)
+        if typed is not None and palette.sb.currentLength()[0] != typed:
+            missed.append("typed length not drawn")
+        if not drawn_as_labeled(palette.sb):
+            missed.append("label is not the drawn length")
+        return what, missed
+
+    for rows in SWEEP_ROWS:
+        for cols in SWEEP_COLS:
+            series.setOption("trace_palette_per_row", rows)
+            series.setOption("tool_palette_cols", cols)
+            palette = main_window.mouse_palette
+            palette.reset()
+            for positions in sweep_positions(mouse_palette.DEFAULT_POSITIONS):
+                mouse_palette.save_palette_positions(settings, positions)
+                mouse_palette.set_default_positions(palette)
+                palette.loadPositionState()
+                palette.restoreScaleBar()
+                palette.clearSBLength()
+                palette.resize()
+                # the thinnest bar, so the thicker previews leave it less room
+                palette.previewScaleBar(SWEEP_PREVIEWS[0])
+                # the longest length the dialog offers is drawn as typed;
+                # later previews and zooms keep it, a decade shorter if the
+                # buttons need the room, as a zoom already steps it
+                hi = palette.sbLengthRange()[1]
+                type_length(monkeypatch, palette, [hi])
+                checks = [check("typed", palette, hi)]
+                for preview in SWEEP_PREVIEWS:
+                    palette.previewScaleBar(preview)
+                    checks.append(check(preview, palette))
+                for factor in (0.25, 4.0):
+                    series.window[2] = zoom * factor
+                    palette.setScale()
+                    checks.append(check(f"zoom {factor}", palette))
+                series.window[2] = zoom
+                palette.setScale()
+                # back at the bar it was typed for, it is drawn as typed again
+                palette.previewScaleBar(SWEEP_PREVIEWS[0])
+                checks.append(check("typed again", palette, hi))
+                palette.restoreScaleBar()
+                checks.append(check("restored", palette))
+                failures += [(rows, cols, positions, what, missed) for what, missed in checks if missed]
+                for key in mouse_palette.PALETTE_POS_KEYS:
+                    settings.remove(key)
+    assert {key: series.getOption(key) for key in stored} == stored
+    assert not failures, f"{window}: {len(failures)}: {failures[:5]}"
+
+
+def smallest_window(main_window, local_series_settings, monkeypatch, qapp, tmp_path,
+                    rows, cols, spot=None, thickness=3):
+    """The palette in the smallest window, at 0.01 µm a pixel, with every
+    group saved at `spot` (None: no saved spots) and a bar this thick."""
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    local_series_settings(main_window)
+    settings = QSettings(str(tmp_path / "positions.ini"), QSettings.IniFormat)
+    monkeypatch.setattr(mouse_palette, "_position_settings", lambda: settings)
+    if spot is not None:
+        mouse_palette.save_palette_positions(settings, {
+            f"{group}_{axis}": v for group in mouse_palette.DEFAULT_POSITIONS
+            for axis, v in (("x", spot[0]), ("y", spot[1]))})
+    main_window.resize(100, 100)
+    main_window.show()
+    qapp.processEvents()
+    series = main_window.series
+    series.setOption("trace_palette_per_row", rows)
+    series.setOption("tool_palette_cols", cols)
+    palette = main_window.mouse_palette
+    palette.reset()
+    series.window[2] = 0.01 * main_window.field.pixmap_dim[0]
+    palette.setScale()
+    palette.previewScaleBar(bar_preview(100, thickness))
+    assert missed_controls(main_window, palette) == []
+    return palette
+
+
+def clear_widths(main_window, palette):
+    """Every bar width up to the field's that leaves every group a clear
+    spot, each found by placing all the groups for it."""
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    return {width for width in range(1, main_window.field.width() + 1)
+            if any(palette.arrange(fractions, bar_width=width) is not None
+                   for fractions in (palette.savedFractions(), mouse_palette.DEFAULT_POSITIONS))}
+
+
+def test_a_typed_length_that_would_cover_a_button_is_drawn_a_decade_shorter(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path):
+    palette = smallest_window(main_window, local_series_settings, monkeypatch, qapp,
+                              tmp_path, 1, 1, spot=(0.0, 0.0))
+    # 179 px falls between widths that are clear: 1.79 µm is offered, but
+    # drawn as typed it would cover buttons
+    lo, hi = palette.sbLengthRange()
+    assert lo <= 1.79 <= hi
+    clear = clear_widths(main_window, palette)
+    assert 179 not in clear and max(clear) == 320
+    asked, refused = type_length(monkeypatch, palette, [1.79])
+    assert refused == []
+    assert ["A length that would cover the palette buttons is drawn"] in asked[0]
+    assert palette.sb.override_length == 1.79
+    assert palette.sb.currentLength()[0] == pytest.approx(0.179)
+    assert drawn_as_labeled(palette.sb)
+    assert missed_controls(main_window, palette) == []
+
+
+def test_the_longest_clear_typed_length_is_offered_and_drawn_as_typed(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path):
+    palette = smallest_window(main_window, local_series_settings, monkeypatch, qapp,
+                              tmp_path, 1, 1)
+    # clear widths stop at 161 px and start again at 219: the longest clear
+    # bar is past the gap
+    clear = clear_widths(main_window, palette)
+    assert 180 not in clear and max(clear) == 228
+    assert palette.sbTypedRoom() == 228
+    assert palette.sbLengthRange()[1] == 2.28
+    asked, refused = type_length(monkeypatch, palette, [2.28])
+    assert refused == []
+    assert ["A longer bar would cover the palette buttons."] in asked[0]
+    assert palette.sb.currentLength()[0] == 2.28 and drawn_as_labeled(palette.sb)
+    assert missed_controls(main_window, palette) == []
+
+
+@pytest.mark.parametrize("shape", [(1, 1), (3, 2), (100, 12)])
+def test_every_typed_length_at_the_smallest_window_leaves_every_control_reachable(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path, shape):
+    """Each whole-pixel length the dialog offers, in each arrangement: drawn
+    as typed when that bar is clear, else at the first clear decade below."""
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    failures = []
+    for spot in (None, (0.0, 0.0), (1.0, 1.0), (0.5, 0.5)):
+        palette = smallest_window(main_window, local_series_settings, monkeypatch, qapp,
+                                  tmp_path, *shape, spot=spot)
+        for thickness in (3, 25):
+            palette.clearSBLength()
+            palette.previewScaleBar(bar_preview(100, thickness))
+            clear = clear_widths(main_window, palette)
+            scale = palette.sb.scale
+            lo, hi = palette.sbLengthRange()
+            # the longest offered is drawn as typed; nothing longer is clear
+            assert palette.sbBarWidth(hi) in clear
+            assert not any(palette.sbBarWidth(round(w * scale, 10)) in clear
+                           for w in range(round(hi / scale) + 1, main_window.field.width() + 1))
+            for pixels in range(round(lo / scale), round(hi / scale) + 1):
+                length = round(pixels * scale, 10)
+                decades = next((k for k in range(4)
+                                if palette.sbBarWidth(length / 10 ** k) in clear), None)
+                asked, refused = type_length(monkeypatch, palette, [length, hi])
+                drawn = palette.sb.currentLength()[0]
+                missed = missed_controls(main_window, palette)
+                if (decades is None) != bool(refused) or missed or not drawn_as_labeled(palette.sb) \
+                        or (decades is not None and drawn != pytest.approx(length / 10 ** decades)):
+                    failures.append((shape, spot, thickness, length, decades, drawn, refused, missed))
+        for key in mouse_palette.PALETTE_POS_KEYS:
+            mouse_palette._position_settings().remove(key)
+    assert not failures, f"{len(failures)}: {failures[:5]}"
+
+
+@pytest.mark.parametrize("pinned", [None, 3.0])
+def test_a_shortened_bar_is_labeled_with_the_length_it_draws(
+        main_window, local_series_settings, monkeypatch, qapp, pinned):
+    from PySide6.QtGui import QPainter, QPixmap
+    from PyReconstruct.modules.gui.palette import mouse_palette, scale_bar
+
+    local_series_settings(main_window)
+    monkeypatch.setattr(mouse_palette, "load_palette_positions", lambda settings: {})
+    main_window.resize(100, 100)
+    main_window.show()
+    qapp.processEvents()
+    series = main_window.series
+    series.setOption("trace_palette_per_row", 1)
+    series.setOption("tool_palette_cols", 1)
+    palette = main_window.mouse_palette
+    palette.reset()
+    series.window[2] = 0.01 * main_window.field.pixmap_dim[0]
+    palette.setScale()
+    stored = {key: series.getOption(key) for key in bar_preview(100, 25, pinned)}
+    palette.previewScaleBar(bar_preview(100, 25, pinned))
+    qapp.processEvents()
+    assert missed_controls(main_window, palette) == []
+    chosen = pinned or scale_bar.niceLength(palette.sbWidth(100) * palette.sb.scale)[0]
+    rects, labels = [], []
+    draw_rect, draw_text = QPainter.drawRect, scale_bar.drawOutlinedText
+    monkeypatch.setattr(QPainter, "drawRect", lambda painter, *args: (
+        rects.append(args) if len(args) == 4 else None, draw_rect(painter, *args))[1])
+    monkeypatch.setattr(scale_bar, "drawOutlinedText", lambda painter, x, y, text: (
+        labels.append(text), draw_text(painter, x, y, text))[1])
+    pixmap = QPixmap(palette.sb.size())
+    pixmap.fill()
+    palette.sb.render(pixmap)
+    # the buttons need the room, so the whole bar is drawn shorter than the
+    # size chosen, and its label is the length drawn
+    assert rects[0][2] <= palette.sb.width()
+    drawn = rects[0][2] * palette.sb.scale
+    assert drawn < chosen
+    assert float(labels[0].split()[0]) == pytest.approx(drawn, abs=palette.sb.scale)
+    assert {key: series.getOption(key) for key in stored} == stored
+
+
+def first_clear_decade(main_window, palette, length):
+    """The length a typed bar must be drawn at: as typed (or the decade a
+    zoom moves it to), or the first decade below whose bar leaves every
+    group clear (by brute force)."""
+    from PyReconstruct.modules.gui.palette.scale_bar import pinnedLength
+
+    clear = clear_widths(main_window, palette)
+    length = pinnedLength(length, palette.sb.scale, main_window.field.width())[0]
+    return next(length / 10 ** k for k in range(6)
+                if palette.sbBarWidth(length / 10 ** k) in clear)
+
+
+def check_typed(main_window, palette, typed):
+    """What is wrong with a typed bar: a covered control, a label that is not
+    the drawn length, a typed length forgotten, or not the first clear decade."""
+    wrong = list(missed_controls(main_window, palette))
+    if palette.sb.override_length != typed:
+        wrong.append("typed length forgotten")
+    if not drawn_as_labeled(palette.sb):
+        wrong.append("label is not the drawn length")
+    if palette.sb.currentLength()[0] != pytest.approx(first_clear_decade(main_window, palette, typed)):
+        wrong.append(f"drawn {palette.sb.currentLength()[0]} µm")
+    return wrong
+
+
+def test_resetting_palette_positions_refits_a_typed_length(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path):
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    palette = smallest_window(main_window, local_series_settings, monkeypatch, qapp,
+                              tmp_path, 1, 1, spot=(0.0, 0.0))
+    type_length(monkeypatch, palette, [3.2])
+    assert palette.sb.currentLength()[0] == 3.2 and palette.sb.width() == 320
+    assert check_typed(main_window, palette, 3.2) == []
+    # View > Palette > Reset palette position: the default spots leave no
+    # room for a 320 px bar, so it is drawn a decade shorter
+    main_window.resetpalette_act.trigger()
+    qapp.processEvents()
+    assert mouse_palette.load_palette_positions(mouse_palette._position_settings()) == {}
+    assert palette.sb.currentLength()[0] == pytest.approx(0.32)
+    assert check_typed(main_window, palette, 3.2) == []
+
+
+def drag_group(main_window, qapp, monkeypatch, button, dx, dy):
+    """Drag a palette group by one of its buttons, with real mouse events."""
+    from PySide6.QtCore import QEvent, QPointF
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QApplication
+
+    monkeypatch.setattr(main_window.field, "max_click_time", -1)
+
+    def send(kind, global_pos, buttons):
+        local = button.mapFromGlobal(global_pos)
+        QApplication.sendEvent(button, QMouseEvent(
+            kind, QPointF(local), QPointF(global_pos), Qt.LeftButton, buttons, Qt.NoModifier))
+
+    start = button.mapToGlobal(button.rect().center())
+    end = start + type(start)(dx, dy)
+    send(QEvent.MouseButtonPress, start, Qt.LeftButton)
+    send(QEvent.MouseMove, end, Qt.LeftButton)
+    send(QEvent.MouseButtonRelease, end, Qt.NoButton)
+    qapp.processEvents()
+
+
+def road_reset_menu(main_window, palette, qapp, monkeypatch):
+    main_window.resetpalette_act.trigger()
+
+
+def road_drag_tools(main_window, palette, qapp, monkeypatch):
+    button = next(iter(palette.mode_buttons.values()))[0]
+    drag_group(main_window, qapp, monkeypatch, button, 150, 150)
+
+
+def road_drag_sections(main_window, palette, qapp, monkeypatch):
+    drag_group(main_window, qapp, monkeypatch, palette.inc_buttons[0], 150, 150)
+
+
+def road_drag_bar(main_window, palette, qapp, monkeypatch):
+    drag_group(main_window, qapp, monkeypatch, palette.sb, 0, 300)
+
+
+def road_window(main_window, palette, qapp, monkeypatch):
+    main_window.resize(1280, 800)
+    qapp.processEvents()
+    main_window.resize(100, 100)
+
+
+def road_long_name(main_window, palette, qapp, monkeypatch):
+    trace = palette.selectedTrace().copy()
+    trace.name = "dendrite_shaft_spine_long_name_01"
+    palette.modifyPaletteButton(palette.selectedPos(), trace)
+
+
+def road_preset(main_window, palette, qapp, monkeypatch):
+    series = main_window.series
+    traces = series.palette_traces[series.palette_index[0]]
+    series.palette_traces["more"] = [t.copy() for t in traces * 3]
+    series.palette_index[0] = "more"
+    palette.reset()
+
+
+def road_tool_columns(main_window, palette, qapp, monkeypatch):
+    main_window.series.setOption("tool_palette_cols", 5)
+    palette.reset()
+
+
+def road_zoom(main_window, palette, qapp, monkeypatch):
+    series = main_window.series
+    zoom = series.window[2]
+    series.window[2] = zoom * 4
+    palette.setScale()
+    series.window[2] = zoom
+    palette.setScale()
+
+
+def road_thicker_bar(main_window, palette, qapp, monkeypatch):
+    palette.previewScaleBar(bar_preview(100, 25))
+
+
+PLACEMENT_ROADS = [road_reset_menu, road_drag_tools, road_drag_sections, road_drag_bar,
+                   road_window, road_long_name, road_preset, road_tool_columns,
+                   road_zoom, road_thicker_bar]
+
+
+@pytest.mark.parametrize("road", PLACEMENT_ROADS, ids=lambda road: road.__name__[5:])
+def test_every_placement_road_refits_a_typed_length(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path, road):
+    """A typed bar that fills the field, then each road that places the
+    palette groups again: the bar is drawn at the first clear decade."""
+    palette = smallest_window(main_window, local_series_settings, monkeypatch, qapp,
+                              tmp_path, 1, 1, spot=(0.0, 0.0))
+    type_length(monkeypatch, palette, [3.2])
+    assert palette.sb.currentLength()[0] == 3.2
+    road(main_window, palette, qapp, monkeypatch)
+    qapp.processEvents()
+    palette = main_window.mouse_palette
+    assert check_typed(main_window, palette, 3.2) == []
+
+
+def pan_zoom_to(main_window, palette, qapp, scale):
+    """Zoom the field to `scale` µm a pixel with real pan-zoom drags, each
+    at most 100 times in or out, as a hand would."""
+    field = main_window.field
+    for _ in range(40):
+        if palette.getScale() == pytest.approx(scale):
+            break
+        factor = min(max(palette.getScale() / scale, 0.01), 100)
+        field.panzoomPress(100, 100)
+        field.panzoomMove(zoom_factor=factor)
+        field.panzoomRelease(zoom_factor=factor)
+        qapp.processEvents()
+    assert palette.sb.scale == pytest.approx(scale)
+
+
+def test_a_typed_bar_with_no_room_at_any_length_is_hidden_until_the_room_returns(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path):
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    palette = smallest_window(main_window, local_series_settings, monkeypatch, qapp,
+                              tmp_path, 1, 1, thickness=25)
+    typed = 1.234567891
+    type_length(monkeypatch, palette, [typed])
+    assert check_typed(main_window, palette, typed) == []
+    visibility = mouse_palette.load_palette_visibility(mouse_palette._visibility_settings())
+    # so far out that the bar's number alone is wider than any clear spot,
+    # at every length it can be drawn
+    pan_zoom_to(main_window, palette, qapp, 1e16)
+    assert palette.sbTypedFit(typed)[1] is None
+    assert palette.sb.isHidden() and not palette.sb_hidden
+    assert missed_controls(main_window, palette) == ["scale bar"]
+    # the View menu's toggle does not show a bar that has no room
+    palette.toggleSB()
+    palette.toggleSB()
+    assert palette.sb.isHidden()
+    # a larger window has room again, and the smallest one has not
+    main_window.resize(1280, 800)
+    qapp.processEvents()
+    assert check_typed(main_window, palette, typed) == []
+    main_window.resize(100, 100)
+    qapp.processEvents()
+    assert palette.sb.isHidden()
+    assert missed_controls(main_window, palette) == ["scale bar"]
+    # zoomed back in, the typed length is drawn again
+    pan_zoom_to(main_window, palette, qapp, 0.01)
+    assert not palette.sb.isHidden()
+    assert palette.sb.currentLength()[0] == typed
+    assert check_typed(main_window, palette, typed) == []
+    assert mouse_palette.load_palette_visibility(mouse_palette._visibility_settings()) == visibility
+
+
+def automatic_length(bar):
+    """The length a screen-fraction bar must draw, by brute force: the
+    longest nice length that fits its widget, or the first decade below
+    whose whole label fits there too; 0 when none does at a pixel or more."""
+    from PyReconstruct.modules.gui.palette.scale_bar import niceLength
+
+    length = niceLength(bar.width() * bar.scale)[0]
+    for k in range(40):
+        shorter = niceLength(length / 10 ** k)[0]
+        if shorter / bar.scale < 1:
+            return 0.0
+        if bar.labelWidth(shorter) + 2 <= bar.width():
+            return shorter
+    return 0.0
+
+
+def pinned_length(palette):
+    """The length an automatic bar of a fixed length must draw, by brute
+    force: the length pinnedLength gives, or the first decade below whose
+    widget, widened to its whole label, leaves every group a clear spot in
+    the saved or the default spots; 0 when none does at a pixel or more."""
+    from PyReconstruct.modules.gui.palette import mouse_palette
+    from PyReconstruct.modules.gui.palette.scale_bar import pinnedLength
+
+    bar = palette.sb
+    length = pinnedLength(bar.micron_length, bar.scale, bar.max_pixel_length)[0]
+    for k in range(40):
+        shorter = length / 10 ** k
+        pixels = int(shorter / bar.scale)
+        if pixels < 1:
+            return 0.0
+        width = max(pixels, bar.labelWidth(shorter) + 2)
+        if any(palette.arrange(spots, bar_width=width) is not None
+               for spots in (palette.savedFractions(), mouse_palette.DEFAULT_POSITIONS)):
+            return shorter
+    return 0.0
+
+
+def bar_problems(main_window, palette):
+    """What is wrong with the scale bar as it stands: a covered control, a
+    label cut off by its widget, or a hidden bar that has room to draw."""
+    bar = palette.sb
+    missed = missed_controls(main_window, palette)
+    fixed = bar.micron_length and not bar.override_length
+    if bar.isHidden():
+        wrong = [name for name in missed if name != "scale bar"]
+        if not palette.sb_hidden and not bar._pinned() and automatic_length(bar):
+            wrong.append("hidden with room")
+        if not palette.sb_hidden and fixed and pinned_length(palette):
+            wrong.append(f"hidden with room for {pinned_length(palette)} µm")
+        return wrong
+    real_len = bar.currentLength()[0]
+    if real_len <= 0:
+        missed.append("nothing drawn")
+    elif bar.labelWidth(real_len) + 2 > bar.width():
+        missed.append(f"label {bar.labelWidth(real_len)} px in a {bar.width()} px bar")
+    elif not bar._pinned() and real_len != pytest.approx(automatic_length(bar)):
+        missed.append(f"drawn {real_len} µm")
+    elif fixed and real_len != pytest.approx(pinned_length(palette)):
+        missed.append(f"drawn {real_len} µm")
+    return missed
+
+
+@pytest.mark.parametrize("percent", [25, 100])
+def test_an_automatic_bar_far_zoomed_out_is_hidden_while_no_label_fits(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path, percent):
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    palette = smallest_window(main_window, local_series_settings, monkeypatch, qapp,
+                              tmp_path, 1, 1, thickness=25)
+    visibility = mouse_palette.load_palette_visibility(mouse_palette._visibility_settings())
+    palette.previewScaleBar(bar_preview(percent, 25))
+    pan_zoom_to(main_window, palette, qapp, 1e16)
+    palette.previewScaleBarWidth(percent)
+    qapp.processEvents()
+    # every label at this zoom, 1000000000000000000 µm and each decade
+    # down to a one-pixel bar, is wider than the room the bar has
+    assert automatic_length(palette.sb) == 0
+    assert palette.sb.isHidden() and not palette.sb_hidden
+    assert missed_controls(main_window, palette) == ["scale bar"]
+    palette.toggleSB()
+    palette.toggleSB()
+    assert palette.sb.isHidden()
+    # a larger window has room for the whole label, and the smallest has not
+    main_window.resize(1280, 800)
+    qapp.processEvents()
+    assert not palette.sb.isHidden()
+    assert bar_problems(main_window, palette) == []
+    main_window.resize(100, 100)
+    qapp.processEvents()
+    assert palette.sb.isHidden()
+    assert missed_controls(main_window, palette) == ["scale bar"]
+    pan_zoom_to(main_window, palette, qapp, 0.01)
+    assert not palette.sb.isHidden()
+    assert bar_problems(main_window, palette) == []
+    assert mouse_palette.load_palette_visibility(mouse_palette._visibility_settings()) == visibility
+
+
+@pytest.mark.parametrize("percent", [25, 100])
+def test_a_fixed_length_bar_far_zoomed_out_steps_a_decade_before_it_hides(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path, percent):
+    from PyReconstruct.modules.gui.palette import mouse_palette
+
+    palette = smallest_window(main_window, local_series_settings, monkeypatch, qapp,
+                              tmp_path, 1, 1, thickness=25)
+    visibility = mouse_palette.load_palette_visibility(mouse_palette._visibility_settings())
+    palette.previewScaleBar(bar_preview(percent, 25, 3.0))
+    pan_zoom_to(main_window, palette, qapp, 1e12)
+    palette.previewScaleBarWidth(percent)
+    qapp.processEvents()
+    # 30000000000000 µm is a 30 px rule whose label leaves no clear spot;
+    # 3000000000000 µm is a 3 px rule whose label does
+    assert palette.sb.micron_length == 3.0 and palette.sb.override_length is None
+    assert not palette.sb.isHidden() and not palette.sb_hidden
+    assert palette.sb.currentLength()[0] == pytest.approx(3e12)
+    assert palette.sb.labelWidth(3e12) + 2 <= palette.sb.width()
+    assert missed_controls(main_window, palette) == []
+    assert bar_problems(main_window, palette) == []
+    # capped at its own 3 px, the bar is drawn the same, with no decade left
+    # to step (placeSB refits it, though its widget keeps its width)
+    palette.sb.setMaxPixelLength(3)
+    palette.placeSB()
+    qapp.processEvents()
+    assert not palette.sb.isHidden()
+    assert palette.sb.currentLength()[0] == pytest.approx(3e12)
+    assert bar_problems(main_window, palette) == []
+    # a larger window has room for the longer decades again
+    main_window.resize(1280, 800)
+    qapp.processEvents()
+    assert palette.sb.currentLength()[0] > 3e12
+    assert bar_problems(main_window, palette) == []
+    main_window.resize(100, 100)
+    qapp.processEvents()
+    assert palette.sb.currentLength()[0] == pytest.approx(3e12)
+    assert bar_problems(main_window, palette) == []
+    # zoomed back in, it is drawn at the longest decade that is clear
+    pan_zoom_to(main_window, palette, qapp, 0.01)
+    assert not palette.sb.isHidden()
+    assert palette.sb.currentLength()[0] == pytest.approx(0.3)
+    assert bar_problems(main_window, palette) == []
+    # zoomed out until no decade has room, it hides
+    pan_zoom_to(main_window, palette, qapp, 1e16)
+    assert pinned_length(palette) == 0
+    assert palette.sb.isHidden() and not palette.sb_hidden
+    assert missed_controls(main_window, palette) == ["scale bar"]
+    assert mouse_palette.load_palette_visibility(mouse_palette._visibility_settings()) == visibility
+
+
+def test_a_fixed_length_bar_drawn_shorter_is_drawn_at_its_length_once_a_zoom_clears_it(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path):
+    palette = smallest_window(main_window, local_series_settings, monkeypatch, qapp,
+                              tmp_path, 1, 1, thickness=25)
+    palette.previewScaleBar(bar_preview(100, 25, 3.0))
+    # 3 µm is 200 px here, wider than the clear room, so 0.3 µm is drawn
+    pan_zoom_to(main_window, palette, qapp, 0.015)
+    assert palette.sb.currentLength()[0] == pytest.approx(0.3)
+    assert bar_problems(main_window, palette) == []
+    # zoomed out a little, 3 µm is 133 px and clear; the shorter bar's
+    # widget is the width of its label, so the zoom moves no group
+    pan_zoom_to(main_window, palette, qapp, 0.0225)
+    assert palette.sb.currentLength()[0] == pytest.approx(3.0)
+    assert bar_problems(main_window, palette) == []
+
+
+def test_resetting_palette_positions_draws_a_fixed_length_bar_a_decade_shorter(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path):
+    palette = smallest_window(main_window, local_series_settings, monkeypatch, qapp,
+                              tmp_path, 1, 1, spot=(0.0, 0.0))
+    palette.previewScaleBar(bar_preview(100, 3, 3.0))
+    pan_zoom_to(main_window, palette, qapp, 1e12)
+    # saved in the corner, the bar has the room of a 300 px rule
+    assert palette.sb.currentLength()[0] == pytest.approx(3e14)
+    assert bar_problems(main_window, palette) == []
+    # the default spots leave too little for the 30 px rule's label, and
+    # enough for the 3 px rule's
+    main_window.resetpalette_act.trigger()
+    qapp.processEvents()
+    assert not palette.sb.isHidden()
+    assert palette.sb.currentLength()[0] == pytest.approx(3e12)
+    assert bar_problems(main_window, palette) == []
+
+
+ZOOM_STEPS = [0.01, 1e4, 1e8, 1e12, 1e14, 1e16, 1e20, 0.01]
+
+
+@pytest.mark.parametrize("window", [(100, 100), (1280, 800)])
+def test_no_scale_bar_label_is_cut_off_at_any_zoom(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path, window):
+    """The automatic bar in either mode and a typed length, at 25 and 100
+    percent, from the smallest window up: zoomed out step by step to 10^20 µm
+    a pixel and back, the whole label shows or the bar is hidden."""
+    palette = smallest_window(main_window, local_series_settings, monkeypatch, qapp,
+                              tmp_path, 1, 1, thickness=25)
+    main_window.resize(*window)
+    qapp.processEvents()
+    failures = []
+    for kind in ("screen fraction", "pinned", "typed"):
+        for percent in (25, 100):
+            pan_zoom_to(main_window, palette, qapp, 0.01)
+            palette.clearSBLength()
+            palette.previewScaleBar(bar_preview(percent, 25, 3.0 if kind == "pinned" else None))
+            if kind == "typed":
+                type_length(monkeypatch, palette, [palette.sbLengthRange()[1] / 3])
+            for scale in ZOOM_STEPS:
+                pan_zoom_to(main_window, palette, qapp, scale)
+                failures += [(kind, percent, scale, wrong)
+                             for wrong in bar_problems(main_window, palette)]
+            assert not palette.sb.isHidden(), (kind, percent)
+    assert not failures, f"{len(failures)}: {failures[:6]}"
+
+
+def test_resetting_palette_positions_hides_an_automatic_bar_whose_label_loses_its_room(
+        main_window, local_series_settings, monkeypatch, qapp, tmp_path):
+    palette = smallest_window(main_window, local_series_settings, monkeypatch, qapp,
+                              tmp_path, 1, 1, spot=(0.0, 0.0))
+    pan_zoom_to(main_window, palette, qapp, 1e13)
+    # saved in the corner, the bar has the field's width for its label
+    assert palette.sb.width() == 320 and not palette.sb.isHidden()
+    assert bar_problems(main_window, palette) == []
+    # the default spots leave 161 px, too few for any decade's label
+    main_window.resetpalette_act.trigger()
+    qapp.processEvents()
+    assert palette.sb.isHidden() and not palette.sb_hidden
+    assert bar_problems(main_window, palette) == []

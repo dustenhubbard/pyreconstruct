@@ -471,6 +471,10 @@ class ScaleBar(MoveableButton):
         # rebuild on the same series)
         self.override_length = None
         self.override_room = 0
+        # how many decades shorter than its length a bar of a fixed length
+        # is drawn, so its whole label leaves the palette buttons clear
+        # (MousePalette.fitPinnedLabel); never stored
+        self.label_decades = 0
         # "show numbers" and "show ticks" as a settings dialog previews
         # them; empty means the stored options (see displayOption)
         self.display_preview = {}
@@ -552,9 +556,10 @@ class ScaleBar(MoveableButton):
         """Draw `length` µm whatever the mode, until called with None.
 
         Someone exporting a figure may want a length the automatic sizing
-        would not pick, so `room` is the field width rather than the scale bar
-        size. The user asked for this length, so the size option does not cap
-        it. If the length does not fit that room, the bar steps a decade, as
+        would not pick, so `room` is not the scale bar size: on the field it
+        is the room the palette buttons leave clear (MousePalette.sbTypedFit),
+        in an exported frame the frame's width. The user asked for this length, so the size
+        option does not cap it. If the length does not fit that room, the bar steps a decade, as
         a pinned bar does, so its label still matches what it measures.
         """
         self.override_length = length
@@ -573,10 +578,24 @@ class ScaleBar(MoveableButton):
             return self.micron_length, self.max_pixel_length
         return None
 
+    def setLabelDecades(self, decades):
+        """Draw a bar of a fixed length `decades` decades shorter than
+        `pinnedLength` gives, so its label still matches what it measures."""
+        if decades == self.label_decades:
+            return
+        self.label_decades = decades
+        self._fitPinned()
+        self.update()
+
     def pinnedRender(self):
         """The pinned bar's length and tick count at the current zoom."""
         micron_length, room = self._pinned()
         real_len, pix_len = pinnedLength(micron_length, self.scale, room)
+        if self.label_decades and not self.override_length:
+            real_len /= 10 ** self.label_decades
+            pix_len = int(real_len / self.scale)
+            if pix_len <= 0:
+                real_len, pix_len = 0.0, 0
         return real_len, pix_len, pinnedSubdivisions(real_len)
 
     def currentLength(self):
@@ -587,7 +606,22 @@ class ScaleBar(MoveableButton):
         else:
             # the longest nice length that fits the widget, and how finely to tick it
             real_len, subdivs = niceLength(self.width() * self.scale)
+            real_len = self.labelFit(real_len, self.width())
         return real_len, subdivs
+
+    def labelFit(self, real_len, room):
+        """`real_len`, or the first decade below it whose whole label fits
+        in `room` pixels, so a long number is never cut off.
+
+        0.0 when no decade has room for its label before the bar is under a
+        pixel. Far zoomed out the number alone is wider than the room; the
+        palette then hides the bar (MousePalette.fitAutoLabel).
+        """
+        while real_len > 0 and self.labelWidth(real_len) + 2 > room:
+            real_len /= 10
+            if real_len / self.scale < 1:
+                return 0.0
+        return real_len
 
     def _fitPinned(self):
         """Resize the widget to the pinned bar, so the paint is never clipped.

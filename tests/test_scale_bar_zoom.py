@@ -376,8 +376,9 @@ def test_a_typed_length_lasts_until_another_series_opens(
 def test_a_length_that_cannot_be_drawn_is_refused_in_plain_words(
     main_window, local_series_settings, monkeypatch
 ):
-    """At 0.01 µm/px the field is 560 px, so 5.6 µm is the longest exact bar
-    and 40 px, 0.4 µm, the shortest. The dialog says so, a length outside is
+    """At 0.01 µm/px the field is 560 px, but a bar wider than 465 px would
+    cover the palette buttons, so 4.65 µm is the longest exact bar and 40 px,
+    0.4 µm, the shortest. The dialog says so and why, a length outside is
     refused with the range, and the dialog opens again."""
     series = local_series_settings(main_window)
     palette = main_window.mouse_palette
@@ -385,16 +386,17 @@ def test_a_length_that_cannot_be_drawn_is_refused_in_plain_words(
     _set_window(main_window, 0.01)
     _render(palette.sb)   # a first paint writes its two display defaults back
     stored = _stored(series)
-    asked, told = _answer(monkeypatch, ([50.0], True), ([0.1], True), ([5.6], True))
+    asked, told = _answer(monkeypatch, ([5.6], True), ([0.1], True), ([4.65], True))
 
     palette.setSBLength()
 
     lines = [row[0] for structure in asked for row in structure
              if isinstance(row[0], str)]
-    assert "At this zoom the bar can be 0.4 to 5.6 µm long." in lines
-    assert len(told) == 2 and all("0.4 to 5.6 µm" in m for m in told)
-    assert palette.sb.override_length == 5.6
-    assert _render(palette.sb) == (560, "5.6 µm")
+    assert "At this zoom the bar can be 0.4 to 4.65 µm long." in lines
+    assert "A longer bar would cover the palette buttons." in lines
+    assert len(told) == 2 and all("0.4 to 4.65 µm" in m for m in told)
+    assert palette.sb.override_length == 4.65
+    assert _render(palette.sb) == (465, "4.65 µm")
     assert _changed(stored, _stored(series)) == {}
 
 
@@ -697,17 +699,18 @@ def test_a_length_past_what_a_bar_can_be_is_refused(
 def test_both_ends_of_the_range_draw_their_own_length(
     main_window, local_series_settings, monkeypatch
 ):
-    """At 0.000275 µm/px in a 560 px field the dialog offers 0.011 to 0.154
-    µm. 0.011 / 0.000275 is 39.99999999999999 in floating point, slightly under
-    the 40 px shortest bar, and the bar used to step up a decade to 0.11 µm.
-    Each end now draws at its own length."""
+    """At 0.000275 µm/px, with 465 px of the 560 px field clear of the
+    palette buttons, the dialog offers 0.011 to 0.127 µm. 0.011 / 0.000275
+    is 39.99999999999999 in floating point, slightly under the 40 px shortest
+    bar, and the bar used to step up a decade to 0.11 µm. Each end now draws
+    at its own length."""
     local_series_settings(main_window)
     palette = main_window.mouse_palette
     palette.reset()
     _set_window(main_window, 0.000275)
     lo, hi = palette.sbLengthRange()
-    assert (lo, hi) == (0.011, 0.154)
-    for length, label in ((lo, "0.011 µm"), (hi, "0.154 µm")):
+    assert (lo, hi) == (0.011, 0.127)
+    for length, label in ((lo, "0.011 µm"), (hi, "0.127 µm")):
         _answer(monkeypatch, ([length], True))
         palette.setSBLength()
         assert palette.sb.currentLength()[0] == length
@@ -783,7 +786,8 @@ def test_the_whole_bar_stays_on_the_field_wherever_it_was_left(
     palette.sb_x = sb_x
     _set_window(main_window, 0.01)
     if bar == "typed":
-        _answer(monkeypatch, ([5.6], True))
+        # the longest the palette buttons leave room for
+        _answer(monkeypatch, ([palette.sbLengthRange()[1]], True))
         palette.setSBLength()
     palette.placeSB()
     left, right = _field_edges(main_window)
