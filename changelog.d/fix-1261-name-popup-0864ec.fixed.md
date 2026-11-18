@@ -1,0 +1,1 @@
+- **A trace name with an extra space at either end saves without a popup.** A name with spaces or commas inside it still shows a note with the saved name.
