@@ -690,9 +690,12 @@ class TraceDialog(QDialog):
             if self.smooth_input is not None:
                 self.smooth_choice = self.readSmoothChoice()
             
-            # notify user if name is changed
-            if trace.name and trace.name != self.name_input.text():
-                notify(f'Invalid name "{self.name_input.text()}" changed to "{trace.name}".')
+            # notify user if name is changed (end spaces are dropped silently)
+            if trace.name and trace.name != self.name_input.text().strip():
+                notify(
+                    f'The name was saved as "{trace.name}". '
+                    "Spaces and commas in a name become underscores."
+                )
 
             if self.is_obj_list:
                 return (trace, sections),  True
