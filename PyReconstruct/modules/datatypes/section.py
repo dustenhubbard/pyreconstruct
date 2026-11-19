@@ -49,6 +49,38 @@ from PyReconstruct.modules.backend.exports import export_svg, export_png
 StoredTraceID = namedtuple("StoredTraceID", ("trace_id", "fill_mode_key"))
 
 
+## A section saved with no image calibration takes the one the other sections
+## of its series use. With none in the series, it takes the Reconstruct default.
+NO_MAG_DEFAULT = 0.00254  # microns per pixel
+
+
+def hasMag(section_data) -> bool:
+    """True when the section data has a mag key, as updateJSON fills a missing one."""
+    return "mag" in section_data
+
+
+def seriesMag(mags) -> float:
+    """The calibration for a section that has none, from the other sections' mags.
+
+    The most common value; on a tie, the one seen first. A mag that is not a
+    positive number is not counted. NO_MAG_DEFAULT when none is left.
+
+        Params:
+            mags (iterable): the mags of the sections that have one, in order
+    """
+    counts : Dict[float, int] = {}
+    for mag in mags:
+        if isinstance(mag, bool) or not isinstance(mag, (int, float)):
+            continue
+        if not math.isfinite(mag) or mag <= 0:
+            continue
+        counts[mag] = counts.get(mag, 0) + 1
+    if not counts:
+        return NO_MAG_DEFAULT
+    most = max(counts.values())
+    return next(mag for mag, n in counts.items() if n == most)
+
+
 ## --- the columnar dual-write ------------------------------------------------
 ##
 ## Every `Section` carries a `SectionColumns` beside its own `self.contours`
@@ -1457,7 +1489,7 @@ class Section():
         section_data["brightness_contrast_profiles"] = {
             "default": (0, 0)
         }
-        section_data["mag"] = 0.00254  # microns per pixel
+        section_data["mag"] = NO_MAG_DEFAULT  # microns per pixel
         section_data["align_locked"] = True
         section_data["thickness"] = 0.05  # section thickness
         section_data["tforms"] = {}  

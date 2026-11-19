@@ -53,6 +53,12 @@ from PyReconstruct.modules.gui.utils.app_icon import window_icon, apply_holiday_
 # feeds, and a nightly version shown in the stable app would be wrong.
 UPDATE_NOTICE_KEY = "update_notice_version"
 
+# The calibration offered for a new series made from images, in microns per
+# image pixel: 2 nm, the pixel size the tSEM images are taken at. A series
+# made from a .ser keeps the calibration in its files, and a saved series
+# keeps its own.
+NEW_SERIES_MAG = 0.002
+
 
 def windowGeometrySettings():
     """The settings object the window geometry is saved in.
@@ -63,6 +69,34 @@ def windowGeometrySettings():
     side, and a shared blob would put one window exactly over the other.
     """
     return settings_for("window/geometry")
+
+
+def _rangeText(values) -> str:
+    """One value, or the lowest and highest when the sections differ."""
+    low, high = min(values), max(values)
+    if abs(high - low) <= 1e-12:
+        return f"{low:g}"
+    return f"{low:g} to {high:g}"
+
+
+def newSeriesCalibrationText(series) -> str:
+    """The calibration and thickness a new series opened with, for a check."""
+    sections = series.data["sections"].values()
+    mags = [s["mag"] for s in sections]
+    thicknesses = [s["thickness"] for s in sections]
+    nm = _rangeText([m * 1000 for m in mags])
+    lines = [
+        f"Image calibration: {_rangeText(mags)} μm/px ({nm} nm per pixel)",
+        f"Section thickness: {_rangeText(thicknesses)} μm",
+    ]
+    if len({round(m, 12) for m in mags}) > 1:
+        lines.append("The sections do not all have the same calibration.")
+    lines += [
+        "",
+        "To change the calibration, use "
+        "Series ▸ Calibration ▸ Manually set pixel mag...",
+    ]
+    return "\n".join(lines)
 
 
 def remappedBCProfile(current : str, profiles_dict : dict) -> str:
@@ -2308,7 +2342,7 @@ class MainWindow(QMainWindow):
         if mag is None:
             mag, confirmed = QInputDialog.getDouble(
                 self, "New Series", "Enter image calibration (μm/px):",
-                0.00254, minValue=0.000001, decimals=6)
+                NEW_SERIES_MAG, minValue=0.000001, decimals=6)
             if not confirmed:
                 return
             
@@ -2334,6 +2368,9 @@ class MainWindow(QMainWindow):
 
         ## Set view to entire image
         self.field.home()
+
+        ## Show the calibration the series has, so it can be checked
+        self.notifyNewSeriesCalibration()
 
         ## Prompt user to save series
         self.saveAsToJser()
@@ -2376,6 +2413,9 @@ class MainWindow(QMainWindow):
 
         # set view to entire image, as the other new-series paths do
         self.field.home()
+
+        # show the calibration the .ser carried, so it can be checked
+        self.notifyNewSeriesCalibration()
 
         # prompt user to save series
         self.saveAsToJser()
@@ -2431,8 +2471,15 @@ class MainWindow(QMainWindow):
         # set view to home
         self.field.home()
 
+        # show the calibration read from the zarr, so it can be checked
+        self.notifyNewSeriesCalibration()
+
         # prompt user to save series
         self.saveAsToJser()
+
+    def notifyNewSeriesCalibration(self):
+        """Show the calibration of the series just made, before it is saved."""
+        notify(newSeriesCalibrationText(self.series), title="New Series")
     
     def exportToXML(self, export_fp : str = None):
         """Export the current series to XML.

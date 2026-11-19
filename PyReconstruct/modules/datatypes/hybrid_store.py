@@ -757,7 +757,7 @@ class HybridStore():
                     time is not a no-op (a tag the writer turned from NaN
                     into null sorts again)
         """
-        from .section import Section
+        from .section import Section, hasMag, seriesMag
         from .series import Series, applyContourRenames
 
         total = source.sectionCount()
@@ -769,7 +769,9 @@ class HybridStore():
                               "pending_section", "pending_series"):
                     self.con.execute(f"DELETE FROM {table}")
                 renames = {}
-                for snum, section_data, _ in source.sections():
+
+                def put(snum, section_data):
+                    nonlocal done
                     if not migrated:
                         stored_ids : dict = {}
                         renames.update(Section.updateJSON(section_data, snum, stored_ids=stored_ids))
@@ -778,10 +780,32 @@ class HybridStore():
                         # every section locks on open (see Series.openJser)
                         section_data["align_locked"] = True
                     self._replaceSection(snum, section_data)
-                    section_data = None  # free it before the next is decoded
                     done += 1
+                    # one step is held back for the mags set below
                     if reporter is not None and total:
-                        reporter.set_progress(done / total * 100)
+                        reporter.set_progress(done / (total + 1) * 100)
+
+                # a section with no calibration takes the one the others use,
+                # as Series.openJser gives it: stored as it is read, its mag
+                # set once all are read
+                mags = []
+                no_mag = []
+                for snum, section_data, _ in source.sections():
+                    if not migrated:
+                        if hasMag(section_data):
+                            mags.append(section_data["mag"])
+                        else:
+                            no_mag.append(snum)
+                    put(snum, section_data)
+                    section_data = None  # free it before the next is decoded
+                missing_mag = seriesMag(mags)
+                for snum in no_mag:
+                    section_data = self.readSection(snum)
+                    section_data["mag"] = missing_mag
+                    self._replaceSection(snum, section_data)
+                    section_data = None
+                if reporter is not None and total:
+                    reporter.set_progress(100)
                 self.setLogText(source.log)
                 series_data = source.series
                 if not migrated:

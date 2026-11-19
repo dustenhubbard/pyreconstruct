@@ -15,6 +15,7 @@ from PyReconstruct.modules.datatypes import (
     Trace,
     Ztrace
 )
+from PyReconstruct.modules.datatypes.section import NO_MAG_DEFAULT, seriesMag
 from PyReconstruct.modules.datatypes_legacy import (
     Transform as XMLTransform,
     process_series_file, 
@@ -155,18 +156,39 @@ def xmlToJSON(series_fp : str) -> Series:
 
         sections = {}
         section_tforms = {}
+        mags = []  # the image calibrations of the sections, in order
+        no_image = []  # sections with no image, converted last
 
         for snum, section_fp in sorted(section_fps.items()):
 
             sections[snum] = f"{sname}.{snum}"
             tform = sectionXMLtoJSON(
-                section_fp, alignment_dict, hidden_dir, sections[snum]
+                section_fp, alignment_dict, hidden_dir, sections[snum],
+                defer_no_image=True, mags=mags,
             )
-
-            section_tforms[snum] = tform
+            # a section with no image takes half its step now and half when
+            # it is converted below, so 100% comes after the last of them
+            if tform is None:
+                no_image.append((snum, section_fp))
+                progress += 0.5
+            else:
+                section_tforms[snum] = tform
+                progress += 1
 
             if progbar.wasCanceled(): return
-            progress += 1
+            progbar.setValue(progress/final_value * 100)
+
+        # a section with no image takes the calibration the others use; it
+        # is read again, as its points are thinned at that calibration
+        missing_mag = seriesMag(mags)
+        for snum, section_fp in no_image:
+            section_tforms[snum] = sectionXMLtoJSON(
+                section_fp, alignment_dict, hidden_dir, sections[snum],
+                missing_mag=missing_mag,
+            )
+
+            if progbar.wasCanceled(): return
+            progress += 0.5
             progbar.setValue(progress/final_value * 100)
 
         # create an empty log file
@@ -268,7 +290,19 @@ def getReconcropperData(json_fp):
     return alignment_dict
 
 
-def sectionXMLtoJSON(section_fp, alignment_dict, hidden_dir, out_name=None):
+def sectionXMLtoJSON(section_fp, alignment_dict, hidden_dir, out_name=None,
+                     missing_mag=NO_MAG_DEFAULT, defer_no_image=False, mags=None):
+    """Convert one legacy section file to a JSON section file.
+
+        Params:
+            missing_mag (float): the calibration for a section with no image
+            defer_no_image (bool): True to leave a section with no image
+                unconverted and return None, so the caller can convert it
+                once the other sections' calibrations are known
+            mags (list): when given, the section's image mag is appended to it
+        Returns:
+            (Transform) the section's transform, or None as above
+    """
 
     # # grab the section file
     # try:
@@ -289,10 +323,15 @@ def sectionXMLtoJSON(section_fp, alignment_dict, hidden_dir, out_name=None):
     else:
         image = None
 
+    if not image and defer_no_image:
+        return None
+
     if image:
 
         section_dict["src"] = image.src
         section_dict["mag"] = image.mag
+        if mags is not None:
+            mags.append(image.mag)
         xml_tform = image.transform
         tform = Transform(
             list(xml_tform.tform()[:2,:].reshape(6))
@@ -302,7 +341,7 @@ def sectionXMLtoJSON(section_fp, alignment_dict, hidden_dir, out_name=None):
 
         print(f"Section: {fname} does not contain any image data.")
         section_dict["src"] = ""
-        section_dict["mag"] = 0.00254
+        section_dict["mag"] = missing_mag
         xml_tform = None
         tform = Transform.identity()
 
