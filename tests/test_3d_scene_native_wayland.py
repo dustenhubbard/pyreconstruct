@@ -77,7 +77,14 @@ if mode == "draw":
     rw.AddObserver("EndEvent", lambda obj, event: renders.append(event))
     widget.resize(120, 100)
     widget.Initialize()  # what vedo does before its first render
+    # shown, as PyReconstruct shows it: a hidden widget gets no resize
+    # event, so VTK would draw at its default 300x300 and the copy would
+    # hold only one corner
+    widget.show()
+    app.processEvents()
     frame = widget.grabFramebuffer()  # initializeGL, then paintGL
+    got["drawn_size"] = list(rw.GetSize())
+    got["frame_size"] = [frame.width(), frame.height()]
     got["renders"] = len(renders)
     got["center"] = frame.pixelColor(frame.width() // 2, frame.height() // 2).getRgb()
     got["corner"] = frame.pixelColor(1, 1).getRgb()
@@ -116,6 +123,8 @@ def test_wayland_scene_shows_the_frame_vtk_drew():
         pytest.skip(f"Qt makes no OpenGL context on {got['no_gl']}")
     assert got["render_window"] == "vtkGenericOpenGLRenderWindow"
     assert got["renders"] >= 1
+    # VTK drew at the size of the frame it was copied into
+    assert got["drawn_size"] == got["frame_size"]
     # the red sphere in the middle and the blue background at the edge.
     # grabFramebuffer returns an opaque image, so this does not see alpha.
     assert got["center"] == [255, 0, 0, 255]
