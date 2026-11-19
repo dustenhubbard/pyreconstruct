@@ -77,8 +77,9 @@ if mode == "draw":
     rw.AddObserver("EndEvent", lambda obj, event: renders.append(event))
     widget.resize(120, 100)
     widget.Initialize()  # what vedo does before its first render
-    # shown, as the app does: a hidden widget gets no resize event, so VTK
-    # would draw at its default 300x300 and the copy would hold one corner
+    # shown, as PyReconstruct shows it: a hidden widget gets no resize
+    # event, so VTK would draw at its default 300x300 and the copy would
+    # hold only one corner
     widget.show()
     app.processEvents()
     frame = widget.grabFramebuffer()  # initializeGL, then paintGL
