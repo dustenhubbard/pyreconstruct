@@ -389,7 +389,8 @@ Also under **File ▸ New series**:
 - **From scaled images…** builds from an existing scaled Zarr directory (expects
   a `scale_1` folder), then runs the same name/calibration/thickness prompts.
 - **From legacy .ser…** creates a series from legacy *Reconstruct* XML `.ser` files.
-  It keeps the calibration in those files and shows it in the same notice.
+  It keeps the calibration in those files and shows it in the same notice. A
+  section with no image takes the calibration the other sections use.
 - **From neuroglancer zarr…** creates a series from a Neuroglancer Zarr.
 
 ### Image directory and Zarr conversion

@@ -458,7 +458,7 @@ re-derived from the model.
 | --- | --- | --- | --- |
 | `src` | string | filename | The section's image, as a bare filename. Resolved against the series `src_dir`. A path is accepted on read but reduced to its basename. |
 | `brightness_contrast_profiles` | object | name -> `[brightness, contrast]` | Named image adjustment profiles. Both values are integers that the UI clamps to `[-100, 100]`; nothing enforces the range on load. Must contain the key named by the series' `current_brightness_contrast_profile`. |
-| `mag` | number | µm per image pixel | Magnification. A new series made from images is offered `0.002`. A section saved without `mag` reads as `0.00254`. |
+| `mag` | number | µm per image pixel | Magnification. A new series made from images is offered `0.002`. A section saved without `mag` takes the most common `mag` of the other sections, or `0.00254` when no section has one. |
 | `align_locked` | boolean | | Whether the section's alignment is locked against edits. **Forced to `true` whenever a `.jser` is unpacked**, regardless of the stored value. (Resuming from an existing hidden directory does not go through the unpack path and does keep the stored value.) |
 | `tforms` | object | alignment name -> 6-number array | One affine transform per alignment. See [4.4](#44-transforms). Must contain the alignment named by the series' `alignment`. The reserved name `no-alignment` is deleted on read and never written. |
 | `thickness` | number | µm | Section thickness. Default for a new section is `0.05`. |

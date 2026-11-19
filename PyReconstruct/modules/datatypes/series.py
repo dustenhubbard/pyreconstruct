@@ -20,7 +20,7 @@ from typing import Optional, Union
 
 from .log import LogSet, LogSetPair, LOG_READ_ERRORS, LOG_WRITE_ERRORS
 from .ztrace import Ztrace
-from .section import Section
+from .section import Section, hasMag, seriesMag
 from .section_rows import OpenCanceled, ParallelLoader, UnpackFeeder, openLoader
 from .trace import Trace, normalizeObjectName, copyObjDefaults
 from .trace_id import TraceIDIssuer
@@ -1542,7 +1542,9 @@ class Series():
                     ParallelLoader.seriesAlignments(alignment, source.series.get("obj_attrs", {})),
                     reporter.canceled_while_waiting,
                 )
-            for snum, section_data, found in source.sections():
+            def unpack(snum, section_data, found):
+                """Migrate and write one section. True when the open is canceled."""
+                nonlocal progress
                 filename = sname + "." + str(snum)
                 section_fp = os.path.join(work_dir, filename)
 
@@ -1596,10 +1598,33 @@ class Series():
                 # after the next section is decoded, so two would be alive
                 section_data = found = data = None
 
-                if reporter.was_canceled():
-                    return None, None, None
                 progress += 1
                 reporter.set_progress(progress/final_value * 100)
+                return reporter.was_canceled()
+
+            # a section saved with no calibration waits for the others, and
+            # takes the one they use (seriesMag); one that has a mag keeps it
+            mags = []
+            no_mag = []
+            for snum, section_data, found in source.sections():
+                if store is None:
+                    if not hasMag(section_data):
+                        no_mag.append((snum, section_data))
+                        section_data = found = None
+                        continue
+                    mags.append(section_data["mag"])
+                canceled = unpack(snum, section_data, found)
+                section_data = found = None
+                if canceled:
+                    return None, None, None
+            missing_mag = seriesMag(mags)
+            while no_mag:
+                snum, section_data = no_mag.pop(0)
+                section_data["mag"] = missing_mag
+                canceled = unpack(snum, section_data, None)
+                section_data = None
+                if canceled:
+                    return None, None, None
             # every section is out: let go of the file before the long build
             if store is not None:
                 splice_index = store.spliceIndex()

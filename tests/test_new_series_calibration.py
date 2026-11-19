@@ -16,6 +16,7 @@ import pytest
 from PyReconstruct.modules.backend.func.xml_json_conversions import xmlToJSON
 from PyReconstruct.modules.constants import blank_section, blank_series
 from PyReconstruct.modules.datatypes import Series
+from PyReconstruct.modules.datatypes.section import seriesMag
 from PyReconstruct.modules.gui.main.main_window import (
     NEW_SERIES_MAG,
     newSeriesCalibrationText,
@@ -210,22 +211,150 @@ def test_existing_jser_keeps_its_calibration(qapp, tmp_path, mag):
     assert _mags_on_disk(fp) == [mag, mag]
 
 
-def test_section_saved_without_a_mag_still_reads_as_before(qapp, tmp_path):
-    fp = _saved_jser(tmp_path, 0.0011)
+def _jser_with_mags(tmp_path, mags):
+    """A saved .jser whose sections carry these mags; None: no mag saved."""
+    images = tmp_path / "images"
+    images.mkdir()
+    series = Series.new(
+        [_image(str(images), f"{i:02}.png") for i in range(len(mags))],
+        "old",
+        0.002,
+        0.05,
+    )
+    fp = str(tmp_path / "old.jser")
+    series.saveJser(save_fp=fp, close=True)
     with open(fp) as f:
         data = json.load(f)
-    first = next(s for s in data["sections"] if s)
-    del first["mag"]
+    saved = [s for s in data["sections"] if s]
+    assert len(saved) == len(mags)
+    for section, mag in zip(saved, mags):
+        if mag is None:
+            del section["mag"]
+        else:
+            section["mag"] = mag
     with open(fp, "w") as f:
         json.dump(data, f)
+    return fp
 
+
+def _opened_mags(fp):
     series = Series.openJser(fp)
     try:
-        mags = sorted(series.loadSection(n).mag for n in series.sections)
+        return [series.loadSection(n).mag for n in sorted(series.sections)]
     finally:
         series.close()
 
-    assert mags == [0.0011, 0.00254]
+
+@pytest.mark.parametrize(
+    "mags, expected",
+    [
+        # the one the others use
+        ([0.0011, None, 0.0011], [0.0011, 0.0011, 0.0011]),
+        # the most common of the others
+        ([0.0031, 0.0011, None, 0.0011], [0.0031, 0.0011, 0.0011, 0.0011]),
+        # a tie: the first of them in the file
+        ([0.0031, None, 0.0011], [0.0031, 0.0031, 0.0011]),
+        # none in the series: the Reconstruct default
+        ([None, None], [0.00254, 0.00254]),
+    ],
+)
+def test_jser_section_without_a_mag_takes_the_series_mag(qapp, tmp_path, mags, expected):
+    fp = _jser_with_mags(tmp_path, mags)
+
+    assert _opened_mags(fp) == expected
+
+    # a save writes the mag it was given; the saved ones are unchanged
+    series = Series.openJser(fp)
+    try:
+        series.saveJser()
+    finally:
+        series.close()
+    assert _mags_on_disk(fp) == expected
+
+
+def test_store_import_fills_a_missing_mag_as_the_open_does(qapp, tmp_path, monkeypatch):
+    from PyReconstruct.modules.datatypes import hybrid_store
+    from PyReconstruct.modules.datatypes.hybrid_store import HybridStore
+
+    monkeypatch.setenv(hybrid_store.ENV_DIR, str(tmp_path / "stores"))
+    fp = _jser_with_mags(tmp_path, [0.0031, None, 0.0011, 0.0011])
+
+    store = HybridStore.forJser(fp)
+    source, collisions = Series._readJserForOpen(fp, None)
+    try:
+        store.importJser(fp, source, collisions)
+    finally:
+        source.close()
+    try:
+        held = [store.readSection(n)["mag"] for n in sorted(store.sectionNumbers())]
+    finally:
+        store.close()
+
+    assert held == _opened_mags(fp) == [0.0031, 0.0011, 0.0011, 0.0011]
+
+
+def test_series_mag_rule():
+    assert seriesMag([]) == 0.00254
+    assert seriesMag([0.002]) == 0.002
+    assert seriesMag([0.0031, 0.002, 0.002]) == 0.002
+    assert seriesMag([0.0031, 0.002]) == 0.0031
+    # what is not a positive number is not counted
+    assert seriesMag([[1], "x", True, 0, -1, float("nan"), 0.0031]) == 0.0031
+    assert seriesMag([None, "x"]) == 0.00254
+
+
+# -- a .ser section with no image ------------------------------------------------
+
+NO_IMAGE_SECTION = """<?xml version="1.0"?>
+<!DOCTYPE Section SYSTEM "section.dtd">
+<Section index="[N]" thickness="0.05" alignLocked="false">
+<Transform dim="0" xcoef=" 0 1 0 0 0 0" ycoef=" 0 0 1 0 0 0">
+<Contour name="a" hidden="false" closed="true" simplified="false" border="1 0 0" fill="1 0 0" mode="9"
+ points="0 0, 1 0, 1 1, 0 1, "/>
+</Transform>
+</Section>"""
+
+
+def _with_no_image(folder, name, snums):
+    for n in snums:
+        with open(os.path.join(folder, f"{name}.{n}"), "w") as f:
+            f.write(NO_IMAGE_SECTION.replace("[N]", str(n)))
+
+
+@pytest.mark.parametrize(
+    "mags, expected",
+    [
+        ([0.0031, None, 0.0031], [0.0031, 0.0031, 0.0031]),
+        ([0.00254, 0.0031, 0.0031, None], [0.00254, 0.0031, 0.0031, 0.0031]),
+        ([None, None], [0.00254, 0.00254]),
+    ],
+)
+def test_ser_section_with_no_image_takes_the_series_mag(qapp, tmp_path, monkeypatch, mags, expected):
+    from PyReconstruct.modules.backend.func import xml_json_conversions
+
+    thinned = []
+    reduce = xml_json_conversions.reducePoints
+
+    def record(points, closed, mag):
+        thinned.append(mag)
+        return reduce(points, closed=closed, mag=mag)
+
+    monkeypatch.setattr(xml_json_conversions, "reducePoints", record)
+
+    ser = _write_legacy_series(str(tmp_path), "S", [m or 0.00254 for m in mags])
+    _with_no_image(str(tmp_path), "S", [n for n, m in enumerate(mags, 1) if m is None])
+
+    series = xmlToJSON(ser)
+    try:
+        assert [series.loadSection(n).mag for n in sorted(series.sections)] == expected
+        assert all(series.loadSection(n).tracesAsList() for n in series.sections
+                   if mags[n - 1] is None)
+    finally:
+        series.close()
+
+    # the points of a section with no image are thinned at the mag it gets
+    assert thinned == [pytest.approx(2 / m) for n, m in enumerate(expected, 1)
+                       if mags[n - 1] is None]
 
 
 @pytest.mark.gui
