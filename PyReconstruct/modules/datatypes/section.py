@@ -68,7 +68,7 @@ def seriesMag(mags) -> float:
         Params:
             mags (iterable): the mags of the sections that have one, in order
     """
-    counts = {}
+    counts : Dict[float, int] = {}
     for mag in mags:
         if isinstance(mag, bool) or not isinstance(mag, (int, float)):
             continue

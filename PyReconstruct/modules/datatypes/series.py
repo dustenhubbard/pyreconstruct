@@ -1590,8 +1590,8 @@ class Series():
                 sections[snum] = filename
 
                 data = opened_index.working(section_data, found)
-                with open(section_fp, "wb") as f:
-                    f.write(data)
+                with open(section_fp, "wb") as out:
+                    out.write(data)
                 if feeder is not None:
                     feeder.wrote(snum, data)
                 # drop it now, not when the loop rebinds the name: that is
@@ -1655,8 +1655,8 @@ class Series():
             # obj_attrs.
             applyContourRenames(series_data, renames, collisions)
             series_name = sname + ".ser"
-            with open(os.path.join(work_dir, series_name), "wb") as f:
-                f.write(fast_dumps(series_data))
+            with open(os.path.join(work_dir, series_name), "wb") as out:
+                out.write(fast_dumps(series_data))
             if reporter.was_canceled():
                 return None, None, None
 
