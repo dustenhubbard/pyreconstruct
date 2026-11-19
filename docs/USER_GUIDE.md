@@ -370,14 +370,17 @@ another window (it was touched within the last few seconds), PyReconstruct shows
    BMP). The files are sorted alphanumerically, and that order becomes the section
    order (section 0, 1, 2, …), so name your images so they sort correctly.
 2. **Series name**: used to name the series.
-3. **Image calibration (µm/px)**: microns per image pixel. Default **0.00254**.
+3. **Image calibration (µm/px)**: microns per image pixel. Default **0.002**
+   (2 nm, the tSEM pixel size).
 4. **Section thickness (µm)**: default **0.05**. Thickness feeds the volume and
    flat-area calculations in the object list.
 
-The new series opens fitted to the first image; you are then prompted to choose
-where to save the `.jser`.
+The new series opens fitted to the first image. A notice shows its image
+calibration and section thickness, so you can check them; you are then prompted
+to choose where to save the `.jser`. To change the calibration later, use
+**Series ▸ Calibration ▸ Manually set pixel mag…**.
 
-![The New Series prompt "Enter image calibration (µm/px)", with the default 0.002540, and Cancel and OK buttons.](assets/images/user-guide/04-new-series-calibration.png)
+![The New Series prompt "Enter image calibration (µm/px)", with the default 0.002000, and Cancel and OK buttons.](assets/images/user-guide/04-new-series-calibration.png)
 
 ### Other ways to create a series
 
@@ -386,6 +389,7 @@ Also under **File ▸ New series**:
 - **From scaled images…** builds from an existing scaled Zarr directory (expects
   a `scale_1` folder), then runs the same name/calibration/thickness prompts.
 - **From legacy .ser…** creates a series from legacy *Reconstruct* XML `.ser` files.
+  It keeps the calibration in those files and shows it in the same notice.
 - **From neuroglancer zarr…** creates a series from a Neuroglancer Zarr.
 
 ### Image directory and Zarr conversion
