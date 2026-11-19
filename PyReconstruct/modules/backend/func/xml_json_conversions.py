@@ -166,25 +166,30 @@ def xmlToJSON(series_fp : str) -> Series:
                 section_fp, alignment_dict, hidden_dir, sections[snum],
                 defer_no_image=True, mags=mags,
             )
+            # a section with no image takes half its step now and half when
+            # it is converted below, so 100% comes after the last of them
             if tform is None:
                 no_image.append((snum, section_fp))
+                progress += 0.5
             else:
                 section_tforms[snum] = tform
+                progress += 1
 
             if progbar.wasCanceled(): return
-            progress += 1
             progbar.setValue(progress/final_value * 100)
 
         # a section with no image takes the calibration the others use; it
         # is read again, as its points are thinned at that calibration
         missing_mag = seriesMag(mags)
         for snum, section_fp in no_image:
-            if progbar.wasCanceled(): return
             section_tforms[snum] = sectionXMLtoJSON(
                 section_fp, alignment_dict, hidden_dir, sections[snum],
                 missing_mag=missing_mag,
             )
-        if progbar.wasCanceled(): return
+
+            if progbar.wasCanceled(): return
+            progress += 0.5
+            progbar.setValue(progress/final_value * 100)
 
         # create an empty log file
         with open(os.path.join(hidden_dir, "existing_log.csv"), "w", encoding="utf-8") as f:

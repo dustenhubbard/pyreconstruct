@@ -1624,6 +1624,9 @@ class Series():
                     return None, None, None
             missing_mag = seriesMag(mags)
             for snum in no_mag:
+                # no progress step here, so let a Cancel click land
+                if reporter.canceled_while_waiting():
+                    return None, None, None
                 section_fp = os.path.join(work_dir, sections[snum])
                 with open(section_fp, "rb") as src:
                     section_data = fast_loads(src.read())
@@ -1634,8 +1637,8 @@ class Series():
                 if feeder is not None:
                     feeder.wrote(snum, data)
                 section_data = data = None
-                if reporter.was_canceled():
-                    return None, None, None
+            if no_mag and reporter.canceled_while_waiting():
+                return None, None, None
             # every section is out: let go of the file before the long build
             if store is not None:
                 splice_index = store.spliceIndex()

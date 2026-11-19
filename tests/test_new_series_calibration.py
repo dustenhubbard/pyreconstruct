@@ -519,3 +519,140 @@ def test_cancel_stops_a_ser_import_at_a_section_with_no_image(qapp, tmp_path, mo
 
     assert xml_json_conversions.xmlToJSON(ser) is None
     assert len(seen) == 1
+
+
+# -- the mags set last still show progress and take Cancel ----------------------
+
+
+def _modal_bar(qapp, label):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QProgressDialog
+
+    bar = QProgressDialog(label, "Cancel", 0, 100)
+    bar.setWindowModality(Qt.WindowModal)
+    bar.setMinimumDuration(0)
+    bar.show()
+    qapp.processEvents()
+    return bar
+
+
+def test_cancel_click_lands_while_open_sets_missing_mags(qapp, tmp_path, monkeypatch):
+    from PySide6.QtCore import QTimer
+
+    from PyReconstruct.modules.backend.progress import QtProgressReporter
+    from PyReconstruct.modules.datatypes.series import OpenedJserIndex
+
+    fp = _jser_with_mags(tmp_path, [None] * 8 + [0.0031])
+    bar = _modal_bar(qapp, "Opening")
+    reporter = QtProgressReporter.__new__(QtProgressReporter)
+    reporter._progbar = bar
+    reporter._finished = False
+    reporter.eta = False
+    filled = []
+    working = OpenedJserIndex.working
+
+    def encode(self, section, found):
+        if section["mag"] == 0.0031 and found is None:
+            filled.append(section)
+            if len(filled) == 1:
+                QTimer.singleShot(0, bar.cancel)
+        return working(self, section, found)
+
+    monkeypatch.setattr(OpenedJserIndex, "working", encode)
+    try:
+        series = Series.openJser(fp, progress=lambda **kw: reporter)
+    finally:
+        bar.close()
+
+    assert series is None
+    assert len(filled) <= 2
+    assert not list(tmp_path.glob(".opening-*"))
+
+
+def test_ser_import_reaches_100_after_the_last_section(qapp, tmp_path, monkeypatch):
+    from PyReconstruct.modules.backend.func import xml_json_conversions
+
+    ser = _write_legacy_series(str(tmp_path), "S", [0.0011] * 4)
+    _with_no_image(str(tmp_path), "S", [1, 3])
+    converted = []
+    values = []
+    real = xml_json_conversions.sectionXMLtoJSON
+
+    def convert(*args, **kwargs):
+        tform = real(*args, **kwargs)
+        if tform is not None:
+            converted.append(os.path.basename(args[0]))
+        return tform
+
+    class Bar:
+        def wasCanceled(self):
+            return False
+
+        def setValue(self, value):
+            values.append((value, len(converted)))
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(xml_json_conversions, "sectionXMLtoJSON", convert)
+    monkeypatch.setattr(xml_json_conversions, "getProgbar", lambda *a, **k: Bar())
+
+    series = xml_json_conversions.xmlToJSON(ser)
+    series.close()
+
+    percents = [v for v, _ in values]
+    assert percents == sorted(percents)
+    assert [n for v, n in values if v >= 100] == [4]
+
+
+def test_cancel_click_lands_while_ser_import_converts_sections_with_no_image(
+    qapp, tmp_path, monkeypatch
+):
+    from PySide6.QtCore import QTimer
+
+    from PyReconstruct.modules.backend.func import xml_json_conversions
+
+    ser = _write_legacy_series(str(tmp_path), "S", [0.0011] * 8)
+    _with_no_image(str(tmp_path), "S", range(1, 9))
+    bar = _modal_bar(qapp, "Converting")
+    deferred = []
+    real = xml_json_conversions.sectionXMLtoJSON
+
+    def convert(*args, **kwargs):
+        if "missing_mag" in kwargs:
+            deferred.append(args[0])
+            if len(deferred) == 1:
+                QTimer.singleShot(0, bar.cancel)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(xml_json_conversions, "sectionXMLtoJSON", convert)
+    monkeypatch.setattr(xml_json_conversions, "getProgbar", lambda *a, **k: bar)
+
+    assert xml_json_conversions.xmlToJSON(ser) is None
+    assert 1 <= len(deferred) <= 2
+
+
+def test_store_import_reaches_100_with_the_final_mags(qapp, tmp_path, monkeypatch):
+    from PyReconstruct.modules.datatypes import hybrid_store
+    from PyReconstruct.modules.datatypes.hybrid_store import HybridStore
+
+    monkeypatch.setenv(hybrid_store.ENV_DIR, str(tmp_path / "stores"))
+    fp = _jser_with_mags(tmp_path, [None, 0.0031])
+    store = HybridStore.forJser(fp)
+    seen = []
+
+    class Reporter:
+        def set_progress(self, value):
+            mags = [store.readSection(n)["mag"] for n in store.sectionNumbers()]
+            seen.append((value, mags))
+
+    source, collisions = Series._readJserForOpen(fp, None)
+    try:
+        store.importJser(fp, source, collisions, reporter=Reporter())
+    finally:
+        source.close()
+        store.close()
+
+    percents = [v for v, _ in seen]
+    assert percents == sorted(percents)
+    assert [m for v, m in seen if v >= 100] == [[0.0031, 0.0031]]

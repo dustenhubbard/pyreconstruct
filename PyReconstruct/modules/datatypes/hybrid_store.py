@@ -781,8 +781,9 @@ class HybridStore():
                         section_data["align_locked"] = True
                     self._replaceSection(snum, section_data)
                     done += 1
+                    # one step is held back for the mags set below
                     if reporter is not None and total:
-                        reporter.set_progress(done / total * 100)
+                        reporter.set_progress(done / (total + 1) * 100)
 
                 # a section with no calibration takes the one the others use,
                 # as Series.openJser gives it: stored as it is read, its mag
@@ -803,6 +804,8 @@ class HybridStore():
                     section_data["mag"] = missing_mag
                     self._replaceSection(snum, section_data)
                     section_data = None
+                if reporter is not None and total:
+                    reporter.set_progress(100)
                 self.setLogText(source.log)
                 series_data = source.series
                 if not migrated:
