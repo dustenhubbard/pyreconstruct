@@ -392,3 +392,130 @@ def test_notice_mixed_calibration_and_thickness():
         "Section thickness: 0.05 to 0.07 μm",
         "The sections do not all have the same calibration.",
     ]
+
+
+# -- a section with no mag is read like the rest --------------------------------
+
+
+def _track_sections(monkeypatch):
+    """Weak references to every section the streamed reader hands out."""
+    import weakref
+
+    from PyReconstruct.modules.datatypes.series import _StreamedJser
+
+    class Tracked(dict):
+        pass
+
+    refs = []
+    original = _StreamedJser.sections
+
+    def sections(self):
+        for n, data, found in original(self):
+            held = Tracked(data)
+            refs.append(weakref.ref(held))
+            yield n, held, found
+            held = None
+
+    monkeypatch.setattr(_StreamedJser, "sections", sections)
+    return lambda: sum(r() is not None for r in refs)
+
+
+def test_open_holds_one_section_at_a_time_with_no_mags(qapp, tmp_path, monkeypatch):
+    from PyReconstruct.modules.datatypes.series import OpenedJserIndex
+
+    fp = _jser_with_mags(tmp_path, [None] * 8)
+    live = _track_sections(monkeypatch)
+    counts = []
+    working = OpenedJserIndex.working
+
+    def encode(self, *args, **kwargs):
+        counts.append(live())
+        return working(self, *args, **kwargs)
+
+    monkeypatch.setattr(OpenedJserIndex, "working", encode)
+
+    assert _opened_mags(fp) == [0.00254] * 8
+    assert counts and max(counts) <= 2, counts
+
+
+def test_store_import_holds_one_section_at_a_time_with_no_mags(qapp, tmp_path, monkeypatch):
+    from PyReconstruct.modules.datatypes import hybrid_store
+    from PyReconstruct.modules.datatypes.hybrid_store import HybridStore
+
+    monkeypatch.setenv(hybrid_store.ENV_DIR, str(tmp_path / "stores"))
+    fp = _jser_with_mags(tmp_path, [None] * 7 + [0.0031])
+    live = _track_sections(monkeypatch)
+    counts = []
+    replace = HybridStore._replaceSection
+
+    def put(self, *args, **kwargs):
+        counts.append(live())
+        return replace(self, *args, **kwargs)
+
+    monkeypatch.setattr(HybridStore, "_replaceSection", put)
+
+    store = HybridStore.forJser(fp)
+    source, collisions = Series._readJserForOpen(fp, None)
+    try:
+        store.importJser(fp, source, collisions)
+    finally:
+        source.close()
+    try:
+        held = [store.readSection(n)["mag"] for n in sorted(store.sectionNumbers())]
+    finally:
+        store.close()
+
+    assert held == [0.0031] * 8
+    assert counts and max(counts) <= 2, counts
+
+
+def test_cancel_stops_an_open_at_a_section_with_no_mag(qapp, tmp_path, monkeypatch):
+    from PyReconstruct.modules.backend.progress import NullProgressReporter
+    from PyReconstruct.modules.datatypes.series import _StreamedJser
+
+    fp = _jser_with_mags(tmp_path, [None] * 8)
+    seen = []
+    original = _StreamedJser.sections
+
+    def sections(self):
+        for row in original(self):
+            seen.append(row[0])
+            yield row
+
+    monkeypatch.setattr(_StreamedJser, "sections", sections)
+
+    class Cancel(NullProgressReporter):
+        def was_canceled(self):
+            return bool(seen)
+
+    assert Series.openJser(fp, progress=Cancel) is None
+    assert seen == [min(seen)]
+
+
+def test_cancel_stops_a_ser_import_at_a_section_with_no_image(qapp, tmp_path, monkeypatch):
+    from PyReconstruct.modules.backend.func import xml_json_conversions
+
+    ser = _write_legacy_series(str(tmp_path), "S", [0.0011] * 8)
+    _with_no_image(str(tmp_path), "S", range(1, 9))
+    seen = []
+    original = xml_json_conversions.process_section_file
+
+    def read(fp):
+        seen.append(fp)
+        return original(fp)
+
+    class Cancel:
+        def setValue(self, value):
+            pass
+
+        def wasCanceled(self):
+            return bool(seen)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(xml_json_conversions, "process_section_file", read)
+    monkeypatch.setattr(xml_json_conversions, "getProgbar", lambda *a, **k: Cancel())
+
+    assert xml_json_conversions.xmlToJSON(ser) is None
+    assert len(seen) == 1

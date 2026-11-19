@@ -785,23 +785,23 @@ class HybridStore():
                         reporter.set_progress(done / total * 100)
 
                 # a section with no calibration takes the one the others use,
-                # as Series.openJser gives it
+                # as Series.openJser gives it: stored as it is read, its mag
+                # set once all are read
                 mags = []
                 no_mag = []
                 for snum, section_data, _ in source.sections():
                     if not migrated:
-                        if not hasMag(section_data):
-                            no_mag.append((snum, section_data))
-                            section_data = None
-                            continue
-                        mags.append(section_data["mag"])
+                        if hasMag(section_data):
+                            mags.append(section_data["mag"])
+                        else:
+                            no_mag.append(snum)
                     put(snum, section_data)
                     section_data = None  # free it before the next is decoded
                 missing_mag = seriesMag(mags)
-                while no_mag:
-                    snum, section_data = no_mag.pop(0)
+                for snum in no_mag:
+                    section_data = self.readSection(snum)
                     section_data["mag"] = missing_mag
-                    put(snum, section_data)
+                    self._replaceSection(snum, section_data)
                     section_data = None
                 self.setLogText(source.log)
                 series_data = source.series

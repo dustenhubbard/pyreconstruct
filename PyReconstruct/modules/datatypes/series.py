@@ -1542,8 +1542,12 @@ class Series():
                     ParallelLoader.seriesAlignments(alignment, source.series.get("obj_attrs", {})),
                     reporter.canceled_while_waiting,
                 )
-            def unpack(snum, section_data, found):
-                """Migrate and write one section. True when the open is canceled."""
+            def unpack(snum, section_data, found, feed=True):
+                """Migrate and write one section. True when the open is canceled.
+
+                feed=False writes it without handing it to the workers, for a
+                section whose mag is filled in once every section is read.
+                """
                 nonlocal progress
                 filename = sname + "." + str(snum)
                 section_fp = os.path.join(work_dir, filename)
@@ -1592,7 +1596,7 @@ class Series():
                 data = opened_index.working(section_data, found)
                 with open(section_fp, "wb") as out:
                     out.write(data)
-                if feeder is not None:
+                if feeder is not None and feed:
                     feeder.wrote(snum, data)
                 # drop it now, not when the loop rebinds the name: that is
                 # after the next section is decoded, so two would be alive
@@ -1602,28 +1606,35 @@ class Series():
                 reporter.set_progress(progress/final_value * 100)
                 return reporter.was_canceled()
 
-            # a section saved with no calibration waits for the others, and
-            # takes the one they use (seriesMag); one that has a mag keeps it
+            # A section saved with no calibration takes the one the others
+            # use (seriesMag); one that has a mag keeps it. It is written as
+            # it is read, like the rest, and its mag is set once all are read.
             mags = []
             no_mag = []
             for snum, section_data, found in source.sections():
-                if store is None:
-                    if not hasMag(section_data):
-                        no_mag.append((snum, section_data))
-                        section_data = found = None
-                        continue
+                filled = store is None and not hasMag(section_data)
+                if filled:
+                    no_mag.append(snum)
+                    found = None
+                elif store is None:
                     mags.append(section_data["mag"])
-                canceled = unpack(snum, section_data, found)
+                canceled = unpack(snum, section_data, found, feed=not filled)
                 section_data = found = None
                 if canceled:
                     return None, None, None
             missing_mag = seriesMag(mags)
-            while no_mag:
-                snum, section_data = no_mag.pop(0)
+            for snum in no_mag:
+                section_fp = os.path.join(work_dir, sections[snum])
+                with open(section_fp, "rb") as src:
+                    section_data = fast_loads(src.read())
                 section_data["mag"] = missing_mag
-                canceled = unpack(snum, section_data, None)
-                section_data = None
-                if canceled:
+                data = opened_index.working(section_data, None)
+                with open(section_fp, "wb") as out:
+                    out.write(data)
+                if feeder is not None:
+                    feeder.wrote(snum, data)
+                section_data = data = None
+                if reporter.was_canceled():
                     return None, None, None
             # every section is out: let go of the file before the long build
             if store is not None:
